@@ -78,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-full-text", action="store_true", help="Skip Wikipedia full-text fetch"
     )
     common.add_argument("--max-articles-per-qid", type=int, default=DEFAULT_MAX_ARTICLES_PER_QID)
+    common.add_argument("--enrichment-batch-size", type=int, default=50)
+    common.add_argument("--enrichment-site-workers", type=int, default=5)
     common.add_argument("--limit", type=int, default=None, help="Cap number of polygons per PBF")
     common.add_argument("--skip-existing", action="store_true")
     common.add_argument("--force", action="store_true")
@@ -114,6 +116,8 @@ def _build_settings(args: argparse.Namespace) -> Settings:
         languages=languages,
         fetch_full_text=not args.no_full_text,
         max_articles_per_qid=args.max_articles_per_qid,
+        enrichment_batch_size=args.enrichment_batch_size,
+        enrichment_site_workers=args.enrichment_site_workers,
         cache_ttl_s=86_400,
         skip_existing=args.skip_existing,
         force=args.force,
@@ -214,6 +218,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         len(results),
         sum(r.polygon_count for r in results),
     )
+    for result in results:
+        LOGGER.info(
+            "Stage timings for %s: %s",
+            result.manifest_entry["source_pbf"],
+            ", ".join(f"{name}={seconds:.3f}s" for name, seconds in result.stage_timings_s.items()),
+        )
     return 0
 
 

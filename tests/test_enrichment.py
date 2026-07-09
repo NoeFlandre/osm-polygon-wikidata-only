@@ -550,3 +550,34 @@ def test_batch_client_capability_protocols_are_structural() -> None:
 
     assert isinstance(WikidataBatch(), BatchWikidataClient)
     assert isinstance(WikipediaBatch(), BatchWikipediaClient)
+
+
+def test_fetch_qids_chunks_same_site_title_batches_at_requested_limit() -> None:
+    class BatchWd(InMemoryWikidataClient):
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            return [self.get_entity(qid) for qid in qids]
+
+    class BatchWiki(InMemoryWikipediaClient):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.batch_sizes: list[int] = []
+
+        def fetch_articles(
+            self, language: str, site: str, titles: list[str], *, fetch_full_text: bool = True
+        ) -> dict[str, FetchResult]:
+            self.batch_sizes.append(len(titles))
+            return {
+                title: FetchResult("ok", _sample_article("en", title, "text")) for title in titles
+            }
+
+    qids = [f"Q{index}" for index in range(1, 52)]
+    wd = BatchWd({qid: WikidataEntity(qid=qid, sitelinks={"enwiki": qid}) for qid in qids})
+    wiki = BatchWiki()
+    summaries = article_linker.fetch_qids(
+        qids,
+        wikidata_client=wd,
+        wikipedia_client=wiki,
+        batch_size=50,
+    )
+    assert len(summaries) == 51
+    assert wiki.batch_sizes == [50, 1]

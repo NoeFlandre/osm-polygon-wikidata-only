@@ -33,6 +33,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 PREFERRED_LANGUAGES: tuple[str, ...] = ("en", "fr", "de", "es", "it")
+DEFAULT_BATCH_SIZE = 50
+DEFAULT_SITE_WORKERS = 5
 
 
 @dataclass
@@ -127,13 +129,23 @@ def fetch_qids(
     languages: Iterable[str] | None = None,
     fetch_full_text: bool = True,
     max_articles_per_qid: int | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    site_workers: int = DEFAULT_SITE_WORKERS,
 ) -> list[LinkSummary]:
     """Fetch and link several QIDs, returning one :class:`LinkSummary` each."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+    if site_workers < 1:
+        raise ValueError("site_workers must be >= 1")
     requested = list(qids)
     if isinstance(wikidata_client, BatchWikidataClient) and isinstance(
         wikipedia_client, BatchWikipediaClient
     ):
-        entities = wikidata_client.get_entities(requested)
+        entities = [
+            entity
+            for chunk in _chunks(requested, batch_size)
+            for entity in wikidata_client.get_entities(chunk)
+        ]
         summaries = [
             LinkSummary(qid=qid, entity=entity)
             for qid, entity in zip(requested, entities, strict=True)
@@ -152,13 +164,18 @@ def fetch_qids(
             key: tuple[str, str], rows: list[tuple[int, str, str]]
         ) -> tuple[tuple[str, str], dict[str, FetchResult]]:
             language, site = key
+            results: dict[str, FetchResult] = {}
             titles = list(dict.fromkeys(title for _, _, title in rows))
-            return key, wikipedia_client.fetch_articles(
-                language, site, titles, fetch_full_text=fetch_full_text
-            )
+            for chunk in _chunks(titles, batch_size):
+                results.update(
+                    wikipedia_client.fetch_articles(
+                        language, site, chunk, fetch_full_text=fetch_full_text
+                    )
+                )
+            return key, results
 
         fetched: dict[tuple[str, str], dict[str, FetchResult]] = {}
-        with ThreadPoolExecutor(max_workers=min(5, max(1, len(requests)))) as executor:
+        with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(requests)))) as executor:
             for key, site_results in executor.map(lambda item: fetch_site(*item), requests.items()):
                 fetched[key] = site_results
         for summary in summaries:
@@ -194,7 +211,15 @@ def fetch_qids(
     return out
 
 
+def _chunks[T](items: list[T], size: int) -> Iterable[list[T]]:
+    """Yield stable, bounded list chunks without copying the full input again."""
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
 __all__ = [
+    "DEFAULT_BATCH_SIZE",
+    "DEFAULT_SITE_WORKERS",
     "PREFERRED_LANGUAGES",
     "LinkSummary",
     "fetch_qids",
