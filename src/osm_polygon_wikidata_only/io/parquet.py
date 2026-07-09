@@ -59,7 +59,7 @@ def write_table(
         table = pa.Table.from_pylist([placeholder], schema=schema)
         table = table.slice(0, 0)
     else:
-        table = pa.Table.from_pylist(list(materialized), schema=schema)
+        table = pa.Table.from_pylist(materialized, schema=schema)
     pq.write_table(table, path, compression="snappy")  # type: ignore[no-untyped-call]
     LOGGER.info("Wrote %d rows to %s", len(materialized), path)
     return len(materialized)
