@@ -27,6 +27,12 @@ def test_each_article_column_has_a_description() -> None:
     assert set(ARTICLE_COLUMNS) == set(ARTICLE_DESCRIPTIONS.keys())
 
 
+def test_has_geometry() -> None:
+    assert "geometry" in POLYGON_COLUMNS
+    assert "geometry" in POLYGON_DESCRIPTIONS
+    assert polygon_schema().field("geometry").type == pa.string()
+
+
 def test_each_link_column_has_a_description() -> None:
     assert set(POLYGON_ARTICLE_COLUMNS) == set(POLYGON_ARTICLE_DESCRIPTIONS.keys())
 

@@ -149,6 +149,13 @@ def test_end_to_end_pbf_to_parquet_to_manifest_to_hf_stub(
     poly_t = pq.read_table(result.polygons_path)
     art_t = pq.read_table(result.articles_path)
     link_t = pq.read_table(result.polygon_articles_path)
+
+    assert "geometry" in poly_t.column_names
+    geometries = poly_t.column("geometry").to_pylist()
+    assert all(g for g in geometries)
+    assert all('"coordinates"' in g for g in geometries)
+    assert all('"Polygon"' in g for g in geometries)
+
     assert poly_t.num_rows == 2
     assert art_t.num_rows == 3  # en A, fr A_fr, en B
     assert link_t.num_rows == 3  # 2 articles for Q1 + 1 article for Q2

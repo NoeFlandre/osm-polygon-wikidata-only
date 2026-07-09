@@ -38,6 +38,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     estimate_tokens,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.utils.rate_limit import sleep_after_429, wait_for_host
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -182,12 +183,19 @@ class HttpWikipediaClient(WikipediaClient):
         return f"{endpoint}?{urllib.parse.urlencode(params)}"
 
     def _http_get(self, url: str) -> dict[str, Any]:
+        host = urllib.parse.urlparse(url).netloc
+        wait_for_host(host, min_interval_s=self._settings.wikipedia_min_interval_s)
         req = urllib.request.Request(
             url,
             headers={"User-Agent": self._settings.user_agent, "Accept": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
-            raw = resp.read()
+        try:
+            with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                sleep_after_429(e, default_s=self._settings.rate_limit_retry_after_default_s)
+            raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
             raise ValueError(f"Expected JSON object from {url}, got {type(parsed).__name__}")

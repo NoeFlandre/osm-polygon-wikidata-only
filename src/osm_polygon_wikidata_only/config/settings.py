@@ -59,8 +59,13 @@ class Settings:
 
     # Network behavior.
     request_timeout_s: float = 30.0
-    request_max_retries: int = 4
-    request_base_delay_s: float = 1.0
+    request_max_retries: int = 8
+    request_base_delay_s: float = 2.0
+
+    # Polite Wikimedia throttling.
+    wikidata_min_interval_s: float = 1.2
+    wikipedia_min_interval_s: float = 0.5
+    rate_limit_retry_after_default_s: float = 60.0
 
     # Cache.
     cache_enabled: bool = True

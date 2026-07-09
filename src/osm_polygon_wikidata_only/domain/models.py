@@ -41,6 +41,7 @@ class Polygon:
     area_m2: float
     area_km2: float
     area_bucket: str
+    geometry: str = ""  # deterministic GeoJSON Polygon/MultiPolygon string
 
     # Wikipedia coverage (filled during enrichment).
     has_name: bool = False
@@ -75,6 +76,7 @@ class Polygon:
         lat: float,
         lon: float,
         bbox: str,
+        geometry: str = "",
         area_m2: float,
         area_km2: float,
         area_bucket: str,
@@ -99,6 +101,7 @@ class Polygon:
             lat=lat,
             lon=lon,
             bbox=bbox,
+            geometry=geometry,
             area_m2=area_m2,
             area_km2=area_km2,
             area_bucket=area_bucket,
