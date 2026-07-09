@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -42,6 +42,16 @@ class HfHub(Protocol):
         commit_message: str,
     ) -> str: ...
 
+    def create_commit(
+        self,
+        *,
+        repo_id: str,
+        operations: Iterable[Any],
+        commit_message: str,
+        repo_type: str,
+        num_threads: int,
+    ) -> Any: ...
+
 
 class StubHfHub:
     """In-memory HF Hub used by tests.
@@ -52,6 +62,7 @@ class StubHfHub:
 
     def __init__(self) -> None:
         self.uploads: list[dict[str, Any]] = []
+        self.commits: list[dict[str, Any]] = []
 
     def upload_file(
         self,
@@ -84,6 +95,27 @@ class StubHfHub:
             }
         )
         return path_in_repo
+
+    def create_commit(
+        self,
+        *,
+        repo_id: str,
+        operations: Iterable[Any],
+        commit_message: str,
+        repo_type: str,
+        num_threads: int,
+    ) -> str:
+        paths = [str(operation.path_in_repo) for operation in operations]
+        self.commits.append(
+            {
+                "repo_id": repo_id,
+                "paths": paths,
+                "commit_message": commit_message,
+                "repo_type": repo_type,
+                "num_threads": num_threads,
+            }
+        )
+        return str(uuid4())
 
 
 def _build_hf_api(token: str | None) -> Any:
@@ -127,6 +159,47 @@ def upload_parquet(
         repo_type="dataset",
         commit_message=msg,
     )
+
+
+def upload_files(
+    repo_id: str,
+    files: Iterable[tuple[Path, str]],
+    *,
+    hub: HfHub | None = None,
+    token: str | None = None,
+    commit_message: str,
+    num_threads: int = 5,
+) -> str:
+    """Publish multiple files in one atomic, concurrent Hub commit."""
+    entries = list(files)
+    if not entries:
+        raise UploadError("Cannot create an empty upload commit")
+    if num_threads < 1:
+        raise ValueError("num_threads must be >= 1")
+    remote_paths = [remote for _, remote in entries]
+    if len(remote_paths) != len(set(remote_paths)):
+        raise UploadError("Upload commit contains duplicate remote paths")
+    for local_path, _ in entries:
+        if not local_path.exists():
+            raise UploadError(f"Local file does not exist: {local_path}")
+    try:
+        from huggingface_hub import CommitOperationAdd
+    except ImportError as e:  # pragma: no cover
+        raise UploadError("huggingface_hub is required for batch uploads.") from e
+    operations = [
+        CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=str(local_path))
+        for local_path, remote_path in entries
+    ]
+    client = hub or _build_hf_api(token=token)
+    LOGGER.info("Uploading %d files atomically to %s", len(operations), repo_id)
+    result = client.create_commit(
+        repo_id=repo_id,
+        operations=operations,
+        commit_message=commit_message,
+        repo_type="dataset",
+        num_threads=num_threads,
+    )
+    return str(result)
 
 
 def upload_manifest(
@@ -186,6 +259,7 @@ __all__ = [
     "UploadError",
     "default_commit_message",
     "upload_card",
+    "upload_files",
     "upload_manifest",
     "upload_parquet",
 ]

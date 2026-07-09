@@ -57,3 +57,9 @@ def test_parser_push_flag() -> None:
     )
     assert args.push is True
     assert args.repo_id == "foo/bar"
+
+
+def test_parser_accepts_upload_worker_count() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["process-pbf", "/tmp/x.osm.pbf", "--upload-threads", "8"])
+    assert args.upload_threads == 8
