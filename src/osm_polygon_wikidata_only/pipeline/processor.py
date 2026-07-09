@@ -186,52 +186,8 @@ def _build_articles_and_links(
         best = summary.best_language()
         for art in summary.articles:
             aid = article_id(polygon.wikidata, art.language, art.page_id, art.revision_id)
-            wikidata_label = summary.entity.labels.get(art.language) if summary.entity else ""
-            if not wikidata_label and summary.entity is not None:
-                wikidata_label = summary.entity.labels.get("en", "")
-            wikidata_description = (
-                summary.entity.descriptions.get(art.language) if summary.entity else ""
-            )
-            if not wikidata_description and summary.entity is not None:
-                wikidata_description = summary.entity.descriptions.get("en", "")
-            wikidata_aliases = summary.entity.aliases.get(art.language) if summary.entity else None
-            if not wikidata_aliases and summary.entity is not None:
-                wikidata_aliases = summary.entity.aliases.get("en", [])
-
-            article = Article(
-                article_id=aid,
-                wikidata=polygon.wikidata,
-                language=art.language,
-                site=art.site,
-                title=art.title,
-                url=art.url,
-                page_id=art.page_id,
-                revision_id=art.revision_id,
-                revision_timestamp=art.revision_timestamp,
-                retrieved_at=art.retrieved_at,
-                wikidata_label=str(wikidata_label or ""),
-                wikidata_description=str(wikidata_description or ""),
-                wikidata_aliases=json_dumps(wikidata_aliases or []),
-                lead_text=art.lead_text,
-                extract=art.extract,
-                full_text=art.full_text,
-                full_text_format=art.full_text_format,
-                article_length_chars=len(art.full_text),
-                article_length_words=count_words(art.full_text),
-                article_length_tokens_estimate=estimate_tokens(art.full_text),
-                thumbnail_url=art.thumbnail_url,
-                thumbnail_width=art.thumbnail_width,
-                thumbnail_height=art.thumbnail_height,
-                categories=json_dumps(art.categories),
-                license=art.license,
-                attribution=art.attribution,
-                source_api=art.source_api,
-                fetch_status="ok",
-                fetch_error="",
-                content_hash=content_hash(art.full_text),
-            )
             if aid not in articles_by_id:
-                articles_by_id[aid] = article
+                articles_by_id[aid] = _article_row(aid, polygon.wikidata, art, summary)
 
             links.append(
                 PolygonArticleLink(
@@ -249,6 +205,50 @@ def _build_articles_and_links(
                 )
             )
     return list(articles_by_id.values()), links
+
+
+def _article_row(aid: str, qid: str, art: Any, summary: LinkSummary) -> Article:
+    """Build expensive article metadata exactly once per deduplicated row."""
+    entity = summary.entity
+    label = entity.labels.get(art.language) if entity else ""
+    description = entity.descriptions.get(art.language) if entity else ""
+    aliases = entity.aliases.get(art.language) if entity else None
+    if entity is not None:
+        label = label or entity.labels.get("en", "")
+        description = description or entity.descriptions.get("en", "")
+        aliases = aliases or entity.aliases.get("en", [])
+    return Article(
+        article_id=aid,
+        wikidata=qid,
+        language=art.language,
+        site=art.site,
+        title=art.title,
+        url=art.url,
+        page_id=art.page_id,
+        revision_id=art.revision_id,
+        revision_timestamp=art.revision_timestamp,
+        retrieved_at=art.retrieved_at,
+        wikidata_label=str(label or ""),
+        wikidata_description=str(description or ""),
+        wikidata_aliases=json_dumps(aliases or []),
+        lead_text=art.lead_text,
+        extract=art.extract,
+        full_text=art.full_text,
+        full_text_format=art.full_text_format,
+        article_length_chars=len(art.full_text),
+        article_length_words=count_words(art.full_text),
+        article_length_tokens_estimate=estimate_tokens(art.full_text),
+        thumbnail_url=art.thumbnail_url,
+        thumbnail_width=art.thumbnail_width,
+        thumbnail_height=art.thumbnail_height,
+        categories=json_dumps(art.categories),
+        license=art.license,
+        attribution=art.attribution,
+        source_api=art.source_api,
+        fetch_status="ok",
+        fetch_error="",
+        content_hash=content_hash(art.full_text),
+    )
 
 
 def content_hash(text: str) -> str:
