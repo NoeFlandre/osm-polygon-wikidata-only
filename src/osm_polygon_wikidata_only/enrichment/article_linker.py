@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .wikidata_client import (
@@ -25,7 +26,7 @@ from .wikidata_client import (
     is_valid_qid,
     language_from_site,
 )
-from .wikipedia_client import WikipediaArticle, WikipediaClient
+from .wikipedia_client import FetchResult, WikipediaArticle, WikipediaClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -127,8 +128,56 @@ def fetch_qids(
     max_articles_per_qid: int | None = None,
 ) -> list[LinkSummary]:
     """Fetch and link several QIDs, returning one :class:`LinkSummary` each."""
+    requested = list(qids)
+    batch_entities = getattr(wikidata_client, "get_entities", None)
+    batch_articles = getattr(wikipedia_client, "fetch_articles", None)
+    if callable(batch_entities) and callable(batch_articles):
+        entities = batch_entities(requested)
+        summaries = [
+            LinkSummary(qid=qid, entity=entity)
+            for qid, entity in zip(requested, entities, strict=True)
+        ]
+        requests: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
+        allow = {lang for lang in languages} if languages is not None else None
+        for index, summary in enumerate(summaries):
+            if summary.entity is None:
+                continue
+            for site, title in sorted(summary.entity.sitelinks.items()):
+                language = language_from_site(site)
+                if allow is None or language in allow:
+                    requests.setdefault((language, site), []).append((index, site, title))
+
+        def fetch_site(
+            key: tuple[str, str], rows: list[tuple[int, str, str]]
+        ) -> tuple[tuple[str, str], dict[str, FetchResult]]:
+            language, site = key
+            titles = list(dict.fromkeys(title for _, _, title in rows))
+            return key, batch_articles(language, site, titles, fetch_full_text=fetch_full_text)
+
+        fetched: dict[tuple[str, str], dict[str, FetchResult]] = {}
+        with ThreadPoolExecutor(max_workers=min(5, max(1, len(requests)))) as executor:
+            for key, site_results in executor.map(lambda item: fetch_site(*item), requests.items()):
+                fetched[key] = site_results
+        for summary in summaries:
+            entity = summary.entity
+            if entity is None:
+                continue
+            for site, title in sorted(entity.sitelinks.items()):
+                language = language_from_site(site)
+                if allow is not None and language not in allow:
+                    continue
+                article_result = fetched[(language, site)][title]
+                summary.statuses[site] = article_result.status
+                if article_result.status == "ok" and article_result.article is not None:
+                    summary.articles.append(article_result.article)
+                else:
+                    summary.errors[site] = article_result.error
+            if max_articles_per_qid is not None:
+                summary.articles = summary.articles[:max_articles_per_qid]
+        return summaries
+
     out: list[LinkSummary] = []
-    for qid in qids:
+    for qid in requested:
         summary = link_qid(
             qid,
             wikidata_client=wikidata_client,

@@ -19,12 +19,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import sleep_after_429, wait_for_host
+from osm_polygon_wikidata_only.utils.rate_limit import (
+    defer_host,
+    retry_after_seconds,
+    sleep_after_429,
+    wait_for_host,
+)
 from osm_polygon_wikidata_only.utils.retry import with_retries
 
 LOGGER = logging.getLogger(__name__)
@@ -98,9 +104,15 @@ class HttpWikidataClient(WikidataClient):
         self._endpoint = endpoint
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
-        if not is_valid_qid(qid):
-            return None
-        url = self._build_url(qid)
+        return self.get_entities([qid])[0]
+
+    def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
+        """Resolve several QIDs in one Action API request, preserving order."""
+        requested = list(qids)
+        valid = [qid for qid in dict.fromkeys(requested) if is_valid_qid(qid)]
+        if not valid:
+            return [None for _ in requested]
+        url = self._build_url("|".join(valid))
         try:
             data = with_retries(
                 lambda: self._http_get(url),
@@ -109,9 +121,10 @@ class HttpWikidataClient(WikidataClient):
                 retry_on=(urllib.error.URLError, TimeoutError, OSError),
             )
         except (urllib.error.URLError, TimeoutError, OSError) as e:
-            LOGGER.warning("Wikidata request failed for %s: %s", qid, e)
-            return None
-        return parse_wikidata_entity(qid, data)
+            LOGGER.warning("Wikidata batch request failed for %d QIDs: %s", len(valid), e)
+            return [None for _ in requested]
+        parsed = {qid: parse_wikidata_entity(qid, data) for qid in valid}
+        return [parsed.get(qid) for qid in requested]
 
     def _build_url(self, qid: str) -> str:
         params = {
@@ -132,6 +145,12 @@ class HttpWikidataClient(WikidataClient):
                 raw = resp.read()
         except urllib.error.HTTPError as e:
             if e.code == 429:
+                defer_host(
+                    "www.wikidata.org",
+                    retry_after_seconds(
+                        e, default_s=self._settings.rate_limit_retry_after_default_s
+                    ),
+                )
                 sleep_after_429(e, default_s=self._settings.rate_limit_retry_after_default_s)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
@@ -160,31 +179,50 @@ class CachedWikidataClient(WikidataClient):
         self._failed_ttl_s = failed_ttl_s
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
-        if not is_valid_qid(qid):
-            return None
-        key = f"wikidata/{qid}.json"
-        hit = self._cache.get(key)
-        if hit is not None:
-            if hit.status == "ok":
-                return _entity_from_dict(hit.parsed_result)
-            return None
-        entity = self._inner.get_entity(qid)
-        if entity is None:
-            self._cache.set(
-                key,
-                payload=None,
-                status="error",
-                ttl_s=self._failed_ttl_s,
-                response_metadata={"reason": "wikidata_not_found"},
-            )
-            return None
-        self._cache.set(
-            key,
-            payload=_entity_to_dict(entity),
-            request_url=self._endpoint_for(qid),
-            status="ok",
-        )
-        return entity
+        return self.get_entities([qid])[0]
+
+    def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
+        """Resolve cache misses together while preserving input order."""
+        requested = list(qids)
+        resolved: dict[str, WikidataEntity | None] = {}
+        misses: list[str] = []
+        for qid in dict.fromkeys(requested):
+            if not is_valid_qid(qid):
+                resolved[qid] = None
+                continue
+            key = f"wikidata/{qid}.json"
+            hit = self._cache.get(key)
+            if hit is None:
+                misses.append(qid)
+            elif hit.status == "ok" and isinstance(hit.parsed_result, dict):
+                resolved[qid] = _entity_from_dict(hit.parsed_result)
+            else:
+                resolved[qid] = None
+
+        batch_get = getattr(self._inner, "get_entities", None)
+        if callable(batch_get):
+            fetched = batch_get(misses)
+        else:
+            fetched = [self._inner.get_entity(qid) for qid in misses]
+        for qid, entity in zip(misses, fetched, strict=True):
+            key = f"wikidata/{qid}.json"
+            if entity is None:
+                self._cache.set(
+                    key,
+                    payload=None,
+                    status="error",
+                    ttl_s=self._failed_ttl_s,
+                    response_metadata={"reason": "wikidata_not_found"},
+                )
+            else:
+                self._cache.set(
+                    key,
+                    payload=_entity_to_dict(entity),
+                    request_url=self._endpoint_for(qid),
+                    status="ok",
+                )
+            resolved[qid] = entity
+        return [resolved.get(qid) for qid in requested]
 
     def _endpoint_for(self, qid: str) -> str:
         if isinstance(self._inner, HttpWikidataClient):
