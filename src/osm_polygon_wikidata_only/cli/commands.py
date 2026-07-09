@@ -46,7 +46,8 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
 )
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
-    upload_files,
+    upload_manifest,
+    upload_parquet,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
@@ -158,30 +159,42 @@ def _maybe_push(
         return
     hub = StubHfHub() if args.dry_run else None
     token = None
-    files: list[tuple[Path, str]] = []
     for r in results:
-        files.extend(
-            (
-                (r.polygons_path, f"{REMOTE_POLYGONS_DIR}/{r.polygons_path.stem}.parquet"),
-                (r.articles_path, f"{REMOTE_ARTICLES_DIR}/{r.articles_path.stem}.parquet"),
-                (
-                    r.polygon_articles_path,
-                    f"{REMOTE_LINKS_DIR}/{r.polygon_articles_path.stem}.parquet",
-                ),
-            )
+        commit = args.commit_message or f"Update PBF {r.manifest_entry['source_pbf']}"
+        upload_parquet(
+            settings.repo_id,
+            r.polygons_path,
+            path_in_repo=f"{REMOTE_POLYGONS_DIR}/{r.polygons_path.stem}.parquet",
+            hub=hub,
+            token=token,
+            commit_message=commit,
         )
-    files.append((results[-1].manifest_path, REMOTE_MANIFEST_FILE))
-    commit = args.commit_message or f"Update {len(results)} PBF artifact set(s)"
-    upload_files(
+        upload_parquet(
+            settings.repo_id,
+            r.articles_path,
+            path_in_repo=f"{REMOTE_ARTICLES_DIR}/{r.articles_path.stem}.parquet",
+            hub=hub,
+            token=token,
+            commit_message=commit,
+        )
+        upload_parquet(
+            settings.repo_id,
+            r.polygon_articles_path,
+            path_in_repo=f"{REMOTE_LINKS_DIR}/{r.polygon_articles_path.stem}.parquet",
+            hub=hub,
+            token=token,
+            commit_message=commit,
+        )
+    upload_manifest(
         settings.repo_id,
-        files,
+        results[-1].manifest_path,
+        path_in_repo=REMOTE_MANIFEST_FILE,
         hub=hub,
         token=token,
-        commit_message=commit,
-        num_threads=args.upload_threads,
+        commit_message=args.commit_message or "Update manifest",
     )
     if hub is not None:
-        LOGGER.info("Dry-run: %d atomic upload commit(s) recorded", len(hub.commits))
+        LOGGER.info("Dry-run: %d uploads recorded", len(hub.uploads))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
