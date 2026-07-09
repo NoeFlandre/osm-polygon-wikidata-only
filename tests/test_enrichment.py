@@ -334,8 +334,25 @@ def test_http_wikipedia_client_fetch_articles_returns_results_by_requested_title
         }
     }
     monkeypatch.setattr(client, "_http_get", lambda url: data)
-    results = client.fetch_articles("en", "enwiki", ["Alpha", "Beta"])
+    results = client.fetch_articles("en", "enwiki", ["Alpha", "Beta"], fetch_full_text=False)
     assert [results[title].article.title for title in ("Alpha", "Beta")] == ["Alpha", "Beta"]
+
+
+def test_full_text_article_batches_use_individual_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HttpWikipediaClient(Settings())
+    calls: list[str] = []
+
+    def fetch_article(language: str, site: str, title: str, **_: object) -> FetchResult:
+        calls.append(title)
+        return FetchResult("ok", _sample_article(language, title, "full text"))
+
+    monkeypatch.setattr(client, "fetch_article", fetch_article)
+    results = client.fetch_articles("en", "enwiki", ["Alpha", "Beta"], fetch_full_text=True)
+
+    assert calls == ["Alpha", "Beta"]
+    assert set(results) == {"Alpha", "Beta"}
 
 
 def test_cached_wikipedia_client_serves_from_cache(tmp_path: Path) -> None:

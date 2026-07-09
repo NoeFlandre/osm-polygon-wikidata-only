@@ -195,6 +195,14 @@ class HttpWikipediaClient(WikipediaClient):
         requested = list(dict.fromkeys(titles))
         if not requested:
             return {}
+        if fetch_full_text:
+            # TextExtracts only returns multiple extracts for lead-only
+            # (`exintro`) requests. Full-text batches silently omit all but
+            # one extract, so preserve complete per-article retrieval here.
+            return {
+                title: self.fetch_article(language, site, title, fetch_full_text=True)
+                for title in requested
+            }
         url = self._build_url(language, "|".join(requested), fetch_full_text=fetch_full_text)
         try:
             data = with_retries(
