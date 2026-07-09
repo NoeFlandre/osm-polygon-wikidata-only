@@ -222,6 +222,14 @@ def test_process_pbf_writes_three_parquet_and_manifest(
     assert result.articles_path.exists()
     assert result.polygon_articles_path.exists()
     assert result.manifest_path.exists()
+    assert set(result.stage_timings_s) == {
+        "extract",
+        "enrich",
+        "build_rows",
+        "write_parquet",
+        "manifest",
+    }
+    assert all(seconds >= 0 for seconds in result.stage_timings_s.values())
 
     # Read back polygons parquet and check schema.
     table = pq.read_table(result.polygons_path)

@@ -173,6 +173,8 @@ uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 | `--all-languages` | Fetch every available sitelink (default: 5 languages) |
 | `--no-full-text` | Fetch only the lead section, not the full article |
 | `--max-articles-per-qid <n>` | Cap articles per Wikidata QID (default `5`) |
+| `--enrichment-batch-size <n>` | Maximum QIDs/titles per API batch (default `50`) |
+| `--enrichment-site-workers <n>` | Concurrent independent Wikipedia-site batch jobs (default `5`) |
 | `--limit <n>` | Process only the first N polygons per PBF |
 | `--skip-existing` | Skip PBFs already listed in the manifest |
 | `--force` | Re-process even when `--skip-existing` applies |
@@ -205,6 +207,23 @@ uv run osm-polygon-wikidata-only process-dir \
     --languages en,fr \
     --skip-existing
 ```
+
+### Resumable full-dataset command
+
+Run this single command to process every PBF in the data root, publish each
+completed run, and skip PBFs already recorded in the manifest:
+
+```bash
+uv run osm-polygon-wikidata-only process-dir "$OSM_POLYGON_DATA_ROOT/raw" \
+  --skip-existing \
+  --push
+```
+
+To pause, stop the command with `Ctrl-C`. Run the identical command again to
+resume: completed PBFs remain skipped, while the interrupted PBF is retried
+because it has no completed manifest entry. Stage timings are logged for every
+PBF. Tune large runs only when needed with `--enrichment-batch-size`,
+`--enrichment-site-workers`, and `--upload-threads`.
 
 Programmatic usage:
 

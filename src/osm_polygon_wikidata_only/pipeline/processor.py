@@ -9,6 +9,7 @@ input file.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,7 @@ class ProcessResult:
     article_count: int
     link_count: int
     manifest_entry: dict[str, Any]
+    stage_timings_s: dict[str, float]
 
 
 def _local_path(processed_dir: Path, subdir: str, stem: str) -> Path:
@@ -121,6 +123,8 @@ def _enrich_polygon(
             languages=settings.languages,
             fetch_full_text=settings.fetch_full_text,
             max_articles_per_qid=settings.max_articles_per_qid,
+            batch_size=settings.enrichment_batch_size,
+            site_workers=settings.enrichment_site_workers,
         )
         summary = summary_list[0]
         summaries[qid] = summary
@@ -278,6 +282,8 @@ def process_pbf(
     6. Upsert the manifest entry.
     """
     stem = PbfStem.from_path(pbf_path)
+    timings: dict[str, float] = {}
+    stage_started = time.perf_counter()
     extracted_at = utc_now_iso()
     LOGGER.info("Processing %s (region=%s)", pbf_path.name, stem.region)
 
@@ -309,8 +315,10 @@ def process_pbf(
         for candidate in reader.collect_polygon_candidates():
             add_candidate(candidate)
     LOGGER.info("Extracted %d polygons from %s", len(polygons), pbf_path.name)
+    timings["extract"] = time.perf_counter() - stage_started
 
     # Step 3-4: enrich.
+    stage_started = time.perf_counter()
     summaries: dict[str, LinkSummary] = {}
     unique_qids = sorted({p.wikidata for p in polygons if p.wikidata})
     if unique_qids:
@@ -330,7 +338,6 @@ def process_pbf(
         len(summaries),
         len(unique_qids),
     )
-
     enriched: list[Polygon] = [
         _enrich_polygon(
             p,
@@ -341,6 +348,9 @@ def process_pbf(
         )
         for p in polygons
     ]
+    timings["enrich"] = time.perf_counter() - stage_started
+
+    stage_started = time.perf_counter()
 
     articles, links = _build_articles_and_links(enriched, summaries)
     LOGGER.info(
@@ -348,8 +358,10 @@ def process_pbf(
         len(articles),
         len(links),
     )
+    timings["build_rows"] = time.perf_counter() - stage_started
 
     # Step 5: write parquet.
+    stage_started = time.perf_counter()
     polygons_path = _local_path(data_root.processed, PROCESSED_POLYGONS, stem.stem)
     articles_path = _local_path(data_root.processed, PROCESSED_ARTICLES, stem.stem)
     links_path = _local_path(data_root.processed, PROCESSED_LINKS, stem.stem)
@@ -357,8 +369,10 @@ def process_pbf(
     write_polygons(polygons_path, [polygon_to_dict(p) for p in enriched])
     write_articles(articles_path, [_article_to_dict(a) for a in articles])
     write_polygon_articles(links_path, [_link_to_dict(link) for link in links])
+    timings["write_parquet"] = time.perf_counter() - stage_started
 
     # Step 6: manifest.
+    stage_started = time.perf_counter()
     stats = StreamingStats()
     for p in enriched:
         stats.add_polygon(p)
@@ -379,6 +393,7 @@ def process_pbf(
         stats=final_stats,
         extraction_version=__version__,
     )
+    timings["manifest"] = time.perf_counter() - stage_started
 
     return ProcessResult(
         polygons_path=polygons_path,
@@ -389,6 +404,7 @@ def process_pbf(
         article_count=len(articles),
         link_count=len(links),
         manifest_entry=entry,
+        stage_timings_s=timings,
     )
 
 
