@@ -147,6 +147,7 @@ def _enrich_polygon(
         lat=polygon.lat,
         lon=polygon.lon,
         bbox=polygon.bbox,
+        geometry=polygon.geometry,
         area_m2=polygon.area_m2,
         area_km2=polygon.area_km2,
         area_bucket=polygon.area_bucket,

@@ -1,10 +1,38 @@
-# Python-generated files
+# Byte-compiled / Python
 __pycache__/
-*.py[oc]
+*.py[cod]
+*.egg-info/
 build/
 dist/
 wheels/
-*.egg-info
 
 # Virtual environments
-.venv
+.venv/
+venv/
+.uv-cache/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# All data artifacts: the repository is code-only.
+# PBF inputs, intermediate outputs, Arrow/Parquet files, saved datasets,
+# Hugging Face caches, etc. all live on the configured external data root.
+data/
+*.arrow
+*.parquet
+*.pbf
+*.osm.pbf
+.huggingface/
+**/__pycache__/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

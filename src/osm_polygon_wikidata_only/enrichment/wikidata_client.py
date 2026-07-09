@@ -24,6 +24,7 @@ from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
+from osm_polygon_wikidata_only.utils.rate_limit import sleep_after_429, wait_for_host
 from osm_polygon_wikidata_only.utils.retry import with_retries
 
 LOGGER = logging.getLogger(__name__)
@@ -124,9 +125,15 @@ class HttpWikidataClient(WikidataClient):
         return f"{self._endpoint}?{urllib.parse.urlencode(params)}"
 
     def _http_get(self, url: str) -> dict[str, Any]:
+        wait_for_host("www.wikidata.org", min_interval_s=self._settings.wikidata_min_interval_s)
         req = urllib.request.Request(url, headers={"User-Agent": self._settings.user_agent})
-        with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
-            raw = resp.read()
+        try:
+            with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                sleep_after_429(e, default_s=self._settings.rate_limit_retry_after_default_s)
+            raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
             raise ValueError(f"Expected JSON object from {url}, got {type(parsed).__name__}")

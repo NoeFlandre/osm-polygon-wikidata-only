@@ -66,6 +66,8 @@ def test_candidate_to_polygon_builds_full_row() -> None:
     assert p.osm_primary_tag == "landuse=forest"
     assert p.area_bucket  # non-empty
     assert p.bbox  # JSON list
+    assert p.geometry
+    assert '"coordinates"' in p.geometry
 
 
 def test_candidate_to_polygon_skips_invalid_geometry() -> None:
@@ -388,3 +390,22 @@ def test_streaming_stats_aggregates_correctly() -> None:
     assert final.unique_wikidata_count == 1
     assert final.area_bucket_counts == {"100m2-1k_m2": 1}
     assert final.top_tag_keys == {"landuse": 1}
+
+
+def test_candidate_to_polygon_includes_geometry() -> None:
+    row = candidate_to_polygon(
+        (
+            "way",
+            1,
+            {"wikidata": "Q1", "name": "x"},
+            '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}',
+        ),
+        source_pbf_stem="test-latest",
+        region="test",
+        source_pbf="test-latest.osm.pbf",
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+
+    assert row is not None
+    assert '"type":"Polygon"' in row.geometry or '"type": "Polygon"' in row.geometry
+    assert "coordinates" in row.geometry

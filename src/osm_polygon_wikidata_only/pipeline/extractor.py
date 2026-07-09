@@ -101,6 +101,7 @@ def candidate_to_polygon(
         lat=pg.lat,
         lon=pg.lon,
         bbox=json_dumps(bbox),
+        geometry=json_dumps(geom),
         area_m2=pg.area_m2,
         area_km2=pg.area_m2 / 1_000_000.0,
         area_bucket=area_bucket(pg.area_m2),
