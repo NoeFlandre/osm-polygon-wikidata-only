@@ -20,6 +20,7 @@ from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
     UploadError,
     upload_card,
+    upload_files,
     upload_manifest,
     upload_parquet,
 )
@@ -108,6 +109,25 @@ def test_upload_manifest(tmp_path: Path) -> None:
         hub=stub,
     )
     assert stub.uploads[0]["path_in_repo"] == REMOTE_MANIFEST_FILE
+
+
+def test_upload_files_commits_every_artifact_atomically(tmp_path: Path) -> None:
+    stub = StubHfHub()
+    polygon = _small_parquet(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    upload_files(
+        "org/name",
+        [(polygon, "polygons/x.parquet"), (manifest, REMOTE_MANIFEST_FILE)],
+        hub=stub,
+        commit_message="Update PBF x",
+        num_threads=3,
+    )
+
+    assert len(stub.commits) == 1
+    assert stub.commits[0]["paths"] == ["polygons/x.parquet", REMOTE_MANIFEST_FILE]
+    assert stub.commits[0]["num_threads"] == 3
 
 
 def test_upload_card_rejects_empty() -> None:

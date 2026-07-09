@@ -177,6 +177,7 @@ uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 | `--skip-existing` | Skip PBFs already listed in the manifest |
 | `--force` | Re-process even when `--skip-existing` applies |
 | `--push` | Upload produced artifacts to the Hub |
+| `--upload-threads <n>` | Concurrent transfer workers in the atomic Hub commit (default `5`) |
 | `--commit-message <msg>` | Custom git commit message for the push |
 | `--dry-run` | Use a stub HF client (records calls without uploading) |
 | `--log-level <level>` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
@@ -248,6 +249,9 @@ Wikimedia traffic polite:
   if a batch response is incomplete or invalid.
 * Per-host pacing, retries with jitter, and a shared `429` cooldown remain in
   force when batch jobs run concurrently.
+* `--push` publishes every produced Parquet artifact and the final manifest in
+  one atomic Hugging Face commit. Transfers use concurrent workers; increase
+  `--upload-threads` only when local bandwidth and Hub quotas allow it.
 
 For a repeatable production run, use `--skip-existing`; it consults the
 manifest and leaves previously completed PBFs untouched. Use `--force` only
