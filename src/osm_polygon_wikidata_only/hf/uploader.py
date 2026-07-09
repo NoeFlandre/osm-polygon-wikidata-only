@@ -9,10 +9,9 @@ go through :func:`upload_parquet`, :func:`upload_manifest`, and
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -263,29 +262,3 @@ __all__ = [
     "upload_manifest",
     "upload_parquet",
 ]
-
-
-def _parse_repo(repo_id_or_url: str) -> tuple[str, str]:  # pragma: no cover
-    """Reserved for future use; parses ``org/name`` or a HF URL."""
-    if "://" in repo_id_or_url:
-        url = repo_id_or_url
-        try:
-            # Lazy URL parse
-            from urllib.parse import urlparse
-
-            o = urlparse(url)
-            path = o.path.strip("/")
-            parts = path.split("/", 1)
-            if len(parts) != 2:
-                raise ValueError("expected org/name")
-            return (parts[0], parts[1])
-        except (ValueError, AttributeError) as e:
-            raise UploadError(f"Could not parse repo URL: {repo_id_or_url}") from e
-    if "/" not in repo_id_or_url:
-        raise UploadError("repo_id must be in 'org/name' form")
-    parts = repo_id_or_url.split("/", 1)
-    return (parts[0], parts[1])
-
-
-def _normalize_payload(payload: Mapping[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
