@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
 from typing import Any
 
 from osm_polygon_wikidata_only import __version__
@@ -51,7 +50,7 @@ def _compute_geom(geom_json: str) -> tuple[PolygonGeometry, dict[str, object]] |
 
 
 def _row_dict(polygon: Polygon) -> dict[str, Any]:
-    return asdict(polygon)
+    return dict(polygon.__dict__)
 
 
 def candidate_to_polygon(

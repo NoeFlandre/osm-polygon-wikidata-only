@@ -288,19 +288,26 @@ def process_pbf(
     import osm_polygon_wikidata_only.io.pbf_reader as _pbf_reader_mod
 
     reader = _pbf_reader_mod.PBFReader(pbf_path)
-    for candidate in reader.collect_polygon_candidates():
+
+    def add_candidate(candidate: object) -> None:
+        if settings.limit is not None and len(polygons) >= settings.limit:
+            return
         polygon = candidate_to_polygon(
-            candidate,
+            candidate,  # type: ignore[arg-type]
             source_pbf_stem=stem.stem,
             region=stem.region,
             source_pbf=pbf_path.name,
             extracted_at=extracted_at,
         )
-        if polygon is None:
-            continue
-        if settings.limit is not None and len(polygons) >= settings.limit:
-            break
-        polygons.append(polygon)
+        if polygon is not None:
+            polygons.append(polygon)
+
+    stream_candidates = getattr(reader, "iter_polygon_candidates", None)
+    if callable(stream_candidates):
+        stream_candidates(add_candidate)
+    else:
+        for candidate in reader.collect_polygon_candidates():
+            add_candidate(candidate)
     LOGGER.info("Extracted %d polygons from %s", len(polygons), pbf_path.name)
 
     # Step 3-4: enrich.
@@ -386,15 +393,11 @@ def process_pbf(
 
 
 def _article_to_dict(a: Article) -> dict[str, Any]:
-    from dataclasses import asdict
-
-    return asdict(a)
+    return dict(a.__dict__)
 
 
 def _link_to_dict(link: PolygonArticleLink) -> dict[str, Any]:
-    from dataclasses import asdict
-
-    return asdict(link)
+    return dict(link.__dict__)
 
 
 __all__ = ["PbfStem", "ProcessResult", "process_pbf"]
