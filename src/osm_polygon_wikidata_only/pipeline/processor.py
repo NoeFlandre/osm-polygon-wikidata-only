@@ -27,7 +27,7 @@ from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArt
 from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary, fetch_qids
 from osm_polygon_wikidata_only.enrichment.text_cleaning import count_words, estimate_tokens
 from osm_polygon_wikidata_only.enrichment.wikidata_client import WikidataClient
-from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaClient
+from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaArticle, WikipediaClient
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import (
     manifest_path,
@@ -51,7 +51,7 @@ from .stats import StreamingStats
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PbfStem:
     """A parsed PBF filename.
 
@@ -75,7 +75,7 @@ class PbfStem:
         return cls(path=path, stem=stem, region=region)
 
 
-@dataclass
+@dataclass(slots=True)
 class ProcessResult:
     """What :func:`process_pbf` returns: row counts + manifest entry."""
 
@@ -211,7 +211,7 @@ def _build_articles_and_links(
     return list(articles_by_id.values()), links
 
 
-def _article_row(aid: str, qid: str, art: Any, summary: LinkSummary) -> Article:
+def _article_row(aid: str, qid: str, art: WikipediaArticle, summary: LinkSummary) -> Article:
     """Build expensive article metadata exactly once per deduplicated row."""
     entity = summary.entity
     label = entity.labels.get(art.language) if entity else ""
