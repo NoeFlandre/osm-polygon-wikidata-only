@@ -15,6 +15,20 @@ _LOCK = threading.Lock()
 _NEXT_ALLOWED: dict[str, float] = {}
 
 
+def defer_host(host: str, delay_s: float) -> None:
+    """Prevent every worker from using ``host`` until the cooldown ends."""
+    if delay_s <= 0:
+        return
+    with _LOCK:
+        _NEXT_ALLOWED[host] = max(_NEXT_ALLOWED.get(host, 0.0), time.monotonic() + delay_s)
+
+
+def next_wait_seconds(host: str) -> float:
+    """Return the current shared cooldown remaining for ``host``."""
+    with _LOCK:
+        return max(0.0, _NEXT_ALLOWED.get(host, 0.0) - time.monotonic())
+
+
 def wait_for_host(host: str, *, min_interval_s: float) -> None:
     """Ensure at least min_interval_s between requests to the same host."""
     if min_interval_s <= 0:

@@ -28,6 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,7 +39,12 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     estimate_tokens,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import sleep_after_429, wait_for_host
+from osm_polygon_wikidata_only.utils.rate_limit import (
+    defer_host,
+    retry_after_seconds,
+    sleep_after_429,
+    wait_for_host,
+)
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -163,6 +169,37 @@ class HttpWikipediaClient(WikipediaClient):
             fetch_full_text=fetch_full_text,
         )
 
+    def fetch_articles(
+        self,
+        language: str,
+        site: str,
+        titles: Iterable[str],
+        *,
+        fetch_full_text: bool = True,
+    ) -> dict[str, FetchResult]:
+        """Fetch a same-site title batch and return a result for every title."""
+        requested = list(dict.fromkeys(titles))
+        if not requested:
+            return {}
+        url = self._build_url(language, "|".join(requested), fetch_full_text=fetch_full_text)
+        try:
+            data = with_retries(
+                lambda: self._http_get(url),
+                attempts=self._settings.request_max_retries,
+                base_delay=self._settings.request_base_delay_s,
+                retry_on=(urllib.error.URLError, TimeoutError, OSError),
+            )
+            return _parse_wikipedia_batch_response(
+                language, site, requested, data, fetch_full_text=fetch_full_text
+            )
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
+            # A batch is only an optimization. Reuse the established per-title
+            # path so a malformed or transient batch response cannot drop work.
+            return {
+                title: self.fetch_article(language, site, title, fetch_full_text=fetch_full_text)
+                for title in requested
+            }
+
     def _build_url(self, language: str, title: str, *, fetch_full_text: bool) -> str:
         endpoint = MEDIAWIKI_API_URL_TEMPLATE.format(lang=language)
         params: dict[str, str] = {
@@ -194,6 +231,12 @@ class HttpWikipediaClient(WikipediaClient):
                 raw = resp.read()
         except urllib.error.HTTPError as e:
             if e.code == 429:
+                defer_host(
+                    host,
+                    retry_after_seconds(
+                        e, default_s=self._settings.rate_limit_retry_after_default_s
+                    ),
+                )
                 sleep_after_429(e, default_s=self._settings.rate_limit_retry_after_default_s)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
@@ -263,6 +306,67 @@ class CachedWikipediaClient(WikipediaClient):
             )
         return result
 
+    def fetch_articles(
+        self,
+        language: str,
+        site: str,
+        titles: Iterable[str],
+        *,
+        fetch_full_text: bool = True,
+    ) -> dict[str, FetchResult]:
+        """Serve cached titles and fetch only the missing titles as a batch."""
+        requested = list(dict.fromkeys(titles))
+        results: dict[str, FetchResult] = {}
+        missing: list[str] = []
+        for title in requested:
+            key = f"wikipedia/{site}/{self._safe_title(title)}.json"
+            hit = self._cache.get(key)
+            if hit is None:
+                missing.append(title)
+            elif hit.status == "ok" and isinstance(hit.parsed_result, dict):
+                results[title] = FetchResult("ok", _article_from_dict(hit.parsed_result))
+            else:
+                results[title] = FetchResult(
+                    hit.parsed_result if isinstance(hit.parsed_result, str) else "http_error", None
+                )
+
+        batch_fetch = getattr(self._inner, "fetch_articles", None)
+        if callable(batch_fetch):
+            fetched = batch_fetch(language, site, missing, fetch_full_text=fetch_full_text)
+        else:
+            fetched = {
+                title: self._inner.fetch_article(
+                    language, site, title, fetch_full_text=fetch_full_text
+                )
+                for title in missing
+            }
+        for title in missing:
+            result = fetched.get(title)
+            if result is None:
+                result = self._inner.fetch_article(
+                    language, site, title, fetch_full_text=fetch_full_text
+                )
+            key = f"wikipedia/{site}/{self._safe_title(title)}.json"
+            if result.status == "ok" and result.article is not None:
+                self._cache.set(
+                    key,
+                    payload=_article_to_dict(result.article),
+                    request_url=self._endpoint_for(language, title, fetch_full_text),
+                    response_metadata={"language": language, "site": site, "title": title},
+                    status="ok",
+                )
+            else:
+                self._cache.set(
+                    key,
+                    payload=result.status,
+                    request_url=self._endpoint_for(language, title, fetch_full_text),
+                    response_metadata={"status": result.status, "error": result.error},
+                    status="error",
+                    ttl_s=self._failed_ttl_s,
+                )
+            results[title] = result
+        return results
+
     @staticmethod
     def _safe_title(title: str) -> str:
         # Cache file system can't have slashes; keep them encoded.
@@ -320,6 +424,59 @@ def _article_from_dict(d: dict[str, Any]) -> WikipediaArticle:
         source_api=d.get("source_api", ""),
         retrieved_at=d.get("retrieved_at", ""),
     )
+
+
+def _parse_wikipedia_batch_response(
+    language: str,
+    site: str,
+    requested: list[str],
+    data: dict[str, Any],
+    *,
+    fetch_full_text: bool,
+) -> dict[str, FetchResult]:
+    """Map an Action API multi-page response back to every requested title."""
+    query = data.get("query")
+    if not isinstance(query, dict):
+        raise ValueError("missing query in batch response")
+    raw_pages = query.get("pages")
+    if not isinstance(raw_pages, dict):
+        raise ValueError("missing query.pages in batch response")
+    pages_by_title = {
+        str(page.get("title")): page
+        for page in raw_pages.values()
+        if isinstance(page, dict) and page.get("title")
+    }
+    aliases: dict[str, str] = {}
+    for key in ("normalized", "redirects"):
+        entries = query.get(key, [])
+        if isinstance(entries, list):
+            for entry in entries:
+                if (
+                    isinstance(entry, dict)
+                    and isinstance(entry.get("from"), str)
+                    and isinstance(entry.get("to"), str)
+                ):
+                    aliases[entry["from"]] = entry["to"]
+
+    out: dict[str, FetchResult] = {}
+    for title in requested:
+        resolved = title
+        seen: set[str] = set()
+        while resolved in aliases and resolved not in seen:
+            seen.add(resolved)
+            resolved = aliases[resolved]
+        page = pages_by_title.get(resolved)
+        if page is None:
+            out[title] = FetchResult("article_not_found", None, "page missing")
+            continue
+        out[title] = parse_wikipedia_response(
+            language,
+            site,
+            title,
+            {"query": {"pages": {"0": page}}},
+            fetch_full_text=fetch_full_text,
+        )
+    return out
 
 
 def parse_wikipedia_response(

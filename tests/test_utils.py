@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from osm_polygon_wikidata_only.utils import rate_limit
 from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
 from osm_polygon_wikidata_only.utils.time import parse_iso_to_z, utc_now_iso
 
@@ -51,3 +54,9 @@ def test_parse_iso_to_z_normalizes_offset() -> None:
 
 def test_parse_iso_to_z_returns_input_on_garbage() -> None:
     assert parse_iso_to_z("not a date") == "not a date"
+
+
+def test_defer_host_moves_next_request_after_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rate_limit.time, "monotonic", lambda: 10.0)
+    rate_limit.defer_host("en.wikipedia.org", 30.0)
+    assert rate_limit.next_wait_seconds("en.wikipedia.org") == 30.0
