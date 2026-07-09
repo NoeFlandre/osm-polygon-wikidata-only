@@ -21,7 +21,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
@@ -77,6 +77,13 @@ class WikidataClient(ABC):
     @abstractmethod
     def get_entity(self, qid: str) -> WikidataEntity | None:
         """Return the entity for ``qid`` or ``None`` if it does not exist."""
+
+
+@runtime_checkable
+class BatchWikidataClient(Protocol):
+    """Optional capability for resolving several QIDs in one request."""
+
+    def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]: ...
 
 
 class InMemoryWikidataClient(WikidataClient):
@@ -309,6 +316,7 @@ def _is_language_wiki(site: str) -> bool:
 
 
 __all__ = [
+    "BatchWikidataClient",
     "CachedWikidataClient",
     "HttpWikidataClient",
     "InMemoryWikidataClient",

@@ -21,12 +21,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .wikidata_client import (
+    BatchWikidataClient,
     WikidataClient,
     WikidataEntity,
     is_valid_qid,
     language_from_site,
 )
-from .wikipedia_client import FetchResult, WikipediaArticle, WikipediaClient
+from .wikipedia_client import BatchWikipediaClient, FetchResult, WikipediaArticle, WikipediaClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -129,10 +130,10 @@ def fetch_qids(
 ) -> list[LinkSummary]:
     """Fetch and link several QIDs, returning one :class:`LinkSummary` each."""
     requested = list(qids)
-    batch_entities = getattr(wikidata_client, "get_entities", None)
-    batch_articles = getattr(wikipedia_client, "fetch_articles", None)
-    if callable(batch_entities) and callable(batch_articles):
-        entities = batch_entities(requested)
+    if isinstance(wikidata_client, BatchWikidataClient) and isinstance(
+        wikipedia_client, BatchWikipediaClient
+    ):
+        entities = wikidata_client.get_entities(requested)
         summaries = [
             LinkSummary(qid=qid, entity=entity)
             for qid, entity in zip(requested, entities, strict=True)
@@ -152,7 +153,9 @@ def fetch_qids(
         ) -> tuple[tuple[str, str], dict[str, FetchResult]]:
             language, site = key
             titles = list(dict.fromkeys(title for _, _, title in rows))
-            return key, batch_articles(language, site, titles, fetch_full_text=fetch_full_text)
+            return key, wikipedia_client.fetch_articles(
+                language, site, titles, fetch_full_text=fetch_full_text
+            )
 
         fetched: dict[tuple[str, str], dict[str, FetchResult]] = {}
         with ThreadPoolExecutor(max_workers=min(5, max(1, len(requests)))) as executor:
