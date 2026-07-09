@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     strip_template_markers,
 )
 from osm_polygon_wikidata_only.enrichment.wikidata_client import (
+    BatchWikidataClient,
     CachedWikidataClient,
     HttpWikidataClient,
     InMemoryWikidataClient,
@@ -26,6 +27,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     parse_wikidata_entity,
 )
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
+    BatchWikipediaClient,
     CachedWikipediaClient,
     FetchResult,
     HttpWikipediaClient,
@@ -533,3 +535,18 @@ def test_fetch_qids_uses_batch_clients_and_preserves_input_order() -> None:
     ]
     assert wd.calls == 1
     assert wiki.calls == 2
+
+
+def test_batch_client_capability_protocols_are_structural() -> None:
+    class WikidataBatch:
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            return [None for _ in qids]
+
+    class WikipediaBatch:
+        def fetch_articles(
+            self, language: str, site: str, titles: list[str], *, fetch_full_text: bool = True
+        ) -> dict[str, FetchResult]:
+            return {}
+
+    assert isinstance(WikidataBatch(), BatchWikidataClient)
+    assert isinstance(WikipediaBatch(), BatchWikipediaClient)

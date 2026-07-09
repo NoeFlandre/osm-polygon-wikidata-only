@@ -215,12 +215,12 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import HttpWikipediaC
 from osm_polygon_wikidata_only.enrichment.wikidata_client import HttpWikidataClient
 from osm_polygon_wikidata_only.pipeline.processor import process_pbf
 
-data_root = resolve_data_root()
+data_root = resolve_data_root(repo_root=Path.cwd())
 data_root.ensure()
 
 settings = Settings(languages=("en", "fr"))
-wd = HttpWikidataClient(user_agent=settings.user_agent)
-wiki = HttpWikipediaClient(user_agent=settings.user_agent)
+wd = HttpWikidataClient(settings)
+wiki = HttpWikipediaClient(settings)
 
 result = process_pbf(
     Path("monaco-latest.osm.pbf"),
@@ -231,6 +231,41 @@ result = process_pbf(
 )
 print(result.polygon_count, "polygons")
 ```
+
+## Reliability and performance behavior
+
+The pipeline is designed to preserve dataset completeness while keeping
+Wikimedia traffic polite:
+
+* Candidate order, selected sitelinks, and Parquet row ordering are
+  deterministic.
+* Identical Wikidata QIDs and Wikipedia titles are fetched once per run and
+  reused for every matching polygon.
+* HTTP clients use the on-disk cache by default. Failed requests are cached
+  briefly to avoid repeatedly hammering a failing endpoint.
+* Concrete HTTP clients batch compatible Wikidata and same-language Wikipedia
+  requests. The pipeline falls back to the established per-item request path
+  if a batch response is incomplete or invalid.
+* Per-host pacing, retries with jitter, and a shared `429` cooldown remain in
+  force when batch jobs run concurrently.
+
+For a repeatable production run, use `--skip-existing`; it consults the
+manifest and leaves previously completed PBFs untouched. Use `--force` only
+when you intentionally want to rebuild a completed PBF.
+
+## Development quality checks
+
+Run the complete local gate before contributing:
+
+```bash
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+```
+
+The test suite uses in-memory clients and stub PBF readers for unit coverage.
+It does not require a real PBF, external data root, or Wikimedia request.
 
 ---
 

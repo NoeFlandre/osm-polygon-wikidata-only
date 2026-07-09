@@ -30,7 +30,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from osm_polygon_wikidata_only.config.settings import MEDIAWIKI_API_URL_TEMPLATE, Settings
 from osm_polygon_wikidata_only.enrichment.text_cleaning import (
@@ -104,6 +104,20 @@ class WikipediaClient(ABC):
         wikidata_aliases: list[str] | None = None,
         fetch_full_text: bool = True,
     ) -> FetchResult: ...
+
+
+@runtime_checkable
+class BatchWikipediaClient(Protocol):
+    """Optional capability for fetching same-site titles in one request."""
+
+    def fetch_articles(
+        self,
+        language: str,
+        site: str,
+        titles: Iterable[str],
+        *,
+        fetch_full_text: bool = True,
+    ) -> dict[str, FetchResult]: ...
 
 
 class InMemoryWikipediaClient(WikipediaClient):
@@ -564,6 +578,7 @@ def parse_wikipedia_response(
 
 
 __all__ = [
+    "BatchWikipediaClient",
     "CachedWikipediaClient",
     "FetchResult",
     "HttpWikipediaClient",
