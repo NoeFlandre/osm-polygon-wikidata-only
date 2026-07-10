@@ -153,7 +153,7 @@ def test_authenticated_clients_use_higher_concurrency_and_lower_host_interval(
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
     # The shared scheduler must allow enough concurrent requests to
     # plausibly reach the 1200 rpm ceiling.
-    assert wikidata._scheduler._semaphore._value >= 8  # type: ignore[attr-defined]
+    assert wikidata._scheduler.max_in_flight >= 8
     # The HTTP clients must use a much tighter per-host pacing.
     assert wikidata._settings.wikidata_min_interval_s <= 0.1
     assert wikipedia._settings.wikipedia_min_interval_s <= 0.1
@@ -172,7 +172,7 @@ def test_anonymous_clients_preserve_conservative_throttling(tmp_path: Path) -> N
     assert isinstance(wikidata, dependencies.HttpWikidataClient)
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
     # Anonymous sessions must keep the polite defaults.
-    assert wikidata._scheduler._semaphore._value == 3  # type: ignore[attr-defined]
+    assert wikidata._scheduler.max_in_flight == 3
     assert wikidata._settings.wikidata_min_interval_s == pytest.approx(1.2)
     assert wikipedia._settings.wikipedia_min_interval_s == pytest.approx(0.5)
     assert wikidata._scheduler.current_requests_per_minute == pytest.approx(180.0)

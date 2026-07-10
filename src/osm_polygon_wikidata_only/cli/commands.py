@@ -17,7 +17,6 @@ import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
@@ -52,6 +51,7 @@ from osm_polygon_wikidata_only.hf.uploader import (
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
+from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 from osm_polygon_wikidata_only.utils.logging import configure_logging
 
 from .dependencies import build_clients as _build_clients
@@ -103,7 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if resumed:
             LOGGER.info("Resumed %d pending background upload(s)", resumed)
 
-    def enqueue_upload(result: Any) -> None:
+    def enqueue_upload(result: ProcessResult) -> None:
         if upload_queue is None:
             return
         snapshots = data_root.cache / "upload_manifest_snapshots"

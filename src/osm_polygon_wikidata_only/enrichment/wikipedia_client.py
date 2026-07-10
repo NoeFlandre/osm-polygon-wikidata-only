@@ -317,9 +317,9 @@ class CachedWikipediaClient(WikipediaClient):
         fetch_full_text: bool = True,
     ) -> FetchResult:
         key = self._cache_key(site, title, fetch_full_text)
-        hit = self._cache.get(key)
-        if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
-            return FetchResult("ok", _article_from_dict(hit.parsed_result))
+        cached = self._cached_result(key)
+        if cached is not None:
+            return cached
         result = self._inner.fetch_article(
             language,
             site,
@@ -329,23 +329,7 @@ class CachedWikipediaClient(WikipediaClient):
             wikidata_aliases=wikidata_aliases,
             fetch_full_text=fetch_full_text,
         )
-        if result.status == "ok" and result.article is not None:
-            self._cache.set(
-                key,
-                payload=_article_to_dict(result.article),
-                request_url=self._endpoint_for(language, title, fetch_full_text),
-                response_metadata={"language": language, "site": site, "title": title},
-                status="ok",
-            )
-        else:
-            self._cache.set(
-                key,
-                payload=result.status,
-                request_url=self._endpoint_for(language, title, fetch_full_text),
-                response_metadata={"status": result.status, "error": result.error},
-                status="error",
-                ttl_s=self._failed_ttl_s,
-            )
+        self._store_result(key, result, language, site, title, fetch_full_text)
         return result
 
     def fetch_articles(
@@ -362,11 +346,11 @@ class CachedWikipediaClient(WikipediaClient):
         missing: list[str] = []
         for title in requested:
             key = self._cache_key(site, title, fetch_full_text)
-            hit = self._cache.get(key)
-            if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
-                results[title] = FetchResult("ok", _article_from_dict(hit.parsed_result))
-            else:
+            cached = self._cached_result(key)
+            if cached is None:
                 missing.append(title)
+            else:
+                results[title] = cached
 
         batch_fetch = getattr(self._inner, "fetch_articles", None)
         if callable(batch_fetch):
@@ -385,25 +369,43 @@ class CachedWikipediaClient(WikipediaClient):
                     language, site, title, fetch_full_text=fetch_full_text
                 )
             key = self._cache_key(site, title, fetch_full_text)
-            if result.status == "ok" and result.article is not None:
-                self._cache.set(
-                    key,
-                    payload=_article_to_dict(result.article),
-                    request_url=self._endpoint_for(language, title, fetch_full_text),
-                    response_metadata={"language": language, "site": site, "title": title},
-                    status="ok",
-                )
-            else:
-                self._cache.set(
-                    key,
-                    payload=result.status,
-                    request_url=self._endpoint_for(language, title, fetch_full_text),
-                    response_metadata={"status": result.status, "error": result.error},
-                    status="error",
-                    ttl_s=self._failed_ttl_s,
-                )
+            self._store_result(key, result, language, site, title, fetch_full_text)
             results[title] = result
         return results
+
+    def _cached_result(self, key: str) -> FetchResult | None:
+        hit = self._cache.get(key)
+        if hit is None or hit.status != "ok" or not isinstance(hit.parsed_result, dict):
+            return None
+        return FetchResult("ok", _article_from_dict(hit.parsed_result))
+
+    def _store_result(
+        self,
+        key: str,
+        result: FetchResult,
+        language: str,
+        site: str,
+        title: str,
+        fetch_full_text: bool,
+    ) -> None:
+        request_url = self._endpoint_for(language, title, fetch_full_text)
+        if result.status == "ok" and result.article is not None:
+            self._cache.set(
+                key,
+                payload=_article_to_dict(result.article),
+                request_url=request_url,
+                response_metadata={"language": language, "site": site, "title": title},
+                status="ok",
+            )
+            return
+        self._cache.set(
+            key,
+            payload=result.status,
+            request_url=request_url,
+            response_metadata={"status": result.status, "error": result.error},
+            status="error",
+            ttl_s=self._failed_ttl_s,
+        )
 
     @staticmethod
     def _safe_title(title: str) -> str:

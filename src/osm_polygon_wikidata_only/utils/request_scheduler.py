@@ -45,6 +45,7 @@ class AdaptiveRequestScheduler:
             raise ValueError("host_throttle_window_s must be positive")
         if host_throttle_threshold < 1:
             raise ValueError("host_throttle_threshold must be at least 1")
+        self._max_in_flight = max_in_flight
         self._semaphore = threading.BoundedSemaphore(max_in_flight)
         self._current_requests_per_minute = requests_per_minute
         self._max_requests_per_minute = maximum
@@ -64,6 +65,11 @@ class AdaptiveRequestScheduler:
         """Apply one cooldown to every future request."""
         with self._lock:
             self._cooldown_until = max(self._cooldown_until, self._clock() + max(0.0, delay_s))
+
+    @property
+    def max_in_flight(self) -> int:
+        """Return the configured process-wide concurrency bound."""
+        return self._max_in_flight
 
     @property
     def current_requests_per_minute(self) -> float:
