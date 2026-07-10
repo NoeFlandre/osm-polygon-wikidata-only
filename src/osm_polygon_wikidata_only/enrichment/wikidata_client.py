@@ -31,7 +31,10 @@ from osm_polygon_wikidata_only.utils.rate_limit import (
     retry_after_seconds,
     wait_for_host,
 )
-from osm_polygon_wikidata_only.utils.request_scheduler import default_scheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    AdaptiveRequestScheduler,
+    default_scheduler,
+)
 from osm_polygon_wikidata_only.utils.retry import with_retries
 
 LOGGER = logging.getLogger(__name__)
@@ -107,9 +110,11 @@ class HttpWikidataClient(WikidataClient):
         settings: Settings,
         *,
         endpoint: str = WIKIDATA_API_URL,
+        scheduler: AdaptiveRequestScheduler | None = None,
     ) -> None:
         self._settings = settings
         self._endpoint = endpoint
+        self._scheduler = scheduler or default_scheduler()
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
         return self.get_entities([qid])[0]
@@ -158,16 +163,16 @@ class HttpWikidataClient(WikidataClient):
                 with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
                     return resp.read(), resp.headers.get("Content-Encoding", "")
 
-            raw, encoding = default_scheduler().run(request)
+            raw, encoding = self._scheduler.run(request)
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
-            if e.code == 429:
+            if e.code in (429, 503):
                 delay = retry_after_seconds(
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
                 defer_host("www.wikidata.org", delay)
-                default_scheduler().defer(delay)
+                self._scheduler.defer(delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
@@ -306,22 +311,41 @@ def language_from_site(site: str) -> str:
     original site if it does not end in ``wiki``.
     """
     if site.endswith("wiki"):
-        return site[: -len("wiki")]
+        language = site[: -len("wiki")]
+        aliases = {"be_x_old": "be-tarask"}
+        return aliases.get(language, language.replace("_", "-"))
     return site
 
 
 def _is_language_wiki(site: str) -> bool:
     """True iff ``site`` is a language-Wikipedia sitelink key.
 
-    The Wikidata convention is ``<lang>wiki`` where ``<lang>`` is a
-    2- or 3-letter lowercase language code. Sitelinks like
-    ``commonswiki`` or ``wikidatawiki`` are NOT language Wikipedias
-    and are filtered out.
+    Wikimedia database names include long and compound language identifiers,
+    so length is not a valid discriminator. Explicitly exclude non-Wikipedia
+    projects and accept lowercase language database identifiers.
     """
     if not site.endswith("wiki") or len(site) <= len("wiki"):
         return False
     lang = site[: -len("wiki")]
-    return 2 <= len(lang) <= 3 and lang.isalpha() and lang == lang.lower()
+    non_language_projects = {
+        "commons",
+        "foundation",
+        "incubator",
+        "mediawiki",
+        "meta",
+        "outreach",
+        "sources",
+        "species",
+        "strategy",
+        "test",
+        "test2",
+        "wikidata",
+    }
+    return (
+        lang not in non_language_projects
+        and lang == lang.lower()
+        and all(character.isalnum() or character in "_-" for character in lang)
+    )
 
 
 __all__ = [

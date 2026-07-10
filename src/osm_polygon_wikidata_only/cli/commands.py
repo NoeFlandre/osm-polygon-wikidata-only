@@ -53,6 +53,7 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.utils.logging import configure_logging
+from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
@@ -135,14 +136,20 @@ def _build_clients(
     settings: Settings, *, data_root: DataRoot
 ) -> tuple[WikidataClient, WikipediaClient, JsonFileCache | None]:
     cache: JsonFileCache | None = None
-    wd: WikidataClient = HttpWikidataClient(settings)
-    wiki: WikipediaClient = HttpWikipediaClient(settings)
+    scheduler = AdaptiveRequestScheduler(
+        max_in_flight=settings.wikimedia_max_in_flight,
+        requests_per_minute=settings.wikimedia_requests_per_minute,
+    )
+    wd: WikidataClient = HttpWikidataClient(settings, scheduler=scheduler)
+    wiki: WikipediaClient = HttpWikipediaClient(settings, scheduler=scheduler)
     if settings.cache_enabled:
         try:
             wd_cache = JsonFileCache(data_root.cache_wikidata)
             wiki_cache = JsonFileCache(data_root.cache_wikipedia)
-            wd = CachedWikidataClient(HttpWikidataClient(settings), wd_cache)
-            wiki = CachedWikipediaClient(HttpWikipediaClient(settings), wiki_cache)
+            wd = CachedWikidataClient(HttpWikidataClient(settings, scheduler=scheduler), wd_cache)
+            wiki = CachedWikipediaClient(
+                HttpWikipediaClient(settings, scheduler=scheduler), wiki_cache
+            )
             cache = JsonFileCache(data_root.cache)
         except OSError as e:
             LOGGER.debug("Cache disabled: %s", e)

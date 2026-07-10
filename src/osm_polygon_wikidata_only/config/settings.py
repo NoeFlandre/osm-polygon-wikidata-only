@@ -68,6 +68,8 @@ class Settings:
     rate_limit_retry_after_default_s: float = 60.0
     enrichment_batch_size: int = 50
     enrichment_site_workers: int = 5
+    wikimedia_max_in_flight: int = 3
+    wikimedia_requests_per_minute: float = 180.0
 
     # Cache.
     cache_enabled: bool = True
