@@ -20,6 +20,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from .progress import EnrichmentProgress
 from .wikidata_client import (
     BatchWikidataClient,
     WikidataClient,
@@ -133,6 +134,7 @@ def fetch_qids(
     max_articles_per_qid: int | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     site_workers: int = DEFAULT_SITE_WORKERS,
+    progress: EnrichmentProgress | None = None,
 ) -> list[LinkSummary]:
     """Fetch and link several QIDs, returning one :class:`LinkSummary` each."""
     if batch_size < 1:
@@ -140,14 +142,16 @@ def fetch_qids(
     if site_workers < 1:
         raise ValueError("site_workers must be >= 1")
     requested = list(qids)
+    if progress is not None:
+        progress.set_qids_total(len(requested))
     if isinstance(wikidata_client, BatchWikidataClient) and isinstance(
         wikipedia_client, BatchWikipediaClient
     ):
-        entities = [
-            entity
-            for chunk in _chunks(requested, batch_size)
-            for entity in wikidata_client.get_entities(chunk)
-        ]
+        entities: list[WikidataEntity | None] = []
+        for chunk in _chunks(requested, batch_size):
+            entities.extend(wikidata_client.get_entities(chunk))
+            if progress is not None:
+                progress.advance_qids(len(chunk))
         summaries = [
             LinkSummary(qid=qid, entity=entity)
             for qid, entity in zip(requested, entities, strict=True)
@@ -161,10 +165,12 @@ def fetch_qids(
                 language = language_from_site(site)
                 if allow is None or language in allow:
                     requests.setdefault((language, site), []).append((index, site, title))
+        if progress is not None:
+            progress.start_wikipedia(len(requests))
 
         def fetch_site(
             key: tuple[str, str], rows: list[tuple[int, str, str]]
-        ) -> tuple[tuple[str, str], dict[str, FetchResult]]:
+        ) -> tuple[tuple[str, str], dict[str, FetchResult], int]:
             language, site = key
             results: dict[str, FetchResult] = {}
             titles = list(dict.fromkeys(title for _, _, title in rows))
@@ -174,12 +180,16 @@ def fetch_qids(
                         language, site, chunk, fetch_full_text=fetch_full_text
                     )
                 )
-            return key, results
+            return key, results, len(titles)
 
         fetched: dict[tuple[str, str], dict[str, FetchResult]] = {}
         with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(requests)))) as executor:
-            for key, site_results in executor.map(lambda item: fetch_site(*item), requests.items()):
+            for key, site_results, title_count in executor.map(
+                lambda item: fetch_site(*item), requests.items()
+            ):
                 fetched[key] = site_results
+                if progress is not None:
+                    progress.complete_site(title_count)
         for summary in summaries:
             entity = summary.entity
             if entity is None:
@@ -212,6 +222,8 @@ def fetch_qids(
             languages=languages,
             fetch_full_text=fetch_full_text,
         )
+        if progress is not None:
+            progress.advance_qids()
         if max_articles_per_qid is not None:
             summary.articles = summary.articles[:max_articles_per_qid]
         out.append(summary)

@@ -51,6 +51,14 @@ responses are cached atomically; transient failures never satisfy completion.
 When TextExtracts is empty for a valid page, enrichment uses the Action API's
 exact-revision parse output as a deterministic plain-text fallback.
 
+Long enrichment is observable without request-level noise. A thread-safe tracker
+records completed and total QIDs, completed and total Wikipedia sites, and
+articles attempted. The processor reads an immutable snapshot in a two-minute
+heartbeat that also names the active Wikidata or Wikipedia phase, and stops its
+daemon immediately when enrichment returns or raises. This is a liveness signal,
+not an ETA, and it does not alter request pacing, ordering, retries, or output
+construction.
+
 A PBF is published locally only after every expected article succeeds. Its
 three Parquet files, manifest snapshot, and generated Hugging Face dataset card
 are then queued in one background upload commit while the next PBF begins.
