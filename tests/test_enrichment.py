@@ -338,6 +338,13 @@ def test_http_wikipedia_client_fetch_articles_returns_results_by_requested_title
     assert [results[title].article.title for title in ("Alpha", "Beta")] == ["Alpha", "Beta"]
 
 
+def test_http_clients_request_maxlag_for_background_work() -> None:
+    wiki_url = HttpWikipediaClient(Settings())._build_url("en", "Alpha", fetch_full_text=True)
+    wd_url = HttpWikidataClient(Settings())._build_url("Q1")
+    assert "maxlag=5" in wiki_url
+    assert "maxlag=5" in wd_url
+
+
 def test_full_text_article_batches_use_individual_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

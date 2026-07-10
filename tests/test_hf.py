@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     remote_dataset_card_path,
     remote_parquet_path,
 )
+from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
     UploadError,
@@ -128,6 +130,54 @@ def test_upload_files_commits_every_artifact_atomically(tmp_path: Path) -> None:
     assert len(stub.commits) == 1
     assert stub.commits[0]["paths"] == ["polygons/x.parquet", REMOTE_MANIFEST_FILE]
     assert stub.commits[0]["num_threads"] == 3
+
+
+def test_background_upload_submit_does_not_wait_for_upload(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def upload(files: list[tuple[Path, str]], message: str) -> None:
+        started.set()
+        release.wait(timeout=2)
+
+    queue = BackgroundUploadQueue(upload=upload, max_pending=2)
+    queue.submit([(_small_parquet(tmp_path), "polygons/x.parquet")], "x")
+    assert started.wait(timeout=1)
+    release.set()
+    assert queue.close_and_wait() == []
+
+
+def test_background_upload_reports_worker_failure(tmp_path: Path) -> None:
+    def upload(files: list[tuple[Path, str]], message: str) -> None:
+        raise UploadError("offline")
+
+    queue = BackgroundUploadQueue(upload=upload, max_pending=2)
+    queue.submit([(_small_parquet(tmp_path), "polygons/x.parquet")], "x")
+    failures = queue.close_and_wait()
+    assert len(failures) == 1
+    assert "offline" in failures[0]
+
+
+def test_background_upload_failure_is_resumed_from_durable_state(tmp_path: Path) -> None:
+    state = tmp_path / "jobs"
+    artifact = _small_parquet(tmp_path)
+    failing = BackgroundUploadQueue(
+        upload=lambda files, message: (_ for _ in ()).throw(UploadError("offline")),
+        state_dir=state,
+    )
+    failing.submit([(artifact, "polygons/x.parquet")], "x")
+    assert failing.close_and_wait()
+    assert len(list(state.glob("*.json"))) == 1
+
+    calls: list[str] = []
+    resumed = BackgroundUploadQueue(
+        upload=lambda files, message: calls.append(message),
+        state_dir=state,
+    )
+    assert resumed.resume_pending() == 1
+    assert resumed.close_and_wait() == []
+    assert calls == ["x"]
+    assert not list(state.glob("*.json"))
 
 
 def test_upload_card_rejects_empty() -> None:

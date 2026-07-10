@@ -42,11 +42,14 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
 )
+from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
+    upload_files,
     upload_manifest,
     upload_parquet,
 )
+from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.utils.logging import configure_logging
@@ -106,7 +109,9 @@ def _parse_languages(arg: str) -> tuple[str, ...]:
 
 
 def _build_settings(args: argparse.Namespace) -> Settings:
-    languages = None if args.all_languages or args.languages is None else _parse_languages(args.languages)
+    languages = (
+        None if args.all_languages or args.languages is None else _parse_languages(args.languages)
+    )
     return Settings(
         repo_id=args.repo_id,
         user_agent=args.user_agent,
@@ -212,16 +217,61 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"Unknown command: {args.command}")
         return 2
 
-    results = orchestrate(
-        inputs,
-        data_root=data_root,
-        settings=settings,
-        wikidata_client=wd,
-        wikipedia_client=wiki,
-        cache=cache,
-    )
+    upload_queue: BackgroundUploadQueue | None = None
+    hub = StubHfHub() if args.push and args.dry_run else None
+    if args.push:
 
-    _maybe_push(args, settings=settings, data_root=data_root, results=results)
+        def upload_job(files: list[tuple[Path, str]], message: str) -> None:
+            upload_files(
+                settings.repo_id,
+                files,
+                hub=hub,
+                commit_message=message,
+                num_threads=args.upload_threads,
+            )
+
+        upload_queue = BackgroundUploadQueue(
+            upload=upload_job,
+            max_pending=2,
+            state_dir=data_root.cache / "upload_jobs",
+        )
+        resumed = upload_queue.resume_pending()
+        if resumed:
+            LOGGER.info("Resumed %d pending background upload(s)", resumed)
+
+    def enqueue_upload(result: Any) -> None:
+        if upload_queue is None:
+            return
+        snapshots = data_root.cache / "upload_manifest_snapshots"
+        snapshot = snapshots / f"{result.polygons_path.stem}.json"
+        atomic_write_text(snapshot, result.manifest_path.read_text(encoding="utf-8"))
+        upload_queue.submit(
+            [
+                (result.polygons_path, f"{REMOTE_POLYGONS_DIR}/{result.polygons_path.name}"),
+                (result.articles_path, f"{REMOTE_ARTICLES_DIR}/{result.articles_path.name}"),
+                (
+                    result.polygon_articles_path,
+                    f"{REMOTE_LINKS_DIR}/{result.polygon_articles_path.name}",
+                ),
+                (snapshot, REMOTE_MANIFEST_FILE),
+            ],
+            args.commit_message or f"Update PBF {result.manifest_entry['source_pbf']}",
+        )
+
+    upload_failures: list[str] = []
+    try:
+        results = orchestrate(
+            inputs,
+            data_root=data_root,
+            settings=settings,
+            wikidata_client=wd,
+            wikipedia_client=wiki,
+            cache=cache,
+            on_complete=enqueue_upload,
+        )
+    finally:
+        if upload_queue is not None:
+            upload_failures = upload_queue.close_and_wait()
     LOGGER.info(
         "Done. %d PBF(s), %d polygons processed.",
         len(results),
@@ -233,6 +283,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             result.manifest_entry["source_pbf"],
             ", ".join(f"{name}={seconds:.3f}s" for name, seconds in result.stage_timings_s.items()),
         )
+    if upload_failures:
+        LOGGER.error("%d background upload(s) failed", len(upload_failures))
+        return 1
     return 0
 
 

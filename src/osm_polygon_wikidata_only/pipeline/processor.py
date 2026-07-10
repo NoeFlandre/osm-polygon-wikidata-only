@@ -9,6 +9,7 @@ input file.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +50,10 @@ from .extractor import candidate_to_polygon, polygon_to_dict
 from .stats import StreamingStats
 
 LOGGER = logging.getLogger(__name__)
+
+
+class IncompleteEnrichmentError(RuntimeError):
+    """Raised when expected Wikimedia work did not finish successfully."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,9 +335,21 @@ def process_pbf(
             languages=settings.languages,
             fetch_full_text=settings.fetch_full_text,
             max_articles_per_qid=settings.max_articles_per_qid,
+            batch_size=settings.enrichment_batch_size,
+            site_workers=settings.enrichment_site_workers,
         )
         for s in unique_summaries:
             summaries[s.qid] = s
+    failures = [
+        f"{summary.qid}:{site} ({summary.statuses.get(site, 'unknown')}): {error}"
+        for summary in summaries.values()
+        for site, error in summary.errors.items()
+    ]
+    if failures:
+        raise IncompleteEnrichmentError(
+            "Incomplete Wikipedia enrichment; rerun the same command to resume: "
+            + "; ".join(failures)
+        )
     LOGGER.info(
         "Fetched summaries for %d unique QIDs (%d QIDs total)",
         len(summaries),
@@ -366,9 +383,21 @@ def process_pbf(
     articles_path = _local_path(data_root.processed, PROCESSED_ARTICLES, stem.stem)
     links_path = _local_path(data_root.processed, PROCESSED_LINKS, stem.stem)
 
-    write_polygons(polygons_path, [polygon_to_dict(p) for p in enriched])
-    write_articles(articles_path, [_article_to_dict(a) for a in articles])
-    write_polygon_articles(links_path, [_link_to_dict(link) for link in links])
+    temporary_paths = [
+        path.with_suffix(path.suffix + ".tmp")
+        for path in (polygons_path, articles_path, links_path)
+    ]
+    try:
+        write_polygons(temporary_paths[0], [polygon_to_dict(p) for p in enriched])
+        write_articles(temporary_paths[1], [_article_to_dict(a) for a in articles])
+        write_polygon_articles(temporary_paths[2], [_link_to_dict(link) for link in links])
+        for temporary, final in zip(
+            temporary_paths, (polygons_path, articles_path, links_path), strict=True
+        ):
+            os.replace(temporary, final)
+    finally:
+        for temporary in temporary_paths:
+            temporary.unlink(missing_ok=True)
     timings["write_parquet"] = time.perf_counter() - stage_started
 
     # Step 6: manifest.
@@ -416,4 +445,4 @@ def _link_to_dict(link: PolygonArticleLink) -> dict[str, Any]:
     return dict(link.__dict__)
 
 
-__all__ = ["PbfStem", "ProcessResult", "process_pbf"]
+__all__ = ["IncompleteEnrichmentError", "PbfStem", "ProcessResult", "process_pbf"]

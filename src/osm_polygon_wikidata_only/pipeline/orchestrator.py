@@ -8,7 +8,7 @@ and ``force`` flags.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -47,6 +47,7 @@ def orchestrate(
     wikidata_client: WikidataClient,
     wikipedia_client: WikipediaClient,
     cache: JsonFileCache | None = None,
+    on_complete: Callable[[ProcessResult], None] | None = None,
 ) -> list[ProcessResult]:
     """Process every input PBF, honoring ``skip_existing`` and ``force``."""
     pbfs = collect_pbfs(inputs)
@@ -73,6 +74,8 @@ def orchestrate(
             cache=cache,
         )
         results.append(result)
+        if on_complete is not None:
+            on_complete(result)
     return results
 
 
