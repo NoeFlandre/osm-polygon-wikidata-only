@@ -900,16 +900,16 @@ def test_fetch_qids_chunks_same_site_title_batches_at_requested_limit() -> None:
     assert wiki.batch_sizes == [50, 1]
 
 
-def test_fetch_qids_schedules_chunks_from_one_large_site_concurrently() -> None:
-    """A slow chunk must not monopolize all work assigned to its site."""
+def test_fetch_qids_prioritizes_other_sites_before_more_large_site_chunks() -> None:
+    """One large site must not monopolize the executor's FIFO queue."""
 
     class BatchWd(InMemoryWikidataClient):
         def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
             return [self.get_entity(qid) for qid in qids]
 
     first_chunk_started = threading.Event()
-    second_chunk_started = threading.Event()
-    release_first_chunk = threading.Event()
+    other_site_started = threading.Event()
+    release_large_site = threading.Event()
 
     class GatedBatchWiki(InMemoryWikipediaClient):
         def fetch_articles(
@@ -917,16 +917,23 @@ def test_fetch_qids_schedules_chunks_from_one_large_site_concurrently() -> None:
         ) -> dict[str, FetchResult]:
             if titles == ["Q1", "Q2"]:
                 first_chunk_started.set()
-                release_first_chunk.wait(timeout=5)
+                release_large_site.wait(timeout=5)
             elif titles == ["Q3", "Q4"]:
-                second_chunk_started.set()
+                release_large_site.wait(timeout=5)
+            elif site == "frwiki":
+                other_site_started.set()
             return {
                 title: FetchResult("ok", _sample_article(language, title, title))
                 for title in titles
             }
 
-    qids = ["Q1", "Q2", "Q3", "Q4"]
-    wd = BatchWd({qid: WikidataEntity(qid=qid, sitelinks={"enwiki": qid}) for qid in qids})
+    qids = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+    wd = BatchWd(
+        {
+            **{qid: WikidataEntity(qid=qid, sitelinks={"enwiki": qid}) for qid in qids[:4]},
+            "Q5": WikidataEntity(qid="Q5", sitelinks={"frwiki": "Q5"}),
+        }
+    )
     progress = EnrichmentProgress(total_qids=0)
     result: list[article_linker.LinkSummary] = []
 
@@ -946,12 +953,11 @@ def test_fetch_qids_schedules_chunks_from_one_large_site_concurrently() -> None:
 
     assert first_chunk_started.wait(timeout=2)
     try:
-        assert second_chunk_started.wait(timeout=2), (
-            "the second chunk should use the free worker while the first chunk is blocked"
+        assert other_site_started.wait(timeout=2), (
+            "another site must run before the large site's second chunk"
         )
-        assert progress.snapshot().sites_completed == 0
     finally:
-        release_first_chunk.set()
+        release_large_site.set()
         fetcher.join(timeout=5)
 
     assert not fetcher.is_alive()
@@ -961,10 +967,11 @@ def test_fetch_qids_schedules_chunks_from_one_large_site_concurrently() -> None:
         ["Q2"],
         ["Q3"],
         ["Q4"],
+        ["Q5"],
     ]
     snapshot = progress.snapshot()
-    assert snapshot.sites_completed == snapshot.sites_total == 1
-    assert snapshot.articles_attempted == 4
+    assert snapshot.sites_completed == snapshot.sites_total == 2
+    assert snapshot.articles_attempted == 5
 
 
 def test_fetch_qids_reports_site_progress_as_sites_complete_not_in_input_order() -> None:
