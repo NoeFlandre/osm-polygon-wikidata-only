@@ -19,10 +19,8 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
@@ -37,25 +35,9 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
 )
 from osm_polygon_wikidata_only.utils.retry import with_retries
 
+from .wikidata.models import BatchWikidataClient, Sitelinks, WikidataClient, WikidataEntity
+
 LOGGER = logging.getLogger(__name__)
-
-# Sitelink entry: site -> title (e.g. ``{"enwiki": "Monaco"}``).
-Sitelinks = dict[str, str]
-
-
-@dataclass(frozen=True)
-class WikidataEntity:
-    """A minimal Wikidata entity used by this pipeline.
-
-    Only the fields we actually consume are kept. ``labels`` and
-    ``descriptions`` are keyed by language code.
-    """
-
-    qid: str
-    sitelinks: Sitelinks = field(default_factory=dict)
-    labels: dict[str, str] = field(default_factory=dict)
-    descriptions: dict[str, str] = field(default_factory=dict)
-    aliases: dict[str, list[str]] = field(default_factory=dict)
 
 
 class WikidataError(RuntimeError):
@@ -73,21 +55,6 @@ def is_valid_qid(qid: str) -> bool:
     if not qid:
         return False
     return bool(_QID_PATTERN.match(qid))
-
-
-class WikidataClient(ABC):
-    """Abstract interface — concrete implementations below."""
-
-    @abstractmethod
-    def get_entity(self, qid: str) -> WikidataEntity | None:
-        """Return the entity for ``qid`` or ``None`` if it does not exist."""
-
-
-@runtime_checkable
-class BatchWikidataClient(Protocol):
-    """Optional capability for resolving several QIDs in one request."""
-
-    def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]: ...
 
 
 class InMemoryWikidataClient(WikidataClient):

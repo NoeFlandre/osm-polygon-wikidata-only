@@ -46,14 +46,11 @@ from osm_polygon_wikidata_only.io.pbf_reader import (  # noqa: F401  (kept for r
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
+from .completeness import IncompleteEnrichmentError
 from .extractor import candidate_to_polygon, polygon_to_dict
 from .stats import StreamingStats
 
 LOGGER = logging.getLogger(__name__)
-
-
-class IncompleteEnrichmentError(RuntimeError):
-    """Raised when expected Wikimedia work did not finish successfully."""
 
 
 @dataclass(frozen=True, slots=True)
