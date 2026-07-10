@@ -22,6 +22,7 @@ combine:
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import urllib.error
@@ -42,9 +43,9 @@ from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.utils.rate_limit import (
     defer_host,
     retry_after_seconds,
-    sleep_after_429,
     wait_for_host,
 )
+from osm_polygon_wikidata_only.utils.request_scheduler import default_scheduler
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -235,6 +236,7 @@ class HttpWikipediaClient(WikipediaClient):
             "inprop": "url",
             "rvprop": "ids|timestamp",
             "redirects": "1",
+            "maxlag": "5",
         }
         if not fetch_full_text:
             # ``exintro`` makes the API return only the lead section.
@@ -246,20 +248,28 @@ class HttpWikipediaClient(WikipediaClient):
         wait_for_host(host, min_interval_s=self._settings.wikipedia_min_interval_s)
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": self._settings.user_agent, "Accept": "application/json"},
+            headers={
+                "User-Agent": self._settings.user_agent,
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+            },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
-                raw = resp.read()
+
+            def request() -> tuple[bytes, str]:
+                with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
+                    return resp.read(), resp.headers.get("Content-Encoding", "")
+
+            raw, encoding = default_scheduler().run(request)
+            if encoding == "gzip":
+                raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                defer_host(
-                    host,
-                    retry_after_seconds(
-                        e, default_s=self._settings.rate_limit_retry_after_default_s
-                    ),
+                delay = retry_after_seconds(
+                    e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
-                sleep_after_429(e, default_s=self._settings.rate_limit_retry_after_default_s)
+                defer_host(host, delay)
+                default_scheduler().defer(delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):

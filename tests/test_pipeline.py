@@ -16,11 +16,16 @@ from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     InMemoryWikidataClient,
     WikidataEntity,
 )
-from osm_polygon_wikidata_only.enrichment.wikipedia_client import FetchResult, WikipediaArticle
+from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
+    FetchResult,
+    InMemoryWikipediaClient,
+    WikipediaArticle,
+)
 from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
 from osm_polygon_wikidata_only.pipeline.extractor import candidate_to_polygon
-from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
+from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs, orchestrate
 from osm_polygon_wikidata_only.pipeline.processor import (
+    IncompleteEnrichmentError,
     PbfStem,
     process_pbf,
 )
@@ -360,6 +365,42 @@ def test_process_pbf_keeps_polygons_with_no_wikipedia(
     assert by_id["tiny-latest:way:2"]["has_wikipedia"] is False
 
 
+def test_process_pbf_does_not_publish_when_an_expected_article_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia_client import InMemoryWikipediaClient
+    from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
+
+    class _StubReader:
+        def __init__(self, pbf_path: Path) -> None:
+            self.pbf_path = pbf_path
+
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
+            return [_candidate(osm_id=1, wikidata="Q1", name="A")]
+
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+    pbf = tmp_path / "tiny-latest.osm.pbf"
+    pbf.write_bytes(b"")
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    wd = InMemoryWikidataClient({"Q1": WikidataEntity(qid="Q1", sitelinks={"enwiki": "A"})})
+    wiki = InMemoryWikipediaClient(
+        {("enwiki", "A"): FetchResult("rate_limited", None, "retry later")}
+    )
+
+    with pytest.raises(IncompleteEnrichmentError, match="enwiki"):
+        process_pbf(
+            pbf,
+            data_root=data_root,
+            wikidata_client=wd,
+            wikipedia_client=wiki,
+            settings=Settings(),
+        )
+
+    assert not list(data_root.processed.rglob("*.parquet"))
+    assert not (data_root.processed_manifests / "processed_pbfs.json").exists()
+
+
 # --- orchestrator ------------------------------------------------------
 
 
@@ -373,6 +414,38 @@ def test_collect_pbfs_expands_directories(tmp_path: Path) -> None:
     pbfs = collect_pbfs([tmp_path, sub])
     names = sorted(p.name for p in pbfs)
     assert names == ["a-latest.osm.pbf", "b-latest.osm.pbf", "c-latest.osm.pbf"]
+
+
+def test_orchestrate_submits_each_result_before_processing_next_pbf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "a.osm.pbf"
+    second = tmp_path / "b.osm.pbf"
+    first.write_bytes(b"")
+    second.write_bytes(b"")
+    events: list[str] = []
+
+    def fake_process(path: Path, **_: object) -> object:
+        events.append(f"process:{path.name}")
+        return type("Result", (), {"manifest_entry": {"source_pbf": path.name}})()
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.pipeline.orchestrator.process_pbf", fake_process)
+    data_root = DataRoot(tmp_path / "data")
+    data_root.ensure()
+    orchestrate(
+        [first, second],
+        data_root=data_root,
+        settings=Settings(),
+        wikidata_client=InMemoryWikidataClient({}),
+        wikipedia_client=InMemoryWikipediaClient({}),
+        on_complete=lambda result: events.append(f"submit:{result.manifest_entry['source_pbf']}"),
+    )
+    assert events == [
+        "process:a.osm.pbf",
+        "submit:a.osm.pbf",
+        "process:b.osm.pbf",
+        "submit:b.osm.pbf",
+    ]
 
 
 # --- stats -------------------------------------------------------------

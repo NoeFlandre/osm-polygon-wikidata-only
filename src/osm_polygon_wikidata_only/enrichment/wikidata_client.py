@@ -13,6 +13,7 @@ A :class:`CachedWikidataClient` wraps any client and adds the
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import urllib.error
@@ -28,9 +29,9 @@ from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
 from osm_polygon_wikidata_only.utils.rate_limit import (
     defer_host,
     retry_after_seconds,
-    sleep_after_429,
     wait_for_host,
 )
+from osm_polygon_wikidata_only.utils.request_scheduler import default_scheduler
 from osm_polygon_wikidata_only.utils.retry import with_retries
 
 LOGGER = logging.getLogger(__name__)
@@ -141,24 +142,32 @@ class HttpWikidataClient(WikidataClient):
             "sitefilter": "wiki",
             "languages": "en",
             "format": "json",
+            "maxlag": "5",
         }
         return f"{self._endpoint}?{urllib.parse.urlencode(params)}"
 
     def _http_get(self, url: str) -> dict[str, Any]:
         wait_for_host("www.wikidata.org", min_interval_s=self._settings.wikidata_min_interval_s)
-        req = urllib.request.Request(url, headers={"User-Agent": self._settings.user_agent})
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
+        )
         try:
-            with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
-                raw = resp.read()
+
+            def request() -> tuple[bytes, str]:
+                with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
+                    return resp.read(), resp.headers.get("Content-Encoding", "")
+
+            raw, encoding = default_scheduler().run(request)
+            if encoding == "gzip":
+                raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                defer_host(
-                    "www.wikidata.org",
-                    retry_after_seconds(
-                        e, default_s=self._settings.rate_limit_retry_after_default_s
-                    ),
+                delay = retry_after_seconds(
+                    e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
-                sleep_after_429(e, default_s=self._settings.rate_limit_retry_after_default_s)
+                defer_host("www.wikidata.org", delay)
+                default_scheduler().defer(delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
