@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 from email.message import Message
@@ -431,12 +433,16 @@ def test_http_wikipedia_client_routes_requests_through_injected_session(
     assert headers["Accept-encoding"] == "gzip"
 
 
-def test_http_wikipedia_client_reports_429_to_scheduler(
+def test_http_wikipedia_client_reports_429_to_host_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
-    delays: list[float] = []
-    monkeypatch.setattr(scheduler, "report_throttled", delays.append)
+    recorded: list[tuple[str, float]] = []
+    monkeypatch.setattr(
+        scheduler,
+        "report_host_throttled",
+        lambda host, delay: recorded.append((host, delay)),
+    )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.enrichment.wikipedia_client.defer_host", lambda *_: None
     )
@@ -449,7 +455,7 @@ def test_http_wikipedia_client_reports_429_to_scheduler(
     with pytest.raises(urllib.error.HTTPError):
         client._http_get(client._build_url("en", "Alpha", fetch_full_text=True))
 
-    assert delays == [17]
+    assert recorded == [("en.wikipedia.org", 17.0)]
 
 
 def test_http_clients_request_maxlag_for_background_work() -> None:
@@ -888,3 +894,101 @@ def test_fetch_qids_chunks_same_site_title_batches_at_requested_limit() -> None:
     )
     assert len(summaries) == 51
     assert wiki.batch_sizes == [50, 1]
+
+
+def test_fetch_qids_reports_site_progress_as_sites_complete_not_in_input_order() -> None:
+    """Regression: Wikipedia progress must update as fast sites finish.
+
+    ``executor.map`` yields results in input order, so the previous
+    implementation only advanced ``complete_site`` once the FIRST
+    (language, site) finished all its HTTP calls. For regions like
+    Antarctica where ``enwiki`` alone has hundreds of titles, the
+    heartbeat would stay at ``Wikipedia 0/108 sites`` until that one
+    site finished, even though all the small-language sites had
+    already completed in the background.
+    """
+
+    class BatchWd(InMemoryWikidataClient):
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            return [self.get_entity(qid) for qid in qids]
+
+    slow_release = threading.Event()
+
+    class GatedBatchWiki(InMemoryWikipediaClient):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.completed_sites: list[str] = []
+            self._lock = threading.Lock()
+
+        def fetch_articles(
+            self, language: str, site: str, titles: list[str], *, fetch_full_text: bool = True
+        ) -> dict[str, FetchResult]:
+            # The slow site (enwiki) blocks until the test releases it;
+            # every other site returns immediately so it can finish
+            # while enwiki is still waiting.
+            if site == "enwiki":
+                slow_release.wait(timeout=10)
+            with self._lock:
+                self.completed_sites.append(site)
+            return {
+                title: FetchResult("ok", _sample_article(language, title, "body"))
+                for title in titles
+            }
+
+    # Many QIDs all sharing enwiki (the slow site) plus a few QIDs
+    # with small sites that should finish quickly.
+    slow_qids = [f"Q{index}" for index in range(1, 31)]
+    fast_qids = [f"Q{index + 100}" for index in range(1, 6)]
+    wd = BatchWd(
+        {
+            **{qid: WikidataEntity(qid=qid, sitelinks={"enwiki": qid}) for qid in slow_qids},
+            **{qid: WikidataEntity(qid=qid, sitelinks={"frwiki": qid}) for qid in fast_qids},
+        }
+    )
+    wiki = GatedBatchWiki()
+    progress = EnrichmentProgress(total_qids=0)
+
+    fetcher = threading.Thread(
+        target=article_linker.fetch_qids,
+        kwargs={
+            "qids": slow_qids + fast_qids,
+            "wikidata_client": wd,
+            "wikipedia_client": wiki,
+            "site_workers": 4,
+            "progress": progress,
+        },
+    )
+    fetcher.start()
+
+    # Wait for the small sites (frwiki) to finish while enwiki is
+    # still gated. Once frwiki is in completed_sites, give the
+    # main thread a moment to advance the progress snapshot.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with wiki._lock:
+            if "frwiki" in wiki.completed_sites:
+                break
+        time.sleep(0.02)
+    else:  # pragma: no cover - guard against real regressions
+        slow_release.set()
+        fetcher.join(timeout=5)
+        pytest.fail("frwiki never finished while enwiki was gated")
+
+    # While enwiki is still gated, the progress must already reflect
+    # the small site(s) that finished. This is exactly the heartbeat
+    # scenario: the heartbeat should report "Wikipedia N/M sites" with
+    # N>0 long before enwiki finishes.
+    snapshot = progress.snapshot()
+    assert snapshot.sites_total == 2
+    assert snapshot.sites_completed == 1, (
+        f"frwiki must advance progress while enwiki is still gated; snapshot={snapshot}"
+    )
+
+    # Release enwiki and let the fetch finish cleanly.
+    slow_release.set()
+    fetcher.join(timeout=5)
+    assert not fetcher.is_alive()
+
+    final = progress.snapshot()
+    assert final.sites_completed == final.sites_total == 2
+    assert final.articles_attempted == 35
