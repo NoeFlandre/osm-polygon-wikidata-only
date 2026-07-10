@@ -23,12 +23,10 @@ from osm_polygon_wikidata_only.config.paths import (
     DataRoot,
 )
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.domain.ids import article_id
 from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
 from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary, fetch_qids
-from osm_polygon_wikidata_only.enrichment.text_cleaning import count_words, estimate_tokens
 from osm_polygon_wikidata_only.enrichment.wikidata_client import WikidataClient
-from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaArticle, WikipediaClient
+from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaClient
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import (
     manifest_path,
@@ -43,7 +41,6 @@ from osm_polygon_wikidata_only.io.pbf_reader import (  # noqa: F401  (kept for r
     PBFReader,
     region_from_filename,
 )
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 from . import rows as row_operations
@@ -99,169 +96,6 @@ def _local_path(processed_dir: Path, subdir: str, stem: str) -> Path:
 
 def _remote_path(subdir: str, stem: str) -> str:
     return f"{subdir}/{stem}.parquet"
-
-
-def _enrich_polygon(
-    polygon: Polygon,
-    *,
-    wikidata_client: WikidataClient,
-    wikipedia_client: WikipediaClient,
-    settings: Settings,
-    summaries: dict[str, LinkSummary],
-) -> Polygon:
-    """Apply Wikidata/Wikipedia enrichment to a polygon.
-
-    Looks up the cached :class:`LinkSummary` for the polygon's
-    Wikidata QID. If missing, fetches it now. The summary's articles
-    are converted to per-language best-language decisions on the
-    polygon row.
-    """
-    qid = polygon.wikidata
-    summary = summaries.get(qid)
-    if summary is None:
-        summary_list = fetch_qids(
-            [qid],
-            wikidata_client=wikidata_client,
-            wikipedia_client=wikipedia_client,
-            languages=settings.languages,
-            fetch_full_text=settings.fetch_full_text,
-            max_articles_per_qid=settings.max_articles_per_qid,
-            batch_size=settings.enrichment_batch_size,
-            site_workers=settings.enrichment_site_workers,
-        )
-        summary = summary_list[0]
-        summaries[qid] = summary
-
-    langs = sorted({a.language for a in summary.articles})
-    best = summary.best_language()
-    has_text = bool(summary.articles and any(a.full_text for a in summary.articles))
-    has_en = "en" in langs
-    has_fr = "fr" in langs
-
-    return Polygon(
-        polygon_id=polygon.polygon_id,
-        region=polygon.region,
-        source_pbf=polygon.source_pbf,
-        osm_type=polygon.osm_type,
-        osm_id=polygon.osm_id,
-        wikidata=polygon.wikidata,
-        name=polygon.name,
-        tags=polygon.tags,
-        tag_keys=polygon.tag_keys,
-        tag_count=polygon.tag_count,
-        osm_primary_tag=polygon.osm_primary_tag,
-        centroid=polygon.centroid,
-        lat=polygon.lat,
-        lon=polygon.lon,
-        bbox=polygon.bbox,
-        geometry=polygon.geometry,
-        area_m2=polygon.area_m2,
-        area_km2=polygon.area_km2,
-        area_bucket=polygon.area_bucket,
-        has_name=polygon.has_name,
-        has_wikidata=polygon.has_wikidata,
-        has_wikipedia=bool(summary.articles),
-        wikipedia_language_count=len(langs),
-        wikipedia_languages=json_dumps(langs),
-        wikipedia_article_count=len(summary.articles),
-        has_english_wikipedia=has_en,
-        has_french_wikipedia=has_fr,
-        text_available=has_text,
-        best_language=best,
-        extraction_version=polygon.extraction_version,
-        extracted_at=polygon.extracted_at,
-    )
-
-
-def _build_articles_and_links(
-    polygons: list[Polygon],
-    summaries: dict[str, LinkSummary],
-) -> tuple[list[Article], list[PolygonArticleLink]]:
-    """Build per-PBF article rows and polygon-article links.
-
-    Articles are deduplicated by ``article_id`` (one row per unique
-    (wikidata, language, page_id, revision_id) tuple). Links are
-    produced for every (polygon, article) pair.
-    """
-    articles_by_id: dict[str, Article] = {}
-    links: list[PolygonArticleLink] = []
-
-    for polygon in polygons:
-        summary = summaries.get(polygon.wikidata)
-        if summary is None or not summary.articles:
-            continue
-        best = summary.best_language()
-        for art in summary.articles:
-            aid = article_id(polygon.wikidata, art.language, art.page_id, art.revision_id)
-            if aid not in articles_by_id:
-                articles_by_id[aid] = _article_row(aid, polygon.wikidata, art, summary)
-
-            links.append(
-                PolygonArticleLink(
-                    polygon_id=polygon.polygon_id,
-                    article_id=aid,
-                    wikidata=polygon.wikidata,
-                    language=art.language,
-                    source_pbf=polygon.source_pbf,
-                    region=polygon.region,
-                    osm_type=polygon.osm_type,
-                    osm_id=polygon.osm_id,
-                    page_id=art.page_id,
-                    revision_id=art.revision_id,
-                    is_best_language=(art.language == best),
-                )
-            )
-    return list(articles_by_id.values()), links
-
-
-def _article_row(aid: str, qid: str, art: WikipediaArticle, summary: LinkSummary) -> Article:
-    """Build expensive article metadata exactly once per deduplicated row."""
-    entity = summary.entity
-    label = entity.labels.get(art.language) if entity else ""
-    description = entity.descriptions.get(art.language) if entity else ""
-    aliases = entity.aliases.get(art.language) if entity else None
-    if entity is not None:
-        label = label or entity.labels.get("en", "")
-        description = description or entity.descriptions.get("en", "")
-        aliases = aliases or entity.aliases.get("en", [])
-    return Article(
-        article_id=aid,
-        wikidata=qid,
-        language=art.language,
-        site=art.site,
-        title=art.title,
-        url=art.url,
-        page_id=art.page_id,
-        revision_id=art.revision_id,
-        revision_timestamp=art.revision_timestamp,
-        retrieved_at=art.retrieved_at,
-        wikidata_label=str(label or ""),
-        wikidata_description=str(description or ""),
-        wikidata_aliases=json_dumps(aliases or []),
-        lead_text=art.lead_text,
-        extract=art.extract,
-        full_text=art.full_text,
-        full_text_format=art.full_text_format,
-        article_length_chars=len(art.full_text),
-        article_length_words=count_words(art.full_text),
-        article_length_tokens_estimate=estimate_tokens(art.full_text),
-        thumbnail_url=art.thumbnail_url,
-        thumbnail_width=art.thumbnail_width,
-        thumbnail_height=art.thumbnail_height,
-        categories=json_dumps(art.categories),
-        license=art.license,
-        attribution=art.attribution,
-        source_api=art.source_api,
-        fetch_status="ok",
-        fetch_error="",
-        content_hash=content_hash(art.full_text),
-    )
-
-
-def content_hash(text: str) -> str:
-    from osm_polygon_wikidata_only.domain.ids import content_hash as _hash
-
-    return _hash(text)
 
 
 def process_pbf(
