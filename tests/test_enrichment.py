@@ -12,6 +12,7 @@ import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment import article_linker
+from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgress
 from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     clean_article_text,
     count_words,
@@ -766,6 +767,79 @@ def test_fetch_qids_uses_batch_clients_and_preserves_input_order() -> None:
     ]
     assert wd.calls == 1
     assert wiki.calls == 2
+
+
+def test_fetch_qids_reports_batched_qid_site_and_article_progress() -> None:
+    class BatchWd(InMemoryWikidataClient):
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            return [self.get_entity(qid) for qid in qids]
+
+    class BatchWiki(InMemoryWikipediaClient):
+        def fetch_articles(
+            self, language: str, site: str, titles: list[str], *, fetch_full_text: bool = True
+        ) -> dict[str, FetchResult]:
+            return {
+                title: self.fetch_article(language, site, title, fetch_full_text=fetch_full_text)
+                for title in titles
+            }
+
+    wd = BatchWd(
+        {
+            "Q1": WikidataEntity(qid="Q1", sitelinks={"enwiki": "One", "frwiki": "Un"}),
+            "Q2": WikidataEntity(qid="Q2", sitelinks={"enwiki": "Two"}),
+        }
+    )
+    wiki = BatchWiki(
+        {
+            ("enwiki", "One"): FetchResult("ok", _sample_article("en", "One", "one")),
+            ("enwiki", "Two"): FetchResult("ok", _sample_article("en", "Two", "two")),
+            ("frwiki", "Un"): FetchResult("ok", _sample_article("fr", "Un", "un")),
+        }
+    )
+    progress = EnrichmentProgress(total_qids=0)
+
+    summaries = article_linker.fetch_qids(
+        ["Q1", "Q2"],
+        wikidata_client=wd,
+        wikipedia_client=wiki,
+        batch_size=1,
+        progress=progress,
+    )
+
+    assert [summary.qid for summary in summaries] == ["Q1", "Q2"]
+    snapshot = progress.snapshot()
+    assert (snapshot.qids_completed, snapshot.qids_total) == (2, 2)
+    assert (snapshot.sites_completed, snapshot.sites_total) == (2, 2)
+    assert snapshot.articles_attempted == 3
+
+
+def test_fetch_qids_reports_qid_progress_for_compatibility_clients() -> None:
+    wd = InMemoryWikidataClient(
+        {
+            "Q1": WikidataEntity(qid="Q1", sitelinks={"enwiki": "One"}),
+            "Q2": WikidataEntity(qid="Q2", sitelinks={"enwiki": "Two"}),
+        }
+    )
+    wiki = InMemoryWikipediaClient(
+        {
+            ("enwiki", "One"): FetchResult("ok", _sample_article("en", "One", "one")),
+            ("enwiki", "Two"): FetchResult("ok", _sample_article("en", "Two", "two")),
+        }
+    )
+    progress = EnrichmentProgress(total_qids=0)
+
+    summaries = article_linker.fetch_qids(
+        ["Q1", "Q2"],
+        wikidata_client=wd,
+        wikipedia_client=wiki,
+        progress=progress,
+    )
+
+    assert [summary.qid for summary in summaries] == ["Q1", "Q2"]
+    snapshot = progress.snapshot()
+    assert (snapshot.qids_completed, snapshot.qids_total) == (2, 2)
+    assert (snapshot.sites_completed, snapshot.sites_total) == (0, 0)
+    assert snapshot.articles_attempted == 0
 
 
 def test_batch_client_capability_protocols_are_structural() -> None:
