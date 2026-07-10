@@ -13,6 +13,26 @@ isolation.
 | `hf` | Remote paths, dataset card rendering, and atomic Hub uploads. |
 | `cli` | Argument parsing and dependency wiring only. |
 
+## Dependency direction
+
+Dependencies point inward: CLI and pipeline orchestration compose I/O and
+enrichment; enrichment depends on configuration, cache interfaces, and small
+utilities; domain code is pure and does not import infrastructure. Stable
+facade modules preserve documented imports while focused subpackages contain
+models and implementation details.
+
+The largest workflows are split by responsibility:
+
+- `cli.parser` owns argparse and immutable settings conversion;
+- `pipeline.rows` owns deterministic domain-row construction;
+- `pipeline.processor` sequences extraction, enrichment, publication, and
+  metrics;
+- `enrichment.wikipedia.models` and `enrichment.wikidata.models` define the
+  typed contracts used across clients and linkers.
+
+Private implementation modules may evolve, but the supported imports in
+[`docs/api.md`](api.md) are compatibility boundaries.
+
 ## Completeness and publication
 
 Normal production runs fetch full text for every valid language-Wikipedia

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
+from email.message import Message
 
 import pytest
 
 from osm_polygon_wikidata_only.utils import rate_limit
 from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import parse_iso_to_z, utc_now_iso
 
 
@@ -110,3 +113,44 @@ def test_scheduler_never_exceeds_global_concurrency() -> None:
     for thread in threads:
         thread.join(timeout=2)
     assert peak == 3
+
+
+def test_retry_returns_after_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
+    attempts = 0
+
+    def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise OSError("temporary")
+        return "ok"
+
+    assert with_retries(operation, attempts=3, base_delay=0, retry_on=(OSError,)) == "ok"
+    assert attempts == 3
+
+
+def test_retry_raises_last_error_after_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
+
+    with pytest.raises(OSError, match="offline"):
+        with_retries(
+            lambda: (_ for _ in ()).throw(OSError("offline")),
+            attempts=2,
+            base_delay=0,
+            retry_on=(OSError,),
+        )
+
+
+def test_retry_after_seconds_parses_numeric_header() -> None:
+    headers = Message()
+    headers["Retry-After"] = "12.5"
+    error = urllib.error.HTTPError("https://example.test", 429, "limited", headers, None)
+    assert rate_limit.retry_after_seconds(error) == 12.5
+
+
+def test_retry_after_seconds_uses_default_for_invalid_header() -> None:
+    headers = Message()
+    headers["Retry-After"] = "not-a-date"
+    error = urllib.error.HTTPError("https://example.test", 429, "limited", headers, None)
+    assert rate_limit.retry_after_seconds(error, default_s=17) == 17

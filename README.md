@@ -10,6 +10,10 @@ Face dataset.
 * **Hugging Face dataset**: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only>
 * **Maintainer**: Noé Flandre
 
+Documentation: [architecture](docs/architecture.md) ·
+[supported Python API](docs/api.md) · [development](docs/development.md) ·
+[contributing](CONTRIBUTING.md) · [security](SECURITY.md)
+
 ---
 
 ## What this project does
