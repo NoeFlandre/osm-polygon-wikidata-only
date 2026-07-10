@@ -46,3 +46,16 @@ def test_public_docs_never_contain_test_password() -> None:
 
     for document in documents:
         assert "secret-value" not in document.read_text(encoding="utf-8")
+
+
+def test_public_docs_explain_enrichment_progress_heartbeat() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8").lower()
+    architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8").lower()
+
+    for document in (readme, architecture):
+        assert "two-minute" in document
+        assert "qid" in document
+        assert "wikipedia site" in document
+        assert "articles attempted" in document
+        assert "eta" in document
+        assert "request pacing" in document
