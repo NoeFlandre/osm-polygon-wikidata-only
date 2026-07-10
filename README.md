@@ -169,10 +169,10 @@ uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 | `--data-root <path>` | Override the resolved external data root |
 | `--repo-id <org/name>` | Target Hugging Face repo (default `NoeFlandre/osm-polygon-wikidata-only`) |
 | `--user-agent <ua>` | Override Wikimedia User-Agent (default identifies this project) |
-| `--languages en,fr,...` | Comma-separated ISO 639-1 codes for sitelinks |
-| `--all-languages` | Fetch every available sitelink (default: 5 languages) |
+| `--languages en,fr,...` | Explicitly narrow the default all-language sitelink set |
+| `--all-languages` | Explicit compatibility alias for the all-language default |
 | `--no-full-text` | Fetch only the lead section, not the full article |
-| `--max-articles-per-qid <n>` | Cap articles per Wikidata QID (default `5`) |
+| `--max-articles-per-qid <n>` | Explicitly cap articles per QID (default: no cap) |
 | `--enrichment-batch-size <n>` | Maximum QIDs/titles per API batch (default `50`) |
 | `--enrichment-site-workers <n>` | Concurrent independent Wikipedia-site batch jobs (default `5`) |
 | `--limit <n>` | Process only the first N polygons per PBF |
@@ -224,6 +224,14 @@ resume: completed PBFs remain skipped, while the interrupted PBF is retried
 because it has no completed manifest entry. Stage timings are logged for every
 PBF. Tune large runs only when needed with `--enrichment-batch-size`,
 `--enrichment-site-workers`, and `--upload-threads`.
+
+The normal command fetches full text for every valid language-Wikipedia
+sitelink with no per-QID cap. If any expected article remains unresolved after
+retries, that PBF is not published; rerunning resumes from successful cache
+checkpoints. With `--push`, each locally complete PBF is queued for an atomic
+background upload while the next PBF starts processing. Shutdown waits for the
+queue, and unresolved uploads make the command exit nonzero and remain queued
+for the next invocation.
 
 Programmatic usage:
 

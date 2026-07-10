@@ -60,6 +60,7 @@ def test_language_from_site_strips_wiki() -> None:
     assert language_from_site("enwiki") == "en"
     assert language_from_site("frwiki") == "fr"
     assert language_from_site("dewiki") == "de"
+    assert language_from_site("zh_min_nanwiki") == "zh-min-nan"
 
 
 def test_language_from_site_passthrough_for_unknown() -> None:
@@ -76,6 +77,8 @@ def test_parse_wikidata_entity_extracts_sitelinks() -> None:
                 "sitelinks": {
                     "enwiki": {"title": "Douglas Adams"},
                     "frwiki": {"title": "Douglas Adams"},
+                    "simplewiki": {"title": "Douglas Adams"},
+                    "zh_min_nanwiki": {"title": "Douglas Adams"},
                     "commonswiki": {"title": "Douglas Adams"},  # not a wiki
                 },
                 "labels": {"en": {"value": "Douglas Adams"}},
@@ -86,7 +89,12 @@ def test_parse_wikidata_entity_extracts_sitelinks() -> None:
     entity = parse_wikidata_entity("Q42", data)
     assert entity is not None
     assert entity.qid == "Q42"
-    assert entity.sitelinks == {"enwiki": "Douglas Adams", "frwiki": "Douglas Adams"}
+    assert entity.sitelinks == {
+        "enwiki": "Douglas Adams",
+        "frwiki": "Douglas Adams",
+        "simplewiki": "Douglas Adams",
+        "zh_min_nanwiki": "Douglas Adams",
+    }
     assert entity.labels == {"en": "Douglas Adams"}
 
 
@@ -384,6 +392,53 @@ def test_cached_wikipedia_client_caches_failures(tmp_path: Path) -> None:
     assert client.fetch_article("en", "enwiki", "X").status == "article_not_found"
 
 
+def test_cached_wikipedia_client_does_not_reuse_transient_failure(tmp_path: Path) -> None:
+    class RecoveringWikipedia(InMemoryWikipediaClient):
+        calls = 0
+
+        def fetch_article(
+            self, language: str, site: str, title: str, **kwargs: object
+        ) -> FetchResult:
+            self.calls += 1
+            if self.calls == 1:
+                return FetchResult("http_error", None, "offline")
+            return FetchResult("ok", _sample_article(language, title, "complete"))
+
+    inner = RecoveringWikipedia({})
+    client = CachedWikipediaClient(inner, JsonFileCache(tmp_path))
+    assert client.fetch_article("en", "enwiki", "X").status == "http_error"
+    assert client.fetch_article("en", "enwiki", "X").status == "ok"
+    assert inner.calls == 2
+
+
+def test_full_text_request_does_not_reuse_lead_only_cache(tmp_path: Path) -> None:
+    class TextAwareWikipedia(InMemoryWikipediaClient):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.calls: list[bool] = []
+
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            fetch_full_text: bool = True,
+            **kwargs: object,
+        ) -> FetchResult:
+            self.calls.append(fetch_full_text)
+            text = "full body" if fetch_full_text else "lead"
+            return FetchResult("ok", _sample_article(language, title, text))
+
+    inner = TextAwareWikipedia()
+    client = CachedWikipediaClient(inner, JsonFileCache(tmp_path))
+    client.fetch_article("en", "enwiki", "X", fetch_full_text=False)
+    result = client.fetch_article("en", "enwiki", "X", fetch_full_text=True)
+    assert result.article is not None
+    assert result.article.full_text == "full body"
+    assert inner.calls == [False, True]
+
+
 def test_cached_wikipedia_client_batches_only_cache_misses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -489,6 +544,24 @@ def test_link_qid_filters_non_wiki_sitelinks() -> None:
     )
     summary = article_linker.link_qid("Q1", wikidata_client=wd, wikipedia_client=en)
     assert {a.language for a in summary.articles} == {"en"}
+
+
+def test_link_qid_includes_long_and_compound_wikipedia_language_sites() -> None:
+    entity = WikidataEntity(
+        qid="Q1",
+        sitelinks={"simplewiki": "Foo", "zh_min_nanwiki": "Foo_nan"},
+    )
+    wd = InMemoryWikidataClient({"Q1": entity})
+    wiki = InMemoryWikipediaClient(
+        {
+            ("simplewiki", "Foo"): FetchResult("ok", _sample_article("simple", "Foo", "x")),
+            ("zh_min_nanwiki", "Foo_nan"): FetchResult(
+                "ok", _sample_article("zh-min-nan", "Foo_nan", "x")
+            ),
+        }
+    )
+    summary = article_linker.link_qid("Q1", wikidata_client=wd, wikipedia_client=wiki)
+    assert {article.language for article in summary.articles} == {"simple", "zh-min-nan"}
 
 
 def test_best_language_picks_preferred_then_falls_back() -> None:

@@ -45,7 +45,10 @@ from osm_polygon_wikidata_only.utils.rate_limit import (
     retry_after_seconds,
     wait_for_host,
 )
-from osm_polygon_wikidata_only.utils.request_scheduler import default_scheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    AdaptiveRequestScheduler,
+    default_scheduler,
+)
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -144,8 +147,11 @@ class InMemoryWikipediaClient(WikipediaClient):
 class HttpWikipediaClient(WikipediaClient):
     """Real Wikipedia client using the MediaWiki Action API."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, *, scheduler: AdaptiveRequestScheduler | None = None
+    ) -> None:
         self._settings = settings
+        self._scheduler = scheduler or default_scheduler()
 
     def fetch_article(
         self,
@@ -169,7 +175,7 @@ class HttpWikipediaClient(WikipediaClient):
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return FetchResult("article_not_found", None, str(e))
-            if e.code == 429:
+            if e.code in (429, 503):
                 return FetchResult("rate_limited", None, str(e))
             return FetchResult("http_error", None, f"HTTP {e.code}: {e}")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -260,7 +266,7 @@ class HttpWikipediaClient(WikipediaClient):
                 with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
                     return resp.read(), resp.headers.get("Content-Encoding", "")
 
-            raw, encoding = default_scheduler().run(request)
+            raw, encoding = self._scheduler.run(request)
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
@@ -269,7 +275,7 @@ class HttpWikipediaClient(WikipediaClient):
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
                 defer_host(host, delay)
-                default_scheduler().defer(delay)
+                self._scheduler.defer(delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
@@ -302,14 +308,10 @@ class CachedWikipediaClient(WikipediaClient):
         wikidata_aliases: list[str] | None = None,
         fetch_full_text: bool = True,
     ) -> FetchResult:
-        key = f"wikipedia/{site}/{self._safe_title(title)}.json"
+        key = self._cache_key(site, title, fetch_full_text)
         hit = self._cache.get(key)
-        if hit is not None:
-            if hit.status == "ok" and isinstance(hit.parsed_result, dict):
-                return FetchResult("ok", _article_from_dict(hit.parsed_result))
-            return FetchResult(
-                hit.parsed_result if isinstance(hit.parsed_result, str) else "http_error", None
-            )
+        if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
+            return FetchResult("ok", _article_from_dict(hit.parsed_result))
         result = self._inner.fetch_article(
             language,
             site,
@@ -351,16 +353,12 @@ class CachedWikipediaClient(WikipediaClient):
         results: dict[str, FetchResult] = {}
         missing: list[str] = []
         for title in requested:
-            key = f"wikipedia/{site}/{self._safe_title(title)}.json"
+            key = self._cache_key(site, title, fetch_full_text)
             hit = self._cache.get(key)
-            if hit is None:
-                missing.append(title)
-            elif hit.status == "ok" and isinstance(hit.parsed_result, dict):
+            if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
                 results[title] = FetchResult("ok", _article_from_dict(hit.parsed_result))
             else:
-                results[title] = FetchResult(
-                    hit.parsed_result if isinstance(hit.parsed_result, str) else "http_error", None
-                )
+                missing.append(title)
 
         batch_fetch = getattr(self._inner, "fetch_articles", None)
         if callable(batch_fetch):
@@ -378,7 +376,7 @@ class CachedWikipediaClient(WikipediaClient):
                 result = self._inner.fetch_article(
                     language, site, title, fetch_full_text=fetch_full_text
                 )
-            key = f"wikipedia/{site}/{self._safe_title(title)}.json"
+            key = self._cache_key(site, title, fetch_full_text)
             if result.status == "ok" and result.article is not None:
                 self._cache.set(
                     key,
@@ -403,6 +401,11 @@ class CachedWikipediaClient(WikipediaClient):
     def _safe_title(title: str) -> str:
         # Cache file system can't have slashes; keep them encoded.
         return title.replace("/", "_").replace(" ", "_")
+
+    @classmethod
+    def _cache_key(cls, site: str, title: str, fetch_full_text: bool) -> str:
+        policy = "full-text-v2" if fetch_full_text else "lead-only-v2"
+        return f"wikipedia/{policy}/{site}/{cls._safe_title(title)}.json"
 
     def _endpoint_for(self, language: str, title: str, fetch_full_text: bool) -> str:
         if isinstance(self._inner, HttpWikipediaClient):
