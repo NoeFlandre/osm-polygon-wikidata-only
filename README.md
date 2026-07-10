@@ -179,7 +179,7 @@ uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 | `--no-full-text` | Fetch only the lead section, not the full article |
 | `--max-articles-per-qid <n>` | Explicitly cap articles per QID (default: no cap) |
 | `--enrichment-batch-size <n>` | Maximum QIDs/titles per API batch (default `50`) |
-| `--enrichment-site-workers <n>` | Concurrent independent Wikipedia-site batch jobs (default `5`) |
+| `--enrichment-site-workers <n>` | Concurrent Wikipedia batch jobs (default `8`) |
 | `--limit <n>` | Process only the first N polygons per PBF |
 | `--skip-existing` | Skip PBFs already listed in the manifest |
 | `--force` | Re-process even when `--skip-existing` applies |

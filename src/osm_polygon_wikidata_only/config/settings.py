@@ -67,7 +67,7 @@ class Settings:
     wikipedia_min_interval_s: float = 0.5
     rate_limit_retry_after_default_s: float = 60.0
     enrichment_batch_size: int = 50
-    enrichment_site_workers: int = 5
+    enrichment_site_workers: int = 8
     wikimedia_max_in_flight: int = 3
     wikimedia_requests_per_minute: float = 180.0
 

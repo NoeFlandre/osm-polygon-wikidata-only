@@ -71,6 +71,7 @@ def test_normal_command_defaults_to_every_language_without_article_cap() -> None
     assert settings.languages is None
     assert settings.fetch_full_text is True
     assert settings.max_articles_per_qid is None
+    assert settings.enrichment_site_workers == 8
 
 
 def test_main_handles_empty_directory_without_network(tmp_path: Path) -> None:
