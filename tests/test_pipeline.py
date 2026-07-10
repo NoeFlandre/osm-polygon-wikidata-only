@@ -284,17 +284,17 @@ def test_process_pbf_dedups_repeated_qids(tmp_path: Path, monkeypatch: pytest.Mo
     data_root.ensure()
 
     settings = Settings()
-    import osm_polygon_wikidata_only.pipeline.processor as processor
+    import osm_polygon_wikidata_only.pipeline.rows as rows
 
     word_count_calls = 0
-    original_count_words = processor.count_words
+    original_count_words = rows.count_words
 
     def count_words_once(text: str) -> int:
         nonlocal word_count_calls
         word_count_calls += 1
         return original_count_words(text)
 
-    monkeypatch.setattr(processor, "count_words", count_words_once)
+    monkeypatch.setattr(rows, "count_words", count_words_once)
     result = process_pbf(
         pbf,
         data_root=data_root,

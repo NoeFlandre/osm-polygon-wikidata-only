@@ -46,6 +46,7 @@ from osm_polygon_wikidata_only.io.pbf_reader import (  # noqa: F401  (kept for r
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
+from . import rows as row_operations
 from .completeness import IncompleteEnrichmentError
 from .extractor import candidate_to_polygon, polygon_to_dict
 from .stats import StreamingStats
@@ -353,7 +354,7 @@ def process_pbf(
         len(unique_qids),
     )
     enriched: list[Polygon] = [
-        _enrich_polygon(
+        row_operations.enrich_polygon(
             p,
             wikidata_client=wikidata_client,
             wikipedia_client=wikipedia_client,
@@ -366,7 +367,7 @@ def process_pbf(
 
     stage_started = time.perf_counter()
 
-    articles, links = _build_articles_and_links(enriched, summaries)
+    articles, links = row_operations.build_articles_and_links(enriched, summaries)
     LOGGER.info(
         "Built %d unique articles and %d polygon-article links",
         len(articles),
