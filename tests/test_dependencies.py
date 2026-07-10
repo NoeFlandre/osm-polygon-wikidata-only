@@ -45,6 +45,19 @@ def test_build_clients_keeps_anonymous_scheduler_fixed(tmp_path: Path) -> None:
     assert wikidata._scheduler.current_requests_per_minute == 180
 
 
+def test_build_clients_preserves_lower_anonymous_settings_rate(tmp_path: Path) -> None:
+    wikidata, _, _ = dependencies.build_clients(
+        Settings(cache_enabled=False, wikimedia_requests_per_minute=90),
+        data_root=data_root(tmp_path),
+        environ={},
+    )
+
+    assert isinstance(wikidata, HttpWikidataClient)
+    for _ in range(200):
+        wikidata._scheduler.report_success()
+    assert wikidata._scheduler.current_requests_per_minute == 90
+
+
 def test_build_clients_shares_authenticated_session_and_ramps_to_default_ceiling(
     tmp_path: Path,
 ) -> None:
