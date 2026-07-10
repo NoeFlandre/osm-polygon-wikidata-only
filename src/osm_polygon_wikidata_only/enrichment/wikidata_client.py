@@ -23,6 +23,10 @@ from collections.abc import Iterable
 from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
+from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
+    WikimediaHttpSession,
+    WikimediaSession,
+)
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
 from osm_polygon_wikidata_only.utils.rate_limit import (
     defer_host,
@@ -78,10 +82,16 @@ class HttpWikidataClient(WikidataClient):
         *,
         endpoint: str = WIKIDATA_API_URL,
         scheduler: AdaptiveRequestScheduler | None = None,
+        session: WikimediaHttpSession | None = None,
     ) -> None:
         self._settings = settings
         self._endpoint = endpoint
         self._scheduler = scheduler or default_scheduler()
+        self._session = session or WikimediaSession(
+            scheduler=self._scheduler,
+            timeout_s=settings.request_timeout_s,
+            user_agent=settings.user_agent,
+        )
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
         return self.get_entities([qid])[0]
@@ -125,12 +135,7 @@ class HttpWikidataClient(WikidataClient):
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
         )
         try:
-
-            def request() -> tuple[bytes, str]:
-                with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
-                    return resp.read(), resp.headers.get("Content-Encoding", "")
-
-            raw, encoding = self._scheduler.run(request)
+            raw, encoding = self._session.read(req)
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
@@ -139,7 +144,7 @@ class HttpWikidataClient(WikidataClient):
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
                 defer_host("www.wikidata.org", delay)
-                self._scheduler.defer(delay)
+                self._scheduler.report_throttled(delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
