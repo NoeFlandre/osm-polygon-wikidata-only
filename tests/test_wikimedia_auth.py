@@ -61,7 +61,9 @@ class FakeOpener:
         if self._on_open is not None:
             self._on_open()
         parameters = urllib.parse.parse_qs(
-            request.data.decode() if request.data is not None else urllib.parse.urlparse(request.full_url).query
+            request.data.decode()
+            if request.data is not None
+            else urllib.parse.urlparse(request.full_url).query
         )
         action = parameters.get("action", [""])[0]
         if action == "query" and parameters.get("meta") == ["tokens"]:
