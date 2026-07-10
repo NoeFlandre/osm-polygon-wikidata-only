@@ -144,7 +144,7 @@ class HttpWikidataClient(WikidataClient):
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
                 defer_host("www.wikidata.org", delay)
-                self._scheduler.report_throttled(delay)
+                self._scheduler.report_host_throttled("www.wikidata.org", delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
