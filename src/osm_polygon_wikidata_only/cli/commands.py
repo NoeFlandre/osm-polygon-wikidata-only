@@ -21,11 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot, resolve_data_root
-from osm_polygon_wikidata_only.config.settings import (
-    DEFAULT_REPO_ID,
-    DEFAULT_USER_AGENT,
-    Settings,
-)
+from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
@@ -65,77 +61,10 @@ from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.utils.logging import configure_logging
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
+from .parser import build_parser
+from .parser import build_settings as _build_settings
+
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="osm-polygon-wikidata-only",
-        description="Build a Hugging Face dataset of OSM polygons linked to Wikidata + Wikipedia.",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--data-root", type=Path, default=None, help="Data root directory")
-    common.add_argument(
-        "--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face repo id (org/name)"
-    )
-    common.add_argument("--user-agent", default=DEFAULT_USER_AGENT, help="Wikipedia/Wikidata UA")
-    common.add_argument("--languages", default=None, help="Optional comma-separated language codes")
-    common.add_argument(
-        "--all-languages", action="store_true", help="Fetch all available sitelinks"
-    )
-    common.add_argument(
-        "--no-full-text", action="store_true", help="Skip Wikipedia full-text fetch"
-    )
-    common.add_argument("--max-articles-per-qid", type=int, default=None)
-    common.add_argument("--enrichment-batch-size", type=int, default=50)
-    common.add_argument("--enrichment-site-workers", type=int, default=5)
-    common.add_argument("--limit", type=int, default=None, help="Cap number of polygons per PBF")
-    common.add_argument("--skip-existing", action="store_true")
-    common.add_argument("--force", action="store_true")
-    common.add_argument("--push", action="store_true", help="Push artifacts to Hugging Face")
-    common.add_argument("--commit-message", default=None)
-    common.add_argument(
-        "--upload-threads",
-        type=int,
-        default=5,
-        help="Concurrent Hugging Face upload workers per atomic commit",
-    )
-    common.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
-    common.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
-
-    p_pbf = sub.add_parser("process-pbf", parents=[common], help="Process one PBF file")
-    p_pbf.add_argument("input", type=Path, help="Path to a .osm.pbf file")
-
-    p_dir = sub.add_parser("process-dir", parents=[common], help="Process every PBF in a directory")
-    p_dir.add_argument("input", type=Path, help="Directory containing *.osm.pbf files")
-    return parser
-
-
-def _parse_languages(arg: str) -> tuple[str, ...]:
-    return tuple(sorted({s.strip() for s in arg.split(",") if s.strip()}))
-
-
-def _build_settings(args: argparse.Namespace) -> Settings:
-    languages = (
-        None if args.all_languages or args.languages is None else _parse_languages(args.languages)
-    )
-    return Settings(
-        repo_id=args.repo_id,
-        user_agent=args.user_agent,
-        languages=languages,
-        fetch_full_text=not args.no_full_text,
-        max_articles_per_qid=args.max_articles_per_qid,
-        enrichment_batch_size=args.enrichment_batch_size,
-        enrichment_site_workers=args.enrichment_site_workers,
-        cache_ttl_s=86_400,
-        skip_existing=args.skip_existing,
-        force=args.force,
-        limit=args.limit,
-    )
 
 
 def _resolve_data_root(args: argparse.Namespace) -> DataRoot:
@@ -329,3 +258,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
+
+
+__all__ = ["build_parser", "main"]
