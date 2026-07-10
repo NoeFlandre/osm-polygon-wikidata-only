@@ -58,6 +58,12 @@ class _Opener(Protocol):
     def open(self, request: urllib.request.Request, *, timeout: float) -> _Response: ...
 
 
+class WikimediaHttpSession(Protocol):
+    """Transport boundary shared by Wikimedia API clients."""
+
+    def read(self, request: urllib.request.Request) -> tuple[bytes, str]: ...
+
+
 @dataclass
 class _HostSession:
     opener: _Opener
@@ -192,7 +198,9 @@ class WikimediaSession:
             with opener.open(request, timeout=self._timeout_s) as response:
                 return response.read(), response.headers.get("Content-Encoding", "")
 
-        return self._scheduler.run(operation)
+        result = self._scheduler.run(operation)
+        self._scheduler.report_success()
+        return result
 
 
 def load_wikimedia_credentials(
@@ -218,6 +226,7 @@ __all__ = [
     "WikimediaAuthenticationError",
     "WikimediaConfigurationError",
     "WikimediaCredentials",
+    "WikimediaHttpSession",
     "WikimediaSession",
     "load_wikimedia_credentials",
 ]
