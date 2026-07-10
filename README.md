@@ -213,6 +213,80 @@ uv run osm-polygon-wikidata-only process-dir \
     --skip-existing
 ```
 
+### Wikimedia Bot Password authentication
+
+Long production runs should authenticate their read-only API requests with a
+Wikimedia Bot Password. Authentication identifies the pipeline to Wikimedia
+and lets the account receive its applicable API request tier. It does not grant
+this project permission to edit Wikimedia.
+
+Create the credentials once:
+
+1. Sign in to the Wikimedia account that will operate the pipeline.
+2. Open [Meta-Wiki Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords).
+3. Enter a descriptive bot name such as `osm-polygon-pipeline`.
+4. Select **Basic rights**, which are required for API reading. Leave editing,
+   page creation, uploading, and administration grants disabled; this pipeline
+   only reads public API data.
+5. Create the Bot Password and copy both generated values immediately. The
+   username includes a suffix, for example `AccountName@osm-polygon-pipeline`;
+   use the complete generated username, not the main account username.
+
+Export them into the current terminal session. Reading the password silently
+keeps it out of shell history:
+
+```bash
+export WIKIMEDIA_BOT_USERNAME='AccountName@osm-polygon-pipeline'
+read -rs WIKIMEDIA_BOT_PASSWORD
+export WIKIMEDIA_BOT_PASSWORD
+```
+
+Paste the generated password at the silent prompt and press Enter. Do not commit
+the password, add it to a checked-in `.env` file, paste it into an issue, or use
+the main Wikimedia account password. The process retains it only in memory.
+
+With both variables present, the application starts at 180 requests per minute
+and gradually ramps toward 1,200 after successful request windows. To choose a
+different authenticated ceiling:
+
+```bash
+export WIKIMEDIA_REQUESTS_PER_MINUTE=600
+```
+
+Usually, omit this override and let the adaptive scheduler work. Wikimedia
+determines the actual tier from the account's standing: authentication alone
+does not guarantee a particular limit. The pipeline keeps at most three requests
+in flight, preserves a separate authenticated cookie session for every API host,
+and automatically reduces its rate when Wikimedia returns HTTP 429 with
+`Retry-After`.
+
+The startup log states either `anonymous` or `authenticated as <username>` and
+the configured ceiling. The password is never logged. Authentication itself is
+verified lazily on the first request to each Wikidata or language-Wikipedia host.
+If only one credential variable is set, configuration stops before processing;
+if Wikimedia rejects the pair, the first API request fails without silently
+falling back to anonymous access.
+
+Troubleshooting:
+
+- If the application names a missing variable, export both variables in the same
+  terminal that launches `uv run`.
+- If authentication is rejected, copy the complete generated bot username,
+  reset or recreate the Bot Password, and export the new values. Changing the
+  main account password can require resetting Bot Passwords.
+- If HTTP 429 responses continue, leave the automatic cooldown in control or
+  lower `WIKIMEDIA_REQUESTS_PER_MINUTE`; do not increase concurrency above three.
+- To revoke access, return to
+  [Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords)
+  and revoke the named Bot Password. Then remove the variables with
+  `unset WIKIMEDIA_BOT_USERNAME WIKIMEDIA_BOT_PASSWORD`.
+
+The implementation follows Wikimedia's official
+[Bot Password](https://www.mediawiki.org/wiki/Manual:Bot_passwords),
+[API login](https://www.mediawiki.org/wiki/API:Login), and
+[API rate-limit](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)
+guidance.
+
 ### Resumable full-dataset command
 
 Run this single command to process every PBF in the data root, publish each
@@ -354,6 +428,11 @@ The HTTP clients honor:
   repeated runs avoid hammering the same endpoint,
 * localized language lists (`--languages`) so we never fetch
   unwanted sitelinks.
+
+For authenticated production processing, follow the
+[Bot Password setup](#wikimedia-bot-password-authentication). Bot Password
+cookies are kept in memory and isolated per Wikimedia API host. Anonymous mode
+remains available when neither credential environment variable is set.
 
 ---
 
