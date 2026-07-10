@@ -25,6 +25,7 @@ from osm_polygon_wikidata_only.config.paths import (
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
 from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary, fetch_qids
+from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgress
 from osm_polygon_wikidata_only.enrichment.wikidata_client import WikidataClient
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaClient
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
@@ -46,6 +47,7 @@ from osm_polygon_wikidata_only.utils.time import utc_now_iso
 from . import rows as row_operations
 from .completeness import IncompleteEnrichmentError
 from .extractor import candidate_to_polygon, polygon_to_dict
+from .heartbeat import EnrichmentHeartbeat
 from .stats import StreamingStats
 
 LOGGER = logging.getLogger(__name__)
@@ -158,18 +160,30 @@ def process_pbf(
     stage_started = time.perf_counter()
     summaries: dict[str, LinkSummary] = {}
     unique_qids = sorted({p.wikidata for p in polygons if p.wikidata})
+    LOGGER.info(
+        "Starting enrichment for %s: %d unique Wikidata QIDs",
+        stem.region,
+        len(unique_qids),
+    )
     if unique_qids:
         # Fetch unique QIDs once, then reuse the summaries for each polygon.
-        unique_summaries = fetch_qids(
-            unique_qids,
-            wikidata_client=wikidata_client,
-            wikipedia_client=wikipedia_client,
-            languages=settings.languages,
-            fetch_full_text=settings.fetch_full_text,
-            max_articles_per_qid=settings.max_articles_per_qid,
-            batch_size=settings.enrichment_batch_size,
-            site_workers=settings.enrichment_site_workers,
-        )
+        progress = EnrichmentProgress(total_qids=len(unique_qids))
+        with EnrichmentHeartbeat(
+            region=stem.region,
+            snapshot=progress.snapshot,
+            log=LOGGER.info,
+        ):
+            unique_summaries = fetch_qids(
+                unique_qids,
+                wikidata_client=wikidata_client,
+                wikipedia_client=wikipedia_client,
+                languages=settings.languages,
+                fetch_full_text=settings.fetch_full_text,
+                max_articles_per_qid=settings.max_articles_per_qid,
+                batch_size=settings.enrichment_batch_size,
+                site_workers=settings.enrichment_site_workers,
+                progress=progress,
+            )
         for s in unique_summaries:
             summaries[s.qid] = s
     failures = [

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+from types import TracebackType
 
 import pyarrow.parquet as pq
 import pytest
@@ -157,9 +159,41 @@ def tiny_pbf(tmp_path: Path) -> Path:
 
 
 def test_process_pbf_writes_three_parquet_and_manifest(
-    tiny_pbf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tiny_pbf: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
+    from osm_polygon_wikidata_only.pipeline import processor as processor_module
+
+    heartbeat_regions: list[str] = []
+    heartbeat_exited: list[bool] = []
+    progress_trackers: list[object] = []
+    real_fetch_qids = processor_module.fetch_qids
+
+    class RecordingHeartbeat:
+        def __init__(self, *, region: str, **_: object) -> None:
+            heartbeat_regions.append(region)
+
+        def __enter__(self) -> RecordingHeartbeat:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
+            heartbeat_exited.append(True)
+
+    def recording_fetch_qids(*args: object, **kwargs: object) -> object:
+        progress_trackers.append(kwargs.get("progress"))
+        return real_fetch_qids(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(processor_module, "EnrichmentHeartbeat", RecordingHeartbeat)
+    monkeypatch.setattr(processor_module, "fetch_qids", recording_fetch_qids)
+    caplog.set_level(logging.INFO, logger=processor_module.LOGGER.name)
 
     candidates = [
         _candidate(osm_id=1, wikidata="Q1", name="A"),
@@ -235,6 +269,11 @@ def test_process_pbf_writes_three_parquet_and_manifest(
         "manifest",
     }
     assert all(seconds >= 0 for seconds in result.stage_timings_s.values())
+    assert heartbeat_regions == ["tiny"]
+    assert heartbeat_exited == [True]
+    assert len(progress_trackers) == 1
+    assert progress_trackers[0] is not None
+    assert "Starting enrichment for tiny: 2 unique Wikidata QIDs" in caplog.text
 
     # Read back polygons parquet and check schema.
     table = pq.read_table(result.polygons_path)

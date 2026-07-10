@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,51 @@ def test_build_clients_keeps_anonymous_scheduler_fixed(tmp_path: Path) -> None:
     for _ in range(200):
         wikidata._scheduler.report_success()
     assert wikidata._scheduler.current_requests_per_minute == 180
+
+
+def test_build_clients_logs_anonymous_mode_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=dependencies.LOGGER.name)
+
+    dependencies.build_clients(
+        Settings(cache_enabled=False),
+        data_root=data_root(tmp_path),
+        environ={},
+    )
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == dependencies.LOGGER.name and "Wikimedia API mode" in record.getMessage()
+    ]
+    assert messages == ["Wikimedia API mode: anonymous (rate ceiling: 180 requests/minute)"]
+
+
+def test_build_clients_logs_authenticated_mode_once_without_password(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=dependencies.LOGGER.name)
+
+    dependencies.build_clients(
+        Settings(cache_enabled=False),
+        data_root=data_root(tmp_path),
+        environ={
+            "WIKIMEDIA_BOT_USERNAME": "NoeFlandre@pipeline",
+            "WIKIMEDIA_BOT_PASSWORD": "secret-value",
+        },
+    )
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == dependencies.LOGGER.name and "Wikimedia API mode" in record.getMessage()
+    ]
+    assert messages == [
+        "Wikimedia API mode: authenticated as NoeFlandre@pipeline "
+        "(rate ceiling: 1200 requests/minute)"
+    ]
+    assert "secret-value" not in caplog.text
 
 
 def test_build_clients_preserves_lower_anonymous_settings_rate(tmp_path: Path) -> None:
