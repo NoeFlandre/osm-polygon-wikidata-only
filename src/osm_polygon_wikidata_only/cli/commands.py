@@ -13,15 +13,12 @@ Shared options: ``--push``, ``--repo-id``, ``--data-root``,
 
 from __future__ import annotations
 
-import argparse
 import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from osm_polygon_wikidata_only.config.paths import DataRoot, resolve_data_root
-from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
@@ -29,16 +26,6 @@ from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_DESCRIPTIONS,
     POLYGON_COLUMNS,
     POLYGON_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.enrichment.wikidata_client import (
-    CachedWikidataClient,
-    HttpWikidataClient,
-    WikidataClient,
-)
-from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
-    CachedWikipediaClient,
-    HttpWikipediaClient,
-    WikipediaClient,
 )
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 from osm_polygon_wikidata_only.hf.repo_layout import (
@@ -51,97 +38,18 @@ from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
     upload_files,
-    upload_manifest,
-    upload_parquet,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
-from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.utils.logging import configure_logging
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
+from .dependencies import build_clients as _build_clients
+from .dependencies import resolve_cli_data_root as _resolve_data_root
 from .parser import build_parser
 from .parser import build_settings as _build_settings
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
-
-
-def _resolve_data_root(args: argparse.Namespace) -> DataRoot:
-    return resolve_data_root(explicit=args.data_root, repo_root=Path.cwd())
-
-
-def _build_clients(
-    settings: Settings, *, data_root: DataRoot
-) -> tuple[WikidataClient, WikipediaClient, JsonFileCache | None]:
-    cache: JsonFileCache | None = None
-    scheduler = AdaptiveRequestScheduler(
-        max_in_flight=settings.wikimedia_max_in_flight,
-        requests_per_minute=settings.wikimedia_requests_per_minute,
-    )
-    wd: WikidataClient = HttpWikidataClient(settings, scheduler=scheduler)
-    wiki: WikipediaClient = HttpWikipediaClient(settings, scheduler=scheduler)
-    if settings.cache_enabled:
-        try:
-            wd_cache = JsonFileCache(data_root.cache_wikidata)
-            wiki_cache = JsonFileCache(data_root.cache_wikipedia)
-            wd = CachedWikidataClient(HttpWikidataClient(settings, scheduler=scheduler), wd_cache)
-            wiki = CachedWikipediaClient(
-                HttpWikipediaClient(settings, scheduler=scheduler), wiki_cache
-            )
-            cache = JsonFileCache(data_root.cache)
-        except OSError as e:
-            LOGGER.debug("Cache disabled: %s", e)
-    return wd, wiki, cache
-
-
-def _maybe_push(
-    args: argparse.Namespace,
-    *,
-    settings: Settings,
-    data_root: DataRoot,
-    results: list[Any],
-) -> None:
-    if not args.push or not results:
-        return
-    hub = StubHfHub() if args.dry_run else None
-    token = None
-    for r in results:
-        commit = args.commit_message or f"Update PBF {r.manifest_entry['source_pbf']}"
-        upload_parquet(
-            settings.repo_id,
-            r.polygons_path,
-            path_in_repo=f"{REMOTE_POLYGONS_DIR}/{r.polygons_path.stem}.parquet",
-            hub=hub,
-            token=token,
-            commit_message=commit,
-        )
-        upload_parquet(
-            settings.repo_id,
-            r.articles_path,
-            path_in_repo=f"{REMOTE_ARTICLES_DIR}/{r.articles_path.stem}.parquet",
-            hub=hub,
-            token=token,
-            commit_message=commit,
-        )
-        upload_parquet(
-            settings.repo_id,
-            r.polygon_articles_path,
-            path_in_repo=f"{REMOTE_LINKS_DIR}/{r.polygon_articles_path.stem}.parquet",
-            hub=hub,
-            token=token,
-            commit_message=commit,
-        )
-    upload_manifest(
-        settings.repo_id,
-        results[-1].manifest_path,
-        path_in_repo=REMOTE_MANIFEST_FILE,
-        hub=hub,
-        token=token,
-        commit_message=args.commit_message or "Update manifest",
-    )
-    if hub is not None:
-        LOGGER.info("Dry-run: %d uploads recorded", len(hub.uploads))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

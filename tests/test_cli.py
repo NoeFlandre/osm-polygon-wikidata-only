@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser
+from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
 
 
 def test_parser_has_two_subcommands() -> None:
@@ -71,3 +71,27 @@ def test_normal_command_defaults_to_every_language_without_article_cap() -> None
     assert settings.languages is None
     assert settings.fetch_full_text is True
     assert settings.max_articles_per_qid is None
+
+
+def test_main_handles_empty_directory_without_network(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path)]) == 0
+
+
+def test_main_drains_dry_run_upload_queue_for_empty_directory(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    assert (
+        main(
+            [
+                "process-dir",
+                str(raw),
+                "--data-root",
+                str(tmp_path),
+                "--push",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
