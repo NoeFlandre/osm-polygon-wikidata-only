@@ -21,11 +21,13 @@ class AdaptiveRequestScheduler:
         max_requests_per_minute: float | None = None,
         minimum_requests_per_minute: float = 60,
         successes_per_increase: int = 100,
+        host_throttle_window_s: float = 10.0,
+        host_throttle_threshold: int = 3,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not 1 <= max_in_flight <= 3:
-            raise ValueError("max_in_flight must be between 1 and 3")
+        if not 1 <= max_in_flight <= 16:
+            raise ValueError("max_in_flight must be between 1 and 16")
         if requests_per_minute <= 0:
             raise ValueError("requests_per_minute must be positive")
         maximum = (
@@ -39,6 +41,10 @@ class AdaptiveRequestScheduler:
             )
         if successes_per_increase <= 0:
             raise ValueError("successes_per_increase must be positive")
+        if host_throttle_window_s <= 0:
+            raise ValueError("host_throttle_window_s must be positive")
+        if host_throttle_threshold < 1:
+            raise ValueError("host_throttle_threshold must be at least 1")
         self._semaphore = threading.BoundedSemaphore(max_in_flight)
         self._current_requests_per_minute = requests_per_minute
         self._max_requests_per_minute = maximum
@@ -50,6 +56,9 @@ class AdaptiveRequestScheduler:
         self._lock = threading.Lock()
         self._next_request_at = 0.0
         self._cooldown_until = 0.0
+        self._host_throttle_window_s = host_throttle_window_s
+        self._host_throttle_threshold = host_throttle_threshold
+        self._host_throttle_events: dict[str, float] = {}
 
     def defer(self, delay_s: float) -> None:
         """Apply one cooldown to every future request."""
@@ -89,6 +98,19 @@ class AdaptiveRequestScheduler:
                 self._current_requests_per_minute / 2,
             )
             self._successful_requests = 0
+
+    def report_host_throttled(self, host: str, delay_s: float) -> None:
+        """Record a per-host throttle; escalate globally only when systemic."""
+        with self._lock:
+            now = self._clock()
+            cutoff = now - self._host_throttle_window_s
+            self._host_throttle_events = {
+                h: t for h, t in self._host_throttle_events.items() if t > cutoff
+            }
+            self._host_throttle_events[host] = now
+            if len(self._host_throttle_events) < self._host_throttle_threshold:
+                return
+        self.report_throttled(delay_s)
 
     def run(self, operation: Callable[[], T]) -> T:
         """Run an operation after acquiring global concurrency and rate capacity."""

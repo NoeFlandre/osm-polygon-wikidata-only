@@ -178,6 +178,88 @@ def test_scheduler_successes_restore_rate_after_throttling() -> None:
     assert scheduler.current_requests_per_minute == 125
 
 
+def test_report_host_throttled_single_host_does_not_escalate() -> None:
+    """A 429 from one host must not trigger the global cooldown."""
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=200,
+        max_requests_per_minute=400,
+        minimum_requests_per_minute=60,
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+
+    scheduler.report_host_throttled("fr.wikipedia.org", 60.0)
+
+    assert scheduler.current_requests_per_minute == 200
+    assert scheduler.run(lambda: "ok") == "ok"
+    assert sleeps == []
+
+
+def test_report_host_throttled_escalates_when_threshold_hosts_fail() -> None:
+    """Three distinct hosts within the window must trigger global backoff."""
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=200,
+        max_requests_per_minute=400,
+        minimum_requests_per_minute=60,
+        successes_per_increase=1,
+        host_throttle_threshold=3,
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+
+    scheduler.report_host_throttled("fr.wikipedia.org", 60.0)
+    scheduler.report_host_throttled("de.wikipedia.org", 60.0)
+    assert scheduler.current_requests_per_minute == 200
+
+    scheduler.report_host_throttled("es.wikipedia.org", 60.0)
+    assert scheduler.current_requests_per_minute == 100
+    assert scheduler.run(lambda: "ok") == "ok"
+    assert sleeps == [60.0]
+
+
+def test_report_host_throttled_prunes_events_outside_window() -> None:
+    """Old events expire, so a slow trickle never escalates."""
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=200,
+        max_requests_per_minute=400,
+        minimum_requests_per_minute=60,
+        host_throttle_window_s=10.0,
+        host_throttle_threshold=3,
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+
+    scheduler.report_host_throttled("fr.wikipedia.org", 5.0)
+    now[0] += 11.0
+    scheduler.report_host_throttled("de.wikipedia.org", 5.0)
+    now[0] += 11.0
+    scheduler.report_host_throttled("es.wikipedia.org", 5.0)
+
+    assert scheduler.current_requests_per_minute == 200
+    assert sleeps == []
+
+
 def test_retry_returns_after_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
     attempts = 0
