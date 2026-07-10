@@ -48,6 +48,8 @@ def build_clients(
     source = os.environ if environ is None else environ
     credentials = load_wikimedia_credentials(source)
     ceiling = _request_rate_ceiling(source, authenticated=credentials is not None)
+    if credentials is None:
+        ceiling = min(ceiling, settings.wikimedia_requests_per_minute)
     initial_rate = min(settings.wikimedia_requests_per_minute, ceiling)
     scheduler = AdaptiveRequestScheduler(
         max_in_flight=settings.wikimedia_max_in_flight,
