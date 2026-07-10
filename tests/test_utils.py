@@ -115,6 +115,69 @@ def test_scheduler_never_exceeds_global_concurrency() -> None:
     assert peak == 3
 
 
+def test_scheduler_raises_rate_after_success_window_without_exceeding_ceiling() -> None:
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=100,
+        max_requests_per_minute=130,
+        successes_per_increase=2,
+    )
+
+    assert scheduler.current_requests_per_minute == 100
+    scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 100
+    scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 125
+    scheduler.report_success()
+    scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 130
+
+
+def test_scheduler_without_higher_ceiling_remains_fixed() -> None:
+    scheduler = AdaptiveRequestScheduler(requests_per_minute=180, successes_per_increase=1)
+
+    scheduler.report_success()
+
+    assert scheduler.current_requests_per_minute == 180
+
+
+def test_scheduler_throttling_applies_cooldown_and_halves_active_rate() -> None:
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=200,
+        max_requests_per_minute=400,
+        minimum_requests_per_minute=60,
+        successes_per_increase=1,
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+
+    scheduler.report_throttled(12)
+
+    assert scheduler.current_requests_per_minute == 100
+    assert scheduler.run(lambda: "ok") == "ok"
+    assert sleeps == [12]
+
+
+def test_scheduler_successes_restore_rate_after_throttling() -> None:
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=200,
+        max_requests_per_minute=400,
+        minimum_requests_per_minute=60,
+        successes_per_increase=1,
+    )
+    scheduler.report_throttled(0)
+
+    scheduler.report_success()
+
+    assert scheduler.current_requests_per_minute == 125
+
+
 def test_retry_returns_after_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
     attempts = 0
