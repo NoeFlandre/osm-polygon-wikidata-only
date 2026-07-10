@@ -274,7 +274,12 @@ def test_parse_wikipedia_response_empty_text_is_empty_text() -> None:
     data = _sample_wiki_response(extract="")
     res = parse_wikipedia_response("en", "enwiki", "Hello", data)
     assert res.status == "empty_text"
-    assert res.article is None
+    # Metadata is preserved on empty body so the linker can build an
+    # Article row with fetch_status="empty_text".
+    assert res.article is not None
+    assert res.article.page_id == 123
+    assert res.article.revision_id == 999
+    assert res.article.full_text == ""
 
 
 def test_parse_wikipedia_response_article_not_found() -> None:

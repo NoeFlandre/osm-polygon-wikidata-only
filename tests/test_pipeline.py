@@ -401,6 +401,118 @@ def test_process_pbf_does_not_publish_when_an_expected_article_fails(
     assert not (data_root.processed_manifests / "processed_pbfs.json").exists()
 
 
+def test_process_pbf_publishes_empty_text_articles_instead_of_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Option C: empty_text results become rows, not PBF-level failures."""
+    from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
+
+    candidates = [
+        _candidate(osm_id=1, wikidata="Q1", name="A"),
+    ]
+
+    class _StubReader:
+        def __init__(self, pbf_path: Path) -> None:
+            self.pbf_path = pbf_path
+
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
+            return list(candidates)
+
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+
+    wd = InMemoryWikidataClient(
+        {
+            "Q1": WikidataEntity(
+                qid="Q1",
+                sitelinks={"enwiki": "A", "frwiki": "A_fr"},
+                labels={"en": "A label"},
+            ),
+        }
+    )
+
+    empty_stub = _make_article("fr", "")
+    wiki = InMemoryWikipediaClient(
+        {
+            ("enwiki", "A"): FetchResult("ok", _make_article("en", "en body")),
+            (
+                "frwiki",
+                "A_fr",
+            ): FetchResult(
+                "empty_text",
+                empty_stub,
+                "extract and exact-revision parse were empty",
+            ),
+        }
+    )
+
+    pbf = tmp_path / "tiny-latest.osm.pbf"
+    pbf.write_bytes(b"")
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    # Must NOT raise: empty_text is data, not an infrastructure failure.
+    result = process_pbf(
+        pbf,
+        data_root=data_root,
+        wikidata_client=wd,
+        wikipedia_client=wiki,
+        settings=Settings(),
+    )
+    assert result.polygon_count == 1
+    assert result.article_count == 2  # en OK + fr empty_text both linked
+    assert result.link_count == 2  # polygon -> both articles
+
+    art_table = pq.read_table(result.articles_path)
+    rows = {row["language"]: row for row in art_table.to_pylist()}
+    assert rows["en"]["fetch_status"] == "ok"
+    assert rows["en"]["full_text"] == "en body"
+    assert rows["fr"]["fetch_status"] == "empty_text"
+    assert rows["fr"]["full_text"] == ""
+    assert rows["fr"]["page_id"] == 10
+    assert rows["fr"]["revision_id"] == 100
+
+    link_table = pq.read_table(result.polygon_articles_path)
+    assert sorted(row["language"] for row in link_table.to_pylist()) == ["en", "fr"]
+
+
+def test_process_pbf_still_raises_for_transient_http_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Option C must NOT swallow rate_limited / http_error / parse_error."""
+    from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
+
+    candidates = [_candidate(osm_id=1, wikidata="Q1", name="A")]
+
+    class _StubReader:
+        def __init__(self, pbf_path: Path) -> None:
+            self.pbf_path = pbf_path
+
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
+            return list(candidates)
+
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+
+    wd = InMemoryWikidataClient({"Q1": WikidataEntity(qid="Q1", sitelinks={"enwiki": "A"})})
+    wiki = InMemoryWikipediaClient(
+        {("enwiki", "A"): FetchResult("rate_limited", None, "503 Service Unavailable")}
+    )
+
+    pbf = tmp_path / "tiny-latest.osm.pbf"
+    pbf.write_bytes(b"")
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    with pytest.raises(IncompleteEnrichmentError, match="enwiki"):
+        process_pbf(
+            pbf,
+            data_root=data_root,
+            wikidata_client=wd,
+            wikipedia_client=wiki,
+            settings=Settings(),
+        )
+    assert not list(data_root.processed.rglob("*.parquet"))
+
+
 # --- orchestrator ------------------------------------------------------
 
 

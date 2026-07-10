@@ -113,10 +113,12 @@ def link_qid(
             fetch_full_text=fetch_full_text,
         )
         summary.statuses[site] = result.status
-        if result.status != "ok" or result.article is None:
+        if result.status == "article_not_found" or result.article is None:
             summary.errors[site] = result.error
             continue
         summary.articles.append(result.article)
+        if result.status != "ok":
+            summary.errors[site] = result.error
 
     return summary
 
@@ -188,8 +190,13 @@ def fetch_qids(
                     continue
                 article_result = fetched[(language, site)][title]
                 summary.statuses[site] = article_result.status
-                if article_result.status == "ok" and article_result.article is not None:
+                if (
+                    article_result.status != "article_not_found"
+                    and article_result.article is not None
+                ):
                     summary.articles.append(article_result.article)
+                    if article_result.status != "ok":
+                        summary.errors[site] = article_result.error
                 else:
                     summary.errors[site] = article_result.error
             if max_articles_per_qid is not None:
