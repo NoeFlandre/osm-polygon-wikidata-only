@@ -384,6 +384,27 @@ def test_authentication_failure_on_one_host_does_not_block_another() -> None:
     assert en_actions == ["query", "login", "query"]
 
 
+def test_authentication_fallback_warns_once_per_session(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=WikimediaSession.__module__)
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=lambda: FakeOpener(login_result={"login": {"result": "Failed"}}),
+    )
+
+    session.read(urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"))
+    session.read(urllib.request.Request("https://de.wikipedia.org/w/api.php?action=query"))
+
+    fallback_records = [
+        record for record in caplog.records if "continuing anonymously" in record.getMessage()
+    ]
+    assert [record.levelno for record in fallback_records] == [logging.WARNING, logging.DEBUG]
+
+
 def test_malformed_login_response_is_sanitized_in_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

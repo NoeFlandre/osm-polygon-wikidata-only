@@ -515,6 +515,43 @@ def test_process_pbf_publishes_empty_text_articles_instead_of_failing(
     assert sorted(row["language"] for row in link_table.to_pylist()) == ["en", "fr"]
 
 
+def test_process_pbf_treats_missing_wikipedia_page_as_non_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale Wikidata sitelink must not abort publication."""
+    from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
+
+    class _StubReader:
+        def __init__(self, pbf_path: Path) -> None:
+            self.pbf_path = pbf_path
+
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
+            return [_candidate(osm_id=1, wikidata="Q1", name="A")]
+
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+    pbf = tmp_path / "tiny-latest.osm.pbf"
+    pbf.write_bytes(b"")
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    wd = InMemoryWikidataClient({"Q1": WikidataEntity(qid="Q1", sitelinks={"cebwiki": "Missing"})})
+    wiki = InMemoryWikipediaClient(
+        {("cebwiki", "Missing"): FetchResult("article_not_found", None, "no pages")}
+    )
+
+    result = process_pbf(
+        pbf,
+        data_root=data_root,
+        wikidata_client=wd,
+        wikipedia_client=wiki,
+        settings=Settings(),
+    )
+
+    assert result.polygon_count == 1
+    assert result.article_count == 0
+    assert result.link_count == 0
+    assert result.manifest_path.exists()
+
+
 def test_process_pbf_still_raises_for_transient_http_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

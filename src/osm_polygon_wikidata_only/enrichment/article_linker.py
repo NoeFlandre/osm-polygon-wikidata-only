@@ -195,13 +195,17 @@ def fetch_qids(
             # Submit one chunk per site per pass. This lets large Wikipedias
             # use spare capacity without putting all of their chunks ahead of
             # every smaller site in the executor's FIFO queue.
-            futures = {executor.submit(fetch_chunk, key, titles): key for key, titles in work}
+            futures = {
+                executor.submit(fetch_chunk, key, titles): len(titles) for key, titles in work
+            }
             for future in as_completed(futures):
                 key, chunk_results = future.result()
                 fetched[key].update(chunk_results)
+                if progress is not None:
+                    progress.advance_articles(futures[future])
                 chunks_remaining[key] -= 1
                 if chunks_remaining[key] == 0 and progress is not None:
-                    progress.complete_site(len(site_titles[key]))
+                    progress.complete_site(0)
         for summary in summaries:
             entity = summary.entity
             if entity is None:

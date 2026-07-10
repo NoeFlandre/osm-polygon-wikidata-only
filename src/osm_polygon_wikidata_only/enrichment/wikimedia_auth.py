@@ -100,6 +100,8 @@ class WikimediaSession:
         self._opener_factory = opener_factory
         self._hosts: dict[str, _HostSession] = {}
         self._hosts_lock = threading.Lock()
+        self._fallback_warning_lock = threading.Lock()
+        self._fallback_warning_emitted = False
 
     def read(self, request: urllib.request.Request) -> tuple[bytes, str]:
         """Authenticate the request host when configured, then read its response."""
@@ -134,14 +136,22 @@ class WikimediaSession:
                 # and let the actual request proceed anonymously
                 # rather than aborting the whole pipeline.
                 state.auth_skipped = True
-                LOGGER.warning(
-                    "Wikimedia Bot Password rejected by %s; continuing anonymously "
-                    "for this host (%s)",
-                    netloc,
-                    error,
-                )
+                self._log_authentication_fallback(netloc, error)
                 return
             state.authenticated = True
+
+    def _log_authentication_fallback(
+        self, netloc: str, error: WikimediaAuthenticationError
+    ) -> None:
+        with self._fallback_warning_lock:
+            first_fallback = not self._fallback_warning_emitted
+            self._fallback_warning_emitted = True
+        log = LOGGER.warning if first_fallback else LOGGER.debug
+        log(
+            "Wikimedia Bot Password rejected by %s; continuing anonymously for this host (%s)",
+            netloc,
+            error,
+        )
 
     def _authenticate(self, opener: _Opener, scheme: str, netloc: str) -> None:
         credentials = self._credentials

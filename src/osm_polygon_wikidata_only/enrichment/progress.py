@@ -53,6 +53,12 @@ class EnrichmentProgress:
             self._sites_completed += 1
             self._articles_attempted += articles_attempted
 
+    def advance_articles(self, count: int) -> None:
+        """Record completed article attempts before their site finishes."""
+        _require_non_negative(count)
+        with self._lock:
+            self._articles_attempted += count
+
     def snapshot(self) -> EnrichmentProgressSnapshot:
         with self._lock:
             return EnrichmentProgressSnapshot(

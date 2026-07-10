@@ -974,6 +974,64 @@ def test_fetch_qids_prioritizes_other_sites_before_more_large_site_chunks() -> N
     assert snapshot.articles_attempted == 5
 
 
+def test_fetch_qids_reports_completed_chunks_before_site_finishes() -> None:
+    class BatchWd(InMemoryWikidataClient):
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            return [self.get_entity(qid) for qid in qids]
+
+    blocked_chunk_started = threading.Event()
+    other_chunk_returned = threading.Event()
+    release_blocked_chunk = threading.Event()
+
+    class GatedBatchWiki(InMemoryWikipediaClient):
+        def fetch_articles(
+            self, language: str, site: str, titles: list[str], *, fetch_full_text: bool = True
+        ) -> dict[str, FetchResult]:
+            if titles == ["Q1", "Q2"]:
+                blocked_chunk_started.set()
+                release_blocked_chunk.wait(timeout=5)
+            else:
+                other_chunk_returned.set()
+            return {
+                title: FetchResult("ok", _sample_article(language, title, title))
+                for title in titles
+            }
+
+    qids = ["Q1", "Q2", "Q3", "Q4"]
+    wd = BatchWd({qid: WikidataEntity(qid=qid, sitelinks={"enwiki": qid}) for qid in qids})
+    progress = EnrichmentProgress(total_qids=0)
+    fetcher = threading.Thread(
+        target=article_linker.fetch_qids,
+        kwargs={
+            "qids": qids,
+            "wikidata_client": wd,
+            "wikipedia_client": GatedBatchWiki({}),
+            "batch_size": 2,
+            "site_workers": 2,
+            "progress": progress,
+        },
+    )
+    fetcher.start()
+
+    assert blocked_chunk_started.wait(timeout=2)
+    assert other_chunk_returned.wait(timeout=2)
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline and progress.snapshot().articles_attempted == 0:
+        time.sleep(0.01)
+    try:
+        snapshot = progress.snapshot()
+        assert snapshot.articles_attempted == 2
+        assert snapshot.sites_completed == 0
+    finally:
+        release_blocked_chunk.set()
+        fetcher.join(timeout=5)
+
+    assert not fetcher.is_alive()
+    final = progress.snapshot()
+    assert final.articles_attempted == 4
+    assert final.sites_completed == final.sites_total == 1
+
+
 def test_fetch_qids_reports_site_progress_as_sites_complete_not_in_input_order() -> None:
     """Regression: Wikipedia progress must update as fast sites finish.
 
