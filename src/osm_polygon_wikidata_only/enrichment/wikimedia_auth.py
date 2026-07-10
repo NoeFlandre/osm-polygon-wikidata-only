@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
+import logging
 import os
 import threading
 import urllib.parse
@@ -14,6 +15,8 @@ from types import TracebackType
 from typing import Protocol, cast
 
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+
+LOGGER = logging.getLogger(__name__)
 
 WIKIMEDIA_BOT_USERNAME = "WIKIMEDIA_BOT_USERNAME"
 WIKIMEDIA_BOT_PASSWORD = "WIKIMEDIA_BOT_PASSWORD"  # noqa: S105 - environment name
@@ -69,6 +72,7 @@ class _HostSession:
     opener: _Opener
     lock: threading.Lock
     authenticated: bool = False
+    auth_skipped: bool = False  # True iff the bot password was rejected here
 
 
 def _cookie_opener() -> _Opener:
@@ -116,12 +120,27 @@ class WikimediaSession:
             return state
 
     def _ensure_authenticated(self, state: _HostSession, scheme: str, netloc: str) -> None:
-        if state.authenticated:
+        if state.authenticated or state.auth_skipped:
             return
         with state.lock:
-            if state.authenticated:
+            if state.authenticated or state.auth_skipped:
                 return
-            self._authenticate(state.opener, scheme, netloc)
+            try:
+                self._authenticate(state.opener, scheme, netloc)
+            except WikimediaAuthenticationError as error:
+                # Bot passwords are bound to a single wiki. When the
+                # session contacts a host where the password is not
+                # registered, we mark the host as "no auth possible"
+                # and let the actual request proceed anonymously
+                # rather than aborting the whole pipeline.
+                state.auth_skipped = True
+                LOGGER.warning(
+                    "Wikimedia Bot Password rejected by %s; continuing anonymously "
+                    "for this host (%s)",
+                    netloc,
+                    error,
+                )
+                return
             state.authenticated = True
 
     def _authenticate(self, opener: _Opener, scheme: str, netloc: str) -> None:

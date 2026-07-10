@@ -33,12 +33,6 @@ from dataclasses import replace
 from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import MEDIAWIKI_API_URL_TEMPLATE, Settings
-from osm_polygon_wikidata_only.enrichment.text_cleaning import (
-    clean_article_text,
-    count_words,
-    estimate_tokens,
-    html_to_plain_text,
-)
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaHttpSession,
     WikimediaSession,
@@ -54,13 +48,21 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
     default_scheduler,
 )
 from osm_polygon_wikidata_only.utils.retry import with_retries
-from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 from .wikipedia.models import (
     BatchWikipediaClient,
     FetchResult,
     WikipediaArticle,
     WikipediaClient,
+)
+from .wikipedia.parsing import (
+    parse_wikipedia_batch_response as _parse_wikipedia_batch_response,
+)
+from .wikipedia.parsing import (
+    parse_wikipedia_response,
+    plain_text_from_parse_response,
+    query_with_extract,
+    revision_id_from_query,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -142,7 +144,7 @@ class HttpWikipediaClient(WikipediaClient):
         )
         if result.status != "empty_text" or not fetch_full_text:
             return result
-        revision_id = _revision_id_from_query(data)
+        revision_id = revision_id_from_query(data)
         if revision_id <= 0:
             return result
         fallback_url = self._build_parse_url(language, revision_id)
@@ -158,7 +160,7 @@ class HttpWikipediaClient(WikipediaClient):
             return FetchResult(status, None, f"parse fallback HTTP {error.code}: {error}")
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             return FetchResult("http_error", None, f"parse fallback failed: {error}")
-        parsed_text = _plain_text_from_parse_response(fallback_data)
+        parsed_text = plain_text_from_parse_response(fallback_data)
         if not parsed_text:
             if result.article is not None:
                 return FetchResult(
@@ -171,7 +173,7 @@ class HttpWikipediaClient(WikipediaClient):
             language,
             site,
             title,
-            _query_with_extract(data, parsed_text),
+            query_with_extract(data, parsed_text),
             wikidata_label=wikidata_label,
             wikidata_description=wikidata_description,
             fetch_full_text=True,
@@ -287,42 +289,6 @@ class HttpWikipediaClient(WikipediaClient):
         if not isinstance(parsed, dict):
             raise ValueError(f"Expected JSON object from {url}, got {type(parsed).__name__}")
         return parsed
-
-
-def _revision_id_from_query(data: dict[str, Any]) -> int:
-    pages = (data.get("query") or {}).get("pages") or {}
-    if not isinstance(pages, dict) or not pages:
-        return 0
-    page = next(iter(pages.values()))
-    if not isinstance(page, dict):
-        return 0
-    revisions = page.get("revisions") or []
-    if not isinstance(revisions, list) or not revisions or not isinstance(revisions[0], dict):
-        return 0
-    return int(revisions[0].get("revid", 0))
-
-
-def _plain_text_from_parse_response(data: dict[str, Any]) -> str:
-    parsed = data.get("parse") or {}
-    if not isinstance(parsed, dict):
-        return ""
-    text = parsed.get("text", "")
-    if isinstance(text, dict):
-        text = text.get("*", "")
-    return html_to_plain_text(text) if isinstance(text, str) else ""
-
-
-def _query_with_extract(data: dict[str, Any], extract: str) -> dict[str, Any]:
-    query = data.get("query") or {}
-    pages = query.get("pages") if isinstance(query, dict) else None
-    if not isinstance(pages, dict) or not pages:
-        return data
-    key, raw_page = next(iter(pages.items()))
-    if not isinstance(raw_page, dict):
-        return data
-    page = dict(raw_page)
-    page["extract"] = extract
-    return {"query": {"pages": {key: page}}}
 
 
 class CachedWikipediaClient(WikipediaClient):
@@ -501,143 +467,6 @@ def _article_from_dict(d: dict[str, Any]) -> WikipediaArticle:
         source_api=d.get("source_api", ""),
         retrieved_at=d.get("retrieved_at", ""),
     )
-
-
-def _parse_wikipedia_batch_response(
-    language: str,
-    site: str,
-    requested: list[str],
-    data: dict[str, Any],
-    *,
-    fetch_full_text: bool,
-) -> dict[str, FetchResult]:
-    """Map an Action API multi-page response back to every requested title."""
-    query = data.get("query")
-    if not isinstance(query, dict):
-        raise ValueError("missing query in batch response")
-    raw_pages = query.get("pages")
-    if not isinstance(raw_pages, dict):
-        raise ValueError("missing query.pages in batch response")
-    pages_by_title = {
-        str(page.get("title")): page
-        for page in raw_pages.values()
-        if isinstance(page, dict) and page.get("title")
-    }
-    aliases: dict[str, str] = {}
-    for key in ("normalized", "redirects"):
-        entries = query.get(key, [])
-        if isinstance(entries, list):
-            for entry in entries:
-                if (
-                    isinstance(entry, dict)
-                    and isinstance(entry.get("from"), str)
-                    and isinstance(entry.get("to"), str)
-                ):
-                    aliases[entry["from"]] = entry["to"]
-
-    out: dict[str, FetchResult] = {}
-    for title in requested:
-        resolved = title
-        seen: set[str] = set()
-        while resolved in aliases and resolved not in seen:
-            seen.add(resolved)
-            resolved = aliases[resolved]
-        page = pages_by_title.get(resolved)
-        if page is None:
-            out[title] = FetchResult("article_not_found", None, "page missing")
-            continue
-        out[title] = parse_wikipedia_response(
-            language,
-            site,
-            title,
-            {"query": {"pages": {"0": page}}},
-            fetch_full_text=fetch_full_text,
-        )
-    return out
-
-
-def parse_wikipedia_response(
-    language: str,
-    site: str,
-    title: str,
-    data: dict[str, Any],
-    *,
-    wikidata_label: str = "",
-    wikidata_description: str = "",
-    fetch_full_text: bool = True,
-) -> FetchResult:
-    """Parse the JSON returned by the MediaWiki Action API.
-
-    Returns an :class:`FetchResult` whose ``status`` is ``ok`` on
-    success, or one of the documented failure statuses otherwise.
-    """
-    try:
-        pages = (data.get("query") or {}).get("pages") or {}
-    except (AttributeError, TypeError):
-        return FetchResult("parse_error", None, "missing query.pages")
-    if not pages:
-        return FetchResult("article_not_found", None, "no pages in response")
-    page = next(iter(pages.values()))
-    if page.get("missing") is not None or "pageid" not in page:
-        return FetchResult("article_not_found", None, "page missing")
-    page_id = int(page.get("pageid", 0))
-    revisions = page.get("revisions") or []
-    if not revisions:
-        return FetchResult("parse_error", None, "no revisions")
-    revision = revisions[0]
-    revision_id = int(revision.get("revid", 0))
-    revision_timestamp = revision.get("timestamp", "")
-    extract = page.get("extract", "") or ""
-    full_text = clean_article_text(extract)
-    # ``exintro`` mode (fetch_full_text=False) returns the lead in ``extract``;
-    # full-text mode returns the entire article in ``extract``. We treat
-    # ``lead_text`` as the first paragraph-ish chunk: the first 500 chars
-    # of the cleaned text. The full body is in ``full_text``.
-    lead_text = ""
-    if extract:
-        snippet = extract.strip().split("\n\n", 1)[0]
-        lead_text = clean_article_text(snippet)[:500]
-    canonical_title = page.get("title", title)
-    url = (
-        page.get("fullurl")
-        or f"https://{language}.wikipedia.org/wiki/{urllib.parse.quote(canonical_title.replace(' ', '_'))}"
-    )
-    thumb = page.get("thumbnail") or {}
-    thumbnail_url = thumb.get("source", "")
-    thumbnail_width = thumb.get("width")
-    thumbnail_height = thumb.get("height")
-    attribution = (
-        f'Text from Wikipedia article "{canonical_title}" ({language}.wikipedia.org); '
-        f"contributors; revision {revision_id}; accessed {utc_now_iso()}; "
-        "licensed under CC BY-SA."
-    )
-    article = WikipediaArticle(
-        language=language,
-        site=site,
-        title=canonical_title,
-        page_id=page_id,
-        revision_id=revision_id,
-        revision_timestamp=revision_timestamp,
-        url=url,
-        lead_text=lead_text,
-        extract=clean_article_text(extract),
-        full_text=full_text,
-        full_text_format="plain_text",
-        thumbnail_url=thumbnail_url,
-        thumbnail_width=thumbnail_width,
-        thumbnail_height=thumbnail_height,
-        categories=[],
-        license="CC BY-SA 4.0",
-        attribution=attribution,
-        source_api="mediawiki_action_api",
-        retrieved_at=utc_now_iso(),
-    )
-    if not full_text:
-        return FetchResult("empty_text", article, "no extract returned by API")
-    # Touch the helpers so they remain referenced in case future code
-    # wants to compute per-article metrics from the article text.
-    _ = (count_words(full_text), estimate_tokens(full_text))
-    return FetchResult("ok", article, "")
 
 
 __all__ = [

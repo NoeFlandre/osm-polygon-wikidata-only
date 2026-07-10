@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from .progress import EnrichmentProgress
@@ -184,9 +184,17 @@ def fetch_qids(
 
         fetched: dict[tuple[str, str], dict[str, FetchResult]] = {}
         with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(requests)))) as executor:
-            for key, site_results, title_count in executor.map(
-                lambda item: fetch_site(*item), requests.items()
-            ):
+            # Submit one task per (language, site) and iterate via
+            # ``as_completed`` so the heartbeat advances as fast sites
+            # finish, regardless of their position in the input dict.
+            # ``executor.map`` yields results in input order, which
+            # would block all progress reporting until the slowest
+            # (often the highest-titled) site finishes.
+            futures = {
+                executor.submit(fetch_site, key, rows): key for key, rows in requests.items()
+            }
+            for future in as_completed(futures):
+                key, site_results, title_count = future.result()
                 fetched[key] = site_results
                 if progress is not None:
                     progress.complete_site(title_count)
