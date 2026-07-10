@@ -115,6 +115,12 @@ def test_scheduler_never_exceeds_global_concurrency() -> None:
     assert peak == 3
 
 
+def test_scheduler_reports_configured_concurrency_without_private_introspection() -> None:
+    scheduler = AdaptiveRequestScheduler(max_in_flight=7, requests_per_minute=100_000)
+
+    assert scheduler.max_in_flight == 7
+
+
 def test_scheduler_raises_rate_after_success_window_without_exceeding_ceiling() -> None:
     scheduler = AdaptiveRequestScheduler(
         requests_per_minute=100,
