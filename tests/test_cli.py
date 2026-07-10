@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from osm_polygon_wikidata_only.cli.commands import build_parser
+from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser
 
 
 def test_parser_has_two_subcommands() -> None:
@@ -63,3 +63,11 @@ def test_parser_accepts_upload_worker_count() -> None:
     parser = build_parser()
     args = parser.parse_args(["process-pbf", "/tmp/x.osm.pbf", "--upload-threads", "8"])
     assert args.upload_threads == 8
+
+
+def test_normal_command_defaults_to_every_language_without_article_cap() -> None:
+    args = build_parser().parse_args(["process-dir", "/tmp/pbfs"])
+    settings = _build_settings(args)
+    assert settings.languages is None
+    assert settings.fetch_full_text is True
+    assert settings.max_articles_per_qid is None

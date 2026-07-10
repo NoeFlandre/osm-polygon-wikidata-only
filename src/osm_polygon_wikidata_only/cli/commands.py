@@ -22,8 +22,6 @@ from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot, resolve_data_root
 from osm_polygon_wikidata_only.config.settings import (
-    DEFAULT_LANGUAGES,
-    DEFAULT_MAX_ARTICLES_PER_QID,
     DEFAULT_REPO_ID,
     DEFAULT_USER_AGENT,
     Settings,
@@ -69,16 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face repo id (org/name)"
     )
     common.add_argument("--user-agent", default=DEFAULT_USER_AGENT, help="Wikipedia/Wikidata UA")
-    common.add_argument(
-        "--languages", default=",".join(DEFAULT_LANGUAGES), help="Comma-separated ISO 639-1 codes"
-    )
+    common.add_argument("--languages", default=None, help="Optional comma-separated language codes")
     common.add_argument(
         "--all-languages", action="store_true", help="Fetch all available sitelinks"
     )
     common.add_argument(
         "--no-full-text", action="store_true", help="Skip Wikipedia full-text fetch"
     )
-    common.add_argument("--max-articles-per-qid", type=int, default=DEFAULT_MAX_ARTICLES_PER_QID)
+    common.add_argument("--max-articles-per-qid", type=int, default=None)
     common.add_argument("--enrichment-batch-size", type=int, default=50)
     common.add_argument("--enrichment-site-workers", type=int, default=5)
     common.add_argument("--limit", type=int, default=None, help="Cap number of polygons per PBF")
@@ -110,7 +106,7 @@ def _parse_languages(arg: str) -> tuple[str, ...]:
 
 
 def _build_settings(args: argparse.Namespace) -> Settings:
-    languages = None if args.all_languages else _parse_languages(args.languages)
+    languages = None if args.all_languages or args.languages is None else _parse_languages(args.languages)
     return Settings(
         repo_id=args.repo_id,
         user_agent=args.user_agent,
