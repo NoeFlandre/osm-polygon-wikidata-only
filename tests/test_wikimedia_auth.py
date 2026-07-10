@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import traceback
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -42,6 +43,12 @@ class FakeResponse:
         return None
 
 
+class RawResponse(FakeResponse):
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self.headers = Message()
+
+
 class FakeOpener:
     def __init__(
         self,
@@ -71,6 +78,18 @@ class FakeOpener:
         if action == "login":
             return FakeResponse(self._login_result)
         return FakeResponse({"query": {"ok": True}})
+
+
+class MalformedLoginOpener(FakeOpener):
+    def open(self, request: urllib.request.Request, *, timeout: float) -> FakeResponse:
+        parameters = urllib.parse.parse_qs(
+            request.data.decode()
+            if request.data is not None
+            else urllib.parse.urlparse(request.full_url).query
+        )
+        if parameters.get("action") == ["login"]:
+            return RawResponse(b"malformed-raw-secret-value")
+        return super().open(request, timeout=timeout)
 
 
 def make_scheduler() -> AdaptiveRequestScheduler:
@@ -262,3 +281,25 @@ def test_authentication_failure_is_sanitized(login_result: object) -> None:
     assert "en.wikipedia.org" in message
     assert "secret-value" not in message
     assert "raw-secret-value" not in message
+
+
+def test_malformed_login_response_is_absent_from_traceback() -> None:
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=MalformedLoginOpener,
+    )
+
+    with pytest.raises(WikimediaAuthenticationError) as captured:
+        session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
+
+    rendered = "".join(
+        traceback.format_exception(
+            type(captured.value), captured.value, captured.value.__traceback__
+        )
+    )
+    assert "raw-secret-value" not in rendered
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__
