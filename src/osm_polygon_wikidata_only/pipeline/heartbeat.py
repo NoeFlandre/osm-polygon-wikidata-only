@@ -81,6 +81,7 @@ class EnrichmentHeartbeat:
                 elapsed_minutes = int(max(0.0, self._clock() - self._started_at) // 60)
                 self._log(
                     f"Enrichment progress for {self._region}: {elapsed_minutes}m elapsed; "
+                    f"phase={snapshot.phase.capitalize()}; "
                     f"Wikidata {snapshot.qids_completed}/{snapshot.qids_total} QIDs; "
                     f"Wikipedia {snapshot.sites_completed}/{snapshot.sites_total} sites, "
                     f"{snapshot.articles_attempted} articles attempted"

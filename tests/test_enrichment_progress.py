@@ -50,6 +50,7 @@ def test_progress_tracker_starts_with_an_immutable_snapshot() -> None:
         sites_completed=0,
         sites_total=0,
         articles_attempted=0,
+        phase="wikidata",
     )
     with pytest.raises(AttributeError):
         snapshot.qids_completed = 1  # type: ignore[misc]
@@ -69,7 +70,7 @@ def test_progress_tracker_records_qid_totals_and_completion() -> None:
 def test_progress_tracker_records_completed_site_and_articles() -> None:
     progress = EnrichmentProgress(total_qids=3)
 
-    progress.set_sites_total(4)
+    progress.start_wikipedia(total_sites=4)
     progress.complete_site(articles_attempted=7)
 
     assert progress.snapshot() == EnrichmentProgressSnapshot(
@@ -78,6 +79,7 @@ def test_progress_tracker_records_completed_site_and_articles() -> None:
         sites_completed=1,
         sites_total=4,
         articles_attempted=7,
+        phase="wikipedia",
     )
 
 
@@ -93,7 +95,7 @@ def test_snapshot_is_not_changed_by_later_updates() -> None:
 
 def test_concurrent_site_updates_never_lose_counts() -> None:
     progress = EnrichmentProgress(total_qids=0)
-    progress.set_sites_total(100)
+    progress.start_wikipedia(total_sites=100)
     threads = [threading.Thread(target=progress.complete_site, args=(1,)) for _ in range(100)]
 
     for thread in threads:
@@ -111,7 +113,7 @@ def test_concurrent_site_updates_never_lose_counts() -> None:
     [
         lambda progress: progress.set_qids_total(-1),
         lambda progress: progress.advance_qids(-1),
-        lambda progress: progress.set_sites_total(-1),
+        lambda progress: progress.start_wikipedia(-1),
         lambda progress: progress.complete_site(-1),
     ],
 )
@@ -125,7 +127,7 @@ def test_progress_tracker_rejects_negative_counts(operation: object) -> None:
 def test_heartbeat_logs_one_snapshot_after_each_two_minute_wait() -> None:
     progress = EnrichmentProgress(total_qids=143)
     progress.advance_qids(143)
-    progress.set_sites_total(64)
+    progress.start_wikipedia(total_sites=64)
     for _ in range(18):
         progress.complete_site(articles_attempted=41)
     stop_event = FakeStopEvent([False, False, True])
@@ -145,6 +147,7 @@ def test_heartbeat_logs_one_snapshot_after_each_two_minute_wait() -> None:
     assert len(messages) == 2
     assert "antarctica" in messages[0]
     assert "2m elapsed" in messages[0]
+    assert "phase=Wikipedia" in messages[0]
     assert "Wikidata 143/143 QIDs" in messages[0]
     assert "Wikipedia 18/64 sites, 738 articles attempted" in messages[0]
     assert "4m elapsed" in messages[1]

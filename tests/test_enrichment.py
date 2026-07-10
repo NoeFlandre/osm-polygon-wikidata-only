@@ -811,6 +811,7 @@ def test_fetch_qids_reports_batched_qid_site_and_article_progress() -> None:
     assert (snapshot.qids_completed, snapshot.qids_total) == (2, 2)
     assert (snapshot.sites_completed, snapshot.sites_total) == (2, 2)
     assert snapshot.articles_attempted == 3
+    assert snapshot.phase == "wikipedia"
 
 
 def test_fetch_qids_reports_qid_progress_for_compatibility_clients() -> None:
@@ -840,6 +841,7 @@ def test_fetch_qids_reports_qid_progress_for_compatibility_clients() -> None:
     assert (snapshot.qids_completed, snapshot.qids_total) == (2, 2)
     assert (snapshot.sites_completed, snapshot.sites_total) == (0, 0)
     assert snapshot.articles_attempted == 0
+    assert snapshot.phase == "wikidata"
 
 
 def test_batch_client_capability_protocols_are_structural() -> None:
