@@ -181,10 +181,10 @@ class WikimediaSession:
             login = login_data.get("login")
             if not isinstance(login, dict) or login.get("result") != "Success":
                 raise ValueError("login rejected")
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             raise WikimediaAuthenticationError(
                 f"Wikimedia Bot Password authentication failed for {netloc}"
-            ) from error
+            ) from None
 
     def _read_json(self, opener: _Opener, request: urllib.request.Request) -> dict[str, object]:
         body, _ = self._read(opener, request)
