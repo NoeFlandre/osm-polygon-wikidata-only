@@ -180,19 +180,21 @@ def fetch_qids(
             key: list(dict.fromkeys(title for _, _, title in rows))
             for key, rows in requests.items()
         }
-        work = [
-            (key, chunk)
-            for key, titles in site_titles.items()
-            for chunk in _chunks(titles, batch_size)
-        ]
-        chunks_remaining = {
-            key: sum(1 for _ in _chunks(titles, batch_size)) for key, titles in site_titles.items()
+        site_chunks = {
+            key: list(_chunks(titles, batch_size)) for key, titles in site_titles.items()
         }
+        work = [
+            (key, chunks[index])
+            for index in range(max(map(len, site_chunks.values()), default=0))
+            for key, chunks in site_chunks.items()
+            if index < len(chunks)
+        ]
+        chunks_remaining = {key: len(chunks) for key, chunks in site_chunks.items()}
         fetched: dict[tuple[str, str], dict[str, FetchResult]] = {key: {} for key in requests}
         with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(work)))) as executor:
-            # Chunks, rather than whole sites, are the work unit. Large
-            # Wikipedias can therefore use otherwise-idle workers instead of
-            # serializing thousands of titles behind one slow request stream.
+            # Submit one chunk per site per pass. This lets large Wikipedias
+            # use spare capacity without putting all of their chunks ahead of
+            # every smaller site in the executor's FIFO queue.
             futures = {executor.submit(fetch_chunk, key, titles): key for key, titles in work}
             for future in as_completed(futures):
                 key, chunk_results = future.result()
