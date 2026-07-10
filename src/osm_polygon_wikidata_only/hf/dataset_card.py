@@ -23,6 +23,7 @@ def render_dataset_card(
     link_columns: list[str],
     link_descriptions: Mapping[str, str],
     primary_lang: str = "en",
+    maintainer: str = "Noé Flandre",
 ) -> str:
     """Render the dataset card markdown.
 
@@ -52,12 +53,14 @@ def render_dataset_card(
         f"# {repo_id}\n\n"
         "OSM polygons tagged with a `wikidata=*` reference, "
         "enriched with Wikidata descriptions and Wikipedia article "
-        "text (per language). One PBF produces three parquet files "
+        "text for every valid language-Wikipedia sitelink, with full text "
+        "and no per-QID article cap. One PBF produces three parquet files "
         "in this Hub:\n\n"
         "- `polygons/<stem>.parquet` — one row per polygon\n"
         "- `articles/<stem>.parquet` — one row per unique Wikipedia article\n"
         "- `polygon_articles/<stem>.parquet` — many-to-many link table\n\n"
         f"Generated on {today}.\n\n"
+        f"Maintained by **{maintainer}**.\n\n"
         f"{schema_section}\n"
         "## Data sources & licenses\n\n"
         "- **OpenStreetMap** polygons: (c) OpenStreetMap contributors, "
@@ -70,7 +73,7 @@ def render_dataset_card(
         "```python\n"
         "from datasets import load_dataset\n"
         'ds = load_dataset("parquet", data_files={\n'
-        '    "polygons": "hf://datasets/{repo_id}/polygons/*.parquet",\n'
+        f'    "polygons": "hf://datasets/{repo_id}/polygons/*.parquet",\n'
         "})\n"
         "```\n"
     )
@@ -98,6 +101,7 @@ def _render_front_matter(
         "  - wikipedia\n"
         "  - polygons\n"
         "  - geospatial\n"
+        "  - multilingual\n"
         "configs:\n"
         "  - config_name: polygons\n"
         "    data_files:\n"

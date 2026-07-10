@@ -238,3 +238,20 @@ def test_render_dataset_card_mentions_licenses() -> None:
     assert "ODbL" in markdown
     assert "CC BY-SA" in markdown
     assert "Wikipedia" in markdown
+
+
+def test_render_dataset_card_identifies_multilingual_scope_and_maintainer() -> None:
+    markdown = render_dataset_card(
+        repo_id="NoeFlandre/osm-polygon-wikidata-only",
+        stats={},
+        polygon_columns=[],
+        polygon_descriptions={},
+        article_columns=[],
+        article_descriptions={},
+        link_columns=[],
+        link_descriptions={},
+    )
+    assert "Noé Flandre" in markdown
+    assert "every valid language-Wikipedia sitelink" in markdown
+    assert "no per-QID article cap" in markdown
+    assert "  - multilingual" in markdown

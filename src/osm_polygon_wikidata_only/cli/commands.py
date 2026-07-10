@@ -26,6 +26,14 @@ from osm_polygon_wikidata_only.config.settings import (
     DEFAULT_USER_AGENT,
     Settings,
 )
+from osm_polygon_wikidata_only.domain.schema import (
+    ARTICLE_COLUMNS,
+    ARTICLE_DESCRIPTIONS,
+    POLYGON_ARTICLE_COLUMNS,
+    POLYGON_ARTICLE_DESCRIPTIONS,
+    POLYGON_COLUMNS,
+    POLYGON_DESCRIPTIONS,
+)
 from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     CachedWikidataClient,
     HttpWikidataClient,
@@ -36,6 +44,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     HttpWikipediaClient,
     WikipediaClient,
 )
+from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
     REMOTE_LINKS_DIR,
@@ -51,6 +60,7 @@ from osm_polygon_wikidata_only.hf.uploader import (
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.utils.logging import configure_logging
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
@@ -252,6 +262,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         snapshots = data_root.cache / "upload_manifest_snapshots"
         snapshot = snapshots / f"{result.polygons_path.stem}.json"
         atomic_write_text(snapshot, result.manifest_path.read_text(encoding="utf-8"))
+        entries = load_manifest(result.manifest_path)
+        aggregate = {
+            key: sum(int(entry.get(key, 0)) for entry in entries.values())
+            for key in ("polygon_count", "article_count", "unique_wikidata_count")
+        }
+        card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
+        atomic_write_text(
+            card_snapshot,
+            render_dataset_card(
+                repo_id=settings.repo_id,
+                stats=aggregate,
+                polygon_columns=list(POLYGON_COLUMNS),
+                polygon_descriptions=POLYGON_DESCRIPTIONS,
+                article_columns=list(ARTICLE_COLUMNS),
+                article_descriptions=ARTICLE_DESCRIPTIONS,
+                link_columns=list(POLYGON_ARTICLE_COLUMNS),
+                link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
+                maintainer="Noé Flandre",
+            ),
+        )
         upload_queue.submit(
             [
                 (result.polygons_path, f"{REMOTE_POLYGONS_DIR}/{result.polygons_path.name}"),
@@ -261,6 +291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{REMOTE_LINKS_DIR}/{result.polygon_articles_path.name}",
                 ),
                 (snapshot, REMOTE_MANIFEST_FILE),
+                (card_snapshot, "README.md"),
             ],
             args.commit_message or f"Update PBF {result.manifest_entry['source_pbf']}",
         )

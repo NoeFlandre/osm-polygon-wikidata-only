@@ -13,6 +13,19 @@ isolation.
 | `hf` | Remote paths, dataset card rendering, and atomic Hub uploads. |
 | `cli` | Argument parsing and dependency wiring only. |
 
+## Completeness and publication
+
+Normal production runs fetch full text for every valid language-Wikipedia
+sitelink with no per-QID article cap. Wikimedia requests share a global
+unauthenticated scheduler capped at three in-flight requests. Successful
+responses are cached atomically; transient failures never satisfy completion.
+
+A PBF is published locally only after every expected article succeeds. Its
+three Parquet files, manifest snapshot, and generated Hugging Face dataset card
+are then queued in one background upload commit while the next PBF begins.
+Failed upload jobs persist under the external data root and resume on the next
+invocation. The dataset and pipeline are maintained by Noé Flandre.
+
 ## Compatibility contract
 
 The CLI, Parquet schemas, manifest paths, deterministic ordering, and public
