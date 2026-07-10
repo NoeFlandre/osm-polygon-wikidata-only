@@ -358,6 +358,11 @@ Wikimedia traffic polite:
   to plain text while preserving the original revision ID.
 * Per-host pacing, retries with jitter, and a shared `429` cooldown remain in
   force when batch jobs run concurrently.
+* Long enrichment stages emit a concise two-minute heartbeat naming the active
+  Wikidata or Wikipedia phase, completed and total QIDs, completed and total
+  Wikipedia sites, and articles attempted. The snapshot confirms liveness; it is
+  not an ETA and does not change request pacing. Short enrichment stages finish
+  without a heartbeat.
 * `--push` publishes every produced Parquet artifact and the final manifest in
   one atomic Hugging Face commit. Transfers use concurrent workers; increase
   `--upload-threads` only when local bandwidth and Hub quotas allow it.
