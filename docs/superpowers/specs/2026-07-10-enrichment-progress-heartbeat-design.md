@@ -28,6 +28,11 @@ Further snapshots appear no more than once every 120 seconds. Existing completio
 and stage-timing logs remain unchanged. Enrichment finishing before the first
 interval produces only the immediate start and existing completion messages.
 
+Dependency construction also emits exactly one INFO startup summary stating
+whether Wikimedia access is `anonymous` or `authenticated as <username>`, plus
+the configured rate ceiling. The password is never included. Authentication
+mode is not repeated in every heartbeat because it does not change during a run.
+
 The snapshot fields are factual counters:
 
 - Wikidata QIDs completed and total unique valid QIDs.
@@ -109,6 +114,8 @@ Implementation follows red-green-refactor:
   shutdown, and cleanup after exceptions.
 - Processor tests first prove the immediate start message, tracker injection,
   region-specific heartbeat construction, and preservation of existing outputs.
+- Dependency logging tests first prove the once-per-run anonymous/authenticated
+  summary, authenticated username, rate ceiling, and password redaction.
 - The complete test, coverage, lint, formatting, typing, and package-build gates
   run before integration.
 
@@ -122,6 +129,8 @@ alter request pacing.
 
 - An immediate INFO message follows extraction and states the unique valid QID
   count.
+- Startup logs state anonymous or authenticated Wikimedia mode exactly once;
+  authenticated logs may identify the username but never the password.
 - A long enrichment emits at most one domain-progress snapshot every 120 seconds.
 - A short enrichment emits no heartbeat snapshot.
 - Snapshots report completed/total QIDs, completed/total Wikipedia sites, attempted
