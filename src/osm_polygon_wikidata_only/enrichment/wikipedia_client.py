@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
 from osm_polygon_wikidata_only.config.settings import MEDIAWIKI_API_URL_TEMPLATE, Settings
@@ -38,6 +38,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     clean_article_text,
     count_words,
     estimate_tokens,
+    html_to_plain_text,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.utils.rate_limit import (
@@ -180,7 +181,7 @@ class HttpWikipediaClient(WikipediaClient):
             return FetchResult("http_error", None, f"HTTP {e.code}: {e}")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             return FetchResult("http_error", None, str(e))
-        return parse_wikipedia_response(
+        result = parse_wikipedia_response(
             language,
             site,
             title,
@@ -189,6 +190,46 @@ class HttpWikipediaClient(WikipediaClient):
             wikidata_description=wikidata_description,
             fetch_full_text=fetch_full_text,
         )
+        if result.status != "empty_text" or not fetch_full_text:
+            return result
+        revision_id = _revision_id_from_query(data)
+        if revision_id <= 0:
+            return result
+        fallback_url = self._build_parse_url(language, revision_id)
+        try:
+            fallback_data = with_retries(
+                lambda: self._http_get(fallback_url),
+                attempts=self._settings.request_max_retries,
+                base_delay=self._settings.request_base_delay_s,
+                retry_on=(urllib.error.URLError, TimeoutError, OSError),
+            )
+        except urllib.error.HTTPError as error:
+            status = "rate_limited" if error.code in (429, 503) else "http_error"
+            return FetchResult(status, None, f"parse fallback HTTP {error.code}: {error}")
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            return FetchResult("http_error", None, f"parse fallback failed: {error}")
+        parsed_text = _plain_text_from_parse_response(fallback_data)
+        if not parsed_text:
+            return FetchResult("empty_text", None, "extract and exact-revision parse were empty")
+        fallback_result = parse_wikipedia_response(
+            language,
+            site,
+            title,
+            _query_with_extract(data, parsed_text),
+            wikidata_label=wikidata_label,
+            wikidata_description=wikidata_description,
+            fetch_full_text=True,
+        )
+        if fallback_result.article is not None:
+            return FetchResult(
+                fallback_result.status,
+                replace(
+                    fallback_result.article,
+                    source_api="mediawiki_action_api_parse_fallback",
+                ),
+                fallback_result.error,
+            )
+        return fallback_result
 
     def fetch_articles(
         self,
@@ -249,6 +290,20 @@ class HttpWikipediaClient(WikipediaClient):
             params["exintro"] = "1"
         return f"{endpoint}?{urllib.parse.urlencode(params)}"
 
+    def _build_parse_url(self, language: str, revision_id: int) -> str:
+        endpoint = MEDIAWIKI_API_URL_TEMPLATE.format(lang=language)
+        params = {
+            "action": "parse",
+            "format": "json",
+            "formatversion": "2",
+            "oldid": str(revision_id),
+            "prop": "text",
+            "disableeditsection": "1",
+            "disablelimitreport": "1",
+            "maxlag": "5",
+        }
+        return f"{endpoint}?{urllib.parse.urlencode(params)}"
+
     def _http_get(self, url: str) -> dict[str, Any]:
         host = urllib.parse.urlparse(url).netloc
         wait_for_host(host, min_interval_s=self._settings.wikipedia_min_interval_s)
@@ -270,7 +325,7 @@ class HttpWikipediaClient(WikipediaClient):
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
-            if e.code == 429:
+            if e.code in (429, 503):
                 delay = retry_after_seconds(
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
@@ -281,6 +336,42 @@ class HttpWikipediaClient(WikipediaClient):
         if not isinstance(parsed, dict):
             raise ValueError(f"Expected JSON object from {url}, got {type(parsed).__name__}")
         return parsed
+
+
+def _revision_id_from_query(data: dict[str, Any]) -> int:
+    pages = (data.get("query") or {}).get("pages") or {}
+    if not isinstance(pages, dict) or not pages:
+        return 0
+    page = next(iter(pages.values()))
+    if not isinstance(page, dict):
+        return 0
+    revisions = page.get("revisions") or []
+    if not isinstance(revisions, list) or not revisions or not isinstance(revisions[0], dict):
+        return 0
+    return int(revisions[0].get("revid", 0))
+
+
+def _plain_text_from_parse_response(data: dict[str, Any]) -> str:
+    parsed = data.get("parse") or {}
+    if not isinstance(parsed, dict):
+        return ""
+    text = parsed.get("text", "")
+    if isinstance(text, dict):
+        text = text.get("*", "")
+    return html_to_plain_text(text) if isinstance(text, str) else ""
+
+
+def _query_with_extract(data: dict[str, Any], extract: str) -> dict[str, Any]:
+    query = data.get("query") or {}
+    pages = query.get("pages") if isinstance(query, dict) else None
+    if not isinstance(pages, dict) or not pages:
+        return data
+    key, raw_page = next(iter(pages.items()))
+    if not isinstance(raw_page, dict):
+        return data
+    page = dict(raw_page)
+    page["extract"] = extract
+    return {"query": {"pages": {key: page}}}
 
 
 class CachedWikipediaClient(WikipediaClient):

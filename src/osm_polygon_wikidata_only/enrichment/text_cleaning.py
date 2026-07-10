@@ -8,10 +8,38 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Literal
+from html.parser import HTMLParser
+from typing import ClassVar, Literal
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _SENTINEL_RE = re.compile(r"\{\{[^}]*\}\}")  # simple {{...}} markers
+
+
+class _RenderedTextParser(HTMLParser):
+    """Collect visible text from MediaWiki parser HTML."""
+
+    _IGNORED: ClassVar[frozenset[str]] = frozenset({"script", "style"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._IGNORED:
+            self._ignored_depth += 1
+        elif tag in {"br", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr"}:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._IGNORED and self._ignored_depth:
+            self._ignored_depth -= 1
+        elif tag in {"div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr"}:
+            self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth:
+            self.parts.append(data)
 
 
 def normalize_whitespace(text: str) -> str:
@@ -42,6 +70,14 @@ def clean_article_text(text: str) -> str:
     return out
 
 
+def html_to_plain_text(html: str) -> str:
+    """Convert rendered MediaWiki HTML to deterministic visible plain text."""
+    parser = _RenderedTextParser()
+    parser.feed(html)
+    parser.close()
+    return clean_article_text("".join(parser.parts))
+
+
 def count_words(text: str) -> int:
     """Approximate whitespace-token word count."""
     if not text:
@@ -66,6 +102,7 @@ __all__ = [
     "clean_article_text",
     "count_words",
     "estimate_tokens",
+    "html_to_plain_text",
     "normalize_unicode",
     "normalize_whitespace",
     "strip_template_markers",

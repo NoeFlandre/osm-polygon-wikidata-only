@@ -19,6 +19,8 @@ Normal production runs fetch full text for every valid language-Wikipedia
 sitelink with no per-QID article cap. Wikimedia requests share a global
 unauthenticated scheduler capped at three in-flight requests. Successful
 responses are cached atomically; transient failures never satisfy completion.
+When TextExtracts is empty for a valid page, enrichment uses the Action API's
+exact-revision parse output as a deterministic plain-text fallback.
 
 A PBF is published locally only after every expected article succeeds. Its
 three Parquet files, manifest snapshot, and generated Hugging Face dataset card
