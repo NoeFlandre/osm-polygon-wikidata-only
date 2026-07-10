@@ -275,6 +275,9 @@ Wikimedia traffic polite:
 * Concrete HTTP clients batch compatible Wikidata and same-language Wikipedia
   requests. The pipeline falls back to the established per-item request path
   if a batch response is incomplete or invalid.
+* If a valid page returns an empty TextExtracts result, the client parses that
+  page's exact revision through the Action API and converts the rendered HTML
+  to plain text while preserving the original revision ID.
 * Per-host pacing, retries with jitter, and a shared `429` cooldown remain in
   force when batch jobs run concurrently.
 * `--push` publishes every produced Parquet artifact and the final manifest in

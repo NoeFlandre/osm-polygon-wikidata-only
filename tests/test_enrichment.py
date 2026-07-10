@@ -12,6 +12,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     clean_article_text,
     count_words,
     estimate_tokens,
+    html_to_plain_text,
     normalize_unicode,
     normalize_whitespace,
     strip_template_markers,
@@ -225,6 +226,11 @@ def test_estimate_tokens_floor_at_1_for_short_text() -> None:
     assert estimate_tokens("a" * 40) == 10
 
 
+def test_html_to_plain_text_keeps_rendered_article_text() -> None:
+    html = "<div><p>First <b>paragraph</b>.</p><h2>History</h2><p>Second&nbsp;part.</p></div>"
+    assert html_to_plain_text(html) == "First paragraph. History Second part."
+
+
 # --- parse_wikipedia_response ------------------------------------------
 
 
@@ -368,6 +374,35 @@ def test_full_text_article_batches_use_individual_requests(
 
     assert calls == ["Alpha", "Beta"]
     assert set(results) == {"Alpha", "Beta"}
+
+
+def test_http_wikipedia_client_falls_back_to_exact_revision_parse_when_extract_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HttpWikipediaClient(Settings(request_base_delay_s=0))
+    query = _sample_wiki_response(extract="", revid=540315, title="حکیم ترمذی")
+    parsed = {
+        "parse": {
+            "title": "حکیم ترمذی",
+            "pageid": 81195,
+            "revid": 540315,
+            "text": '<div class="mw-parser-output"><p>حکیم ترمذی مشہور صوفی نیں۔</p></div>',  # noqa: RUF001
+        }
+    }
+    urls: list[str] = []
+
+    def http_get(url: str) -> dict[str, object]:
+        urls.append(url)
+        return query if len(urls) == 1 else parsed
+
+    monkeypatch.setattr(client, "_http_get", http_get)
+    result = client.fetch_article("pnb", "pnbwiki", "حکیم ترمذی")
+    assert result.status == "ok"
+    assert result.article is not None
+    assert result.article.revision_id == 540315
+    assert "مشہور صوفی" in result.article.full_text
+    assert "action=parse" in urls[1]
+    assert "oldid=540315" in urls[1]
 
 
 def test_cached_wikipedia_client_serves_from_cache(tmp_path: Path) -> None:
