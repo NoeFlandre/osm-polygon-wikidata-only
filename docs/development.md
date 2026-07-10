@@ -12,6 +12,33 @@ Production data belongs under `OSM_POLYGON_DATA_ROOT`; tests use temporary
 directories and in-memory clients. The automated suite must not access the
 network or require a real PBF collection.
 
+## Wikimedia authentication environment
+
+Production operators can provide a Bot Password using the complete generated
+username and secret:
+
+```bash
+export WIKIMEDIA_BOT_USERNAME='AccountName@osm-polygon-pipeline'
+read -rs WIKIMEDIA_BOT_PASSWORD
+export WIKIMEDIA_BOT_PASSWORD
+```
+
+The pair is optional but all-or-nothing. With neither variable, clients remain
+anonymous at 180 requests per minute. With both, dependency construction shares
+one authenticated session and adaptive scheduler across Wikidata and Wikipedia.
+The authenticated ceiling defaults to 1,200 requests per minute and can be
+overridden with a positive number:
+
+```bash
+export WIKIMEDIA_REQUESTS_PER_MINUTE=600
+```
+
+Never use live credentials in tests. Pass an explicit environment mapping and
+an injected fake opener/session, as `tests/test_wikimedia_auth.py` and
+`tests/test_dependencies.py` do. Tests must assert that exception messages and
+representations do not contain passwords. Do not add network-dependent login
+tests to the automated suite.
+
 ## Test-driven changes
 
 Use red-green-refactor: add one focused failing test, confirm the expected

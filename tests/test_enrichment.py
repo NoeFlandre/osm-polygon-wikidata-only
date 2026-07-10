@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.request
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -37,6 +41,25 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     parse_wikipedia_response,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+
+
+class RecordingSession:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+        self.requests: list[urllib.request.Request] = []
+
+    def read(self, request: urllib.request.Request) -> tuple[bytes, str]:
+        self.requests.append(request)
+        return json.dumps(self._payload).encode(), ""
+
+
+class ThrottledSession:
+    def read(self, request: urllib.request.Request) -> tuple[bytes, str]:
+        headers = Message()
+        headers["Retry-After"] = "17"
+        raise urllib.error.HTTPError(request.full_url, 429, "limited", headers, None)
+
 
 # --- QID validation ------------------------------------------------------
 
@@ -141,6 +164,35 @@ def test_http_wikidata_client_get_entities_parses_each_qid(
         "Q1",
         "Q2",
     ]
+
+
+def test_http_wikidata_client_routes_requests_through_injected_session() -> None:
+    session = RecordingSession({"entities": {}})
+    client = HttpWikidataClient(Settings(), session=session)
+
+    assert client._http_get(client._build_url("Q1")) == {"entities": {}}
+
+    assert len(session.requests) == 1
+    headers = dict(session.requests[0].header_items())
+    assert headers["User-agent"] == Settings().user_agent
+    assert headers["Accept-encoding"] == "gzip"
+
+
+def test_http_wikidata_client_reports_429_to_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
+    delays: list[float] = []
+    monkeypatch.setattr(scheduler, "report_throttled", delays.append)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.enrichment.wikidata_client.defer_host", lambda *_: None
+    )
+    client = HttpWikidataClient(Settings(), scheduler=scheduler, session=ThrottledSession())
+
+    with pytest.raises(urllib.error.HTTPError):
+        client._http_get(client._build_url("Q1"))
+
+    assert delays == [17]
 
 
 # --- CachedWikidataClient -----------------------------------------------
@@ -355,6 +407,48 @@ def test_http_wikipedia_client_fetch_articles_returns_results_by_requested_title
     monkeypatch.setattr(client, "_http_get", lambda url: data)
     results = client.fetch_articles("en", "enwiki", ["Alpha", "Beta"], fetch_full_text=False)
     assert [results[title].article.title for title in ("Alpha", "Beta")] == ["Alpha", "Beta"]
+
+
+def test_http_wikipedia_client_routes_requests_through_injected_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {"query": {"pages": {}}}
+    session = RecordingSession(payload)
+    client = HttpWikipediaClient(Settings(), session=session)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.enrichment.wikipedia_client.wait_for_host",
+        lambda *_, **__: None,
+    )
+
+    url = client._build_url("en", "Alpha", fetch_full_text=True)
+    assert client._http_get(url) == payload
+
+    assert len(session.requests) == 1
+    headers = dict(session.requests[0].header_items())
+    assert headers["User-agent"] == Settings().user_agent
+    assert headers["Accept"] == "application/json"
+    assert headers["Accept-encoding"] == "gzip"
+
+
+def test_http_wikipedia_client_reports_429_to_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
+    delays: list[float] = []
+    monkeypatch.setattr(scheduler, "report_throttled", delays.append)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.enrichment.wikipedia_client.defer_host", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.enrichment.wikipedia_client.wait_for_host",
+        lambda *_, **__: None,
+    )
+    client = HttpWikipediaClient(Settings(), scheduler=scheduler, session=ThrottledSession())
+
+    with pytest.raises(urllib.error.HTTPError):
+        client._http_get(client._build_url("en", "Alpha", fetch_full_text=True))
+
+    assert delays == [17]
 
 
 def test_http_clients_request_maxlag_for_background_work() -> None:
