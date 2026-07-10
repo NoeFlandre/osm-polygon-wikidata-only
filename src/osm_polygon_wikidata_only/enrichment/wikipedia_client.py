@@ -210,6 +210,12 @@ class HttpWikipediaClient(WikipediaClient):
             return FetchResult("http_error", None, f"parse fallback failed: {error}")
         parsed_text = _plain_text_from_parse_response(fallback_data)
         if not parsed_text:
+            if result.article is not None:
+                return FetchResult(
+                    "empty_text",
+                    result.article,
+                    "extract and exact-revision parse were empty",
+                )
             return FetchResult("empty_text", None, "extract and exact-revision parse were empty")
         fallback_result = parse_wikipedia_response(
             language,
@@ -682,7 +688,7 @@ def parse_wikipedia_response(
         retrieved_at=utc_now_iso(),
     )
     if not full_text:
-        return FetchResult("empty_text", None, "no extract returned by API")
+        return FetchResult("empty_text", article, "no extract returned by API")
     # Touch the helpers so they remain referenced in case future code
     # wants to compute per-article metrics from the article text.
     _ = (count_words(full_text), estimate_tokens(full_text))

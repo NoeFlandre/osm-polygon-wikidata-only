@@ -44,9 +44,19 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     HttpWikipediaClient,
     WikipediaClient,
 )
+from osm_polygon_wikidata_only.hf.coverage_map import (
+    ensure_world_land,
+    generate_coverage_map,
+    load_centroids_from_parquet,
+)
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
+from osm_polygon_wikidata_only.hf.dataset_stats import (
+    compute_dataset_stats,
+    render_stats_section,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
+    REMOTE_COVERAGE_MAP_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
@@ -267,6 +277,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             key: sum(int(entry.get(key, 0)) for entry in entries.values())
             for key in ("polygon_count", "article_count", "unique_wikidata_count")
         }
+        dataset_stats = compute_dataset_stats(data_root.processed)
+        stats_section = render_stats_section(dataset_stats)
         card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
         atomic_write_text(
             card_snapshot,
@@ -280,8 +292,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 link_columns=list(POLYGON_ARTICLE_COLUMNS),
                 link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
                 maintainer="Noé Flandre",
+                stats_section=stats_section,
             ),
         )
+        map_snapshot = snapshots / f"{result.polygons_path.stem}-coverage_map.png"
+        lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
+        try:
+            land_path = ensure_world_land(data_root.cache)
+        except Exception:
+            LOGGER.warning("Could not fetch world land data; map will omit continents")
+            land_path = None
+        generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
         upload_queue.submit(
             [
                 (result.polygons_path, f"{REMOTE_POLYGONS_DIR}/{result.polygons_path.name}"),
@@ -292,6 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 (snapshot, REMOTE_MANIFEST_FILE),
                 (card_snapshot, "README.md"),
+                (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
             ],
             args.commit_message or f"Update PBF {result.manifest_entry['source_pbf']}",
         )

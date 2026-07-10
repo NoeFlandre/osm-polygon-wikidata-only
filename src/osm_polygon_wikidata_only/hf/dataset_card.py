@@ -24,11 +24,16 @@ def render_dataset_card(
     link_descriptions: Mapping[str, str],
     primary_lang: str = "en",
     maintainer: str = "Noé Flandre",
+    stats_section: str | None = None,
 ) -> str:
     """Render the dataset card markdown.
 
     ``stats`` may include ``polygon_count``, ``article_count``,
     ``unique_wikidata_count``, etc.
+
+    ``stats_section`` is an optional pre-rendered markdown block of
+    factual dataset statistics (snapshot, funnel, language distribution).
+    When provided, it is included verbatim after the coverage map.
     """
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     rc_lines = _render_front_matter(
@@ -49,6 +54,8 @@ def render_dataset_card(
         link_descriptions,
     )
 
+    stats_block = stats_section if stats_section is not None else ""
+
     body = (
         f"# {repo_id}\n\n"
         "OSM polygons tagged with a `wikidata=*` reference, "
@@ -61,6 +68,9 @@ def render_dataset_card(
         "- `polygon_articles/<stem>.parquet` — many-to-many link table\n\n"
         f"Generated on {today}.\n\n"
         f"Maintained by **{maintainer}**.\n\n"
+        "## Coverage\n\n"
+        "![Coverage Map](coverage_map.png)\n\n"
+        f"{stats_block}\n"
         f"{schema_section}\n"
         "## Data sources & licenses\n\n"
         "- **OpenStreetMap** polygons: (c) OpenStreetMap contributors, "

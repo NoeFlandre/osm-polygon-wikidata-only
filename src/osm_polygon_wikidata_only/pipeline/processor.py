@@ -254,8 +254,8 @@ def _article_row(aid: str, qid: str, art: WikipediaArticle, summary: LinkSummary
         license=art.license,
         attribution=art.attribution,
         source_api=art.source_api,
-        fetch_status="ok",
-        fetch_error="",
+        fetch_status=_article_fetch_status(art.site, summary),
+        fetch_error=_article_fetch_error(art.site, summary),
         content_hash=content_hash(art.full_text),
     )
 
@@ -264,6 +264,16 @@ def content_hash(text: str) -> str:
     from osm_polygon_wikidata_only.domain.ids import content_hash as _hash
 
     return _hash(text)
+
+
+def _article_fetch_status(site: str, summary: LinkSummary) -> str:
+    return summary.statuses.get(site, "ok")
+
+
+def _article_fetch_error(site: str, summary: LinkSummary) -> str:
+    if _article_fetch_status(site, summary) == "ok":
+        return ""
+    return summary.errors.get(site, "")
 
 
 def process_pbf(
@@ -344,6 +354,7 @@ def process_pbf(
         f"{summary.qid}:{site} ({summary.statuses.get(site, 'unknown')}): {error}"
         for summary in summaries.values()
         for site, error in summary.errors.items()
+        if summary.statuses.get(site) != "empty_text"
     ]
     if failures:
         raise IncompleteEnrichmentError(

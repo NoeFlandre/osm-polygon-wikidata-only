@@ -14,6 +14,9 @@ REMOTE_MANIFESTS_DIR = "manifests"
 # The per-file manifest, one entry per source PBF.
 REMOTE_MANIFEST_FILE = "manifests/processed_pbfs.json"
 
+# The coverage map PNG embedded in the dataset README.
+REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
+
 
 def remote_parquet_path(subdir: str, stem: str) -> str:
     """Build the deterministic remote path for a per-PBF parquet file."""
@@ -34,6 +37,7 @@ def local_to_remote(local_path: Path, processed_subdir: str) -> str:
 
 __all__ = [
     "REMOTE_ARTICLES_DIR",
+    "REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_LINKS_DIR",
     "REMOTE_MANIFESTS_DIR",
     "REMOTE_MANIFEST_FILE",

@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "datasets>=3.0",
     "huggingface-hub>=0.24",
+    "matplotlib>=3.8",
     "osmium>=3.7",
     "pyarrow>=16",
 ]
@@ -58,6 +59,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S", "B", "SIM"]
 "src/osm_polygon_wikidata_only/enrichment/*.py" = ["S310"]
+"src/osm_polygon_wikidata_only/hf/coverage_map.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/uploader.py" = ["S310"]
 
 [tool.ruff.format]
