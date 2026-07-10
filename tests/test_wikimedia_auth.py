@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
-import traceback
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -14,7 +14,6 @@ from types import TracebackType
 import pytest
 
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
-    WikimediaAuthenticationError,
     WikimediaConfigurationError,
     WikimediaCredentials,
     WikimediaSession,
@@ -38,7 +37,7 @@ class FakeResponse:
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         return None
 
@@ -265,7 +264,18 @@ def test_concurrent_first_use_logs_in_once() -> None:
         {"unexpected": "raw-secret-value"},
     ],
 )
-def test_authentication_failure_is_sanitized(login_result: object) -> None:
+def test_authentication_failure_falls_back_to_anonymous_for_that_host(
+    login_result: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Per-host fallback: a rejected bot password must not crash the pipeline.
+
+    Bot passwords are bound to a single wiki. When a session contacts
+    a different wiki where the password is not registered, the auth
+    attempt is rejected. The session must mark that host as
+    non-authenticatable and continue to serve the request anonymously
+    rather than raising and aborting the whole pipeline.
+    """
+    caplog.set_level(logging.WARNING, logger=WikimediaSession.__module__)
     session = WikimediaSession(
         scheduler=make_scheduler(),
         timeout_s=5,
@@ -274,16 +284,116 @@ def test_authentication_failure_is_sanitized(login_result: object) -> None:
         opener_factory=lambda: FakeOpener(login_result=login_result),
     )
 
-    with pytest.raises(WikimediaAuthenticationError) as captured:
-        session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
+    body, _ = session.read(
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query")
+    )
 
-    message = str(captured.value)
-    assert "en.wikipedia.org" in message
-    assert "secret-value" not in message
-    assert "raw-secret-value" not in message
+    # The data request still came back (anonymously).
+    assert json.loads(body) == {"query": {"ok": True}}
+    # The auth failure must be surfaced as a warning, not an exception.
+    assert not any(
+        record.levelno >= logging.ERROR and "raw-secret-value" in record.getMessage()
+        for record in caplog.records
+    )
+    assert any(
+        record.levelno == logging.WARNING
+        and "ru.wikipedia.org" in record.getMessage()
+        and "anonymous" in record.getMessage().lower()
+        for record in caplog.records
+    )
 
 
-def test_malformed_login_response_is_absent_from_traceback() -> None:
+def test_authentication_failure_does_not_retry_on_subsequent_requests() -> None:
+    """After a per-host auth failure, the session must not try again."""
+    opener = FakeOpener(login_result={"login": {"result": "Failed"}})
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=lambda: opener,
+    )
+
+    for _ in range(3):
+        session.read(urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"))
+
+    actions = [
+        urllib.parse.parse_qs(
+            item.data.decode()
+            if item.data is not None
+            else urllib.parse.urlparse(item.full_url).query
+        ).get("action", [""])[0]
+        for item in opener.requests
+    ]
+    # First call: token + login (rejected) + data query. Subsequent
+    # calls: only the data query because the host is marked as
+    # ``auth_skipped``.
+    assert actions.count("login") == 1
+    assert actions.count("query") == 4
+
+
+def test_authentication_failure_on_one_host_does_not_block_another() -> None:
+    """A rejected password on host A must not leak into host B."""
+    openers: list[FakeOpener] = []
+
+    def factory() -> FakeOpener:
+        opener = FakeOpener()
+        openers.append(opener)
+        return opener
+
+    # First opener (ru.wikipedia) rejects the password; second
+    # (en.wikipedia) accepts it.
+    openers.append(FakeOpener(login_result={"login": {"result": "Failed"}}))
+    en_opener = FakeOpener()
+    state = {"index": 0}
+
+    def round_robin_factory() -> FakeOpener:
+        current = state["index"]
+        state["index"] += 1
+        return openers[current] if current == 0 else en_opener
+
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=round_robin_factory,
+    )
+
+    # Contact ru.wikipedia first; auth should be silently skipped.
+    body_ru, _ = session.read(
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query")
+    )
+    assert json.loads(body_ru) == {"query": {"ok": True}}
+
+    # Now contact en.wikipedia; the second opener should log in
+    # successfully and the data request should complete.
+    body_en, _ = session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query")
+    )
+    assert json.loads(body_en) == {"query": {"ok": True}}
+
+    en_actions = [
+        urllib.parse.parse_qs(
+            item.data.decode()
+            if item.data is not None
+            else urllib.parse.urlparse(item.full_url).query
+        ).get("action", [""])[0]
+        for item in en_opener.requests
+    ]
+    assert en_actions == ["query", "login", "query"]
+
+
+def test_malformed_login_response_is_sanitized_in_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bot password rejected with a malformed body must not leak the body.
+
+    The pipeline no longer raises on per-host auth failure; instead it
+    logs a warning. The warning must scrub the raw body so that any
+    echo of the secret is not written to logs.
+    """
+    caplog.set_level(logging.WARNING, logger=WikimediaSession.__module__)
     session = WikimediaSession(
         scheduler=make_scheduler(),
         timeout_s=5,
@@ -292,14 +402,13 @@ def test_malformed_login_response_is_absent_from_traceback() -> None:
         opener_factory=MalformedLoginOpener,
     )
 
-    with pytest.raises(WikimediaAuthenticationError) as captured:
-        session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
-
-    rendered = "".join(
-        traceback.format_exception(
-            type(captured.value), captured.value, captured.value.__traceback__
-        )
+    body, _ = session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query")
     )
+
+    # The request must still come back, just anonymously.
+    assert json.loads(body) == {"query": {"ok": True}}
+    # The warning must mention the host but must not echo the body.
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "en.wikipedia.org" in rendered
     assert "raw-secret-value" not in rendered
-    assert captured.value.__cause__ is None
-    assert captured.value.__suppress_context__

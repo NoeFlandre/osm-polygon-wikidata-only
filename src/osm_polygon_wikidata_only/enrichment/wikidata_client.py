@@ -40,25 +40,13 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
 from osm_polygon_wikidata_only.utils.retry import with_retries
 
 from .wikidata.models import BatchWikidataClient, Sitelinks, WikidataClient, WikidataEntity
+from .wikidata.parsing import is_valid_qid, language_from_site, parse_wikidata_entity
 
 LOGGER = logging.getLogger(__name__)
 
 
 class WikidataError(RuntimeError):
     """Raised when the Wikidata client cannot return a result."""
-
-
-_QID_PATTERN = __import__("re").compile(r"^Q[1-9]\d*$")
-
-
-def is_valid_qid(qid: str) -> bool:
-    """Return True if ``qid`` looks like a valid Wikidata identifier.
-
-    A QID is the letter ``Q`` followed by a positive integer.
-    """
-    if not qid:
-        return False
-    return bool(_QID_PATTERN.match(qid))
 
 
 class InMemoryWikidataClient(WikidataClient):
@@ -240,83 +228,6 @@ def _entity_from_dict(d: dict[str, Any]) -> WikidataEntity:
         labels=dict(d.get("labels", {})),
         descriptions=dict(d.get("descriptions", {})),
         aliases={k: list(v) for k, v in d.get("aliases", {}).items()},
-    )
-
-
-def parse_wikidata_entity(qid: str, data: dict[str, Any]) -> WikidataEntity | None:
-    """Parse the JSON returned by ``wbgetentities`` into a :class:`WikidataEntity`.
-
-    Returns ``None`` if the entity is missing or the response is
-    malformed.
-    """
-    entities = data.get("entities") or {}
-    if qid not in entities:
-        return None
-    raw = entities[qid]
-    if raw.get("missing") is not None:
-        return None
-    sitelinks: Sitelinks = {}
-    for site, info in (raw.get("sitelinks") or {}).items():
-        if not _is_language_wiki(site):
-            continue
-        title = info.get("title")
-        if title:
-            sitelinks[site] = title
-    labels = {k: v.get("value", "") for k, v in (raw.get("labels") or {}).items()}
-    descriptions = {k: v.get("value", "") for k, v in (raw.get("descriptions") or {}).items()}
-    aliases: dict[str, list[str]] = {}
-    for k, vals in (raw.get("aliases") or {}).items():
-        aliases[k] = [v.get("value", "") for v in vals if v.get("value")]
-    return WikidataEntity(
-        qid=qid,
-        sitelinks=sitelinks,
-        labels=labels,
-        descriptions=descriptions,
-        aliases=aliases,
-    )
-
-
-def language_from_site(site: str) -> str:
-    """Convert a Wikidata sitelink site to a language code.
-
-    ``enwiki`` -> ``en``; ``frwiki`` -> ``fr``; etc. Returns the
-    original site if it does not end in ``wiki``.
-    """
-    if site.endswith("wiki"):
-        language = site[: -len("wiki")]
-        aliases = {"be_x_old": "be-tarask"}
-        return aliases.get(language, language.replace("_", "-"))
-    return site
-
-
-def _is_language_wiki(site: str) -> bool:
-    """True iff ``site`` is a language-Wikipedia sitelink key.
-
-    Wikimedia database names include long and compound language identifiers,
-    so length is not a valid discriminator. Explicitly exclude non-Wikipedia
-    projects and accept lowercase language database identifiers.
-    """
-    if not site.endswith("wiki") or len(site) <= len("wiki"):
-        return False
-    lang = site[: -len("wiki")]
-    non_language_projects = {
-        "commons",
-        "foundation",
-        "incubator",
-        "mediawiki",
-        "meta",
-        "outreach",
-        "sources",
-        "species",
-        "strategy",
-        "test",
-        "test2",
-        "wikidata",
-    }
-    return (
-        lang not in non_language_projects
-        and lang == lang.lower()
-        and all(character.isalnum() or character in "_-" for character in lang)
     )
 
 

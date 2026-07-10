@@ -62,7 +62,10 @@ def test_build_clients_logs_anonymous_mode_once(
         for record in caplog.records
         if record.name == dependencies.LOGGER.name and "Wikimedia API mode" in record.getMessage()
     ]
-    assert messages == ["Wikimedia API mode: anonymous (rate ceiling: 180 requests/minute)"]
+    assert messages == [
+        "Wikimedia API mode: anonymous (rate ceiling: 180 requests/minute, in-flight=3, "
+        "host interval: 0.50s)"
+    ]
 
 
 def test_build_clients_logs_authenticated_mode_once_without_password(
@@ -86,7 +89,7 @@ def test_build_clients_logs_authenticated_mode_once_without_password(
     ]
     assert messages == [
         "Wikimedia API mode: authenticated as NoeFlandre@pipeline "
-        "(rate ceiling: 1200 requests/minute)"
+        "(rate ceiling: 1200 requests/minute, in-flight=8, host interval: 0.05s)"
     ]
     assert "secret-value" not in caplog.text
 
@@ -124,6 +127,55 @@ def test_build_clients_shares_authenticated_session_and_ramps_to_default_ceiling
     for _ in range(2_000):
         wikidata._scheduler.report_success()
     assert wikidata._scheduler.current_requests_per_minute == 1_200
+
+
+def test_authenticated_clients_use_higher_concurrency_and_lower_host_interval(
+    tmp_path: Path,
+) -> None:
+    """Authenticated bot sessions must exploit their higher rate ceiling.
+
+    Anonymous users are limited by both a per-host interval and a tiny
+    ``max_in_flight`` semaphore, which is polite for unauthenticated
+    traffic. Authenticated bot sessions have a much higher Wikimedia
+    ceiling, so the per-host interval should drop and concurrency
+    should scale so the 1200 rpm ceiling is actually reachable.
+    """
+    wikidata, wikipedia, _ = dependencies.build_clients(
+        Settings(cache_enabled=False),
+        data_root=data_root(tmp_path),
+        environ={
+            "WIKIMEDIA_BOT_USERNAME": "NoeFlandre@pipeline",
+            "WIKIMEDIA_BOT_PASSWORD": "secret-value",
+        },
+    )
+
+    assert isinstance(wikidata, dependencies.HttpWikidataClient)
+    assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
+    # The shared scheduler must allow enough concurrent requests to
+    # plausibly reach the 1200 rpm ceiling.
+    assert wikidata._scheduler._semaphore._value >= 8  # type: ignore[attr-defined]
+    # The HTTP clients must use a much tighter per-host pacing.
+    assert wikidata._settings.wikidata_min_interval_s <= 0.1
+    assert wikipedia._settings.wikipedia_min_interval_s <= 0.1
+    # The scheduler must start at (or near) the ceiling, not at the
+    # conservative anonymous 180 rpm.
+    assert wikidata._scheduler.current_requests_per_minute >= 600
+
+
+def test_anonymous_clients_preserve_conservative_throttling(tmp_path: Path) -> None:
+    wikidata, wikipedia, _ = dependencies.build_clients(
+        Settings(cache_enabled=False),
+        data_root=data_root(tmp_path),
+        environ={},
+    )
+
+    assert isinstance(wikidata, dependencies.HttpWikidataClient)
+    assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
+    # Anonymous sessions must keep the polite defaults.
+    assert wikidata._scheduler._semaphore._value == 3  # type: ignore[attr-defined]
+    assert wikidata._settings.wikidata_min_interval_s == pytest.approx(1.2)
+    assert wikipedia._settings.wikipedia_min_interval_s == pytest.approx(0.5)
+    assert wikidata._scheduler.current_requests_per_minute == pytest.approx(180.0)
 
 
 def test_build_clients_applies_authenticated_rate_ceiling_override(tmp_path: Path) -> None:
