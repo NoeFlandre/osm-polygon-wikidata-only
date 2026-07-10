@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -19,7 +18,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaClien
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 
-from .processor import ExtractedPbf, ProcessResult, extract_pbf, process_extracted_pbf
+from .processor import ProcessResult, extract_pbf, process_extracted_pbf
 
 LOGGER = logging.getLogger(__name__)
 
@@ -72,23 +71,19 @@ def orchestrate(
         return []
 
     results: list[ProcessResult] = []
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pbf-extraction") as executor:
-        current = executor.submit(extract_pbf, selected[0], settings=settings)
-        for index in range(len(selected)):
-            extracted: ExtractedPbf = current.result()
-            if index + 1 < len(selected):
-                current = executor.submit(extract_pbf, selected[index + 1], settings=settings)
-            result = process_extracted_pbf(
-                extracted,
-                data_root=data_root,
-                wikidata_client=wikidata_client,
-                wikipedia_client=wikipedia_client,
-                settings=settings,
-                cache=cache,
-            )
-            results.append(result)
-            if on_complete is not None:
-                on_complete(result)
+    for pbf in selected:
+        extracted = extract_pbf(pbf, settings=settings)
+        result = process_extracted_pbf(
+            extracted,
+            data_root=data_root,
+            wikidata_client=wikidata_client,
+            wikipedia_client=wikipedia_client,
+            settings=settings,
+            cache=cache,
+        )
+        results.append(result)
+        if on_complete is not None:
+            on_complete(result)
     return results
 
 
