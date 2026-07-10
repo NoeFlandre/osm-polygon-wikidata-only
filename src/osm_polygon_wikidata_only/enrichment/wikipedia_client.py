@@ -28,10 +28,9 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import replace
+from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import MEDIAWIKI_API_URL_TEMPLATE, Settings
 from osm_polygon_wikidata_only.enrichment.text_cleaning import (
@@ -53,76 +52,14 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
+from .wikipedia.models import (
+    BatchWikipediaClient,
+    FetchResult,
+    WikipediaArticle,
+    WikipediaClient,
+)
+
 LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class WikipediaArticle:
-    """One Wikipedia article fetched for a given language + page."""
-
-    language: str
-    site: str  # e.g. "enwiki"
-    title: str
-    page_id: int
-    revision_id: int
-    revision_timestamp: str
-    url: str
-    lead_text: str
-    extract: str
-    full_text: str
-    full_text_format: str
-    thumbnail_url: str
-    thumbnail_width: int | None
-    thumbnail_height: int | None
-    categories: list[str]
-    license: str
-    attribution: str
-    source_api: str
-    retrieved_at: str
-
-
-@dataclass(frozen=True)
-class FetchResult:
-    """Result of one article fetch: the article plus a status string.
-
-    ``status`` is one of the documented :data:`FETCH_STATUSES` from
-    :mod:`domain.schema`. On failure, ``article`` is ``None``.
-    """
-
-    status: str
-    article: WikipediaArticle | None
-    error: str = ""
-
-
-class WikipediaClient(ABC):
-    """Abstract interface for fetching a single article."""
-
-    @abstractmethod
-    def fetch_article(
-        self,
-        language: str,
-        site: str,
-        title: str,
-        *,
-        wikidata_label: str = "",
-        wikidata_description: str = "",
-        wikidata_aliases: list[str] | None = None,
-        fetch_full_text: bool = True,
-    ) -> FetchResult: ...
-
-
-@runtime_checkable
-class BatchWikipediaClient(Protocol):
-    """Optional capability for fetching same-site titles in one request."""
-
-    def fetch_articles(
-        self,
-        language: str,
-        site: str,
-        titles: Iterable[str],
-        *,
-        fetch_full_text: bool = True,
-    ) -> dict[str, FetchResult]: ...
 
 
 class InMemoryWikipediaClient(WikipediaClient):
