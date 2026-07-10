@@ -4,6 +4,19 @@ version = "0.1.0"
 description = "Extract OSM polygons with wikidata tags into a Hugging Face dataset."
 readme = "README.md"
 requires-python = ">=3.12"
+authors = [{ name = "Noé Flandre" }]
+license = { file = "LICENSE" }
+keywords = ["openstreetmap", "wikidata", "wikipedia", "geospatial", "parquet"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
 dependencies = [
     "datasets>=3.0",
     "huggingface-hub>=0.24",
@@ -14,6 +27,11 @@ dependencies = [
 
 [project.scripts]
 osm-polygon-wikidata-only = "osm_polygon_wikidata_only.cli.app:run"
+
+[project.urls]
+Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
+Issues = "https://github.com/NoeFlandre/osm-polygon-wikidata-only/issues"
+Dataset = "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only"
 
 [build-system]
 requires = ["hatchling"]
@@ -87,4 +105,4 @@ source = ["src/osm_polygon_wikidata_only"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-fail_under = 60
+fail_under = 80

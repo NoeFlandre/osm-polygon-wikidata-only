@@ -146,7 +146,7 @@ Improve public presentation without promising unsupported behavior:
 - Add `CONTRIBUTING.md` and `SECURITY.md`. Identify Noé Flandre as maintainer;
   security reporting uses a non-sensitive public contact mechanism already
   present in project metadata, not an invented private address.
-- Complete PEP 621 metadata in `pyproject.toml`: author, license file, keywords,
+- Complete PEP 621 metadata in `pyproject.toml`: author, Apache-2.0 license file, keywords,
   classifiers, project URLs, typed-package marker, and supported Python version.
 - Add `py.typed` to the wheel and verify source/wheel contents.
 - Add a GitHub Actions workflow that installs with `uv` and runs tests with
