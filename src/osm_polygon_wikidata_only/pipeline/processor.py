@@ -45,7 +45,7 @@ from osm_polygon_wikidata_only.io.pbf_reader import (  # noqa: F401  (kept for r
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 from . import rows as row_operations
-from .completeness import IncompleteEnrichmentError
+from .completeness import NON_FATAL_FETCH_STATUSES, IncompleteEnrichmentError
 from .extractor import candidate_to_polygon, polygon_to_dict
 from .heartbeat import EnrichmentHeartbeat
 from .stats import StreamingStats
@@ -232,7 +232,7 @@ def process_extracted_pbf(
         f"{summary.qid}:{site} ({summary.statuses.get(site, 'unknown')}): {error}"
         for summary in summaries.values()
         for site, error in summary.errors.items()
-        if summary.statuses.get(site) != "empty_text"
+        if summary.statuses.get(site) not in NON_FATAL_FETCH_STATUSES
     ]
     if failures:
         raise IncompleteEnrichmentError(

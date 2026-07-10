@@ -113,6 +113,7 @@ def test_concurrent_site_updates_never_lose_counts() -> None:
     [
         lambda progress: progress.set_qids_total(-1),
         lambda progress: progress.advance_qids(-1),
+        lambda progress: progress.advance_articles(-1),
         lambda progress: progress.start_wikipedia(-1),
         lambda progress: progress.complete_site(-1),
     ],
