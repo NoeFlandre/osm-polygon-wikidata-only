@@ -55,3 +55,8 @@ def test_status_field_persists(tmp_path: Path) -> None:
     assert entry is not None
     assert entry.status == "error"
     assert entry.parsed_result is None
+
+
+def test_contract_version_mismatch_is_a_cache_miss(tmp_path: Path) -> None:
+    JsonFileCache(tmp_path, contract_version="v1").set("foo", {"a": 1})
+    assert JsonFileCache(tmp_path, contract_version="v2").get("foo") is None

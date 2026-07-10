@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
 from osm_polygon_wikidata_only.utils import rate_limit
 from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
+from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.time import parse_iso_to_z, utc_now_iso
 
 
@@ -60,3 +62,51 @@ def test_defer_host_moves_next_request_after_429(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(rate_limit.time, "monotonic", lambda: 10.0)
     rate_limit.defer_host("en.wikipedia.org", 30.0)
     assert rate_limit.next_wait_seconds("en.wikipedia.org") == 30.0
+
+
+def test_scheduler_global_cooldown_delays_next_request() -> None:
+    now = [10.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    scheduler = AdaptiveRequestScheduler(
+        max_in_flight=3,
+        requests_per_minute=60,
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+    scheduler.defer(12.0)
+    assert scheduler.run(lambda: "ok") == "ok"
+    assert sleeps == [12.0]
+
+
+def test_scheduler_never_exceeds_global_concurrency() -> None:
+    scheduler = AdaptiveRequestScheduler(max_in_flight=3, requests_per_minute=100_000)
+    three_entered = threading.Event()
+    release = threading.Event()
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def work() -> None:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            if active == 3:
+                three_entered.set()
+        release.wait(timeout=2)
+        with lock:
+            active -= 1
+
+    threads = [threading.Thread(target=lambda: scheduler.run(work)) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    assert three_entered.wait(timeout=2)
+    release.set()
+    for thread in threads:
+        thread.join(timeout=2)
+    assert peak == 3
