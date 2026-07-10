@@ -8,6 +8,7 @@ Face dataset.
 
 * **GitHub**: <https://github.com/NoeFlandre/osm-polygon-wikidata-only>
 * **Hugging Face dataset**: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only>
+* **Maintainer**: Noé Flandre
 
 ---
 
