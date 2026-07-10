@@ -606,7 +606,7 @@ def test_orchestrate_submits_each_result_before_processing_next_pbf(
     ]
 
 
-def test_orchestrate_prefetches_next_pbf_while_processing_current(
+def test_orchestrate_does_not_extract_next_pbf_while_processing_current(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from osm_polygon_wikidata_only.pipeline import orchestrator as orchestrator_module
@@ -626,8 +626,8 @@ def test_orchestrate_prefetches_next_pbf_while_processing_current(
 
     def fake_process(extracted: SimpleNamespace, **_: object) -> object:
         if extracted.path == first:
-            assert second_extraction_started.wait(timeout=2), (
-                "the next PBF must start extracting before current enrichment begins"
+            assert not second_extraction_started.wait(timeout=0.2), (
+                "CPU-heavy extraction must not compete with current enrichment"
             )
         events.append(f"process:{extracted.path.name}")
         return type(
@@ -656,9 +656,9 @@ def test_orchestrate_prefetches_next_pbf_while_processing_current(
     ]
     assert events == [
         "extract:a.osm.pbf",
-        "extract:b.osm.pbf",
         "process:a.osm.pbf",
         "submit:a.osm.pbf",
+        "extract:b.osm.pbf",
         "process:b.osm.pbf",
         "submit:b.osm.pbf",
     ]
