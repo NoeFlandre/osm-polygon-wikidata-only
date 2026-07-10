@@ -166,7 +166,7 @@ def fetch_qids(
                 if allow is None or language in allow:
                     requests.setdefault((language, site), []).append((index, site, title))
         if progress is not None:
-            progress.set_sites_total(len(requests))
+            progress.start_wikipedia(len(requests))
 
         def fetch_site(
             key: tuple[str, str], rows: list[tuple[int, str, str]]

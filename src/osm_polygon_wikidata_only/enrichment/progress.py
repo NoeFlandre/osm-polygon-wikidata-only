@@ -15,6 +15,7 @@ class EnrichmentProgressSnapshot:
     sites_completed: int
     sites_total: int
     articles_attempted: int
+    phase: str
 
 
 class EnrichmentProgress:
@@ -27,6 +28,7 @@ class EnrichmentProgress:
         self._sites_completed = 0
         self._sites_total = 0
         self._articles_attempted = 0
+        self._phase = "wikidata"
         self._lock = threading.Lock()
 
     def set_qids_total(self, total: int) -> None:
@@ -39,10 +41,11 @@ class EnrichmentProgress:
         with self._lock:
             self._qids_completed += count
 
-    def set_sites_total(self, total: int) -> None:
-        _require_non_negative(total)
+    def start_wikipedia(self, total_sites: int) -> None:
+        _require_non_negative(total_sites)
         with self._lock:
-            self._sites_total = total
+            self._sites_total = total_sites
+            self._phase = "wikipedia"
 
     def complete_site(self, articles_attempted: int) -> None:
         _require_non_negative(articles_attempted)
@@ -58,6 +61,7 @@ class EnrichmentProgress:
                 sites_completed=self._sites_completed,
                 sites_total=self._sites_total,
                 articles_attempted=self._articles_attempted,
+                phase=self._phase,
             )
 
 
