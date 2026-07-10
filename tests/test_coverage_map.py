@@ -266,7 +266,10 @@ def test_map_uploaded_alongside_parquet_in_orchestrator_callback(
     a.write_bytes(b"")
     b.write_bytes(b"")
 
-    # Stub process_pbf to return a minimal result without touching the real pipeline.
+    # Stub both pipeline stages to avoid touching the real PBF reader.
+    def fake_extract(path: Path, **_: object) -> Path:
+        return path
+
     def fake_process(path: Path, **_: object) -> object:
         polygons_path = data_root.processed_polygons / f"{path.stem}.parquet"
         return type(
@@ -281,7 +284,10 @@ def test_map_uploaded_alongside_parquet_in_orchestrator_callback(
             },
         )()
 
-    monkeypatch.setattr("osm_polygon_wikidata_only.pipeline.orchestrator.process_pbf", fake_process)
+    monkeypatch.setattr("osm_polygon_wikidata_only.pipeline.orchestrator.extract_pbf", fake_extract)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.pipeline.orchestrator.process_extracted_pbf", fake_process
+    )
 
     callback_invocations: list[str] = []
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -18,7 +19,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaClien
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 
-from .processor import ProcessResult, process_pbf
+from .processor import ExtractedPbf, ProcessResult, extract_pbf, process_extracted_pbf
 
 LOGGER = logging.getLogger(__name__)
 
@@ -56,26 +57,38 @@ def orchestrate(
         return []
     LOGGER.info("Orchestrating over %d PBF(s)", len(pbfs))
 
-    results: list[ProcessResult] = []
+    selected: list[Path] = []
+    processed_entries = (
+        load_manifest(data_root.processed_manifests / "processed_pbfs.json")
+        if settings.skip_existing and not settings.force
+        else {}
+    )
     for pbf in pbfs:
-        if (
-            not settings.force
-            and settings.skip_existing
-            and already_processed(data_root.processed_manifests / "processed_pbfs.json", pbf.name)
-        ):
+        if pbf.name in processed_entries:
             LOGGER.info("Skipping %s (already processed, --skip-existing)", pbf.name)
             continue
-        result = process_pbf(
-            pbf,
-            data_root=data_root,
-            wikidata_client=wikidata_client,
-            wikipedia_client=wikipedia_client,
-            settings=settings,
-            cache=cache,
-        )
-        results.append(result)
-        if on_complete is not None:
-            on_complete(result)
+        selected.append(pbf)
+    if not selected:
+        return []
+
+    results: list[ProcessResult] = []
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pbf-extraction") as executor:
+        current = executor.submit(extract_pbf, selected[0], settings=settings)
+        for index in range(len(selected)):
+            extracted: ExtractedPbf = current.result()
+            if index + 1 < len(selected):
+                current = executor.submit(extract_pbf, selected[index + 1], settings=settings)
+            result = process_extracted_pbf(
+                extracted,
+                data_root=data_root,
+                wikidata_client=wikidata_client,
+                wikipedia_client=wikipedia_client,
+                settings=settings,
+                cache=cache,
+            )
+            results.append(result)
+            if on_complete is not None:
+                on_complete(result)
     return results
 
 
