@@ -92,6 +92,15 @@ class ProcessResult:
     stage_timings_s: dict[str, float]
 
 
+@dataclass(frozen=True, slots=True)
+class ExtractedPbf:
+    """A PBF whose polygon rows are ready for enrichment."""
+
+    stem: PbfStem
+    polygons: tuple[Polygon, ...]
+    extraction_duration_s: float
+
+
 def _local_path(processed_dir: Path, subdir: str, stem: str) -> Path:
     return processed_dir / subdir / f"{stem}.parquet"
 
@@ -120,8 +129,20 @@ def process_pbf(
     5. Write the three parquet files.
     6. Upsert the manifest entry.
     """
+    extracted = extract_pbf(pbf_path, settings=settings)
+    return process_extracted_pbf(
+        extracted,
+        data_root=data_root,
+        wikidata_client=wikidata_client,
+        wikipedia_client=wikipedia_client,
+        settings=settings,
+        cache=cache,
+    )
+
+
+def extract_pbf(pbf_path: Path, *, settings: Settings) -> ExtractedPbf:
+    """Read and convert one PBF without performing network or durable writes."""
     stem = PbfStem.from_path(pbf_path)
-    timings: dict[str, float] = {}
     stage_started = time.perf_counter()
     extracted_at = utc_now_iso()
     LOGGER.info("Processing %s (region=%s)", pbf_path.name, stem.region)
@@ -154,7 +175,28 @@ def process_pbf(
         for candidate in reader.collect_polygon_candidates():
             add_candidate(candidate)
     LOGGER.info("Extracted %d polygons from %s", len(polygons), pbf_path.name)
-    timings["extract"] = time.perf_counter() - stage_started
+    return ExtractedPbf(
+        stem=stem,
+        polygons=tuple(polygons),
+        extraction_duration_s=time.perf_counter() - stage_started,
+    )
+
+
+def process_extracted_pbf(
+    extracted: ExtractedPbf,
+    *,
+    data_root: DataRoot,
+    wikidata_client: WikidataClient,
+    wikipedia_client: WikipediaClient,
+    settings: Settings,
+    cache: JsonFileCache | None = None,
+) -> ProcessResult:
+    """Enrich and publish a previously extracted PBF in the calling thread."""
+    del cache  # Reserved for compatibility with the synchronous facade.
+    stem = extracted.stem
+    pbf_path = stem.path
+    polygons = list(extracted.polygons)
+    timings = {"extract": extracted.extraction_duration_s}
 
     # Step 3-4: enrich.
     stage_started = time.perf_counter()
@@ -292,4 +334,12 @@ def _link_to_dict(link: PolygonArticleLink) -> dict[str, Any]:
     return dict(link.__dict__)
 
 
-__all__ = ["IncompleteEnrichmentError", "PbfStem", "ProcessResult", "process_pbf"]
+__all__ = [
+    "ExtractedPbf",
+    "IncompleteEnrichmentError",
+    "PbfStem",
+    "ProcessResult",
+    "extract_pbf",
+    "process_extracted_pbf",
+    "process_pbf",
+]

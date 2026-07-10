@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 
 import pyarrow.parquet as pq
 import pytest
@@ -576,11 +577,17 @@ def test_orchestrate_submits_each_result_before_processing_next_pbf(
     second.write_bytes(b"")
     events: list[str] = []
 
-    def fake_process(path: Path, **_: object) -> object:
-        events.append(f"process:{path.name}")
-        return type("Result", (), {"manifest_entry": {"source_pbf": path.name}})()
+    def fake_extract(path: Path, **_: object) -> SimpleNamespace:
+        return SimpleNamespace(path=path)
 
-    monkeypatch.setattr("osm_polygon_wikidata_only.pipeline.orchestrator.process_pbf", fake_process)
+    def fake_process(extracted: SimpleNamespace, **_: object) -> object:
+        events.append(f"process:{extracted.path.name}")
+        return type("Result", (), {"manifest_entry": {"source_pbf": extracted.path.name}})()
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.pipeline.orchestrator.extract_pbf", fake_extract)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.pipeline.orchestrator.process_extracted_pbf", fake_process
+    )
     data_root = DataRoot(tmp_path / "data")
     data_root.ensure()
     orchestrate(
@@ -592,6 +599,64 @@ def test_orchestrate_submits_each_result_before_processing_next_pbf(
         on_complete=lambda result: events.append(f"submit:{result.manifest_entry['source_pbf']}"),
     )
     assert events == [
+        "process:a.osm.pbf",
+        "submit:a.osm.pbf",
+        "process:b.osm.pbf",
+        "submit:b.osm.pbf",
+    ]
+
+
+def test_orchestrate_prefetches_next_pbf_while_processing_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.pipeline import orchestrator as orchestrator_module
+
+    first = tmp_path / "a.osm.pbf"
+    second = tmp_path / "b.osm.pbf"
+    first.write_bytes(b"")
+    second.write_bytes(b"")
+    second_extraction_started = threading.Event()
+    events: list[str] = []
+
+    def fake_extract(path: Path, **_: object) -> SimpleNamespace:
+        events.append(f"extract:{path.name}")
+        if path == second:
+            second_extraction_started.set()
+        return SimpleNamespace(path=path)
+
+    def fake_process(extracted: SimpleNamespace, **_: object) -> object:
+        if extracted.path == first:
+            assert second_extraction_started.wait(timeout=2), (
+                "the next PBF must start extracting before current enrichment begins"
+            )
+        events.append(f"process:{extracted.path.name}")
+        return type(
+            "Result",
+            (),
+            {"manifest_entry": {"source_pbf": extracted.path.name}},
+        )()
+
+    monkeypatch.setattr(orchestrator_module, "extract_pbf", fake_extract, raising=False)
+    monkeypatch.setattr(orchestrator_module, "process_extracted_pbf", fake_process, raising=False)
+    data_root = DataRoot(tmp_path / "data")
+    data_root.ensure()
+
+    results = orchestrate(
+        [first, second],
+        data_root=data_root,
+        settings=Settings(),
+        wikidata_client=InMemoryWikidataClient({}),
+        wikipedia_client=InMemoryWikipediaClient({}),
+        on_complete=lambda result: events.append(f"submit:{result.manifest_entry['source_pbf']}"),
+    )
+
+    assert [result.manifest_entry["source_pbf"] for result in results] == [
+        "a.osm.pbf",
+        "b.osm.pbf",
+    ]
+    assert events == [
+        "extract:a.osm.pbf",
+        "extract:b.osm.pbf",
         "process:a.osm.pbf",
         "submit:a.osm.pbf",
         "process:b.osm.pbf",
