@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common.add_argument("--max-articles-per-qid", type=int, default=None)
     common.add_argument("--enrichment-batch-size", type=int, default=50)
-    common.add_argument("--enrichment-site-workers", type=int, default=5)
+    common.add_argument("--enrichment-site-workers", type=int, default=8)
     common.add_argument("--limit", type=int, default=None, help="Cap number of polygons per PBF")
     common.add_argument("--skip-existing", action="store_true")
     common.add_argument("--force", action="store_true")

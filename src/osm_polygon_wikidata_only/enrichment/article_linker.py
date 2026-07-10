@@ -168,36 +168,38 @@ def fetch_qids(
         if progress is not None:
             progress.start_wikipedia(len(requests))
 
-        def fetch_site(
-            key: tuple[str, str], rows: list[tuple[int, str, str]]
-        ) -> tuple[tuple[str, str], dict[str, FetchResult], int]:
+        def fetch_chunk(
+            key: tuple[str, str], titles: list[str]
+        ) -> tuple[tuple[str, str], dict[str, FetchResult]]:
             language, site = key
-            results: dict[str, FetchResult] = {}
-            titles = list(dict.fromkeys(title for _, _, title in rows))
-            for chunk in _chunks(titles, batch_size):
-                results.update(
-                    wikipedia_client.fetch_articles(
-                        language, site, chunk, fetch_full_text=fetch_full_text
-                    )
-                )
-            return key, results, len(titles)
+            return key, wikipedia_client.fetch_articles(
+                language, site, titles, fetch_full_text=fetch_full_text
+            )
 
-        fetched: dict[tuple[str, str], dict[str, FetchResult]] = {}
-        with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(requests)))) as executor:
-            # Submit one task per (language, site) and iterate via
-            # ``as_completed`` so the heartbeat advances as fast sites
-            # finish, regardless of their position in the input dict.
-            # ``executor.map`` yields results in input order, which
-            # would block all progress reporting until the slowest
-            # (often the highest-titled) site finishes.
-            futures = {
-                executor.submit(fetch_site, key, rows): key for key, rows in requests.items()
-            }
+        site_titles = {
+            key: list(dict.fromkeys(title for _, _, title in rows))
+            for key, rows in requests.items()
+        }
+        work = [
+            (key, chunk)
+            for key, titles in site_titles.items()
+            for chunk in _chunks(titles, batch_size)
+        ]
+        chunks_remaining = {
+            key: sum(1 for _ in _chunks(titles, batch_size)) for key, titles in site_titles.items()
+        }
+        fetched: dict[tuple[str, str], dict[str, FetchResult]] = {key: {} for key in requests}
+        with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(work)))) as executor:
+            # Chunks, rather than whole sites, are the work unit. Large
+            # Wikipedias can therefore use otherwise-idle workers instead of
+            # serializing thousands of titles behind one slow request stream.
+            futures = {executor.submit(fetch_chunk, key, titles): key for key, titles in work}
             for future in as_completed(futures):
-                key, site_results, title_count = future.result()
-                fetched[key] = site_results
-                if progress is not None:
-                    progress.complete_site(title_count)
+                key, chunk_results = future.result()
+                fetched[key].update(chunk_results)
+                chunks_remaining[key] -= 1
+                if chunks_remaining[key] == 0 and progress is not None:
+                    progress.complete_site(len(site_titles[key]))
         for summary in summaries:
             entity = summary.entity
             if entity is None:
