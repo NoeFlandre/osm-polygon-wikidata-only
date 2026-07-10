@@ -39,6 +39,10 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     estimate_tokens,
     html_to_plain_text,
 )
+from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
+    WikimediaHttpSession,
+    WikimediaSession,
+)
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.utils.rate_limit import (
     defer_host,
@@ -86,10 +90,19 @@ class HttpWikipediaClient(WikipediaClient):
     """Real Wikipedia client using the MediaWiki Action API."""
 
     def __init__(
-        self, settings: Settings, *, scheduler: AdaptiveRequestScheduler | None = None
+        self,
+        settings: Settings,
+        *,
+        scheduler: AdaptiveRequestScheduler | None = None,
+        session: WikimediaHttpSession | None = None,
     ) -> None:
         self._settings = settings
         self._scheduler = scheduler or default_scheduler()
+        self._session = session or WikimediaSession(
+            scheduler=self._scheduler,
+            timeout_s=settings.request_timeout_s,
+            user_agent=settings.user_agent,
+        )
 
     def fetch_article(
         self,
@@ -259,12 +272,7 @@ class HttpWikipediaClient(WikipediaClient):
             },
         )
         try:
-
-            def request() -> tuple[bytes, str]:
-                with urllib.request.urlopen(req, timeout=self._settings.request_timeout_s) as resp:
-                    return resp.read(), resp.headers.get("Content-Encoding", "")
-
-            raw, encoding = self._scheduler.run(request)
+            raw, encoding = self._session.read(req)
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
@@ -273,7 +281,7 @@ class HttpWikipediaClient(WikipediaClient):
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
                 defer_host(host, delay)
-                self._scheduler.defer(delay)
+                self._scheduler.report_throttled(delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
