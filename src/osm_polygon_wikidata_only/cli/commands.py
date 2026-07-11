@@ -25,6 +25,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
     completed_region_stems,
 )
+from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
@@ -70,6 +71,48 @@ from .parser import build_settings as _build_settings
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
 
+def _write_readme_snapshot(data_root: DataRoot, repo_id: str, destination: Path) -> None:
+    """Render the canonical dataset README from current local artifacts."""
+    entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
+    aggregate = {
+        key: sum(int(entry.get(key, 0)) for entry in entries.values())
+        for key in ("polygon_count", "article_count", "unique_wikidata_count")
+    }
+    stats_section = render_stats_section(compute_dataset_stats(data_root.processed))
+    atomic_write_text(
+        destination,
+        render_dataset_card(
+            repo_id=repo_id,
+            stats=aggregate,
+            polygon_columns=list(POLYGON_COLUMNS),
+            polygon_descriptions=POLYGON_DESCRIPTIONS,
+            article_columns=list(ARTICLE_COLUMNS),
+            article_descriptions=ARTICLE_DESCRIPTIONS,
+            link_columns=list(POLYGON_ARTICLE_COLUMNS),
+            link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
+            maintainer="Noé Flandre",
+            stats_section=stats_section,
+        ),
+    )
+
+
+def _augmentation_upload_files(
+    result: AugmentationResult, processed_root: Path, readme: Path
+) -> list[tuple[Path, str]]:
+    artifacts = (
+        result.wikipedia_documents_path,
+        result.wikipedia_sections_path,
+        result.wikivoyage_documents_path,
+        result.wikivoyage_sections_path,
+        result.wikidata_facts_path,
+        result.manifest_path,
+    )
+    return [
+        *((path, str(path.relative_to(processed_root))) for path in artifacts),
+        (readme, "README.md"),
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -98,17 +141,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             augmentation_results.append(augmentation_result)
             LOGGER.info("Augmented %s: %s", stem, augmentation_result.counts)
             if args.push:
-                files = [
-                    (path, str(path.relative_to(data_root.processed)))
-                    for path in (
-                        augmentation_result.wikipedia_documents_path,
-                        augmentation_result.wikipedia_sections_path,
-                        augmentation_result.wikivoyage_documents_path,
-                        augmentation_result.wikivoyage_sections_path,
-                        augmentation_result.wikidata_facts_path,
-                        augmentation_result.manifest_path,
-                    )
-                ]
+                snapshots = data_root.cache / "augmentation_upload_snapshots"
+                readme_snapshot = snapshots / f"{stem}-README.md"
+                _write_readme_snapshot(data_root, settings.repo_id, readme_snapshot)
+                files = _augmentation_upload_files(
+                    augmentation_result, data_root.processed, readme_snapshot
+                )
                 upload_files(
                     settings.repo_id,
                     files,
@@ -156,29 +194,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         snapshots = data_root.cache / "upload_manifest_snapshots"
         snapshot = snapshots / f"{result.polygons_path.stem}.json"
         atomic_write_text(snapshot, result.manifest_path.read_text(encoding="utf-8"))
-        entries = load_manifest(result.manifest_path)
-        aggregate = {
-            key: sum(int(entry.get(key, 0)) for entry in entries.values())
-            for key in ("polygon_count", "article_count", "unique_wikidata_count")
-        }
-        dataset_stats = compute_dataset_stats(data_root.processed)
-        stats_section = render_stats_section(dataset_stats)
         card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
-        atomic_write_text(
-            card_snapshot,
-            render_dataset_card(
-                repo_id=settings.repo_id,
-                stats=aggregate,
-                polygon_columns=list(POLYGON_COLUMNS),
-                polygon_descriptions=POLYGON_DESCRIPTIONS,
-                article_columns=list(ARTICLE_COLUMNS),
-                article_descriptions=ARTICLE_DESCRIPTIONS,
-                link_columns=list(POLYGON_ARTICLE_COLUMNS),
-                link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
-                maintainer="Noé Flandre",
-                stats_section=stats_section,
-            ),
-        )
+        _write_readme_snapshot(data_root, settings.repo_id, card_snapshot)
         map_snapshot = snapshots / f"{result.polygons_path.stem}-coverage_map.png"
         lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
         try:

@@ -35,6 +35,10 @@ Documentation: [architecture](docs/architecture.md) ·
    * `articles/<stem>.parquet` — one row per unique Wikipedia article.
    * `polygon_articles/<stem>.parquet` — many-to-many polygon↔article links.
    * `manifests/processed_pbfs.json` — aggregate stats per source PBF.
+6. Can augment completed regions without reprocessing their PBFs, adding:
+   * `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`.
+   * `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`.
+   * `wikidata/facts/<stem>.parquet`.
 
 The repository is **code only**: every data artifact (PBFs, parquet,
 HF caches, request caches) lives on an external drive.
@@ -160,11 +164,13 @@ export OSM_POLYGON_DATA_ROOT=/Volumes/Seagate\ M3/projects/osm-polygon-wikidata-
 
 ## Usage
 
-After `uv sync`, two entry points are available:
+After `uv sync`, the processing and additive augmentation commands are:
 
 ```bash
 uv run osm-polygon-wikidata-only process-pbf <input.pbf> [--options]
 uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
+uv run osm-polygon-wikidata-only augment-region <stem>  [--options]
+uv run osm-polygon-wikidata-only augment-dir             [--options]
 ```
 
 ### Common options
@@ -297,6 +303,18 @@ uv run osm-polygon-wikidata-only process-dir "$OSM_POLYGON_DATA_ROOT/raw" \
   --skip-existing \
   --push
 ```
+
+In a second terminal, augment every completed region without rereading its PBF:
+
+```bash
+uv run osm-polygon-wikidata-only augment-dir \
+  --skip-existing \
+  --push
+```
+
+Each pushed augmentation atomically uploads its sidecars, manifest, and a fresh
+canonical dataset `README.md`. The main pipeline uses the same README renderer,
+so either command publishes a complete snapshot from the shared local state.
 
 To pause, stop the command with `Ctrl-C`. Run the identical command again to
 resume: completed PBFs remain skipped, while the interrupted PBF is retried
