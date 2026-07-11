@@ -60,3 +60,15 @@ def test_status_field_persists(tmp_path: Path) -> None:
 def test_contract_version_mismatch_is_a_cache_miss(tmp_path: Path) -> None:
     JsonFileCache(tmp_path, contract_version="v1").set("foo", {"a": 1})
     assert JsonFileCache(tmp_path, contract_version="v2").get("foo") is None
+
+
+def test_long_cache_key_uses_a_filesystem_safe_filename(tmp_path: Path) -> None:
+    cache = JsonFileCache(tmp_path)
+    key = "entities/" + "-".join(f"Q{number}" for number in range(100))
+
+    cache.set(key, {"ok": True})
+
+    entry = cache.get(key)
+    assert entry is not None
+    assert entry.parsed_result == {"ok": True}
+    assert max(len(path.name.encode()) for path in tmp_path.iterdir()) <= 255

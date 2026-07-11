@@ -14,6 +14,7 @@ The cache is intentionally simple:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -65,6 +66,9 @@ class JsonFileCache:
     def _path_for(self, key: str) -> Path:
         # Replace path separators in the key with safe characters.
         safe = key.replace("/", "__").replace("\\", "__")
+        if len(safe.encode()) > 160:
+            digest = hashlib.sha256(key.encode()).hexdigest()
+            safe = f"{safe[:80]}__{digest}"
         return self.root / f"{safe}.json"
 
     def get(self, key: str, *, now: float | None = None) -> CacheEntry | None:
