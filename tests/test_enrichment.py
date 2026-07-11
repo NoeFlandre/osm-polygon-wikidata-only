@@ -130,6 +130,31 @@ def test_parse_wikidata_entity_returns_none_for_missing() -> None:
     assert parse_wikidata_entity("Q42", {"entities": {}}) is None
 
 
+def test_parse_wikidata_entity_drops_non_wikipedia_wikifunctions_sitelink() -> None:
+    """Wikifunctions is hosted at ``wikifunctions.org`` and must not be fetched.
+
+    Regression test for a real pipeline failure on Q150 (Wikidata):
+    the entity returns ``wikifunctionswiki`` as a sitelink, which is not
+    a Wikipedia host. Treating it as a language Wikipedia triggers a
+    DNS lookup for ``wikifunctions.wikipedia.org`` that always fails and
+    aborts the entire PBF with ``IncompleteEnrichmentError``.
+    """
+    data = {
+        "entities": {
+            "Q150": {
+                "sitelinks": {
+                    "enwiki": {"title": "Universe"},
+                    "wikifunctionswiki": {"title": "Z10000"},
+                },
+                "labels": {"en": {"value": "Universe"}},
+            }
+        }
+    }
+    entity = parse_wikidata_entity("Q150", data)
+    assert entity is not None
+    assert entity.sitelinks == {"enwiki": "Universe"}
+
+
 # --- InMemoryWikidataClient ---------------------------------------------
 
 

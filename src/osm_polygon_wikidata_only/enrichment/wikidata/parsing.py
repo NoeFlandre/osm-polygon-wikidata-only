@@ -8,6 +8,11 @@ from typing import Any
 from .models import Sitelinks, WikidataEntity
 
 _QID_PATTERN = re.compile(r"^Q[1-9]\d*$")
+# Wikimedia project prefixes that are NOT language Wikipedias. These
+# sitelinks must be dropped early because their hosts do not live under
+# ``<lang>.wikipedia.org`` (e.g. Wikifunctions lives at
+# ``wikifunctions.org``). Without this filter the pipeline tries to
+# fetch them, gets a DNS failure, and aborts the whole PBF.
 _NON_LANGUAGE_PROJECTS = frozenset(
     {
         "commons",
@@ -22,6 +27,7 @@ _NON_LANGUAGE_PROJECTS = frozenset(
         "test",
         "test2",
         "wikidata",
+        "wikifunctions",
     }
 )
 
