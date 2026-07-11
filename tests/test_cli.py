@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+import osm_polygon_wikidata_only.cli.commands as commands
+from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
+from osm_polygon_wikidata_only.config.paths import DataRoot
 
 
 def test_parser_has_two_subcommands() -> None:
@@ -108,3 +112,37 @@ def test_main_drains_dry_run_upload_queue_for_empty_directory(tmp_path: Path) ->
         )
         == 0
     )
+
+
+def test_write_readme_snapshot_uses_canonical_current_dataset_state(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    data_root.processed_manifests.joinpath("processed_pbfs.json").write_text(
+        json.dumps(
+            {
+                "andorra-latest.osm.pbf": {
+                    "polygon_count": 2,
+                    "article_count": 3,
+                    "unique_wikidata_count": 1,
+                }
+            }
+        )
+    )
+    destination = tmp_path / "README.md"
+
+    commands._write_readme_snapshot(data_root, "org/dataset", destination)
+
+    markdown = destination.read_text()
+    assert "# org/dataset" in markdown
+    assert "polygon_count: 2" in markdown
+    assert "wikivoyage/documents/<stem>.parquet" in markdown
+
+
+def test_augmentation_upload_files_include_fresh_readme(tmp_path: Path) -> None:
+    paths = [tmp_path / f"artifact-{index}" for index in range(6)]
+    readme = tmp_path / "README.md"
+    result = AugmentationResult(*paths[:5], paths[5], {})
+
+    files = commands._augmentation_upload_files(result, tmp_path, readme)
+
+    assert files[-1] == (readme, "README.md")
