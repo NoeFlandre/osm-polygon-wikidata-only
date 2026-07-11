@@ -104,17 +104,21 @@ Path: `wikidata/facts/<stem>.parquet`
 
 One row represents a normalized selected claim. Columns:
 
-- `fact_id`, `wikidata`, `property_id`, `property_label`;
-- `value_type`, `value_entity_id`, `value_label`, `value_text`;
+- `fact_id`, `wikidata`, `property_id`, `property_label_en`, `property_labels`;
+- `value_type`, `value_entity_id`, `value_label_en`, `value_labels`, `value_text`;
 - `numeric_value`, `unit_entity_id`, `rank`;
 - `qualifiers`, `references` as deterministic JSON;
 - `retrieved_at`, `source_api`.
 
+`property_labels` and `value_labels` are deterministic JSON objects keyed by
+language. English is always requested and stored when Wikimedia provides it;
+all additional available languages are retained rather than capped.
+
 The initial allow-list is instance of, subclass of, administrative parent,
 country, part of, elevation, inception, heritage designation, and protected
 classification where present. Entity-valued claims resolve labels in the
-languages observed across the region's Wikipedia and Wikivoyage documents and
-fall back to English. Unsupported value types are skipped deterministically
+English plus every language observed across the region's Wikipedia and
+Wikivoyage documents. Unsupported value types are skipped deterministically
 rather than stringified ambiguously.
 
 ## Incremental processing
