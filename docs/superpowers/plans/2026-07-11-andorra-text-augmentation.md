@@ -58,7 +58,7 @@
 
 - [ ] Write failing tests for `augment-region andorra-latest`, input fingerprints, skip/resume, atomic five-file publication, augmentation-manifest-last ordering, and unchanged core file hashes.
 - [ ] Implement the orchestrator reading existing `polygons/andorra-latest.parquet` and `articles/andorra-latest.parquet`, writing under `wikipedia/`, `wikivoyage/`, and `wikidata/`, and storing a versioned manifest.
-- [ ] Add `augment-region <stem> [--push] [--dry-run]` without changing existing command defaults.
+- [ ] Add `augment-region <stem> [--push] [--dry-run]` and `augment-dir --skip-existing --push` without changing existing processing-command defaults.
 - [ ] Run augmentation, CLI, pipeline, schema, and packaging tests; expect pass.
 
 ### Task 5: Verification and requested Andorra upload
