@@ -11,7 +11,19 @@ from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser
 def test_parser_has_two_subcommands() -> None:
     parser = build_parser()
     sub_action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
-    assert set(sub_action.choices) == {"process-pbf", "process-dir"}
+    assert set(sub_action.choices) == {
+        "augment-dir",
+        "augment-region",
+        "process-pbf",
+        "process-dir",
+    }
+
+
+def test_parser_accepts_additive_region_augmentation() -> None:
+    args = build_parser().parse_args(["augment-region", "andorra-latest", "--push"])
+    assert args.command == "augment-region"
+    assert args.stem == "andorra-latest"
+    assert args.push is True
 
 
 def test_parser_process_pbf_accepts_input(tmp_path: Path) -> None:
