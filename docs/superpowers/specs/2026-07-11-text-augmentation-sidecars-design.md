@@ -30,11 +30,33 @@ After the pilot is accepted, the same orchestrator can be called after normal
 core publication and can backfill all existing manifest entries. Both paths use
 the same cache contracts and output schemas.
 
+## Additive namespace layout
+
+```text
+wikipedia/
+  documents/<stem>.parquet
+  sections/<stem>.parquet
+wikivoyage/
+  documents/<stem>.parquet
+  sections/<stem>.parquet
+wikidata/
+  facts/<stem>.parquet
+```
+
+The existing `articles/` directory remains untouched and supported. It is not
+deleted, renamed, overwritten, or included in the Andorra pilot commit. New
+Wikipedia document rows are derived locally from those existing article rows,
+preserving their IDs, revisions, text, columns, licenses, and attribution while
+adding the explicit project namespace. This creates a migration-ready additive
+view without risking already-published data. Physical removal of `articles/` is
+out of scope.
+
 ## Sidecar tables
 
 ### Documents
 
-Path: `augmentations/documents/<stem>.parquet`
+Path: `wikipedia/documents/<stem>.parquet` for Wikipedia and
+`wikivoyage/documents/<stem>.parquet` for Wikivoyage.
 
 One row represents an exact Wikimedia document revision. Columns:
 
@@ -52,9 +74,15 @@ are not refetched merely to duplicate full text. Wikivoyage sitelinks and
 documents are fetched through the shared Wikimedia scheduler and a separate,
 versioned augmentation cache.
 
+The augmentation is multilingual by default and has no preferred-language
+filter or per-QID language cap. Every language present in the existing
+Wikipedia article table is included, and every language-specific Wikivoyage
+sitelink returned by Wikidata is included.
+
 ### Sections
 
-Path: `augmentations/sections/<stem>.parquet`
+Path: `wikipedia/sections/<stem>.parquet` for Wikipedia and
+`wikivoyage/sections/<stem>.parquet` for Wikivoyage.
 
 One row represents an ordered section from an exact document revision. Columns:
 
@@ -72,7 +100,7 @@ and sections cannot drift.
 
 ### Wikidata facts
 
-Path: `augmentations/wikidata_facts/<stem>.parquet`
+Path: `wikidata/facts/<stem>.parquet`
 
 One row represents a normalized selected claim. Columns:
 
@@ -85,8 +113,9 @@ One row represents a normalized selected claim. Columns:
 The initial allow-list is instance of, subclass of, administrative parent,
 country, part of, elevation, inception, heritage designation, and protected
 classification where present. Entity-valued claims resolve labels in the
-document language when available and fall back to English. Unsupported value
-types are skipped deterministically rather than stringified ambiguously.
+languages observed across the region's Wikipedia and Wikivoyage documents and
+fall back to English. Unsupported value types are skipped deterministically
+rather than stringified ambiguously.
 
 ## Incremental processing
 
