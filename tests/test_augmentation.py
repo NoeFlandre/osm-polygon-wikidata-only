@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import urllib.error
+from email.message import Message
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
 from osm_polygon_wikidata_only.augmentation.models import (
     Document,
     document_from_article_row,
@@ -26,6 +29,23 @@ from osm_polygon_wikidata_only.augmentation.wikimedia import (
     normalize_facts,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.io.cache import JsonFileCache
+
+
+class ThrottleThenSuccessSession:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def read(self, request: object) -> tuple[bytes, str]:
+        self.calls += 1
+        if self.calls == 1:
+            headers = Message()
+            headers["Retry-After"] = "0"
+            raise urllib.error.HTTPError(
+                "https://en.wikipedia.org/w/api.php", 429, "limited", headers, None
+            )
+        return b'{"parse":{"text":"ok"}}', ""
 
 
 def article_row() -> dict[str, object]:
@@ -60,6 +80,21 @@ def test_sidecar_columns_are_explicit_and_joinable() -> None:
     assert FACT_COLUMNS[:4] == ("fact_id", "wikidata", "property_id", "property_label_en")
     assert "property_labels" in FACT_COLUMNS
     assert "value_labels" in FACT_COLUMNS
+
+
+def test_augmentation_transport_retries_after_wikimedia_429(tmp_path) -> None:
+    client = AugmentationWikimediaClient(
+        Settings(request_max_retries=2, request_base_delay_s=0),
+        JsonFileCache(tmp_path),
+        environ={},
+    )
+    session = ThrottleThenSuccessSession()
+    client._session = session
+
+    result = client.get_json("https://retry.example.org/w/api.php?action=parse", key="retry-test")
+
+    assert result == {"parse": {"text": "ok"}}
+    assert session.calls == 2
 
 
 def test_existing_article_becomes_wikipedia_document_without_data_loss() -> None:
