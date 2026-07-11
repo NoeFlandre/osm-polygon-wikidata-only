@@ -13,7 +13,7 @@ from osm_polygon_wikidata_only.config.settings import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the stable two-command public CLI parser."""
+    """Build the stable processing and augmentation CLI parser."""
     parser = argparse.ArgumentParser(
         prog="osm-polygon-wikidata-only",
         description="Build a Hugging Face dataset of OSM polygons linked to Wikidata + Wikipedia.",
@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pbf.add_argument("input", type=Path, help="Path to a .osm.pbf file")
     p_dir = sub.add_parser("process-dir", parents=[common], help="Process every PBF in a directory")
     p_dir.add_argument("input", type=Path, help="Directory containing *.osm.pbf files")
+    p_augment = sub.add_parser(
+        "augment-region", parents=[common], help="Augment one completed region without reading PBF"
+    )
+    p_augment.add_argument("stem", help="Completed region stem, e.g. andorra-latest")
+    sub.add_parser("augment-dir", parents=[common], help="Augment every completed core region")
     return parser
 
 

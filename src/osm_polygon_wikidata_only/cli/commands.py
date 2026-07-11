@@ -18,6 +18,13 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
+from osm_polygon_wikidata_only.augmentation.orchestrator import (
+    AugmentationResult,
+    augment_region,
+    augmentation_is_current,
+    completed_region_stems,
+)
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
@@ -49,6 +56,7 @@ from osm_polygon_wikidata_only.hf.uploader import (
     upload_files,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
@@ -72,6 +80,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     data_root = _resolve_data_root(args)
     data_root.ensure()
     settings = _build_settings(args)
+
+    if args.command in {"augment-region", "augment-dir"}:
+        augmentation_client = AugmentationWikimediaClient(
+            settings,
+            JsonFileCache(data_root.cache / "augmentation", contract_version="text-sidecars-v1"),
+        )
+        stems = (
+            [args.stem] if args.command == "augment-region" else completed_region_stems(data_root)
+        )
+        augmentation_results: list[AugmentationResult] = []
+        for stem in stems:
+            if settings.skip_existing and augmentation_is_current(data_root, stem):
+                LOGGER.info("Skipping augmentation for %s (already current)", stem)
+                continue
+            augmentation_result = augment_region(data_root, stem, augmentation_client)
+            augmentation_results.append(augmentation_result)
+            LOGGER.info("Augmented %s: %s", stem, augmentation_result.counts)
+            if args.push:
+                files = [
+                    (path, str(path.relative_to(data_root.processed)))
+                    for path in (
+                        augmentation_result.wikipedia_documents_path,
+                        augmentation_result.wikipedia_sections_path,
+                        augmentation_result.wikivoyage_documents_path,
+                        augmentation_result.wikivoyage_sections_path,
+                        augmentation_result.wikidata_facts_path,
+                        augmentation_result.manifest_path,
+                    )
+                ]
+                upload_files(
+                    settings.repo_id,
+                    files,
+                    hub=StubHfHub() if args.dry_run else None,
+                    commit_message=args.commit_message or f"Add text augmentation for {stem}",
+                    num_threads=args.upload_threads,
+                )
+        LOGGER.info("Done. %d region augmentation(s).", len(augmentation_results))
+        return 0
+
     wd, wiki, cache = _build_clients(settings, data_root=data_root)
 
     inputs: list[Path]

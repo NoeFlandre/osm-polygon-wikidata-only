@@ -26,6 +26,11 @@ publication, and orchestration modules. A new CLI command augments one existing
 region stem from its published Parquet files. The Andorra pilot is explicit;
 normal `process-pbf` and `process-dir` behavior does not change during the pilot.
 
+`augment-dir --skip-existing --push` applies the same work to every completed
+core region and may run beside `process-dir`: it scans only completed polygon
+and article Parquet pairs, uses separate caches and output paths, and never
+opens core artifacts for writing.
+
 After the pilot is accepted, the same orchestrator can be called after normal
 core publication and can backfill all existing manifest entries. Both paths use
 the same cache contracts and output schemas.
