@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
@@ -22,11 +24,18 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     load_wikimedia_credentials,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import wait_for_host
+from osm_polygon_wikidata_only.utils.rate_limit import (
+    defer_host,
+    retry_after_seconds,
+    wait_for_host,
+)
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 from .models import Document, document_id
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AugmentationWikimediaClient:
@@ -62,12 +71,37 @@ class AugmentationWikimediaClient:
         if parsed_url.scheme != "https":
             raise ValueError(f"Only HTTPS Wikimedia URLs are allowed: {url}")
         host = parsed_url.netloc
-        wait_for_host(host, min_interval_s=0.05)
         request = urllib.request.Request(  # noqa: S310 - HTTPS is validated above
             url,
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
         )
-        raw, encoding = self._session.read(request)
+
+        def read() -> tuple[bytes, str]:
+            wait_for_host(host, min_interval_s=0.05)
+            try:
+                return self._session.read(request)
+            except urllib.error.HTTPError as error:
+                if error.code in (429, 503):
+                    delay = retry_after_seconds(
+                        error,
+                        default_s=self._settings.rate_limit_retry_after_default_s,
+                    )
+                    defer_host(host, delay)
+                    self._scheduler.report_host_throttled(host, delay)
+                    LOGGER.warning(
+                        "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
+                        host,
+                        error.code,
+                        delay,
+                    )
+                raise
+
+        raw, encoding = with_retries(
+            read,
+            attempts=self._settings.request_max_retries,
+            base_delay=self._settings.request_base_delay_s,
+            retry_on=(urllib.error.URLError, TimeoutError, OSError),
+        )
         if encoding == "gzip":
             raw = gzip.decompress(raw)
         parsed: object = json.loads(raw.decode())
