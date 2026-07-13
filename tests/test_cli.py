@@ -39,6 +39,11 @@ def test_sync_dir_handles_empty_directory_without_network(tmp_path: Path) -> Non
     assert main(["sync-dir", str(raw), "--data-root", str(tmp_path), "--skip-existing"]) == 0
 
 
+def test_coverage_map_refresh_is_needed_only_when_core_changes() -> None:
+    assert commands._coverage_refresh_required(None) is False
+    assert commands._coverage_refresh_required(object()) is True
+
+
 def test_parser_accepts_additive_region_augmentation() -> None:
     args = build_parser().parse_args(["augment-region", "andorra-latest", "--push"])
     assert args.command == "augment-region"

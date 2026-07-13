@@ -433,39 +433,46 @@ def _sync_upload_files(
 ) -> list[tuple[Path, str]]:
     """Snapshot manifests and assemble one complete atomic region upload."""
     snapshots = data_root.cache / "sync_upload_snapshots" / stem
-    core_manifest = snapshots / "processed_pbfs.json"
     augmentation_manifest = snapshots / "augmentation_manifest.json"
-    atomic_write_text(
-        core_manifest, (data_root.processed_manifests / "processed_pbfs.json").read_text()
-    )
     atomic_write_text(augmentation_manifest, augmentation.manifest_path.read_text())
     readme = snapshots / "README.md"
     _write_readme_snapshot(data_root, repo_id, readme)
-    coverage = snapshots / "coverage_map.png"
-    lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-    try:
-        land_path = ensure_world_land(data_root.cache)
-    except Exception:
-        land_path = None
-    generate_coverage_map(lons, lats, coverage, land_geojson_path=land_path)
     files = [
         (augmentation.wikipedia_documents_path, f"wikipedia/documents/{stem}.parquet"),
         (augmentation.wikipedia_sections_path, f"wikipedia/sections/{stem}.parquet"),
         (augmentation.wikivoyage_documents_path, f"wikivoyage/documents/{stem}.parquet"),
         (augmentation.wikivoyage_sections_path, f"wikivoyage/sections/{stem}.parquet"),
         (augmentation.wikidata_facts_path, f"wikidata/facts/{stem}.parquet"),
-        (core_manifest, REMOTE_MANIFEST_FILE),
         (augmentation_manifest, "augmentation/manifests/augmentation_manifest.json"),
         (readme, "README.md"),
-        (coverage, REMOTE_COVERAGE_MAP_FILE),
     ]
-    if core is not None:
+    if _coverage_refresh_required(core):
+        core_manifest = snapshots / "processed_pbfs.json"
+        atomic_write_text(
+            core_manifest,
+            (data_root.processed_manifests / "processed_pbfs.json").read_text(),
+        )
+        coverage = snapshots / "coverage_map.png"
+        lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
+        try:
+            land_path = ensure_world_land(data_root.cache)
+        except Exception:
+            land_path = None
+        generate_coverage_map(lons, lats, coverage, land_geojson_path=land_path)
+        assert core is not None
         files[:0] = [
             (core.polygons_path, f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
             (core.articles_path, f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
             (core.polygon_articles_path, f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}"),
+            (core_manifest, REMOTE_MANIFEST_FILE),
+            (coverage, REMOTE_COVERAGE_MAP_FILE),
         ]
     return files
+
+
+def _coverage_refresh_required(core: object | None) -> bool:
+    """Coverage changes only when a core polygon artifact changes."""
+    return core is not None
 
 
 if __name__ == "__main__":  # pragma: no cover
