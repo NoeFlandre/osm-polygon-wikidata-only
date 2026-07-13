@@ -121,6 +121,39 @@ def test_scheduler_reports_configured_concurrency_without_private_introspection(
     assert scheduler.max_in_flight == 7
 
 
+def test_scheduler_snapshot_reports_recent_budget_usage_and_throttles() -> None:
+    now = [0.0]
+    scheduler = AdaptiveRequestScheduler(
+        max_in_flight=3,
+        requests_per_minute=1200,
+        max_requests_per_minute=1200,
+        minimum_requests_per_minute=200,
+        clock=lambda: now[0],
+        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+
+    for _ in range(10):
+        scheduler.run(lambda: None)
+    now[0] = 60.0
+    scheduler.report_host_throttled("pl.wikipedia.org", 4.0)
+
+    snapshot = scheduler.snapshot()
+
+    assert snapshot.requests_last_minute == 10
+    assert snapshot.maximum_requests_per_minute == 1200
+    assert snapshot.utilization_percent == pytest.approx(10 / 1200 * 100)
+    assert snapshot.in_flight == 0
+    assert snapshot.throttle_events == 1
+
+
+def test_scheduler_snapshot_reports_operation_as_in_flight() -> None:
+    scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
+
+    observed = scheduler.run(lambda: scheduler.snapshot().in_flight)
+
+    assert observed == 1
+
+
 def test_scheduler_raises_rate_after_success_window_without_exceeding_ceiling() -> None:
     scheduler = AdaptiveRequestScheduler(
         requests_per_minute=100,

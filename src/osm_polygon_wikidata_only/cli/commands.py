@@ -29,6 +29,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
     completed_region_stems,
 )
+from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.schema import (
@@ -80,6 +81,7 @@ from osm_polygon_wikidata_only.pipeline.processor import (
     extract_pbf,
     process_extracted_pbf,
 )
+from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
 from osm_polygon_wikidata_only.pipeline.sync_orchestrator import run_sync_plan
 from osm_polygon_wikidata_only.pipeline.sync_planner import (
     RegionSyncState,
@@ -414,6 +416,11 @@ def _run_sync_dir(args: argparse.Namespace, data_root: DataRoot, settings: Setti
     if upload_queue is not None:
         upload_queue.resume_pending()
     core_results: dict[str, ProcessResult] = {}
+    actionable_states = [state for state in states if state.action is not SyncAction.COMPLETE]
+    progress_positions = {
+        state.stem: index for index, state in enumerate(actionable_states, start=1)
+    }
+    progress_total = len(actionable_states)
     process_states = [state for state in states if state.action is SyncAction.PROCESS]
     extraction_executor = ThreadPoolExecutor(max_workers=1)
     extraction_index = 0
@@ -450,7 +457,28 @@ def _run_sync_dir(args: argparse.Namespace, data_root: DataRoot, settings: Setti
         core_results[state.stem] = result
 
     def augment_state(state: RegionSyncState) -> None:
-        augmentation_result = augment_region(data_root, state.stem, augmentation_client)
+        progress = AugmentationProgress()
+        position = progress_positions[state.stem]
+        LOGGER.info(
+            "Sync region %d/%d %s: augmentation started",
+            position,
+            progress_total,
+            state.stem,
+        )
+        with SyncHeartbeat(
+            region=state.stem,
+            region_index=position,
+            region_total=progress_total,
+            augmentation_snapshot=progress.snapshot,
+            scheduler_snapshot=runtime.scheduler.snapshot,
+            log=LOGGER.info,
+        ):
+            augmentation_result = augment_region(
+                data_root,
+                state.stem,
+                augmentation_client,
+                progress=progress,
+            )
         LOGGER.info("Unified sync completed %s: %s", state.stem, augmentation_result.counts)
         if upload_queue is not None:
             files = _sync_upload_files(

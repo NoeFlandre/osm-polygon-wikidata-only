@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TypeVar
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class RequestSchedulerSnapshot:
+    """A thread-safe point-in-time view of Wikimedia request-budget usage."""
+
+    requests_last_minute: int
+    current_requests_per_minute: float
+    maximum_requests_per_minute: float
+    utilization_percent: float
+    in_flight: int
+    throttle_events: int
+    cooldown_remaining_s: float
 
 
 class AdaptiveRequestScheduler:
@@ -60,6 +75,9 @@ class AdaptiveRequestScheduler:
         self._host_throttle_window_s = host_throttle_window_s
         self._host_throttle_threshold = host_throttle_threshold
         self._host_throttle_events: dict[str, float] = {}
+        self._request_started_at: deque[float] = deque()
+        self._in_flight = 0
+        self._throttle_events = 0
 
     def defer(self, delay_s: float) -> None:
         """Apply one cooldown to every future request."""
@@ -95,6 +113,7 @@ class AdaptiveRequestScheduler:
     def report_throttled(self, delay_s: float) -> None:
         """Apply a global cooldown and reduce the active request rate."""
         with self._lock:
+            self._throttle_events += 1
             self._cooldown_until = max(
                 self._cooldown_until,
                 self._clock() + max(0.0, delay_s),
@@ -109,6 +128,7 @@ class AdaptiveRequestScheduler:
         """Record a per-host throttle; escalate globally only when systemic."""
         with self._lock:
             now = self._clock()
+            self._throttle_events += 1
             cutoff = now - self._host_throttle_window_s
             self._host_throttle_events = {
                 h: t for h, t in self._host_throttle_events.items() if t > cutoff
@@ -116,7 +136,39 @@ class AdaptiveRequestScheduler:
             self._host_throttle_events[host] = now
             if len(self._host_throttle_events) < self._host_throttle_threshold:
                 return
-        self.report_throttled(delay_s)
+        self._apply_global_throttle(delay_s, count_event=False)
+
+    def _apply_global_throttle(self, delay_s: float, *, count_event: bool) -> None:
+        with self._lock:
+            if count_event:
+                self._throttle_events += 1
+            self._cooldown_until = max(
+                self._cooldown_until,
+                self._clock() + max(0.0, delay_s),
+            )
+            self._current_requests_per_minute = max(
+                self._minimum_requests_per_minute,
+                self._current_requests_per_minute / 2,
+            )
+            self._successful_requests = 0
+
+    def snapshot(self) -> RequestSchedulerSnapshot:
+        """Return measured traffic and adaptive-budget state for operator logs."""
+        with self._lock:
+            now = self._clock()
+            cutoff = now - 60.0
+            while self._request_started_at and self._request_started_at[0] < cutoff:
+                self._request_started_at.popleft()
+            recent = len(self._request_started_at)
+            return RequestSchedulerSnapshot(
+                requests_last_minute=recent,
+                current_requests_per_minute=self._current_requests_per_minute,
+                maximum_requests_per_minute=self._max_requests_per_minute,
+                utilization_percent=(recent / self._max_requests_per_minute * 100.0),
+                in_flight=self._in_flight,
+                throttle_events=self._throttle_events,
+                cooldown_remaining_s=max(0.0, self._cooldown_until - now),
+            )
 
     def run(self, operation: Callable[[], T]) -> T:
         """Run an operation after acquiring global concurrency and rate capacity."""
@@ -129,7 +181,14 @@ class AdaptiveRequestScheduler:
             wait = ready_at - self._clock()
             if wait > 0:
                 self._sleep(wait)
-            return operation()
+            with self._lock:
+                self._request_started_at.append(self._clock())
+                self._in_flight += 1
+            try:
+                return operation()
+            finally:
+                with self._lock:
+                    self._in_flight -= 1
 
 
 _DEFAULT_SCHEDULER = AdaptiveRequestScheduler()
@@ -139,4 +198,4 @@ def default_scheduler() -> AdaptiveRequestScheduler:
     return _DEFAULT_SCHEDULER
 
 
-__all__ = ["AdaptiveRequestScheduler", "default_scheduler"]
+__all__ = ["AdaptiveRequestScheduler", "RequestSchedulerSnapshot", "default_scheduler"]
