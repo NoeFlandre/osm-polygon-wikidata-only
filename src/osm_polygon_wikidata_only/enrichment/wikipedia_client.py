@@ -38,7 +38,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import retry_after_seconds
+from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
     default_scheduler,

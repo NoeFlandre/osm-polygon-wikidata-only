@@ -24,7 +24,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     load_wikimedia_credentials,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import retry_after_seconds
+from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
