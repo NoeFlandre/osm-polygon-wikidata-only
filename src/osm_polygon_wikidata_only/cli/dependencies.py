@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     WikidataClient,
 )
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
+    WIKIMEDIA_MAX_IN_FLIGHT,
     WIKIMEDIA_REQUESTS_PER_MINUTE,
     WikimediaConfigurationError,
     WikimediaSession,
@@ -38,7 +39,15 @@ LOGGER = logging.getLogger(__name__)
 # ceiling, the global concurrency cap and per-host pacing have to be
 # loosened for authenticated runs, otherwise the scheduler is the
 # bottleneck even when the API would happily accept more traffic.
-AUTH_MAX_IN_FLIGHT = 3
+#
+# Concurrency math: 1200 rpm = 20 rps. At ~0.3s average API latency the
+# required in-flight count is ~6 (20 x 0.3); 8 leaves headroom while
+# staying well under the 16 hard cap enforced by the scheduler. This is
+# a *client-side* choice, not a guaranteed server allowance, and is
+# subordinate to the global rate ceiling and per-host cooldowns.
+ANON_MAX_IN_FLIGHT = 3
+AUTH_MAX_IN_FLIGHT_DEFAULT = 8
+MAX_IN_FLIGHT_HARD_LIMIT = 16
 AUTH_MIN_HOST_INTERVAL_S = 0.05
 AUTH_MIN_REQUESTS_PER_MINUTE = 200
 
@@ -82,9 +91,15 @@ def build_wikimedia_runtime(
     credentials = load_wikimedia_credentials(source)
     authenticated = credentials is not None
     ceiling = _request_rate_ceiling(source, authenticated=authenticated)
+    max_in_flight = _max_in_flight(source, authenticated=authenticated)
     if not authenticated:
         ceiling = min(ceiling, settings.wikimedia_requests_per_minute)
-    effective = _effective_settings(settings, authenticated=authenticated, ceiling=ceiling)
+    effective = _effective_settings(
+        settings,
+        authenticated=authenticated,
+        ceiling=ceiling,
+        max_in_flight=max_in_flight,
+    )
     minimum_rate = min(
         AUTH_MIN_REQUESTS_PER_MINUTE if authenticated else 60.0,
         effective.wikimedia_requests_per_minute,
@@ -101,14 +116,25 @@ def build_wikimedia_runtime(
         user_agent=effective.user_agent,
         credentials=credentials,
     )
-    LOGGER.info(
-        "Wikimedia API mode: %s (rate ceiling: %.0f requests/minute, in-flight=%d, "
-        "host interval: %.2fs)",
-        f"authenticated as {credentials.username}" if credentials is not None else "anonymous",
-        ceiling,
-        effective.wikimedia_max_in_flight,
-        effective.wikipedia_min_interval_s,
-    )
+    if credentials is not None:
+        LOGGER.info(
+            "Wikimedia API mode: credentials configured for %s; verification is "
+            "performed per host on first request (rate ceiling: %.0f requests/minute, "
+            "in-flight=%d, host interval: %.2fs). The ceiling is a client-side limit, "
+            "not a guaranteed server allowance.",
+            credentials.username,
+            ceiling,
+            effective.wikimedia_max_in_flight,
+            effective.wikipedia_min_interval_s,
+        )
+    else:
+        LOGGER.info(
+            "Wikimedia API mode: anonymous (rate ceiling: %.0f requests/minute, "
+            "in-flight=%d, host interval: %.2fs)",
+            ceiling,
+            effective.wikimedia_max_in_flight,
+            effective.wikipedia_min_interval_s,
+        )
     wikidata: WikidataClient = HttpWikidataClient(
         effective,
         scheduler=scheduler,
@@ -143,22 +169,48 @@ def build_wikimedia_runtime(
         return WikimediaRuntime(effective, scheduler, session, wikidata, wikipedia, None)
 
 
-def _effective_settings(settings: Settings, *, authenticated: bool, ceiling: float) -> Settings:
+def _effective_settings(
+    settings: Settings, *, authenticated: bool, ceiling: float, max_in_flight: int
+) -> Settings:
     """Pick per-call settings based on whether the user is authenticated.
 
     Anonymous traffic keeps the polite conservative defaults. Bot
     password sessions are explicitly allowed higher concurrency and
-    tighter host pacing so the 1200 rpm ceiling is reachable.
+    tighter host pacing so the configured rpm ceiling is reachable.
     """
     if not authenticated:
         return settings
     return replace(
         settings,
-        wikimedia_max_in_flight=AUTH_MAX_IN_FLIGHT,
+        wikimedia_max_in_flight=max_in_flight,
         wikipedia_min_interval_s=min(settings.wikipedia_min_interval_s, AUTH_MIN_HOST_INTERVAL_S),
         wikidata_min_interval_s=min(settings.wikidata_min_interval_s, AUTH_MIN_HOST_INTERVAL_S),
         wikimedia_requests_per_minute=ceiling,
     )
+
+
+def _max_in_flight(environ: Mapping[str, str], *, authenticated: bool) -> int:
+    """Resolve the process-wide concurrency bound from configuration.
+
+    Defaults to a conservative authenticated value (8) that can reach the
+    1200 rpm ceiling at typical latency, or 3 for anonymous traffic. The
+    hard upper bound (16) matches the scheduler's own validation.
+    """
+    raw_value = environ.get(WIKIMEDIA_MAX_IN_FLIGHT)
+    default = AUTH_MAX_IN_FLIGHT_DEFAULT if authenticated else ANON_MAX_IN_FLIGHT
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value.strip())
+    except ValueError as error:
+        raise WikimediaConfigurationError(
+            f"{WIKIMEDIA_MAX_IN_FLIGHT} must be an integer between 1 and {MAX_IN_FLIGHT_HARD_LIMIT}"
+        ) from error
+    if not 1 <= value <= MAX_IN_FLIGHT_HARD_LIMIT:
+        raise WikimediaConfigurationError(
+            f"{WIKIMEDIA_MAX_IN_FLIGHT} must be between 1 and {MAX_IN_FLIGHT_HARD_LIMIT}"
+        )
+    return value
 
 
 def _request_rate_ceiling(environ: Mapping[str, str], *, authenticated: bool) -> float:

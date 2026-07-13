@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import urllib.error
 from email.message import Message
@@ -292,3 +293,56 @@ def test_augment_region_reports_final_phase_progress(tmp_path) -> None:
     snapshot = progress.snapshot()
     assert snapshot.phase == "Writing sidecars"
     assert snapshot.completed == snapshot.total == 5
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def test_augmentation_sidecars_are_deterministic_and_core_is_untouched(
+    tmp_path: Path,
+) -> None:
+    """Output-equivalence regression guard for the transport/scheduler rework.
+
+    The transport changes (per-host scheduler, host-scoped 429 handling,
+    configurable concurrency, auth snapshot) must not alter the deterministic
+    outputs of the augmentation pipeline. This test runs the full
+    orchestrator with the deterministic ``FakeAugmentationClient`` twice and
+    asserts that the five sidecars and the augmentation manifest are byte-
+    stable across runs while the core articles/polygons parquets are never
+    modified.
+    """
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    articles_path = data_root.processed_articles / "andorra-latest.parquet"
+    polygons_path = data_root.processed_polygons / "andorra-latest.parquet"
+    pq.write_table(pa.Table.from_pylist([article_row()]), articles_path)
+    pq.write_table(pa.Table.from_pylist([{"wikidata": "Q1"}]), polygons_path)
+    core_before = (_sha256(articles_path), _sha256(polygons_path))
+
+    result = augment_region(data_root, "andorra-latest", FakeAugmentationClient())
+    sidecars = list(sidecar_paths(data_root, "andorra-latest"))
+    sidecar_hashes_run1 = [_sha256(p) for p in sidecars]
+    manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    manifest_before = manifest_path.read_text()
+
+    # A second orchestrator call must be a no-op (augmentation_is_current),
+    # and the sidecars/manifest must remain byte-identical.
+    assert augmentation_is_current(data_root, "andorra-latest") is True
+    assert [_sha256(p) for p in sidecars] == sidecar_hashes_run1
+    assert manifest_path.read_text() == manifest_before
+
+    # Core artifacts must not be mutated by the augmentation step.
+    assert (_sha256(articles_path), _sha256(polygons_path)) == core_before
+
+    # Manifest counts locked to the deterministic scenario.
+    manifest = json.loads(manifest_before)
+    assert manifest["andorra-latest"]["counts"] == result.counts
+    assert manifest["andorra-latest"]["core_hashes"] == {
+        str(articles_path): core_before[0],
+        str(polygons_path): core_before[1],
+    }

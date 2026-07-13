@@ -433,3 +433,69 @@ def test_malformed_login_response_is_sanitized_in_warning(
     rendered = "\n".join(record.getMessage() for record in caplog.records)
     assert "en.wikipedia.org" in rendered
     assert "raw-secret-value" not in rendered
+
+
+# --- Auth status snapshot -----------------------------------------------
+
+
+def test_auth_snapshot_counts_authenticated_and_anonymous_hosts() -> None:
+    """The snapshot distinguishes verified-authenticated hosts from anonymous ones."""
+    # ru.wikipedia rejects the bot password; en.wikipedia accepts it.
+    ru_opener = FakeOpener(login_result={"login": {"result": "Failed"}})
+    en_opener = FakeOpener()
+    state = {"index": 0}
+
+    def factory() -> FakeOpener:
+        current = state["index"]
+        state["index"] += 1
+        return ru_opener if current == 0 else en_opener
+
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=factory,
+    )
+    session.read(urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"))
+    session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
+
+    snapshot = session.auth_snapshot()
+
+    assert snapshot.credentials_configured is True
+    assert snapshot.authenticated_hosts == 1
+    assert snapshot.anonymous_hosts == 1
+    assert "secret-value" not in repr(snapshot)
+
+
+def test_auth_snapshot_reports_all_anonymous_without_credentials() -> None:
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        opener_factory=FakeOpener,
+    )
+    session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
+
+    snapshot = session.auth_snapshot()
+
+    assert snapshot.credentials_configured is False
+    assert snapshot.authenticated_hosts == 0
+    assert snapshot.anonymous_hosts == 1
+
+
+def test_auth_snapshot_starts_unverified_before_any_request() -> None:
+    """Configured credentials must not be advertised as verified before contact."""
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=FakeOpener,
+    )
+
+    snapshot = session.auth_snapshot()
+
+    assert snapshot.credentials_configured is True
+    assert snapshot.authenticated_hosts == 0
+    assert snapshot.anonymous_hosts == 0

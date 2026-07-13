@@ -206,21 +206,25 @@ def test_http_wikidata_client_routes_requests_through_injected_session() -> None
     assert headers["Accept-encoding"] == "gzip"
 
 
-def test_http_wikidata_client_reports_429_to_global_throttle(
+def test_http_wikidata_client_reports_429_as_host_scoped_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A 429 from one host must be scoped to that host, never global."""
     scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
-    recorded: list[float] = []
-    monkeypatch.setattr(scheduler, "report_throttled", recorded.append)
+    host_reports: list[tuple[str, float]] = []
+    global_reports: list[float] = []
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.enrichment.wikidata_client.defer_host", lambda *_: None
+        scheduler, "report_host_throttled", lambda host, delay: host_reports.append((host, delay))
     )
+    monkeypatch.setattr(scheduler, "report_throttled", lambda delay: global_reports.append(delay))
+    monkeypatch.setattr(scheduler, "pace_host", lambda *_, **__: None)
     client = HttpWikidataClient(Settings(), scheduler=scheduler, session=ThrottledSession())
 
     with pytest.raises(urllib.error.HTTPError):
         client._http_get(client._build_url("Q1"))
 
-    assert recorded == [17.0]
+    assert host_reports == [("www.wikidata.org", 17.0)]
+    assert global_reports == []
 
 
 # --- CachedWikidataClient -----------------------------------------------
@@ -442,11 +446,9 @@ def test_http_wikipedia_client_routes_requests_through_injected_session(
 ) -> None:
     payload = {"query": {"pages": {}}}
     session = RecordingSession(payload)
-    client = HttpWikipediaClient(Settings(), session=session)
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.enrichment.wikipedia_client.wait_for_host",
-        lambda *_, **__: None,
-    )
+    scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
+    monkeypatch.setattr(scheduler, "pace_host", lambda *_, **__: None)
+    client = HttpWikipediaClient(Settings(), scheduler=scheduler, session=session)
 
     url = client._build_url("en", "Alpha", fetch_full_text=True)
     assert client._http_get(url) == payload
@@ -458,25 +460,25 @@ def test_http_wikipedia_client_routes_requests_through_injected_session(
     assert headers["Accept-encoding"] == "gzip"
 
 
-def test_http_wikipedia_client_reports_429_to_global_throttle(
+def test_http_wikipedia_client_reports_429_as_host_scoped_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A 429 from one host must be scoped to that host, never global."""
     scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
-    recorded: list[float] = []
-    monkeypatch.setattr(scheduler, "report_throttled", recorded.append)
+    host_reports: list[tuple[str, float]] = []
+    global_reports: list[float] = []
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.enrichment.wikipedia_client.defer_host", lambda *_: None
+        scheduler, "report_host_throttled", lambda host, delay: host_reports.append((host, delay))
     )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.enrichment.wikipedia_client.wait_for_host",
-        lambda *_, **__: None,
-    )
+    monkeypatch.setattr(scheduler, "report_throttled", lambda delay: global_reports.append(delay))
+    monkeypatch.setattr(scheduler, "pace_host", lambda *_, **__: None)
     client = HttpWikipediaClient(Settings(), scheduler=scheduler, session=ThrottledSession())
 
     with pytest.raises(urllib.error.HTTPError):
         client._http_get(client._build_url("en", "Alpha", fetch_full_text=True))
 
-    assert recorded == [17.0]
+    assert host_reports == [("en.wikipedia.org", 17.0)]
+    assert global_reports == []
 
 
 def test_http_clients_request_maxlag_for_background_work() -> None:

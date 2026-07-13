@@ -21,6 +21,7 @@ LOGGER = logging.getLogger(__name__)
 WIKIMEDIA_BOT_USERNAME = "WIKIMEDIA_BOT_USERNAME"
 WIKIMEDIA_BOT_PASSWORD = "WIKIMEDIA_BOT_PASSWORD"  # noqa: S105 - environment name
 WIKIMEDIA_REQUESTS_PER_MINUTE = "WIKIMEDIA_REQUESTS_PER_MINUTE"
+WIKIMEDIA_MAX_IN_FLIGHT = "WIKIMEDIA_MAX_IN_FLIGHT"
 
 
 class WikimediaConfigurationError(ValueError):
@@ -29,6 +30,29 @@ class WikimediaConfigurationError(ValueError):
 
 class WikimediaAuthenticationError(RuntimeError):
     """Raised when Wikimedia rejects Bot Password authentication."""
+
+
+@dataclass(frozen=True, repr=False, slots=True)
+class WikimediaAuthSnapshot:
+    """Point-in-time view of per-host authentication status.
+
+    ``credentials_configured`` is True when bot-password environment
+    variables were supplied; it does *not* mean any host has verified
+    them. ``authenticated_hosts``/``anonymous_hosts`` count only hosts
+    that have actually been contacted.
+    """
+
+    credentials_configured: bool
+    authenticated_hosts: int
+    anonymous_hosts: int
+
+    def __repr__(self) -> str:
+        return (
+            "WikimediaAuthSnapshot("
+            f"credentials_configured={self.credentials_configured}, "
+            f"authenticated_hosts={self.authenticated_hosts}, "
+            f"anonymous_hosts={self.anonymous_hosts})"
+        )
 
 
 @dataclass(frozen=True, repr=False)
@@ -153,6 +177,22 @@ class WikimediaSession:
             error,
         )
 
+    def auth_snapshot(self) -> WikimediaAuthSnapshot:
+        """Count contacted hosts that verified authentication versus fell back.
+
+        Distinguishes "credentials were supplied" (``credentials_configured``)
+        from "this request is actually authenticated". Hosts that have not yet
+        been contacted are not counted in either bucket.
+        """
+        with self._hosts_lock:
+            hosts = list(self._hosts.values())
+        authenticated = sum(1 for state in hosts if state.authenticated)
+        return WikimediaAuthSnapshot(
+            credentials_configured=self._credentials is not None,
+            authenticated_hosts=authenticated,
+            anonymous_hosts=len(hosts) - authenticated,
+        )
+
     def _authenticate(self, opener: _Opener, scheme: str, netloc: str) -> None:
         credentials = self._credentials
         if credentials is None:
@@ -251,7 +291,9 @@ def load_wikimedia_credentials(
 __all__ = [
     "WIKIMEDIA_BOT_PASSWORD",
     "WIKIMEDIA_BOT_USERNAME",
+    "WIKIMEDIA_MAX_IN_FLIGHT",
     "WIKIMEDIA_REQUESTS_PER_MINUTE",
+    "WikimediaAuthSnapshot",
     "WikimediaAuthenticationError",
     "WikimediaConfigurationError",
     "WikimediaCredentials",

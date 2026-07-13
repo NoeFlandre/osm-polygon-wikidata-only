@@ -38,11 +38,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import (
-    defer_host,
-    retry_after_seconds,
-    wait_for_host,
-)
+from osm_polygon_wikidata_only.utils.rate_limit import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
     default_scheduler,
@@ -264,7 +260,7 @@ class HttpWikipediaClient(WikipediaClient):
 
     def _http_get(self, url: str) -> dict[str, Any]:
         host = urllib.parse.urlparse(url).netloc
-        wait_for_host(host, min_interval_s=self._settings.wikipedia_min_interval_s)
+        self._scheduler.pace_host(host, min_interval_s=self._settings.wikipedia_min_interval_s)
         req = urllib.request.Request(
             url,
             headers={
@@ -282,11 +278,9 @@ class HttpWikipediaClient(WikipediaClient):
                 delay = retry_after_seconds(
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
-                defer_host(host, delay)
-                if e.code == 429:
-                    self._scheduler.report_throttled(delay)
-                else:
-                    self._scheduler.report_host_throttled(host, delay)
+                # Both 429 and 503 are scoped to the offending host; only
+                # systemic multi-host throttling triggers a global backoff.
+                self._scheduler.report_host_throttled(host, delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):

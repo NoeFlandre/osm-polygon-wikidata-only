@@ -28,11 +28,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,
 )
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import (
-    defer_host,
-    retry_after_seconds,
-    wait_for_host,
-)
+from osm_polygon_wikidata_only.utils.rate_limit import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
     default_scheduler,
@@ -117,7 +113,8 @@ class HttpWikidataClient(WikidataClient):
         return f"{self._endpoint}?{urllib.parse.urlencode(params)}"
 
     def _http_get(self, url: str) -> dict[str, Any]:
-        wait_for_host("www.wikidata.org", min_interval_s=self._settings.wikidata_min_interval_s)
+        host = urllib.parse.urlparse(url).netloc or "www.wikidata.org"
+        self._scheduler.pace_host(host, min_interval_s=self._settings.wikidata_min_interval_s)
         req = urllib.request.Request(
             url,
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
@@ -131,11 +128,11 @@ class HttpWikidataClient(WikidataClient):
                 delay = retry_after_seconds(
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
-                defer_host("www.wikidata.org", delay)
-                if e.code == 429:
-                    self._scheduler.report_throttled(delay)
-                else:
-                    self._scheduler.report_host_throttled("www.wikidata.org", delay)
+                # Both 429 and 503 are scoped to the offending host. The
+                # scheduler escalates to a global backoff only when throttling
+                # becomes systemic across several distinct hosts, so a single
+                # host's rate limit never cripples unrelated healthy hosts.
+                self._scheduler.report_host_throttled(host, delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
