@@ -80,6 +80,10 @@ class Settings:
     force: bool = False
     limit: int | None = None  # debug: stop after N polygons
 
+    # Hugging Face authentication. ``None`` means "fall back to HF_TOKEN env
+    # or the saved login token". An explicit value here wins over both.
+    hf_token: str | None = None
+
     # Recommended local data root, overridable by --data-root / env var.
     default_data_root: str = str(DEFAULT_LOCAL_DATA_ROOT)
 
