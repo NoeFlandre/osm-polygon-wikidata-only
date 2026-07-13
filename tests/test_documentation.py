@@ -76,6 +76,29 @@ def test_readme_documents_geographic_coverage_section() -> None:
     assert "opacity encodes" not in readme.lower()
 
 
+def test_readme_states_both_geographic_coverage_formulas() -> None:
+    """The README must spell out the coverage_rate and polygon_count formulas once each."""
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    coverage_section = readme.split("## Geographic coverage", 1)[1].split("\n## ", 1)[0]
+
+    # Coverage rate formula
+    assert "coverage_rate" in coverage_section
+    assert "covered_polygons" in coverage_section
+    assert "all_dataset_polygons" in coverage_section
+    # A covered polygon definition appears once.
+    assert "non-empty text" in coverage_section
+
+    # Polygon count formula
+    assert "polygon_count" in coverage_section
+    assert "centroid" in coverage_section.lower()
+    assert "H3 cell" in coverage_section
+
+    # The conditioning clause appears once and is not duplicated.
+    conditioning_phrase = "OSM `wikidata=*` tag"
+    assert coverage_section.count(conditioning_phrase) == 1
+    assert "wikidata" in coverage_section.lower()
+
+
 def test_architecture_documents_geographic_coverage_generation() -> None:
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
     assert "Geographic coverage" in architecture
