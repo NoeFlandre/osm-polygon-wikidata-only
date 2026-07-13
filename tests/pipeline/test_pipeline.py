@@ -166,12 +166,12 @@ def test_process_pbf_writes_three_parquet_and_manifest(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
-    from osm_polygon_wikidata_only.pipeline import processor as processor_module
+    from osm_polygon_wikidata_only.pipeline import enrichment_phase as enrichment_phase_module
 
     heartbeat_regions: list[str] = []
     heartbeat_exited: list[bool] = []
     progress_trackers: list[object] = []
-    real_fetch_qids = processor_module.fetch_qids
+    real_fetch_qids = enrichment_phase_module.fetch_qids
 
     class RecordingHeartbeat:
         def __init__(self, *, region: str, **_: object) -> None:
@@ -192,9 +192,9 @@ def test_process_pbf_writes_three_parquet_and_manifest(
         progress_trackers.append(kwargs.get("progress"))
         return real_fetch_qids(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(processor_module, "EnrichmentHeartbeat", RecordingHeartbeat)
-    monkeypatch.setattr(processor_module, "fetch_qids", recording_fetch_qids)
-    caplog.set_level(logging.INFO, logger=processor_module.LOGGER.name)
+    monkeypatch.setattr(enrichment_phase_module, "EnrichmentHeartbeat", RecordingHeartbeat)
+    monkeypatch.setattr(enrichment_phase_module, "fetch_qids", recording_fetch_qids)
+    caplog.set_level(logging.INFO, logger="osm_polygon_wikidata_only.pipeline.processor")
 
     candidates = [
         _candidate(osm_id=1, wikidata="Q1", name="A"),
@@ -324,17 +324,17 @@ def test_process_pbf_dedups_repeated_qids(tmp_path: Path, monkeypatch: pytest.Mo
     data_root.ensure()
 
     settings = Settings()
-    import osm_polygon_wikidata_only.pipeline.rows as rows
+    import osm_polygon_wikidata_only.pipeline.row_construction as row_construction_mod
 
     word_count_calls = 0
-    original_count_words = rows.count_words
+    original_count_words = row_construction_mod.count_words
 
     def count_words_once(text: str) -> int:
         nonlocal word_count_calls
         word_count_calls += 1
         return original_count_words(text)
 
-    monkeypatch.setattr(rows, "count_words", count_words_once)
+    monkeypatch.setattr(row_construction_mod, "count_words", count_words_once)
     result = process_pbf(
         pbf,
         data_root=data_root,

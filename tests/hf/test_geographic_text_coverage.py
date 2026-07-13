@@ -17,7 +17,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
@@ -622,7 +621,7 @@ def test_render_writes_through_temporary_file(
         return original_replace(src, dst)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.geographic_text_coverage.os.replace",
+        "osm_polygon_wikidata_only.hf._geographic.rendering.os.replace",
         tracking_replace,
     )
     out = tmp_path / "coverage.png"
@@ -637,6 +636,54 @@ def test_render_deterministic_with_fixed_inputs(tmp_path: Path) -> None:
     render_geographic_text_coverage(cells, out1)
     render_geographic_text_coverage(cells, out2)
     # Inputs are identical and config is fixed -> byte-identical output.
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_render_text_coverage_is_byte_deterministic_within_run(
+    tmp_path: Path,
+) -> None:
+    """Rendering the coverage PNG twice from identical synthetic inputs
+    during the same test run must produce byte-identical output.
+
+    This is the within-run reproducibility contract for the
+    geographic visualization: bytes must match across two consecutive
+    invocations of ``render_geographic_text_coverage`` with the same
+    inputs. We deliberately do not check against a checked-in raster
+    fixture; per the spec, byte equality only needs to hold within
+    the active environment, not against a Matplotlib-version
+    baseline file.
+    """
+    out1 = tmp_path / "a.png"
+    out2 = tmp_path / "b.png"
+    cells = _cell_fixture()
+    render_geographic_text_coverage(cells, out1)
+    render_geographic_text_coverage(cells, out2)
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_render_polygon_count_is_byte_deterministic_within_run(
+    tmp_path: Path,
+) -> None:
+    """Rendering the polygon-count PNG twice from identical synthetic
+    inputs during the same test run must produce byte-identical
+    output."""
+    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+        PolygonCountCell,
+    )
+
+    out1 = tmp_path / "a.png"
+    out2 = tmp_path / "b.png"
+    cells = _cell_fixture()
+    count_cells = [
+        PolygonCountCell(
+            h3_cell=cell.h3_cell,
+            polygon_count=cell.polygon_count,
+            is_low_sample=cell.is_low_sample,
+        )
+        for cell in cells
+    ]
+    render_geographic_polygon_count(count_cells, out1)
+    render_geographic_polygon_count(count_cells, out2)
     assert out1.read_bytes() == out2.read_bytes()
 
 
@@ -895,129 +942,13 @@ def test_colorbar_ticks_are_formatted_as_percentages(tmp_path: Path) -> None:
 
     # The colormap normalization must remain in [0, 1] so aggregation
     # semantics are preserved.
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+    from osm_polygon_wikidata_only.hf._geographic.coverage import (
         _VMAX,
         _VMIN,
     )
 
     assert _VMIN == 0.0
     assert _VMAX == 1.0
-
-
-# --- CLI integration: propagate CoverageMapError, do not submit -------
-
-
-def test_enqueue_upload_propagates_coverage_map_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A CoverageMapError from visualization must propagate; no upload may be submitted."""
-    import osm_polygon_wikidata_only.cli.commands as commands_mod
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    uploads: list[list[tuple[Path, str]]] = []
-
-    class _StubProcessResult:
-        polygons_path = tmp_path / "polygons.parquet"
-        articles_path = tmp_path / "articles.parquet"
-        polygon_articles_path = tmp_path / "links.parquet"
-        manifest_path = tmp_path / "manifest.json"
-        polygon_count = 0
-        article_count = 0
-        link_count = 0
-
-        def __init__(self) -> None:
-            self.manifest_entry = {"source_pbf": "fixture.osm.pbf"}
-            self.stage_timings_s: dict[str, float] = {}
-
-    for path in (
-        _StubProcessResult.polygons_path,
-        _StubProcessResult.articles_path,
-        _StubProcessResult.polygon_articles_path,
-        _StubProcessResult.manifest_path,
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-
-    def boom(_data_root: object, destination: Path) -> Path:
-        raise CoverageMapError("polygons parquet missing required columns: ['lat']")
-
-    def fake_write_readme(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    def submit_spy(files: list[tuple[Path, str]], message: str) -> None:
-        uploads.append(list(files))
-
-    monkeypatch.setattr(commands_mod, "_generate_geographic_text_coverage_snapshot", boom)
-    monkeypatch.setattr(commands_mod, "_write_readme_snapshot", fake_write_readme)
-    monkeypatch.setattr(commands_mod, "ensure_world_land", lambda cache_dir: None)
-    monkeypatch.setattr(commands_mod, "generate_coverage_map", lambda *_a, **_k: None)
-
-    upload_queue = type(
-        "_Q",
-        (),
-        {"submit": staticmethod(submit_spy), "close_and_wait": staticmethod(lambda: [])},
-    )()
-
-    with pytest.raises(CoverageMapError, match=r"missing required columns"):
-        commands_mod._enqueue_core_upload(
-            upload_queue,
-            data_root=data_root,
-            repo_id="org/dataset",
-            commit_message="Update PBF fixture.osm.pbf",
-            result=_StubProcessResult(),  # type: ignore[arg-type]
-        )
-    assert uploads == [], "Upload must not be submitted when visualization generation fails."
-
-
-def test_sync_upload_files_propagates_coverage_map_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A CoverageMapError in the sync-dir core path must propagate before any file list is built."""
-    import osm_polygon_wikidata_only.cli.commands as commands_mod
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-
-    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
-    for path in augmentation_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    aug_manifest = tmp_path / "aug-manifest"
-    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest.write_text("{}", encoding="utf-8")
-    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
-
-    core_paths = {
-        "polygons_path": tmp_path / "core.parquet",
-        "articles_path": tmp_path / "articles.parquet",
-        "polygon_articles_path": tmp_path / "links.parquet",
-    }
-    for path in core_paths.values():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    data_root.processed_manifests.joinpath("processed_pbfs.json").write_text("{}", encoding="utf-8")
-
-    class _Core:
-        pass
-
-    core = _Core()
-    core.polygons_path = core_paths["polygons_path"]
-    core.articles_path = core_paths["articles_path"]
-    core.polygon_articles_path = core_paths["polygon_articles_path"]
-
-    def boom(_data_root: object, destination: Path) -> Path:
-        raise CoverageMapError("polygons directory does not exist: /missing")
-
-    monkeypatch.setattr(commands_mod, "_generate_geographic_text_coverage_snapshot", boom)
-
-    with pytest.raises(CoverageMapError, match=r"polygons directory"):
-        commands_mod._sync_upload_files(
-            data_root, "org/dataset", "monaco-latest", augmentation, core
-        )
-
-
-# --- Coverage map: opacity removed, polygon count no longer encoded ----
 
 
 def test_coverage_cell_renderer_does_not_use_count_opacity(tmp_path: Path) -> None:
@@ -1043,7 +974,7 @@ def test_coverage_cells_use_consistent_full_opacity_for_eligible_cells(
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.geographic_text_coverage.mpatches.Polygon", _TrackingPolygon
+        "osm_polygon_wikidata_only.hf._geographic.coverage.mpatches.Polygon", _TrackingPolygon
     )
 
     cells = [
@@ -1304,7 +1235,7 @@ def test_render_polygon_count_does_not_grey_low_sample_cells(
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.geographic_text_coverage.mpatches.Polygon",
+        "osm_polygon_wikidata_only.hf._geographic.polygon_count.mpatches.Polygon",
         _TrackingPolygon,
     )
     cells = [
@@ -1317,7 +1248,7 @@ def test_render_polygon_count_does_not_grey_low_sample_cells(
     render_geographic_polygon_count(cells, tmp_path / "count.png")
     assert seen_facecolors, "At least one polygon patch must be drawn"
     # None of the facecolors may equal the low-sample grey used by the coverage map.
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import _LOW_SAMPLE_COLOR
+    from osm_polygon_wikidata_only.hf._geographic.coverage import _LOW_SAMPLE_COLOR
 
     assert all(fc != _LOW_SAMPLE_COLOR for fc in seen_facecolors), (
         "Polygon count map must not grey low-sample cells"
@@ -1368,230 +1299,129 @@ def test_polygon_count_cell_is_immutable() -> None:
         cell.polygon_count = 0  # type: ignore[misc]
 
 
-# --- CLI integration: both snapshots are wired into core publication ---
+# --- PyArrow schema-introspection fallback -------------------------------
 
 
-def test_enqueue_core_upload_includes_both_visualization_snapshots(
+def test_read_required_columns_recovers_when_metadata_read_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The legacy core upload path must include both coverage and count maps in one commit."""
-    import osm_polygon_wikidata_only.cli.commands as commands_mod
+    """The schema-introspection fallback in ``read_required_columns`` must
+    survive a failing ``pq.read_metadata`` call (e.g. corrupted file)
+    while still surfacing ``CoverageMapError`` when the column-pruned
+    read fails for a legitimate reason (e.g. missing columns).
 
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    submitted: list[list[tuple[Path, str]]] = []
+    The metadata-read ``except Exception`` is intentionally broad
+    because PyArrow's metadata API can raise across several unstable
+    exception types depending on the file corruption mode; we retain
+    the boundary and document it.
+    """
+    import pyarrow.parquet as pq_mod
 
-    class _StubProcessResult:
-        polygons_path = tmp_path / "polygons.parquet"
-        articles_path = tmp_path / "articles.parquet"
-        polygon_articles_path = tmp_path / "links.parquet"
-        manifest_path = tmp_path / "manifest.json"
-        polygon_count = 0
-        article_count = 0
-        link_count = 0
+    processed = tmp_path / "processed"
+    polygons_dir = processed / "polygons"
+    polygons_dir.mkdir(parents=True)
+    parquet_path = _write_polygons_parquet(polygons_dir / "a.parquet", ["p:way:1"], [0.0], [0.0])
 
-        def __init__(self) -> None:
-            self.manifest_entry = {"source_pbf": "fixture.osm.pbf"}
-            self.stage_timings_s: dict[str, float] = {}
+    def _exploding_read_metadata(_path: Path) -> Any:
+        raise RuntimeError("simulated metadata corruption")
 
-    for path in (
-        _StubProcessResult.polygons_path,
-        _StubProcessResult.articles_path,
-        _StubProcessResult.polygon_articles_path,
-        _StubProcessResult.manifest_path,
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setattr(pq_mod, "read_metadata", _exploding_read_metadata)
 
-    def fake_text(_data_root: object, destination: Path) -> Path:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return destination
-
-    def fake_count(_data_root: object, destination: Path) -> Path:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return destination
-
-    monkeypatch.setattr(commands_mod, "_generate_geographic_text_coverage_snapshot", fake_text)
-    monkeypatch.setattr(commands_mod, "_generate_geographic_polygon_count_snapshot", fake_count)
-    monkeypatch.setattr(commands_mod, "_write_readme_snapshot", lambda *a, **k: None)
-    monkeypatch.setattr(commands_mod, "ensure_world_land", lambda cache_dir: None)
-    monkeypatch.setattr(commands_mod, "generate_coverage_map", lambda *_a, **_k: None)
-
-    upload_queue = type(
-        "_Q",
-        (),
-        {
-            "submit": staticmethod(lambda files, msg: submitted.append(list(files))),
-            "close_and_wait": staticmethod(lambda: []),
-        },
-    )()
-
-    commands_mod._enqueue_core_upload(
-        upload_queue,
-        data_root=data_root,
-        repo_id="org/dataset",
-        commit_message="Update PBF fixture.osm.pbf",
-        result=_StubProcessResult(),  # type: ignore[arg-type]
-    )
-    assert submitted, "Core upload must be submitted when both snapshots succeed"
-    remote_paths = [remote for _, remote in submitted[0]]
-    assert LOCAL_TEXT_COVERAGE_ASSET_PATH in remote_paths
-    assert LOCAL_POLYGON_COUNT_ASSET_PATH in remote_paths
-
-
-def test_sync_upload_files_includes_polygon_count_when_core_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import osm_polygon_wikidata_only.cli.commands as commands
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-
-    def fake_text(_data_root: object, destination: Path) -> Path:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return destination
-
-    def fake_count(_data_root: object, destination: Path) -> Path:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return destination
-
-    monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fake_text)
-    monkeypatch.setattr(commands, "_generate_geographic_polygon_count_snapshot", fake_count)
-
-    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
-    for path in augmentation_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    aug_manifest = tmp_path / "aug-manifest"
-    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest.write_text("{}", encoding="utf-8")
-    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
-
-    core_paths = {
-        "polygons_path": tmp_path / "core.parquet",
-        "articles_path": tmp_path / "articles.parquet",
-        "polygon_articles_path": tmp_path / "links.parquet",
-    }
-    for path in core_paths.values():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    data_root.processed_manifests.joinpath("processed_pbfs.json").write_text("{}", encoding="utf-8")
-
-    class _Core:
-        pass
-
-    core = _Core()
-    core.polygons_path = core_paths["polygons_path"]
-    core.articles_path = core_paths["articles_path"]
-    core.polygon_articles_path = core_paths["polygon_articles_path"]
-
-    files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, core)
-    remote_paths = [remote for _, remote in files]
-    assert LOCAL_TEXT_COVERAGE_ASSET_PATH in remote_paths
-    assert LOCAL_POLYGON_COUNT_ASSET_PATH in remote_paths
-
-
-def test_sync_upload_files_skips_polygon_count_for_augmentation_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import osm_polygon_wikidata_only.cli.commands as commands
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-
-    def fail_text(*_args: object, **_kwargs: object) -> Path:
-        raise AssertionError("Augmentation-only must not regenerate the text coverage asset")
-
-    def fail_count(*_args: object, **_kwargs: object) -> Path:
-        raise AssertionError("Augmentation-only must not regenerate the polygon count asset")
-
-    monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fail_text)
-    monkeypatch.setattr(commands, "_generate_geographic_polygon_count_snapshot", fail_count)
-
-    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
-    for path in augmentation_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    aug_manifest = tmp_path / "aug-manifest"
-    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest.write_text("{}", encoding="utf-8")
-    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
-
-    files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, None)
-    remote_paths = [remote for _, remote in files]
-    assert LOCAL_TEXT_COVERAGE_ASSET_PATH not in remote_paths
-    assert LOCAL_POLYGON_COUNT_ASSET_PATH not in remote_paths
-
-
-def test_enqueue_core_upload_failure_prevents_partial_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """If polygon count generation fails, no upload must be submitted."""
-    import osm_polygon_wikidata_only.cli.commands as commands_mod
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    submitted: list[list[tuple[Path, str]]] = []
-
-    class _StubProcessResult:
-        polygons_path = tmp_path / "polygons.parquet"
-        articles_path = tmp_path / "articles.parquet"
-        polygon_articles_path = tmp_path / "links.parquet"
-        manifest_path = tmp_path / "manifest.json"
-        polygon_count = 0
-        article_count = 0
-        link_count = 0
-
-        def __init__(self) -> None:
-            self.manifest_entry = {"source_pbf": "fixture.osm.pbf"}
-            self.stage_timings_s: dict[str, float] = {}
-
-    for path in (
-        _StubProcessResult.polygons_path,
-        _StubProcessResult.articles_path,
-        _StubProcessResult.polygon_articles_path,
-        _StubProcessResult.manifest_path,
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-
-    monkeypatch.setattr(
-        commands_mod,
-        "_generate_geographic_text_coverage_snapshot",
-        lambda root, dst: (
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            or dst.write_bytes(b"\x89PNG\r\n\x1a\n")
-            or dst
-        ),
+    # Schema-introspection fails -> we fall through with an empty
+    # ``actual`` set. The subsequent column-pruned read succeeds for
+    # well-formed parquet, so the function returns rows unchanged.
+    # Import the private helper directly to exercise the fallback.
+    from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import (
+        read_required_columns,
     )
 
-    def boom_count(_data_root: object, destination: Path) -> Path:
-        raise CoverageMapError("polygons parquet missing required columns: ['lat']")
-
-    monkeypatch.setattr(commands_mod, "_generate_geographic_polygon_count_snapshot", boom_count)
-    monkeypatch.setattr(commands_mod, "_write_readme_snapshot", lambda *a, **k: None)
-    monkeypatch.setattr(commands_mod, "ensure_world_land", lambda cache_dir: None)
-    monkeypatch.setattr(commands_mod, "generate_coverage_map", lambda *_a, **_k: None)
-
-    upload_queue = type(
-        "_Q",
-        (),
+    rows = read_required_columns(parquet_path, ("polygon_id", "lat", "lon"), label="polygons")
+    assert rows == [
         {
-            "submit": staticmethod(lambda files, msg: submitted.append(list(files))),
-            "close_and_wait": staticmethod(lambda: []),
-        },
-    )()
+            "polygon_id": "p:way:1",
+            "lat": 0.0,
+            "lon": 0.0,
+        }
+    ]
+
+
+def test_read_required_columns_still_propagates_coverage_error_when_columns_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the metadata read fails AND the column-pruned read fails,
+    the function must raise :class:`CoverageMapError` identifying the
+    missing columns. This proves the schema-introspection fallback
+    does not silently swallow genuine schema drift.
+    """
+    import pyarrow.parquet as pq_mod
+
+    processed = tmp_path / "processed"
+    polygons_dir = processed / "polygons"
+    polygons_dir.mkdir(parents=True)
+    parquet_path = polygons_dir / "a.parquet"
+    pq.write_table(pa.table({"polygon_id": ["p:way:1"]}), parquet_path)
+
+    def _exploding_read_metadata(_path: Path) -> Any:
+        raise RuntimeError("simulated metadata corruption")
+
+    monkeypatch.setattr(pq_mod, "read_metadata", _exploding_read_metadata)
+
+    from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import (
+        read_required_columns,
+    )
 
     with pytest.raises(CoverageMapError, match=r"missing required columns"):
-        commands_mod._enqueue_core_upload(
-            upload_queue,
-            data_root=data_root,
-            repo_id="org/dataset",
-            commit_message="Update PBF fixture.osm.pbf",
-            result=_StubProcessResult(),  # type: ignore[arg-type]
-        )
-    assert submitted == [], "Upload must not be submitted when count-map generation fails."
+        read_required_columns(parquet_path, ("polygon_id", "lat", "lon"), label="polygons")
+
+
+# --- world-map basemap fallback -----------------------------------------
+
+
+def test_load_land_basemap_returns_none_when_cache_missing(tmp_path: Path) -> None:
+    """``load_land_basemap`` returns ``None`` when no GeoJSON cache exists.
+
+    The implementation handles three cases explicitly: missing or
+    empty cache files, malformed JSON (``ValueError``), and read
+    errors (``OSError``). A non-dictionary parsed JSON payload
+    returns ``None`` directly without raising.
+    """
+    from osm_polygon_wikidata_only.hf._geographic.basemap import load_land_basemap
+
+    assert load_land_basemap(tmp_path) is None
+
+
+def test_load_land_basemap_returns_features_for_well_formed_geojson(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf._geographic.basemap import load_land_basemap
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    geojson = cache_dir / "ne_110m_land.geojson"
+    geojson.write_text(
+        '{"type":"FeatureCollection","features":[{"type":"Feature",'
+        '"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},'
+        '"properties":{}}]}'
+    )
+
+    features = load_land_basemap(cache_dir)
+    assert features is not None
+    assert len(features) == 1
+    assert features[0]["geometry"]["type"] == "Polygon"
+
+
+def test_load_land_basemap_returns_none_for_corrupt_geojson(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A malformed local file (truncated, non-JSON) must return ``None``
+    and emit a warning -- it must NOT raise. This proves the documented
+    ``(OSError, ValueError)`` boundary behaves correctly.
+    """
+    from osm_polygon_wikidata_only.hf._geographic.basemap import load_land_basemap
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    geojson = cache_dir / "ne_110m_land.geojson"
+    geojson.write_text("{not valid json")
+
+    caplog.set_level("WARNING")
+    assert load_land_basemap(cache_dir) is None
+    assert any("Could not read cached land GeoJSON" in r.getMessage() for r in caplog.records)

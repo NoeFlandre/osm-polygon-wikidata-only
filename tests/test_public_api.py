@@ -69,8 +69,194 @@ def test_processor_facade_preserves_public_error() -> None:
     assert IncompleteEnrichmentError is FocusedError
 
 
+def test_processor_facade_re_exports_extractor_symbols() -> None:
+    """``pipeline.processor`` must re-export ``extract_pbf`` and
+    ``ExtractedPbf`` from the focused extractor module."""
+    from osm_polygon_wikidata_only.pipeline import extractor as extractor_mod
+    from osm_polygon_wikidata_only.pipeline import processor as processor_mod
+
+    assert processor_mod.extract_pbf is extractor_mod.extract_pbf
+    assert processor_mod.ExtractedPbf is extractor_mod.ExtractedPbf
+
+
+def test_rows_facade_re_exports_row_construction() -> None:
+    """``pipeline.rows`` keeps backwards-compatible re-exports of the
+    three row-construction helpers by identity."""
+    from osm_polygon_wikidata_only.pipeline import row_construction as focused
+    from osm_polygon_wikidata_only.pipeline import rows as legacy
+
+    assert legacy.enrich_polygon is focused.enrich_polygon
+    assert legacy.build_articles_and_links is focused.build_articles_and_links
+    assert legacy.article_row is focused.article_row
+
+
+def test_enrichment_phase_owns_unique_qids_helper() -> None:
+    """The ``unique_qids`` helper exposes a deterministic QID tuple."""
+    from dataclasses import dataclass
+
+    from osm_polygon_wikidata_only.pipeline.enrichment_phase import unique_qids
+
+    @dataclass(slots=True)
+    class _Stub:
+        wikidata: str
+
+    assert unique_qids([_Stub(wikidata="Q3"), _Stub(wikidata="Q1"), _Stub(wikidata="Q1")]) == (
+        "Q1",
+        "Q3",
+    )
+
+
 def test_cli_facade_preserves_parser() -> None:
     from osm_polygon_wikidata_only.cli.commands import build_parser
     from osm_polygon_wikidata_only.cli.parser import build_parser as focused_build_parser
 
     assert build_parser is focused_build_parser
+
+
+def test_geographic_facade_preserves_public_types() -> None:
+    """The geographic facade must re-export the four documented types
+    from their focused modules unchanged."""
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
+    from osm_polygon_wikidata_only.hf._geographic.models import (
+        CoverageCell,
+        CoverageMapError,
+        PolygonCountCell,
+        RenderResult,
+    )
+
+    assert facade.CoverageCell is CoverageCell
+    assert facade.PolygonCountCell is PolygonCountCell
+    assert facade.RenderResult is RenderResult
+    assert facade.CoverageMapError is CoverageMapError
+
+
+def test_geographic_facade_preserves_aggregation_helpers() -> None:
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
+    from osm_polygon_wikidata_only.hf._geographic.aggregation import (
+        aggregate_geographic_polygon_count as focused_count_agg,
+    )
+    from osm_polygon_wikidata_only.hf._geographic.aggregation import (
+        aggregate_geographic_text_coverage as focused_text_agg,
+    )
+
+    assert facade.aggregate_geographic_text_coverage is focused_text_agg
+    assert facade.aggregate_geographic_polygon_count is focused_count_agg
+
+
+def test_geographic_facade_preserves_rendering_helpers() -> None:
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
+    from osm_polygon_wikidata_only.hf._geographic.coverage import (
+        generate_geographic_text_coverage as focused_text_generate,
+    )
+    from osm_polygon_wikidata_only.hf._geographic.coverage import (
+        render_geographic_text_coverage as focused_text_render,
+    )
+    from osm_polygon_wikidata_only.hf._geographic.polygon_count import (
+        generate_geographic_polygon_count as focused_count_generate,
+    )
+    from osm_polygon_wikidata_only.hf._geographic.polygon_count import (
+        render_geographic_polygon_count as focused_count_render,
+    )
+
+    assert facade.render_geographic_text_coverage is focused_text_render
+    assert facade.generate_geographic_text_coverage is focused_text_generate
+    assert facade.render_geographic_polygon_count is focused_count_render
+    assert facade.generate_geographic_polygon_count is focused_count_generate
+
+
+def test_geographic_facade_preserves_assign_h3_cell_and_defaults() -> None:
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
+    from osm_polygon_wikidata_only.hf._geographic.h3_geometry import (
+        DEFAULT_H3_RESOLUTION as focused_default_resolution,
+    )
+    from osm_polygon_wikidata_only.hf._geographic.h3_geometry import (
+        DEFAULT_MIN_POLYGONS_PER_CELL as focused_default_min_polygons,
+    )
+    from osm_polygon_wikidata_only.hf._geographic.h3_geometry import (
+        assign_h3_cell as focused_assign,
+    )
+
+    assert facade.assign_h3_cell is focused_assign
+    assert facade.DEFAULT_H3_RESOLUTION is focused_default_resolution
+    assert facade.DEFAULT_MIN_POLYGONS_PER_CELL is focused_default_min_polygons
+
+
+def test_geographic_facade_preserves_asset_path_constants() -> None:
+    """The stable asset paths and backwards-compatible aliases are stable
+    by value and live on the facade."""
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
+
+    assert facade.REMOTE_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
+    assert facade.LOCAL_TEXT_COVERAGE_ASSET_PATH == facade.REMOTE_TEXT_COVERAGE_ASSET_PATH
+    assert facade.REMOTE_POLYGON_COUNT_ASSET_PATH == "assets/geographic_polygon_count.png"
+    assert facade.LOCAL_POLYGON_COUNT_ASSET_PATH == facade.REMOTE_POLYGON_COUNT_ASSET_PATH
+    assert facade.LOCAL_ASSET_PATH == facade.LOCAL_TEXT_COVERAGE_ASSET_PATH
+    assert facade.REMOTE_ASSET_PATH == facade.REMOTE_TEXT_COVERAGE_ASSET_PATH
+
+
+def test_dataset_stats_facade_preserves_public_symbols() -> None:
+    """The dataset_stats facade must re-export the three documented
+    public symbols unchanged."""
+    from osm_polygon_wikidata_only.hf import dataset_stats as facade
+    from osm_polygon_wikidata_only.hf._dataset_stats.aggregation import (
+        compute_dataset_stats as focused_compute,
+    )
+    from osm_polygon_wikidata_only.hf._dataset_stats.models import (
+        DatasetStats as focused_stats,
+    )
+    from osm_polygon_wikidata_only.hf._dataset_stats.rendering import (
+        render_stats_section as focused_render,
+    )
+
+    assert facade.DatasetStats is focused_stats
+    assert facade.compute_dataset_stats is focused_compute
+    assert facade.render_stats_section is focused_render
+
+
+def test_uploader_facade_preserves_public_symbols() -> None:
+    """The uploader facade must re-export every documented public symbol
+    from its focused module unchanged. The exact list is the legacy
+    __all__: HfHub, StubHfHub, UploadError, default_commit_message,
+    resolve_hf_token, upload_card, upload_files, upload_manifest,
+    upload_parquet, verify_hf_token, verify_repo_authorization.
+    """
+    from osm_polygon_wikidata_only.hf import uploader as facade
+    from osm_polygon_wikidata_only.hf._uploader.authorization import (
+        verify_repo_authorization as focused_verify_repo,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError as focused_error
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        default_commit_message as focused_default_commit_message,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_card as focused_upload_card,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_files as focused_upload_files,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_manifest as focused_upload_manifest,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_parquet as focused_upload_parquet,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub as focused_protocol
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub as focused_stub
+    from osm_polygon_wikidata_only.hf._uploader.token import (
+        resolve_hf_token as focused_resolve,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.token import (
+        verify_hf_token as focused_verify,
+    )
+
+    assert facade.UploadError is focused_error
+    assert facade.HfHub is focused_protocol
+    assert facade.StubHfHub is focused_stub
+    assert facade.resolve_hf_token is focused_resolve
+    assert facade.verify_hf_token is focused_verify
+    assert facade.verify_repo_authorization is focused_verify_repo
+    assert facade.upload_parquet is focused_upload_parquet
+    assert facade.upload_files is focused_upload_files
+    assert facade.upload_manifest is focused_upload_manifest
+    assert facade.upload_card is focused_upload_card
+    assert facade.default_commit_message is focused_default_commit_message

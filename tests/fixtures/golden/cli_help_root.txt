@@ -1,0 +1,15 @@
+usage: PROG [-h]
+ {process-pbf,process-dir,sync-dir,augment-region,augment-dir} ...
+
+Build a Hugging Face dataset of OSM polygons linked to Wikidata + Wikipedia.
+
+positional arguments:
+ {process-pbf,process-dir,sync-dir,augment-region,augment-dir}
+ process-pbf Process one PBF file
+ process-dir Process every PBF in a directory
+ sync-dir Converge core and augmentation for every PBF
+ augment-region Augment one completed region without reading PBF
+ augment-dir Augment every completed core region
+
+options:
+ -h, --help show this help message and exit

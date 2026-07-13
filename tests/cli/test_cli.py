@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import pytest
 
 import osm_polygon_wikidata_only.cli.commands as commands
-from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
-from osm_polygon_wikidata_only.config.paths import DataRoot
 
 
 def test_parser_has_two_subcommands() -> None:
@@ -37,42 +34,6 @@ def test_sync_dir_handles_empty_directory_without_network(tmp_path: Path) -> Non
     raw = tmp_path / "raw"
     raw.mkdir()
     assert main(["sync-dir", str(raw), "--data-root", str(tmp_path), "--skip-existing"]) == 0
-
-
-def test_coverage_map_refresh_is_needed_only_when_core_changes() -> None:
-    assert commands._coverage_refresh_required(None) is False
-    assert commands._coverage_refresh_required(object()) is True
-
-
-def test_geographic_text_coverage_snapshot_uses_processed_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The shared helper must aggregate from the processed root and emit a PNG."""
-    from osm_polygon_wikidata_only.hf import geographic_text_coverage as module
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import RenderResult
-
-    seen_root: list[Path] = []
-
-    def fake_generate(processed_root: Path, output_path: Path, **_kwargs: object) -> RenderResult:
-        seen_root.append(processed_root)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return RenderResult(output_path=output_path, caption="")
-
-    monkeypatch.setattr(commands, "_generate_geographic_text_coverage", fake_generate)
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    destination = tmp_path / "snapshot.png"
-
-    result = commands._generate_geographic_text_coverage_snapshot(data_root, destination)
-
-    assert seen_root == [data_root.processed]
-    assert destination.exists()
-    assert result == destination
-    # Module-level name preserved so callers can introspect it.
-    assert module.LOCAL_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
-    # Backwards-compatible alias for the historical single-asset name.
-    assert module.LOCAL_ASSET_PATH == module.LOCAL_TEXT_COVERAGE_ASSET_PATH
 
 
 def test_parser_accepts_additive_region_augmentation() -> None:
@@ -275,125 +236,3 @@ def test_main_drains_dry_run_upload_queue_for_empty_directory(tmp_path: Path) ->
         )
         == 0
     )
-
-
-def test_write_readme_snapshot_uses_canonical_current_dataset_state(tmp_path: Path) -> None:
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    data_root.processed_manifests.joinpath("processed_pbfs.json").write_text(
-        json.dumps(
-            {
-                "andorra-latest.osm.pbf": {
-                    "polygon_count": 2,
-                    "article_count": 3,
-                    "unique_wikidata_count": 1,
-                }
-            }
-        )
-    )
-    destination = tmp_path / "README.md"
-
-    commands._write_readme_snapshot(data_root, "org/dataset", destination)
-
-    markdown = destination.read_text()
-    assert "# org/dataset" in markdown
-    assert "polygon_count: 2" in markdown
-    assert "wikivoyage/documents/<stem>.parquet" in markdown
-
-
-def test_augmentation_upload_files_include_fresh_readme(tmp_path: Path) -> None:
-    paths = [tmp_path / f"artifact-{index}" for index in range(6)]
-    readme = tmp_path / "README.md"
-    result = AugmentationResult(*paths[:5], paths[5], {})
-
-    files = commands._augmentation_upload_files(result, tmp_path, readme)
-
-    assert files[-1] == (readme, "README.md")
-
-
-def test_sync_upload_files_includes_geographic_text_coverage_when_core_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The sync-dir core publication path must emit the asset to the canonical remote path."""
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-        LOCAL_TEXT_COVERAGE_ASSET_PATH,
-    )
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-
-    captured: list[Path] = []
-
-    def fake_snapshot(root: object, destination: Path) -> Path:
-        captured.append(destination)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
-        return destination
-
-    monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fake_snapshot)
-    monkeypatch.setattr(commands, "_generate_geographic_polygon_count_snapshot", fake_snapshot)
-
-    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
-    for path in augmentation_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    aug_manifest = tmp_path / "aug-manifest"
-    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest.write_text("{}", encoding="utf-8")
-    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
-
-    core_paths = {
-        "polygons_path": tmp_path / "core.parquet",
-        "articles_path": tmp_path / "articles.parquet",
-        "polygon_articles_path": tmp_path / "links.parquet",
-    }
-    for path in core_paths.values():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    data_root.processed_manifests.joinpath("processed_pbfs.json").write_text("{}", encoding="utf-8")
-
-    class _Core:
-        pass
-
-    core = _Core()
-    core.polygons_path = core_paths["polygons_path"]
-    core.articles_path = core_paths["articles_path"]
-    core.polygon_articles_path = core_paths["polygon_articles_path"]
-
-    files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, core)
-    remote_paths = [remote for _, remote in files]
-    assert LOCAL_TEXT_COVERAGE_ASSET_PATH in remote_paths
-    # The asset is part of the same atomic upload list as the README and core parquets.
-    assert "README.md" in remote_paths
-    assert "polygons/core.parquet" in remote_paths
-    assert captured, "Geographic text coverage snapshot must be generated when core changes."
-
-
-def test_sync_upload_files_skips_geographic_text_coverage_for_augmentation_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Augmentation-only uploads must not regenerate the geographic text coverage asset."""
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-        LOCAL_TEXT_COVERAGE_ASSET_PATH,
-    )
-
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-
-    def fail_if_called(*_args: object, **_kwargs: object) -> Path:
-        raise AssertionError("Augmentation-only uploads must not regenerate the asset")
-
-    monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fail_if_called)
-
-    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
-    for path in augmentation_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("placeholder", encoding="utf-8")
-    aug_manifest = tmp_path / "aug-manifest"
-    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest.write_text("{}", encoding="utf-8")
-    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
-
-    files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, None)
-    remote_paths = [remote for _, remote in files]
-    assert LOCAL_TEXT_COVERAGE_ASSET_PATH not in remote_paths

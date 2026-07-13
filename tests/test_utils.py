@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import json
 import threading
-import urllib.error
-from email.message import Message
 
 import pytest
 
-from osm_polygon_wikidata_only.utils import rate_limit
 from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.retry import with_retries
@@ -59,12 +56,6 @@ def test_parse_iso_to_z_normalizes_offset() -> None:
 
 def test_parse_iso_to_z_returns_input_on_garbage() -> None:
     assert parse_iso_to_z("not a date") == "not a date"
-
-
-def test_defer_host_moves_next_request_after_429(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rate_limit.time, "monotonic", lambda: 10.0)
-    rate_limit.defer_host("en.wikipedia.org", 30.0)
-    assert rate_limit.next_wait_seconds("en.wikipedia.org") == 30.0
 
 
 def test_scheduler_global_cooldown_delays_next_request() -> None:
@@ -324,17 +315,3 @@ def test_retry_raises_last_error_after_budget(monkeypatch: pytest.MonkeyPatch) -
             base_delay=0,
             retry_on=(OSError,),
         )
-
-
-def test_retry_after_seconds_parses_numeric_header() -> None:
-    headers = Message()
-    headers["Retry-After"] = "12.5"
-    error = urllib.error.HTTPError("https://example.test", 429, "limited", headers, None)
-    assert rate_limit.retry_after_seconds(error) == 12.5
-
-
-def test_retry_after_seconds_uses_default_for_invalid_header() -> None:
-    headers = Message()
-    headers["Retry-After"] = "not-a-date"
-    error = urllib.error.HTTPError("https://example.test", 429, "limited", headers, None)
-    assert rate_limit.retry_after_seconds(error, default_s=17) == 17

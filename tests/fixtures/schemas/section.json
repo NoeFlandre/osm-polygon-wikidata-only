@@ -1,0 +1,160 @@
+{
+  "columns": [
+    "section_id",
+    "document_id",
+    "article_id",
+    "wikidata",
+    "project",
+    "language",
+    "site",
+    "page_id",
+    "revision_id",
+    "section_index",
+    "heading",
+    "anchor",
+    "level",
+    "parent_section_id",
+    "section_path",
+    "text",
+    "text_length_chars",
+    "text_length_words",
+    "text_length_tokens_estimate",
+    "content_hash",
+    "license",
+    "attribution"
+  ],
+  "fields": [
+    {
+      "metadata": {},
+      "name": "section_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "document_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "article_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "wikidata",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "project",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "language",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "site",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "page_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "revision_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "section_index",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "heading",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "anchor",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "level",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "parent_section_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "section_path",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "text",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "text_length_chars",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "text_length_words",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "text_length_tokens_estimate",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "content_hash",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "license",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "attribution",
+      "nullable": true,
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+usage: PROG process-pbf [-h] [--data-root DATA_ROOT] [--repo-id REPO_ID]
+ [--user-agent USER_AGENT] [--languages LANGUAGES]
+ [--all-languages] [--no-full-text]
+ [--max-articles-per-qid MAX_ARTICLES_PER_QID]
+ [--enrichment-batch-size ENRICHMENT_BATCH_SIZE]
+ [--enrichment-site-workers ENRICHMENT_SITE_WORKERS]
+ [--limit LIMIT] [--skip-existing] [--force] [--push]
+ [--commit-message COMMIT_MESSAGE]
+ [--upload-threads UPLOAD_THREADS] [--hf-token HF_TOKEN]
+ [--log-level {DEBUG,INFO,WARNING,ERROR}] [--dry-run]
+ input
+
+positional arguments:
+ input Path to a .osm.pbf file
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT Data root directory
+ --repo-id REPO_ID Hugging Face repo id (org/name)
+ --user-agent USER_AGENT Wikipedia/Wikidata UA
+ --languages LANGUAGES Optional comma-separated language codes
+ --all-languages Fetch all available sitelinks
+ --no-full-text Skip Wikipedia full-text fetch
+ --max-articles-per-qid MAX_ARTICLES_PER_QID
+ --enrichment-batch-size ENRICHMENT_BATCH_SIZE
+ --enrichment-site-workers ENRICHMENT_SITE_WORKERS
+ --limit LIMIT Cap number of polygons per PBF
+ --skip-existing
+ --force
+ --push Push artifacts to Hugging Face
+ --commit-message COMMIT_MESSAGE
+ --upload-threads UPLOAD_THREADS
+ Concurrent Hugging Face upload workers per atomic commit
+ --hf-token HF_TOKEN Hugging Face write token. Defaults to the HF_TOKEN env var or the
+ saved `huggingface-cli login` token.
+ --log-level {DEBUG,INFO,WARNING,ERROR}
+ --dry-run Use a stub HF client (no network)

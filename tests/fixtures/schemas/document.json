@@ -1,0 +1,167 @@
+{
+  "columns": [
+    "document_id",
+    "article_id",
+    "wikidata",
+    "project",
+    "language",
+    "site",
+    "title",
+    "url",
+    "page_id",
+    "revision_id",
+    "revision_timestamp",
+    "retrieved_at",
+    "full_text",
+    "full_text_format",
+    "article_length_chars",
+    "article_length_words",
+    "article_length_tokens_estimate",
+    "license",
+    "attribution",
+    "source_api",
+    "fetch_status",
+    "fetch_error",
+    "content_hash"
+  ],
+  "fields": [
+    {
+      "metadata": {},
+      "name": "document_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "article_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "wikidata",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "project",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "language",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "site",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "title",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "url",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "page_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "revision_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "revision_timestamp",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "retrieved_at",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "full_text",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "full_text_format",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "article_length_chars",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "article_length_words",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "article_length_tokens_estimate",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {},
+      "name": "license",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "attribution",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "source_api",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "fetch_status",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "fetch_error",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {},
+      "name": "content_hash",
+      "nullable": true,
+      "type": "string"
+    }
+  ]
+}
