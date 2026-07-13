@@ -66,6 +66,22 @@ are then queued in one background upload commit while the next PBF begins.
 Failed upload jobs persist under the external data root and resume on the next
 invocation. The dataset and pipeline are maintained by Noé Flandre.
 
+## Geographic Wikipedia text coverage visualization
+
+Every successful core publication regenerates a deterministic PNG at
+`assets/geographic_wikipedia_text_coverage.png` before the README snapshot
+is rendered. The visualization aggregates polygons into H3 resolution 3 cells
+and colors each cell by the fraction linked to at least one article with
+non-empty Wikipedia text. The denominator is the full set of dataset
+polygons (already conditional on an OSM `wikidata=*` tag); the numerator
+counts unique polygons, never polygon-article links. Cell opacity encodes
+the polygon count on a log scale and grey cells below twenty polygons are
+spatially visible but flagged as low-sample in the caption. The asset is
+generated only by the legacy core upload path and the canonical `sync-dir`
+core publication path; augmentation-only work reuses the existing asset
+because its inputs do not affect the metric. The same image is embedded in
+both the source `README.md` and the generated Hugging Face dataset card.
+
 ## Compatibility contract
 
 The CLI, Parquet schemas, manifest paths, deterministic ordering, and public

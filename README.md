@@ -430,6 +430,18 @@ coverage, area-bucket counts, top tag keys.
 
 ---
 
+## Geographic Wikipedia Text Coverage
+
+![Geographic Wikipedia Text Coverage](assets/geographic_wikipedia_text_coverage.png)
+
+The denominator is every dataset polygon, already conditional on an OSM
+`wikidata=*` tag. Cell colour is the percentage of polygons linked to at
+least one article with non-empty Wikipedia text; cell opacity encodes the
+polygon count on a log scale. Grey cells hold fewer than 20 polygons and
+are not statistically meaningful.
+
+---
+
 ## Wikimedia etiquette
 
 Wikimedia APIs require a User-Agent identifying the project and a

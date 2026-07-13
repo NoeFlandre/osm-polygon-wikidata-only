@@ -17,6 +17,9 @@ REMOTE_MANIFEST_FILE = "manifests/processed_pbfs.json"
 # The coverage map PNG embedded in the dataset README.
 REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
 
+# The geographic Wikipedia text coverage PNG embedded in the dataset README.
+REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE = "assets/geographic_wikipedia_text_coverage.png"
+
 
 def remote_parquet_path(subdir: str, stem: str) -> str:
     """Build the deterministic remote path for a per-PBF parquet file."""
