@@ -206,16 +206,12 @@ def test_http_wikidata_client_routes_requests_through_injected_session() -> None
     assert headers["Accept-encoding"] == "gzip"
 
 
-def test_http_wikidata_client_reports_429_to_host_throttle(
+def test_http_wikidata_client_reports_429_to_global_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
-    recorded: list[tuple[str, float]] = []
-    monkeypatch.setattr(
-        scheduler,
-        "report_host_throttled",
-        lambda host, delay: recorded.append((host, delay)),
-    )
+    recorded: list[float] = []
+    monkeypatch.setattr(scheduler, "report_throttled", recorded.append)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.enrichment.wikidata_client.defer_host", lambda *_: None
     )
@@ -224,7 +220,7 @@ def test_http_wikidata_client_reports_429_to_host_throttle(
     with pytest.raises(urllib.error.HTTPError):
         client._http_get(client._build_url("Q1"))
 
-    assert recorded == [("www.wikidata.org", 17.0)]
+    assert recorded == [17.0]
 
 
 # --- CachedWikidataClient -----------------------------------------------
@@ -462,16 +458,12 @@ def test_http_wikipedia_client_routes_requests_through_injected_session(
     assert headers["Accept-encoding"] == "gzip"
 
 
-def test_http_wikipedia_client_reports_429_to_host_throttle(
+def test_http_wikipedia_client_reports_429_to_global_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scheduler = AdaptiveRequestScheduler(requests_per_minute=100_000)
-    recorded: list[tuple[str, float]] = []
-    monkeypatch.setattr(
-        scheduler,
-        "report_host_throttled",
-        lambda host, delay: recorded.append((host, delay)),
-    )
+    recorded: list[float] = []
+    monkeypatch.setattr(scheduler, "report_throttled", recorded.append)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.enrichment.wikipedia_client.defer_host", lambda *_: None
     )
@@ -484,7 +476,7 @@ def test_http_wikipedia_client_reports_429_to_host_throttle(
     with pytest.raises(urllib.error.HTTPError):
         client._http_get(client._build_url("en", "Alpha", fetch_full_text=True))
 
-    assert recorded == [("en.wikipedia.org", 17.0)]
+    assert recorded == [17.0]
 
 
 def test_http_clients_request_maxlag_for_background_work() -> None:

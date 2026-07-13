@@ -167,6 +167,7 @@ export OSM_POLYGON_DATA_ROOT=/Volumes/Seagate\ M3/projects/osm-polygon-wikidata-
 After `uv sync`, the processing and additive augmentation commands are:
 
 ```bash
+uv run osm-polygon-wikidata-only sync-dir <dir> [--options]
 uv run osm-polygon-wikidata-only process-pbf <input.pbf> [--options]
 uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 uv run osm-polygon-wikidata-only augment-region <stem>  [--options]
@@ -251,9 +252,9 @@ Paste the generated password at the silent prompt and press Enter. Do not commit
 the password, add it to a checked-in `.env` file, paste it into an issue, or use
 the main Wikimedia account password. The process retains it only in memory.
 
-With both variables present, the application starts at 180 requests per minute
-and gradually ramps toward 1,200 after successful request windows. To choose a
-different authenticated ceiling:
+With both variables present, the unified pipeline uses the authenticated
+1,200-request-per-minute budget with one shared scheduler and at most three
+requests in flight. To choose a different authenticated ceiling:
 
 ```bash
 export WIKIMEDIA_REQUESTS_PER_MINUTE=600
@@ -295,26 +296,19 @@ guidance.
 
 ### Resumable full-dataset command
 
-Run this single command to process every PBF in the data root, publish each
-completed run, and skip PBFs already recorded in the manifest:
+Run this single command to reconcile the existing augmentation backlog, process
+missing PBFs, immediately augment them, and publish complete regional bundles:
 
 ```bash
-uv run osm-polygon-wikidata-only process-dir "$OSM_POLYGON_DATA_ROOT/raw" \
+uv run osm-polygon-wikidata-only sync-dir "$OSM_POLYGON_DATA_ROOT/raw" \
   --skip-existing \
   --push
 ```
 
-In a second terminal, augment every completed region without rereading its PBF:
-
-```bash
-uv run osm-polygon-wikidata-only augment-dir \
-  --skip-existing \
-  --push
-```
-
-Each pushed augmentation atomically uploads its sidecars, manifest, and a fresh
-canonical dataset `README.md`. The main pipeline uses the same README renderer,
-so either command publishes a complete snapshot from the shared local state.
+`process-dir` and `augment-dir` remain available as compatibility commands, but
+do not run them beside `sync-dir`. A data-root lock prevents duplicate unified
+runs. Each completed region is uploaded atomically with fresh manifests and the
+canonical dataset `README.md`.
 
 To pause, stop the command with `Ctrl-C`. Run the identical command again to
 resume: completed PBFs remain skipped, while the interrupted PBF is retried

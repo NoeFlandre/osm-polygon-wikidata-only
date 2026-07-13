@@ -7,7 +7,7 @@ import logging
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot, resolve_data_root
@@ -38,9 +38,21 @@ LOGGER = logging.getLogger(__name__)
 # ceiling, the global concurrency cap and per-host pacing have to be
 # loosened for authenticated runs, otherwise the scheduler is the
 # bottleneck even when the API would happily accept more traffic.
-AUTH_MAX_IN_FLIGHT = 8
+AUTH_MAX_IN_FLIGHT = 3
 AUTH_MIN_HOST_INTERVAL_S = 0.05
 AUTH_MIN_REQUESTS_PER_MINUTE = 200
+
+
+@dataclass(frozen=True, slots=True)
+class WikimediaRuntime:
+    """One process-wide request budget shared by every Wikimedia client."""
+
+    settings: Settings
+    scheduler: AdaptiveRequestScheduler
+    session: WikimediaSession
+    wikidata: WikidataClient
+    wikipedia: WikipediaClient
+    cache: JsonFileCache | None
 
 
 def resolve_cli_data_root(args: argparse.Namespace) -> DataRoot:
@@ -55,6 +67,17 @@ def build_clients(
     environ: Mapping[str, str] | None = None,
 ) -> tuple[WikidataClient, WikipediaClient, JsonFileCache | None]:
     """Build clients that share one global Wikimedia scheduler."""
+    runtime = build_wikimedia_runtime(settings, data_root=data_root, environ=environ)
+    return runtime.wikidata, runtime.wikipedia, runtime.cache
+
+
+def build_wikimedia_runtime(
+    settings: Settings,
+    *,
+    data_root: DataRoot,
+    environ: Mapping[str, str] | None = None,
+) -> WikimediaRuntime:
+    """Build the single Wikimedia transport and all core clients."""
     source = os.environ if environ is None else environ
     credentials = load_wikimedia_credentials(source)
     authenticated = credentials is not None
@@ -97,7 +120,7 @@ def build_clients(
         session=session,
     )
     if not effective.cache_enabled:
-        return wikidata, wikipedia, None
+        return WikimediaRuntime(effective, scheduler, session, wikidata, wikipedia, None)
     try:
         wikidata = CachedWikidataClient(
             wikidata,
@@ -107,10 +130,17 @@ def build_clients(
             wikipedia,
             JsonFileCache(data_root.cache_wikipedia),
         )
-        return wikidata, wikipedia, JsonFileCache(data_root.cache)
+        return WikimediaRuntime(
+            effective,
+            scheduler,
+            session,
+            wikidata,
+            wikipedia,
+            JsonFileCache(data_root.cache),
+        )
     except OSError as error:
         LOGGER.debug("Cache disabled: %s", error)
-        return wikidata, wikipedia, None
+        return WikimediaRuntime(effective, scheduler, session, wikidata, wikipedia, None)
 
 
 def _effective_settings(settings: Settings, *, authenticated: bool, ceiling: float) -> Settings:
@@ -124,7 +154,7 @@ def _effective_settings(settings: Settings, *, authenticated: bool, ceiling: flo
         return settings
     return replace(
         settings,
-        wikimedia_max_in_flight=max(settings.wikimedia_max_in_flight, AUTH_MAX_IN_FLIGHT),
+        wikimedia_max_in_flight=AUTH_MAX_IN_FLIGHT,
         wikipedia_min_interval_s=min(settings.wikipedia_min_interval_s, AUTH_MIN_HOST_INTERVAL_S),
         wikidata_min_interval_s=min(settings.wikidata_min_interval_s, AUTH_MIN_HOST_INTERVAL_S),
         wikimedia_requests_per_minute=ceiling,
@@ -148,4 +178,9 @@ def _request_rate_ceiling(environ: Mapping[str, str], *, authenticated: bool) ->
     return value if authenticated else 180
 
 
-__all__ = ["build_clients", "resolve_cli_data_root"]
+__all__ = [
+    "WikimediaRuntime",
+    "build_clients",
+    "build_wikimedia_runtime",
+    "resolve_cli_data_root",
+]
