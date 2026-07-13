@@ -192,3 +192,22 @@ def test_geographic_facade_preserves_asset_path_constants() -> None:
     assert facade.LOCAL_POLYGON_COUNT_ASSET_PATH == facade.REMOTE_POLYGON_COUNT_ASSET_PATH
     assert facade.LOCAL_ASSET_PATH == facade.LOCAL_TEXT_COVERAGE_ASSET_PATH
     assert facade.REMOTE_ASSET_PATH == facade.REMOTE_TEXT_COVERAGE_ASSET_PATH
+
+
+def test_dataset_stats_facade_preserves_public_symbols() -> None:
+    """The dataset_stats facade must re-export the three documented
+    public symbols unchanged."""
+    from osm_polygon_wikidata_only.hf import dataset_stats as facade
+    from osm_polygon_wikidata_only.hf._dataset_stats.aggregation import (
+        compute_dataset_stats as focused_compute,
+    )
+    from osm_polygon_wikidata_only.hf._dataset_stats.models import (
+        DatasetStats as focused_stats,
+    )
+    from osm_polygon_wikidata_only.hf._dataset_stats.rendering import (
+        render_stats_section as focused_render,
+    )
+
+    assert facade.DatasetStats is focused_stats
+    assert facade.compute_dataset_stats is focused_compute
+    assert facade.render_stats_section is focused_render
