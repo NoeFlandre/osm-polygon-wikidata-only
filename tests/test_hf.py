@@ -482,3 +482,27 @@ def test_render_dataset_card_includes_geographic_coverage_section() -> None:
     assert f"![Geographic Polygon Density]({REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE})" in markdown
     assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE == "assets/geographic_wikipedia_text_coverage.png"
     assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE == "assets/geographic_polygon_count.png"
+
+
+def test_render_dataset_card_states_both_geographic_coverage_formulas() -> None:
+    """The dataset card must spell out the coverage_rate and polygon_count formulas once each."""
+    markdown = render_dataset_card(
+        repo_id="org/name",
+        stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
+        polygon_columns=["polygon_id"],
+        polygon_descriptions={"polygon_id": "id"},
+        article_columns=["article_id"],
+        article_descriptions={"article_id": "id"},
+        link_columns=["polygon_id"],
+        link_descriptions={"polygon_id": "id"},
+    )
+    coverage_section = markdown.split("## Geographic coverage", 1)[1].split("\n## ", 1)[0]
+
+    assert "coverage_rate" in coverage_section
+    assert "covered_polygons" in coverage_section
+    assert "all_dataset_polygons" in coverage_section
+    assert "polygon_count" in coverage_section
+    assert "centroid" in coverage_section.lower()
+    assert "H3 cell" in coverage_section
+    # The conditioning clause appears exactly once.
+    assert coverage_section.count("OSM `wikidata=*` tag") == 1
