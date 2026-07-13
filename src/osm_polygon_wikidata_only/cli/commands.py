@@ -13,13 +13,10 @@ Shared options: ``--push``, ``--repo-id``, ``--data-root``,
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import sys
 from collections.abc import Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
@@ -29,9 +26,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
     completed_region_stems,
 )
-from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
@@ -78,24 +73,13 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.io.run_lock import RunLockError, exclusive_run_lock
-from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs, orchestrate
+from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.pipeline.processor import (
-    ExtractedPbf,
     ProcessResult,
-    extract_pbf,
-    process_extracted_pbf,
-)
-from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
-from osm_polygon_wikidata_only.pipeline.sync_orchestrator import run_sync_plan
-from osm_polygon_wikidata_only.pipeline.sync_planner import (
-    RegionSyncState,
-    SyncAction,
-    plan_sync_states,
 )
 from osm_polygon_wikidata_only.utils.logging import configure_logging
 
 from .dependencies import build_clients as _build_clients
-from .dependencies import build_wikimedia_runtime as _build_wikimedia_runtime
 from .dependencies import resolve_cli_data_root as _resolve_data_root
 from .parser import build_parser
 from .parser import build_settings as _build_settings
@@ -277,9 +261,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.info("Authenticated to Hugging Face as %s (target: %s)", username, settings.repo_id)
 
     if args.command == "sync-dir":
+        from .run_sync import execute as cli_run_sync
+
+        def _build_upload_files(
+            state: object,
+            augmentation: object,
+            core: object | None,
+        ) -> list[tuple[Path, str]]:
+            return _sync_upload_files(
+                data_root,
+                settings.repo_id,
+                getattr(state, "stem", ""),
+                augmentation,  # type: ignore[arg-type]
+                core,  # type: ignore[arg-type]
+            )
+
         try:
             with exclusive_run_lock(data_root.cache / "sync.lock"):
-                return _run_sync_dir(args, data_root, settings)
+                return cli_run_sync(
+                    args,
+                    data_root=data_root,
+                    settings=settings,
+                    build_upload_files=_build_upload_files,
+                )
         except RunLockError as error:
             parser.error(str(error))
 
@@ -390,147 +394,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.error("%d background upload(s) failed", len(upload_failures))
         return 1
     return 0
-
-
-def _run_sync_dir(args: argparse.Namespace, data_root: DataRoot, settings: Settings) -> int:
-    """Converge every raw PBF to the complete existing artifact contract."""
-    runtime = _build_wikimedia_runtime(settings, data_root=data_root)
-    augmentation_client = AugmentationWikimediaClient(
-        runtime.settings,
-        JsonFileCache(data_root.cache / "augmentation", contract_version="text-sidecars-v1"),
-        scheduler=runtime.scheduler,
-        session=runtime.session,
-    )
-    pbfs = collect_pbfs([args.input])
-    entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
-    core_stems = {name.removesuffix(".osm.pbf") for name in entries}
-    current_augmentation = {stem for stem in core_stems if augmentation_is_current(data_root, stem)}
-    states = plan_sync_states(
-        pbfs,
-        core_stems=core_stems,
-        augmentation_stems=current_augmentation,
-        force=settings.force or not settings.skip_existing,
-    )
-    counts = {action: sum(state.action is action for state in states) for action in SyncAction}
-    LOGGER.info(
-        "Unified sync plan: %d augmentation backlog, %d core missing, %d complete",
-        counts[SyncAction.AUGMENT],
-        counts[SyncAction.PROCESS],
-        counts[SyncAction.COMPLETE],
-    )
-
-    hub = StubHfHub() if args.push and args.dry_run else None
-
-    def upload_job(files: list[tuple[Path, str]], message: str) -> None:
-        upload_files(
-            settings.repo_id,
-            files,
-            hub=hub,
-            token=settings.hf_token,
-            commit_message=message,
-            num_threads=args.upload_threads,
-        )
-
-    upload_queue = (
-        BackgroundUploadQueue(
-            upload=upload_job,
-            max_pending=2,
-            state_dir=data_root.cache / "sync_upload_jobs",
-        )
-        if args.push
-        else None
-    )
-    if upload_queue is not None:
-        upload_queue.resume_pending()
-    core_results: dict[str, ProcessResult] = {}
-    actionable_states = [state for state in states if state.action is not SyncAction.COMPLETE]
-    progress_positions = {
-        state.stem: index for index, state in enumerate(actionable_states, start=1)
-    }
-    progress_total = len(actionable_states)
-    process_states = [state for state in states if state.action is SyncAction.PROCESS]
-    extraction_executor = ThreadPoolExecutor(max_workers=1)
-    extraction_index = 0
-    extraction_future: Future[ExtractedPbf] | None = None
-    if process_states:
-        extraction_future = extraction_executor.submit(
-            extract_pbf, process_states[0].pbf_path, settings=settings
-        )
-
-    def process_state(state: RegionSyncState) -> None:
-        nonlocal extraction_future, extraction_index
-        if extraction_future is None or process_states[extraction_index].stem != state.stem:
-            raise RuntimeError(f"Unexpected core processing order for {state.stem}")
-        extracted = extraction_future.result()
-        extraction_index += 1
-        extraction_future = (
-            extraction_executor.submit(
-                extract_pbf,
-                process_states[extraction_index].pbf_path,
-                settings=settings,
-            )
-            if extraction_index < len(process_states)
-            else None
-        )
-        process_settings = replace(settings, skip_existing=False)
-        result = process_extracted_pbf(
-            extracted,
-            data_root=data_root,
-            wikidata_client=runtime.wikidata,
-            wikipedia_client=runtime.wikipedia,
-            settings=process_settings,
-            cache=runtime.cache,
-        )
-        core_results[state.stem] = result
-
-    def augment_state(state: RegionSyncState) -> None:
-        progress = AugmentationProgress()
-        position = progress_positions[state.stem]
-        LOGGER.info(
-            "Sync region %d/%d %s: augmentation started",
-            position,
-            progress_total,
-            state.stem,
-        )
-        with SyncHeartbeat(
-            region=state.stem,
-            region_index=position,
-            region_total=progress_total,
-            augmentation_snapshot=progress.snapshot,
-            scheduler_snapshot=runtime.scheduler.snapshot,
-            auth_snapshot=runtime.session.auth_snapshot,
-            log=LOGGER.info,
-        ):
-            augmentation_result = augment_region(
-                data_root,
-                state.stem,
-                augmentation_client,
-                progress=progress,
-            )
-        LOGGER.info("Unified sync completed %s: %s", state.stem, augmentation_result.counts)
-        if upload_queue is not None:
-            files = _sync_upload_files(
-                data_root,
-                settings.repo_id,
-                state.stem,
-                augmentation_result,
-                core_results.get(state.stem),
-            )
-            upload_queue.submit(files, args.commit_message or f"Sync complete region {state.stem}")
-
-    failures: list[str] = []
-    try:
-        completed = run_sync_plan(
-            states,
-            process_region=process_state,
-            augment_region=augment_state,
-        )
-    finally:
-        extraction_executor.shutdown(wait=True, cancel_futures=True)
-        if upload_queue is not None:
-            failures = upload_queue.close_and_wait()
-    LOGGER.info("Unified sync completed %d region(s)", len(completed))
-    return 1 if failures else 0
 
 
 def _sync_upload_files(
