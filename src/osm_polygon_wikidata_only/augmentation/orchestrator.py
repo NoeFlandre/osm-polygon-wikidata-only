@@ -2,8 +2,10 @@
 
 This module owns the orchestration policy: phase ordering, progress
 transitions, sidecar paths, the core-hash drift check, the manifest
-*write ordering*, and the thread-pool lifecycle (selection of worker
-counts, opening and closing both pools).
+write (the orchestrator constructs the counts dict and decides *when*
+to merge the entry, then :func:`augmentation.steps.update_augmentation_manifest`
+performs the actual atomic merge), and the thread-pool lifecycle
+(selection of worker counts, opening and closing both pools).
 
 The actual side-effectful mechanics -- reading core inputs, fetching
 entities, fetching Wikivoyage documents, parsing article HTML, building

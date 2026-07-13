@@ -1,0 +1,206 @@
+"""Pure-state sync execution: prefetch, augment-backlog, process, augment, complete.
+
+This module is a pure state executor. It receives injectable
+collaborators and delegates every collaboration boundary to the
+caller.
+
+The runner owns only:
+
+* Per-state ordering: prefetch the next PROCESS PBF extraction
+  before fully enriching the current one (one-PBF-ahead
+  invariant); execute the AUGMENT backlog before any new core
+  PROCESS; for each PROCESS state, await its extraction,
+  enrich/persist it, then augment it, then continue in plan
+  order.
+* Aggregation: collect PROCESS results in plan order.
+* Exception semantics: processing and augmentation exceptions
+  propagate through the same boundary as before; ``on_complete``
+  is not invoked on a failure path.
+
+Nothing in this module imports from ``cli.*``, ``hf.*``,
+``argparse``, :class:`DataRoot`, or :class:`Settings`. There
+is no default production collaborator; every callable is
+required and provided by the caller. The CLI shell lives in
+:mod:`cli.run_sync` and constructs collaborators, then invokes
+this runner.
+
+Public identities (:class:`SyncAction`, :class:`RegionSyncState`,
+:func:`run_sync_plan`) are re-exported here unchanged.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+from .sync_orchestrator import run_sync_plan
+from .sync_planner import RegionSyncState, SyncAction
+
+__all__ = [
+    "RegionSyncState",
+    "SyncAction",
+    "run_sync",
+    "run_sync_plan",
+]
+
+
+def run_sync(
+    states: list[RegionSyncState],
+    *,
+    extract_pbf: Callable[[Path], Any],
+    process_extracted_pbf: Callable[[Any], Any],
+    augment_region: Callable[[RegionSyncState], Any],
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[tuple[Path, str]]]
+    | None = None,
+    commit_message: Callable[[RegionSyncState], str] | None = None,
+    submit_upload: Callable[[list[tuple[Path, str]], str], None] | None = None,
+    close_uploads: Callable[[], list[str]] | None = None,
+    on_complete: Callable[[RegionSyncState, Any], None] | None = None,
+) -> int:
+    """Execute the unified sync plan as a pure state executor.
+
+    Required collaborators (all injected, no defaults):
+
+    * ``extract_pbf(pbf_path)``: synchronously returns the
+      ``ExtractedPbf`` for a single PBF. The CLI shell pre-binds
+      ``settings`` (and any other parameters) into this callable.
+    * ``process_extracted_pbf(extracted)``: synchronously enriches
+      and persists one ``ExtractedPbf``. The CLI shell pre-binds
+      ``data_root``, ``wikidata_client``, ``wikipedia_client`` and
+      ``settings`` (with ``skip_existing=False``) into this
+      callable.
+    * ``augment_region(state)``: synchronously augments one
+      region. The CLI shell pre-binds ``data_root``,
+      ``augmentation_client``, heartbeat, and logger.
+
+    Optional collaborators (default ``None``):
+
+    * ``build_upload_files(state, augmentation, core)``: returns a
+      list of ``(local_path, remote_path)`` tuples to commit as
+      one atomic upload. ``None`` means no publication assembly.
+    * ``commit_message(state)``: returns the per-region commit
+      message. Defaults to ``f"Sync complete region {state.stem}"``.
+    * ``submit_upload(files, message)``: enqueues one atomic
+      commit. ``None`` means no upload submission.
+    * ``close_uploads()``: returns a list of failed-job names from
+      the upload queue. ``None`` means no queue is open.
+    * ``on_complete(state, result)``: invoked once per successful
+      augmentation step (PROCESS or AUGMENT).
+
+    Execution sequence:
+
+    1. Start prefetching the first PROCESS PBF.
+    2. Drain AUGMENT (backlog) states for free while extraction
+       runs in the background.
+    3. For each PROCESS state in plan order: await extraction,
+       immediately prefetch the next PBF, enrich/persist the
+       current region, augment it.
+    4. After each successful augmentation, if both
+       ``build_upload_files`` and ``submit_upload`` are provided,
+       build the upload list and submit one atomic commit.
+
+    Exception semantics: processing, extraction, and
+    augmentation exceptions all propagate through the same
+    boundary. The extraction executor and the upload queue are
+    always shut down in ``finally``. No logging is performed
+    inside the runner -- the CLI shell owns all log emission.
+
+    Returns ``0`` on a clean close with no upload failures, ``1``
+    when ``close_uploads`` reports any failure. Execution
+    exceptions are not converted to ``1``.
+    """
+    if extract_pbf is None or process_extracted_pbf is None or augment_region is None:
+        raise RuntimeError(
+            "run_sync requires extract_pbf, process_extracted_pbf, and augment_region collaborators"
+        )
+
+    process_states = [state for state in states if state.action is SyncAction.PROCESS]
+    augment_states = [state for state in states if state.action is SyncAction.AUGMENT]
+
+    extraction_executor = ThreadPoolExecutor(max_workers=1)
+    core_results: dict[str, Any] = {}
+    failures: list[str] = []
+    try:
+        # Step 1: start prefetching the first PROCESS PBF.
+        extraction_future: Future[Any] | None = None
+        if process_states:
+            extraction_future = extraction_executor.submit(extract_pbf, process_states[0].pbf_path)
+
+        # Step 2: drain AUGMENT (backlog) states. Any exception
+        # propagates after the executor is shut down in finally.
+        for state in augment_states:
+            augmentation = augment_region(state)
+            if on_complete is not None:
+                on_complete(state, augmentation)
+            _maybe_submit(
+                state=state,
+                augmentation=augmentation,
+                core=core_results.get(state.stem),
+                submit_upload=submit_upload,
+                build_upload_files=build_upload_files,
+                commit_message=commit_message,
+            )
+
+        # Step 3+4: walk PROCESS states. For each, await extraction,
+        # immediately schedule the next extraction (one-PBF-ahead),
+        # then enrich/persist, then augment that same region. Failures
+        # in extraction or processing propagate; subsequent PROCESS
+        # states are not entered.
+        for process_index, state in enumerate(process_states):
+            if extraction_future is None:
+                raise RuntimeError(f"Missing prefetched extraction for PROCESS state {state.stem}")
+            extracted = extraction_future.result()
+            next_state = (
+                process_states[process_index + 1]
+                if process_index + 1 < len(process_states)
+                else None
+            )
+            extraction_future = (
+                extraction_executor.submit(extract_pbf, next_state.pbf_path)
+                if next_state is not None
+                else None
+            )
+            result = process_extracted_pbf(extracted)
+            core_results[state.stem] = result
+            augmentation = augment_region(state)
+            if on_complete is not None:
+                on_complete(state, augmentation)
+            _maybe_submit(
+                state=state,
+                augmentation=augmentation,
+                core=result,
+                submit_upload=submit_upload,
+                build_upload_files=build_upload_files,
+                commit_message=commit_message,
+            )
+    finally:
+        extraction_executor.shutdown(wait=True, cancel_futures=True)
+        if close_uploads is not None:
+            failures.extend(close_uploads())
+    if failures:
+        return 1
+    return 0
+
+
+def _maybe_submit(
+    *,
+    state: RegionSyncState,
+    augmentation: Any,
+    core: Any | None,
+    submit_upload: Callable[[list[tuple[Path, str]], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[tuple[Path, str]]] | None,
+    commit_message: Callable[[RegionSyncState], str] | None,
+) -> None:
+    if submit_upload is None or build_upload_files is None:
+        return
+    files = build_upload_files(state, augmentation, core)
+    if not files:
+        return
+    message = (
+        commit_message(state)
+        if commit_message is not None
+        else f"Sync complete region {state.stem}"
+    )
+    submit_upload(files, message)
