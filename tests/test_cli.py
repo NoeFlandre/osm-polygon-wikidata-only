@@ -70,7 +70,9 @@ def test_geographic_text_coverage_snapshot_uses_processed_root(
     assert destination.exists()
     assert result == destination
     # Module-level name preserved so callers can introspect it.
-    assert module.LOCAL_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
+    assert module.LOCAL_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
+    # Backwards-compatible alias for the historical single-asset name.
+    assert module.LOCAL_ASSET_PATH == module.LOCAL_TEXT_COVERAGE_ASSET_PATH
 
 
 def test_parser_accepts_additive_region_augmentation() -> None:
@@ -313,7 +315,9 @@ def test_sync_upload_files_includes_geographic_text_coverage_when_core_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The sync-dir core publication path must emit the asset to the canonical remote path."""
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import LOCAL_ASSET_PATH
+    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+        LOCAL_TEXT_COVERAGE_ASSET_PATH,
+    )
 
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -327,6 +331,7 @@ def test_sync_upload_files_includes_geographic_text_coverage_when_core_changes(
         return destination
 
     monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fake_snapshot)
+    monkeypatch.setattr(commands, "_generate_geographic_polygon_count_snapshot", fake_snapshot)
 
     augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
     for path in augmentation_paths:
@@ -357,7 +362,7 @@ def test_sync_upload_files_includes_geographic_text_coverage_when_core_changes(
 
     files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, core)
     remote_paths = [remote for _, remote in files]
-    assert LOCAL_ASSET_PATH in remote_paths
+    assert LOCAL_TEXT_COVERAGE_ASSET_PATH in remote_paths
     # The asset is part of the same atomic upload list as the README and core parquets.
     assert "README.md" in remote_paths
     assert "polygons/core.parquet" in remote_paths
@@ -368,7 +373,9 @@ def test_sync_upload_files_skips_geographic_text_coverage_for_augmentation_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Augmentation-only uploads must not regenerate the geographic text coverage asset."""
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import LOCAL_ASSET_PATH
+    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+        LOCAL_TEXT_COVERAGE_ASSET_PATH,
+    )
 
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -389,4 +396,4 @@ def test_sync_upload_files_skips_geographic_text_coverage_for_augmentation_only(
 
     files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, None)
     remote_paths = [remote for _, remote in files]
-    assert LOCAL_ASSET_PATH not in remote_paths
+    assert LOCAL_TEXT_COVERAGE_ASSET_PATH not in remote_paths

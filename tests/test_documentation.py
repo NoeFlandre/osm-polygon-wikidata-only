@@ -61,21 +61,28 @@ def test_public_docs_explain_enrichment_progress_heartbeat() -> None:
         assert "request pacing" in document
 
 
-def test_readme_documents_geographic_text_coverage_section() -> None:
-    """The README must reference the new visualization exactly once and link to the canonical asset."""
+def test_readme_documents_geographic_coverage_section() -> None:
+    """The README must reference both visualization assets and explain them concisely."""
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
-    assert "## Geographic Wikipedia Text Coverage" in readme
+    assert "## Geographic coverage" in readme
     assert "assets/geographic_wikipedia_text_coverage.png" in readme
-    # Only one image reference to the new asset, matching the single heading.
+    assert "assets/geographic_polygon_count.png" in readme
     assert readme.count("assets/geographic_wikipedia_text_coverage.png") == 1
-    assert readme.count("## Geographic Wikipedia Text Coverage") == 1
+    assert readme.count("assets/geographic_polygon_count.png") == 1
+    # The coverage section must mention the formula, denominator, and conditioning.
+    assert "denominator" in readme.lower()
+    assert "wikidata" in readme.lower()
+    # No opacity encoding claim.
+    assert "opacity encodes" not in readme.lower()
 
 
-def test_architecture_documents_geographic_text_coverage_generation() -> None:
+def test_architecture_documents_geographic_coverage_generation() -> None:
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
-    assert "Geographic Wikipedia text coverage" in architecture or (
-        "Geographic Wikipedia Text Coverage" in architecture
-    )
-    assert "assets/geographic_wikipedia_text_coverage.png" in architecture
+    assert "Geographic coverage" in architecture
+    assert "geographic_polygon_count.png" in architecture
+    assert "geographic_wikipedia_text_coverage.png" in architecture
     assert "H3" in architecture
     assert "20 polygons" in architecture or "twenty polygons" in architecture.lower()
+    assert "logarithmic" in architecture.lower()
+    # The architecture doc must no longer claim opacity encodes polygon count.
+    assert "opacity encodes" not in architecture.lower()

@@ -51,11 +51,15 @@ from osm_polygon_wikidata_only.hf.dataset_stats import (
     render_stats_section,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+    generate_geographic_polygon_count as _generate_geographic_polygon_count,
+)
+from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     generate_geographic_text_coverage as _generate_geographic_text_coverage,
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
     REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
@@ -163,6 +167,26 @@ def _generate_geographic_text_coverage_snapshot(
     return result.output_path
 
 
+def _generate_geographic_polygon_count_snapshot(
+    data_root: DataRoot,
+    destination: Path,
+) -> Path:
+    """Build the geographic polygon density PNG into ``destination``.
+
+    The snapshot mirrors :func:`_generate_geographic_text_coverage_snapshot`
+    but renders the logarithmic polygon-count visualization. Both
+    snapshots are produced before the README so a partial core upload
+    never reaches the Hub.
+    """
+    land_cache = data_root.cache
+    result = _generate_geographic_polygon_count(
+        data_root.processed,
+        destination,
+        land_cache_dir=land_cache,
+    )
+    return result.output_path
+
+
 def _enqueue_core_upload(
     upload_queue: BackgroundUploadQueue,
     *,
@@ -190,6 +214,8 @@ def _enqueue_core_upload(
     generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
     geo_snapshot = snapshots / f"{result.polygons_path.stem}-geographic_text_coverage.png"
     _generate_geographic_text_coverage_snapshot(data_root, geo_snapshot)
+    polygon_count_snapshot = snapshots / f"{result.polygons_path.stem}-geographic_polygon_count.png"
+    _generate_geographic_polygon_count_snapshot(data_root, polygon_count_snapshot)
     card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
     _write_readme_snapshot(data_root, repo_id, card_snapshot)
     upload_queue.submit(
@@ -202,6 +228,7 @@ def _enqueue_core_upload(
             ),
             (snapshot, REMOTE_MANIFEST_FILE),
             (geo_snapshot, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+            (polygon_count_snapshot, REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
             (card_snapshot, "README.md"),
             (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
         ],
@@ -541,6 +568,8 @@ def _sync_upload_files(
         generate_coverage_map(lons, lats, coverage, land_geojson_path=land_path)
         geographic_text_coverage = snapshots / "geographic_text_coverage.png"
         _generate_geographic_text_coverage_snapshot(data_root, geographic_text_coverage)
+        geographic_polygon_count = snapshots / "geographic_polygon_count.png"
+        _generate_geographic_polygon_count_snapshot(data_root, geographic_polygon_count)
         assert core is not None
         files[:0] = [
             (core.polygons_path, f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
@@ -548,6 +577,7 @@ def _sync_upload_files(
             (core.polygon_articles_path, f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}"),
             (core_manifest, REMOTE_MANIFEST_FILE),
             (geographic_text_coverage, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+            (geographic_polygon_count, REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
             (coverage, REMOTE_COVERAGE_MAP_FILE),
         ]
     _write_readme_snapshot(data_root, repo_id, readme)
