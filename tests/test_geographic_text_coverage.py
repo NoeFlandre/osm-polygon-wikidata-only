@@ -621,7 +621,7 @@ def test_render_writes_through_temporary_file(
         return original_replace(src, dst)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.geographic_text_coverage.os.replace",
+        "osm_polygon_wikidata_only.hf._geographic.rendering.os.replace",
         tracking_replace,
     )
     out = tmp_path / "coverage.png"
@@ -636,6 +636,54 @@ def test_render_deterministic_with_fixed_inputs(tmp_path: Path) -> None:
     render_geographic_text_coverage(cells, out1)
     render_geographic_text_coverage(cells, out2)
     # Inputs are identical and config is fixed -> byte-identical output.
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_render_text_coverage_is_byte_deterministic_within_run(
+    tmp_path: Path,
+) -> None:
+    """Rendering the coverage PNG twice from identical synthetic inputs
+    during the same test run must produce byte-identical output.
+
+    This is the within-run reproducibility contract for the
+    geographic visualization: bytes must match across two consecutive
+    invocations of ``render_geographic_text_coverage`` with the same
+    inputs. We deliberately do not check against a checked-in raster
+    fixture; per the spec, byte equality only needs to hold within
+    the active environment, not against a Matplotlib-version
+    baseline file.
+    """
+    out1 = tmp_path / "a.png"
+    out2 = tmp_path / "b.png"
+    cells = _cell_fixture()
+    render_geographic_text_coverage(cells, out1)
+    render_geographic_text_coverage(cells, out2)
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_render_polygon_count_is_byte_deterministic_within_run(
+    tmp_path: Path,
+) -> None:
+    """Rendering the polygon-count PNG twice from identical synthetic
+    inputs during the same test run must produce byte-identical
+    output."""
+    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+        PolygonCountCell,
+    )
+
+    out1 = tmp_path / "a.png"
+    out2 = tmp_path / "b.png"
+    cells = _cell_fixture()
+    count_cells = [
+        PolygonCountCell(
+            h3_cell=cell.h3_cell,
+            polygon_count=cell.polygon_count,
+            is_low_sample=cell.is_low_sample,
+        )
+        for cell in cells
+    ]
+    render_geographic_polygon_count(count_cells, out1)
+    render_geographic_polygon_count(count_cells, out2)
     assert out1.read_bytes() == out2.read_bytes()
 
 
@@ -894,7 +942,7 @@ def test_colorbar_ticks_are_formatted_as_percentages(tmp_path: Path) -> None:
 
     # The colormap normalization must remain in [0, 1] so aggregation
     # semantics are preserved.
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+    from osm_polygon_wikidata_only.hf._geographic.coverage import (
         _VMAX,
         _VMIN,
     )
@@ -926,7 +974,7 @@ def test_coverage_cells_use_consistent_full_opacity_for_eligible_cells(
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.geographic_text_coverage.mpatches.Polygon", _TrackingPolygon
+        "osm_polygon_wikidata_only.hf._geographic.coverage.mpatches.Polygon", _TrackingPolygon
     )
 
     cells = [
@@ -1187,7 +1235,7 @@ def test_render_polygon_count_does_not_grey_low_sample_cells(
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.geographic_text_coverage.mpatches.Polygon",
+        "osm_polygon_wikidata_only.hf._geographic.polygon_count.mpatches.Polygon",
         _TrackingPolygon,
     )
     cells = [
@@ -1200,7 +1248,7 @@ def test_render_polygon_count_does_not_grey_low_sample_cells(
     render_geographic_polygon_count(cells, tmp_path / "count.png")
     assert seen_facecolors, "At least one polygon patch must be drawn"
     # None of the facecolors may equal the low-sample grey used by the coverage map.
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import _LOW_SAMPLE_COLOR
+    from osm_polygon_wikidata_only.hf._geographic.coverage import _LOW_SAMPLE_COLOR
 
     assert all(fc != _LOW_SAMPLE_COLOR for fc in seen_facecolors), (
         "Polygon count map must not grey low-sample cells"
