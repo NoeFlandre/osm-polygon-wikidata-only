@@ -27,11 +27,17 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     DEFAULT_H3_RESOLUTION,
     DEFAULT_MIN_POLYGONS_PER_CELL,
+    LOCAL_POLYGON_COUNT_ASSET_PATH,
+    LOCAL_TEXT_COVERAGE_ASSET_PATH,
     CoverageCell,
     CoverageMapError,
+    PolygonCountCell,
+    aggregate_geographic_polygon_count,
     aggregate_geographic_text_coverage,
     assign_h3_cell,
+    generate_geographic_polygon_count,
     generate_geographic_text_coverage,
+    render_geographic_polygon_count,
     render_geographic_text_coverage,
 )
 
@@ -1009,3 +1015,583 @@ def test_sync_upload_files_propagates_coverage_map_error(
         commands_mod._sync_upload_files(
             data_root, "org/dataset", "monaco-latest", augmentation, core
         )
+
+
+# --- Coverage map: opacity removed, polygon count no longer encoded ----
+
+
+def test_coverage_cell_renderer_does_not_use_count_opacity(tmp_path: Path) -> None:
+    """The renderer must no longer import or use the polygon-count opacity encoder."""
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as module
+
+    assert not hasattr(module, "_opacity_for_count"), (
+        "Polygon-count opacity must be removed from the coverage renderer."
+    )
+
+
+def test_coverage_cells_use_consistent_full_opacity_for_eligible_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All eligible (non-low-sample) cells must be drawn at the same alpha, regardless of polygon count."""
+    from matplotlib import patches
+
+    seen_alphas: list[float] = []
+
+    class _TrackingPolygon(patches.Polygon):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            seen_alphas.append(float(kwargs.get("alpha", 1.0)))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.geographic_text_coverage.mpatches.Polygon", _TrackingPolygon
+    )
+
+    cells = [
+        CoverageCell(
+            h3_cell="833969fffffffff",
+            polygon_count=2,
+            covered_polygon_count=1,
+            coverage_rate=0.5,
+            is_low_sample=False,
+        ),
+        CoverageCell(
+            h3_cell="833969ffffffffe",
+            polygon_count=200,
+            covered_polygon_count=100,
+            coverage_rate=0.5,
+            is_low_sample=False,
+        ),
+    ]
+    render_geographic_text_coverage(cells, tmp_path / "out.png")
+    # The renderer may draw multiple polygon patches per cell due to antimeridian
+    # splitting. Filter to those patches associated with the two cells above; their
+    # alpha must be the same regardless of polygon_count.
+    eligible = [
+        alpha
+        for alpha in seen_alphas
+        if alpha != 0.7  # 0.7 is reserved for low-sample (grey) cells
+    ]
+    assert eligible, "Eligible (non-low-sample) cells must be drawn"
+    assert len({round(a, 6) for a in eligible}) == 1, (
+        f"All eligible cells must share one alpha; saw {sorted(set(eligible))!r}"
+    )
+
+
+def test_coverage_caption_omits_polygon_count_opacity_claim(tmp_path: Path) -> None:
+    """The rendered caption must not state that cell opacity encodes polygon count."""
+    out = tmp_path / "coverage.png"
+    result = render_geographic_text_coverage(_cell_fixture(), out)
+    caption = getattr(result, "caption", None) or ""
+    assert "opacity" not in caption.lower(), (
+        f"Coverage caption must not mention opacity: {caption!r}"
+    )
+    assert "polygon count" not in caption.lower(), (
+        f"Coverage caption must not mention polygon count encoding: {caption!r}"
+    )
+
+
+def test_coverage_caption_explains_metric_meaning(tmp_path: Path) -> None:
+    """The caption must describe what the colour encodes (coverage, 0-100%)."""
+    out = tmp_path / "coverage.png"
+    result = render_geographic_text_coverage(_cell_fixture(), out)
+    caption = result.caption
+    assert "colour" in caption.lower() or "color" in caption.lower()
+    assert "0%" in caption or "100%" in caption or "coverage" in caption.lower()
+
+
+# --- Polygon count map aggregation -------------------------------------
+
+
+def _count_cell_fixture() -> list[PolygonCountCell]:
+    return [
+        PolygonCountCell(
+            h3_cell="833969fffffffff",
+            polygon_count=25,
+            is_low_sample=False,
+        ),
+        PolygonCountCell(
+            h3_cell="83754efffffffff",
+            polygon_count=3,
+            is_low_sample=True,
+        ),
+    ]
+
+
+def test_polygon_count_aggregation_counts_every_polygon(tmp_path: Path) -> None:
+    processed = _build_processed_root(
+        tmp_path,
+        polygons=tuple((f"p:way:{idx}", idx * 0.01, idx * 0.01) for idx in range(30)),
+    )
+    cells = aggregate_geographic_polygon_count(processed)
+    assert sum(c.polygon_count for c in cells) == 30
+
+
+def test_polygon_count_aggregation_is_deterministic_and_sorted(tmp_path: Path) -> None:
+    polygons = tuple((f"p:way:{idx}", idx * 0.01, idx * 0.01) for idx in range(40))
+    processed = _build_processed_root(tmp_path, polygons=polygons)
+    first = aggregate_geographic_polygon_count(processed)
+    second = aggregate_geographic_polygon_count(processed)
+    ids_first = [c.h3_cell for c in first]
+    ids_second = [c.h3_cell for c in second]
+    assert ids_first == ids_second == sorted(ids_first)
+
+
+def test_polygon_count_aggregation_includes_low_sample_flag(tmp_path: Path) -> None:
+    processed = _build_processed_root(
+        tmp_path,
+        polygons=(("p:way:1", 0.0, 0.0),),
+    )
+    [cell] = aggregate_geographic_polygon_count(processed)
+    assert cell.polygon_count == 1
+    assert cell.is_low_sample is True
+
+
+def test_polygon_count_aggregation_ignores_articles_and_links(tmp_path: Path) -> None:
+    """Polygons without links or with empty article text are still counted in the count map."""
+    processed = _build_processed_root(
+        tmp_path,
+        polygons=(
+            ("p:way:1", 0.0, 0.0),
+            ("p:way:2", 0.0, 0.0),
+        ),
+        articles=(("p:en:1:1", ""),),
+        links=(("p:way:1", "p:en:1:1"),),
+    )
+    cells = aggregate_geographic_polygon_count(processed)
+    assert sum(c.polygon_count for c in cells) == 2
+
+
+def test_polygon_count_invalid_centroid_retains_clear_failure(tmp_path: Path) -> None:
+    polygons_dir = tmp_path / "processed" / "polygons"
+    articles_dir = tmp_path / "processed" / "articles"
+    links_dir = tmp_path / "processed" / "polygon_articles"
+    polygons_dir.mkdir(parents=True)
+    articles_dir.mkdir(parents=True)
+    links_dir.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["p:way:n"],
+                "lat": [float("nan")],
+                "lon": [0.0],
+            }
+        ),
+        polygons_dir / "a.parquet",
+    )
+    pq.write_table(
+        pa.table({"article_id": ["p:en:1:1"], "full_text": ["body"]}),
+        articles_dir / "a.parquet",
+    )
+    pq.write_table(
+        pa.table({"polygon_id": ["p:way:n"], "article_id": ["p:en:1:1"]}),
+        links_dir / "a.parquet",
+    )
+    with pytest.raises(CoverageMapError, match=r"p:way:n"):
+        aggregate_geographic_polygon_count(tmp_path / "processed")
+
+
+def test_polygon_count_each_polygon_counted_once(tmp_path: Path) -> None:
+    """Spread polygons to multiple H3 cells; each cell's count must equal input rows."""
+    polygons = tuple(
+        (f"p:way:{idx}", float(idx % 80 - 40), float(idx % 160 - 80)) for idx in range(60)
+    )
+    processed = _build_processed_root(tmp_path, polygons=polygons)
+    cells = aggregate_geographic_polygon_count(processed)
+    assert sum(c.polygon_count for c in cells) == 60
+    # Polygons are deterministic per cell, so the total of individual cell
+    # counts must equal the input.
+    assert sum(c.polygon_count for c in cells) == len(polygons)
+
+
+# --- Polygon count map rendering ---------------------------------------
+
+
+def test_render_polygon_count_creates_valid_png(tmp_path: Path) -> None:
+    out = tmp_path / "count.png"
+    render_geographic_polygon_count(_count_cell_fixture(), out)
+    assert out.exists()
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_render_polygon_count_is_deterministic(tmp_path: Path) -> None:
+    cells = _count_cell_fixture()
+    out1 = tmp_path / "a.png"
+    out2 = tmp_path / "b.png"
+    render_geographic_polygon_count(cells, out1)
+    render_geographic_polygon_count(cells, out2)
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_render_polygon_count_uses_log_normalization(tmp_path: Path) -> None:
+    """The polygon count renderer must use LogNorm on its colormap."""
+    import matplotlib.colors as mcolors
+    import matplotlib.figure
+
+    captured: dict[str, Any] = {}
+
+    real_savefig = matplotlib.figure.Figure.savefig
+
+    def capture_savefig(self: Any, *args: Any, **kwargs: Any) -> Any:
+        for ax in self.axes:
+            # Collect every ScalarMappable-like attribute that exposes a norm.
+            for attr in ("collections",):
+                for coll in getattr(ax, attr, []):
+                    norm = getattr(coll, "norm", None)
+                    if norm is not None:
+                        captured.setdefault("norms", []).append(norm)
+        return real_savefig(self, *args, **kwargs)
+
+    matplotlib.figure.Figure.savefig = capture_savefig  # type: ignore[assignment]
+    try:
+        render_geographic_polygon_count(_count_cell_fixture(), tmp_path / "count.png")
+    finally:
+        matplotlib.figure.Figure.savefig = real_savefig  # type: ignore[assignment]
+
+    norms = captured.get("norms", [])
+    assert norms, "Polygon count map must use a normalized colormap"
+    assert any(isinstance(norm, mcolors.LogNorm) for norm in norms), (
+        "Polygon count map must use LogNorm for the colormap"
+    )
+
+
+def test_render_polygon_count_colorbar_has_human_readable_count_labels(tmp_path: Path) -> None:
+    """The polygon count colorbar must show integer polygon counts (e.g. '1000')."""
+    import matplotlib.figure
+
+    captured: dict[str, Any] = {}
+
+    real_savefig = matplotlib.figure.Figure.savefig
+
+    def capture_savefig(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if len(self.axes) >= 2:
+            colorbar_axes = self.axes[1]
+            captured["formatter"] = colorbar_axes.yaxis.get_major_formatter()
+        return real_savefig(self, *args, **kwargs)
+
+    matplotlib.figure.Figure.savefig = capture_savefig  # type: ignore[assignment]
+    try:
+        render_geographic_polygon_count(_count_cell_fixture(), tmp_path / "count.png")
+    finally:
+        matplotlib.figure.Figure.savefig = real_savefig  # type: ignore[assignment]
+
+    assert "formatter" in captured
+    formatter = captured["formatter"]
+    func = getattr(formatter, "func", None)
+    assert callable(func), "Colorbar must expose its underlying formatter function"
+
+    label = func(1000.0, None)
+    assert isinstance(label, str)
+    # We do not hard-code the exact format, but the rendered label must
+    # represent an integer count and never include '%'.
+    assert "%" not in label
+    # Acceptable formats include plain digits, suffixed "k" or "M", or
+    # thousands-separated digits.
+    stripped = label.replace(",", "").replace(" ", "").rstrip("kKM")
+    assert stripped.isdigit(), f"Polygon count colorbar must show integer counts, got {label!r}"
+
+
+def test_render_polygon_count_does_not_grey_low_sample_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Low-sample cells on the count map must use the colormap (visible), not grey."""
+    from matplotlib import patches
+
+    seen_facecolors: list[Any] = []
+
+    class _TrackingPolygon(patches.Polygon):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            seen_facecolors.append(kwargs.get("facecolor"))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.geographic_text_coverage.mpatches.Polygon",
+        _TrackingPolygon,
+    )
+    cells = [
+        PolygonCountCell(
+            h3_cell="83754efffffffff",
+            polygon_count=3,
+            is_low_sample=True,
+        )
+    ]
+    render_geographic_polygon_count(cells, tmp_path / "count.png")
+    assert seen_facecolors, "At least one polygon patch must be drawn"
+    # None of the facecolors may equal the low-sample grey used by the coverage map.
+    from osm_polygon_wikidata_only.hf.geographic_text_coverage import _LOW_SAMPLE_COLOR
+
+    assert all(fc != _LOW_SAMPLE_COLOR for fc in seen_facecolors), (
+        "Polygon count map must not grey low-sample cells"
+    )
+
+
+def test_render_polygon_count_does_not_perform_network_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request, "urlretrieve", lambda *_args, **_kwargs: pytest.fail("network call")
+    )
+    out = tmp_path / "count.png"
+    render_geographic_polygon_count(_count_cell_fixture(), out)
+    assert out.exists()
+
+
+def test_generate_polygon_count_writes_deterministic_path(tmp_path: Path) -> None:
+    polygons = tuple((f"p:way:{idx}", idx * 0.01, idx * 0.01) for idx in range(30))
+    processed = _build_processed_root(tmp_path, polygons=polygons)
+    data_root = DataRoot(tmp_path / "data_root")
+    data_root.ensure()
+    result = generate_geographic_polygon_count(
+        processed,
+        tmp_path / "assets" / "geographic_polygon_count.png",
+    )
+    out = result.output_path
+    assert out.exists()
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --- Both maps: stable paths and module surface ------------------------
+
+
+def test_text_coverage_local_asset_path_is_stable() -> None:
+    assert LOCAL_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
+
+
+def test_polygon_count_local_asset_path_is_stable() -> None:
+    assert LOCAL_POLYGON_COUNT_ASSET_PATH == "assets/geographic_polygon_count.png"
+
+
+def test_polygon_count_cell_is_immutable() -> None:
+    cell = PolygonCountCell(h3_cell="833969fffffffff", polygon_count=5, is_low_sample=False)
+    with pytest.raises(Exception):
+        cell.polygon_count = 0  # type: ignore[misc]
+
+
+# --- CLI integration: both snapshots are wired into core publication ---
+
+
+def test_enqueue_core_upload_includes_both_visualization_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legacy core upload path must include both coverage and count maps in one commit."""
+    import osm_polygon_wikidata_only.cli.commands as commands_mod
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    submitted: list[list[tuple[Path, str]]] = []
+
+    class _StubProcessResult:
+        polygons_path = tmp_path / "polygons.parquet"
+        articles_path = tmp_path / "articles.parquet"
+        polygon_articles_path = tmp_path / "links.parquet"
+        manifest_path = tmp_path / "manifest.json"
+        polygon_count = 0
+        article_count = 0
+        link_count = 0
+
+        def __init__(self) -> None:
+            self.manifest_entry = {"source_pbf": "fixture.osm.pbf"}
+            self.stage_timings_s: dict[str, float] = {}
+
+    for path in (
+        _StubProcessResult.polygons_path,
+        _StubProcessResult.articles_path,
+        _StubProcessResult.polygon_articles_path,
+        _StubProcessResult.manifest_path,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+
+    def fake_text(_data_root: object, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return destination
+
+    def fake_count(_data_root: object, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return destination
+
+    monkeypatch.setattr(commands_mod, "_generate_geographic_text_coverage_snapshot", fake_text)
+    monkeypatch.setattr(commands_mod, "_generate_geographic_polygon_count_snapshot", fake_count)
+    monkeypatch.setattr(commands_mod, "_write_readme_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(commands_mod, "ensure_world_land", lambda cache_dir: None)
+    monkeypatch.setattr(commands_mod, "generate_coverage_map", lambda *_a, **_k: None)
+
+    upload_queue = type(
+        "_Q",
+        (),
+        {
+            "submit": staticmethod(lambda files, msg: submitted.append(list(files))),
+            "close_and_wait": staticmethod(lambda: []),
+        },
+    )()
+
+    commands_mod._enqueue_core_upload(
+        upload_queue,
+        data_root=data_root,
+        repo_id="org/dataset",
+        commit_message="Update PBF fixture.osm.pbf",
+        result=_StubProcessResult(),  # type: ignore[arg-type]
+    )
+    assert submitted, "Core upload must be submitted when both snapshots succeed"
+    remote_paths = [remote for _, remote in submitted[0]]
+    assert LOCAL_TEXT_COVERAGE_ASSET_PATH in remote_paths
+    assert LOCAL_POLYGON_COUNT_ASSET_PATH in remote_paths
+
+
+def test_sync_upload_files_includes_polygon_count_when_core_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.cli.commands as commands
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    def fake_text(_data_root: object, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return destination
+
+    def fake_count(_data_root: object, destination: Path) -> Path:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"\x89PNG\r\n\x1a\n")
+        return destination
+
+    monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fake_text)
+    monkeypatch.setattr(commands, "_generate_geographic_polygon_count_snapshot", fake_count)
+
+    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
+    for path in augmentation_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+    aug_manifest = tmp_path / "aug-manifest"
+    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
+    aug_manifest.write_text("{}", encoding="utf-8")
+    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
+
+    core_paths = {
+        "polygons_path": tmp_path / "core.parquet",
+        "articles_path": tmp_path / "articles.parquet",
+        "polygon_articles_path": tmp_path / "links.parquet",
+    }
+    for path in core_paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+    data_root.processed_manifests.joinpath("processed_pbfs.json").write_text("{}", encoding="utf-8")
+
+    class _Core:
+        pass
+
+    core = _Core()
+    core.polygons_path = core_paths["polygons_path"]
+    core.articles_path = core_paths["articles_path"]
+    core.polygon_articles_path = core_paths["polygon_articles_path"]
+
+    files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, core)
+    remote_paths = [remote for _, remote in files]
+    assert LOCAL_TEXT_COVERAGE_ASSET_PATH in remote_paths
+    assert LOCAL_POLYGON_COUNT_ASSET_PATH in remote_paths
+
+
+def test_sync_upload_files_skips_polygon_count_for_augmentation_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.cli.commands as commands
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    def fail_text(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("Augmentation-only must not regenerate the text coverage asset")
+
+    def fail_count(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("Augmentation-only must not regenerate the polygon count asset")
+
+    monkeypatch.setattr(commands, "_generate_geographic_text_coverage_snapshot", fail_text)
+    monkeypatch.setattr(commands, "_generate_geographic_polygon_count_snapshot", fail_count)
+
+    augmentation_paths = [tmp_path / f"aug-{idx}" for idx in range(5)]
+    for path in augmentation_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+    aug_manifest = tmp_path / "aug-manifest"
+    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
+    aug_manifest.write_text("{}", encoding="utf-8")
+    augmentation = AugmentationResult(*augmentation_paths, aug_manifest, {})
+
+    files = commands._sync_upload_files(data_root, "org/name", "monaco-latest", augmentation, None)
+    remote_paths = [remote for _, remote in files]
+    assert LOCAL_TEXT_COVERAGE_ASSET_PATH not in remote_paths
+    assert LOCAL_POLYGON_COUNT_ASSET_PATH not in remote_paths
+
+
+def test_enqueue_core_upload_failure_prevents_partial_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If polygon count generation fails, no upload must be submitted."""
+    import osm_polygon_wikidata_only.cli.commands as commands_mod
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    submitted: list[list[tuple[Path, str]]] = []
+
+    class _StubProcessResult:
+        polygons_path = tmp_path / "polygons.parquet"
+        articles_path = tmp_path / "articles.parquet"
+        polygon_articles_path = tmp_path / "links.parquet"
+        manifest_path = tmp_path / "manifest.json"
+        polygon_count = 0
+        article_count = 0
+        link_count = 0
+
+        def __init__(self) -> None:
+            self.manifest_entry = {"source_pbf": "fixture.osm.pbf"}
+            self.stage_timings_s: dict[str, float] = {}
+
+    for path in (
+        _StubProcessResult.polygons_path,
+        _StubProcessResult.articles_path,
+        _StubProcessResult.polygon_articles_path,
+        _StubProcessResult.manifest_path,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+
+    monkeypatch.setattr(
+        commands_mod,
+        "_generate_geographic_text_coverage_snapshot",
+        lambda root, dst: (
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            or dst.write_bytes(b"\x89PNG\r\n\x1a\n")
+            or dst
+        ),
+    )
+
+    def boom_count(_data_root: object, destination: Path) -> Path:
+        raise CoverageMapError("polygons parquet missing required columns: ['lat']")
+
+    monkeypatch.setattr(commands_mod, "_generate_geographic_polygon_count_snapshot", boom_count)
+    monkeypatch.setattr(commands_mod, "_write_readme_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(commands_mod, "ensure_world_land", lambda cache_dir: None)
+    monkeypatch.setattr(commands_mod, "generate_coverage_map", lambda *_a, **_k: None)
+
+    upload_queue = type(
+        "_Q",
+        (),
+        {
+            "submit": staticmethod(lambda files, msg: submitted.append(list(files))),
+            "close_and_wait": staticmethod(lambda: []),
+        },
+    )()
+
+    with pytest.raises(CoverageMapError, match=r"missing required columns"):
+        commands_mod._enqueue_core_upload(
+            upload_queue,
+            data_root=data_root,
+            repo_id="org/dataset",
+            commit_message="Update PBF fixture.osm.pbf",
+            result=_StubProcessResult(),  # type: ignore[arg-type]
+        )
+    assert submitted == [], "Upload must not be submitted when count-map generation fails."

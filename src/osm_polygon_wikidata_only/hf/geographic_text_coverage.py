@@ -1,31 +1,34 @@
-"""Generate a deterministic H3-aggregated geographic Wikipedia text coverage map.
+"""Generate deterministic H3-aggregated geographic visualizations.
 
-The visualization answers a single, precisely-defined question:
+Two world maps are produced from the same local Parquet inputs:
 
-    For each H3 cell at the configured resolution, what fraction of
-    dataset polygons are linked to at least one Wikipedia article with
-    non-empty full text?
+1. ``assets/geographic_wikipedia_text_coverage.png`` -- for each H3 cell
+   at the configured resolution, the fraction of dataset polygons linked
+   to at least one Wikipedia article with non-empty ``full_text``. The
+   denominator is every polygon row in ``processed/polygons/*.parquet``
+   (already conditional on the upstream ``wikidata=*`` filter). Cell
+   colour encodes coverage from 0% to 100%; polygon count is **not**
+   encoded as opacity. Grey cells are reserved for low-sample cells
+   below the configured threshold.
 
-The denominator counts every polygon row under
-``processed/polygons/*.parquet`` exactly once. Polygons in the dataset
-already require an OSM ``wikidata=*`` tag; that qualification is
-inherited from the upstream schema and is documented in the rendered
-caption.
+2. ``assets/geographic_polygon_count.png`` -- the same H3 layout, but
+   colour encodes the raw polygon count per cell using a logarithmic
+   normalization because counts are highly skewed across the world. Low
+   counts are the metric and are not greyed out; opacity is not used as
+   a second data encoding.
 
-The numerator counts unique polygons (never polygon-article links).
-A polygon qualifies when at least one linked article's ``full_text``
-is not null, not empty, and not whitespace-only.
-
-Outputs are sorted by H3 cell id, the colormap scale is fixed at
-``[0, 1]``, and the figure layout is fully deterministic. The function
-is independent of CLI parsing and the network: it reads local Parquet
-files and writes a PNG with no external dependencies at render time.
+Both maps share a basemap, world extent, deterministic cell ordering,
+atomic output via a temporary file, and publication-quality styling.
+Outputs are sorted by H3 cell id and the figure layout is fully
+deterministic. The module is independent of CLI parsing and the network:
+it reads local Parquet files and writes PNGs without external HTTP.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 from collections.abc import Sequence
@@ -52,8 +55,15 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_H3_RESOLUTION: int = 3
 DEFAULT_MIN_POLYGONS_PER_CELL: int = 20
-REMOTE_ASSET_PATH: str = "assets/geographic_wikipedia_text_coverage.png"
-LOCAL_ASSET_PATH: str = "assets/geographic_wikipedia_text_coverage.png"
+
+REMOTE_TEXT_COVERAGE_ASSET_PATH: str = "assets/geographic_wikipedia_text_coverage.png"
+LOCAL_TEXT_COVERAGE_ASSET_PATH: str = REMOTE_TEXT_COVERAGE_ASSET_PATH
+REMOTE_POLYGON_COUNT_ASSET_PATH: str = "assets/geographic_polygon_count.png"
+LOCAL_POLYGON_COUNT_ASSET_PATH: str = REMOTE_POLYGON_COUNT_ASSET_PATH
+
+# Backwards-compatible aliases for the historical single-asset naming.
+LOCAL_ASSET_PATH: str = LOCAL_TEXT_COVERAGE_ASSET_PATH
+REMOTE_ASSET_PATH: str = REMOTE_TEXT_COVERAGE_ASSET_PATH
 
 # Fixed visual constants: do not vary across runs to keep the output
 # deterministic and visually consistent in the published README.
@@ -64,9 +74,13 @@ _LAND_COLOR = "#e8e0d0"
 _LAND_EDGE = "#b8aa90"
 _LOW_SAMPLE_COLOR = "#bdbdbd"
 _LOW_SAMPLE_EDGE = "#8a8a8a"
-_COLORMAP_NAME = "viridis"
+_COVERAGE_COLORMAP_NAME = "viridis"
+_COUNT_COLORMAP_NAME = "magma"
 _VMIN = 0.0
 _VMAX = 1.0
+_COUNT_ALPHA = 0.95
+_COVERAGE_ALPHA = 1.0
+_LOW_SAMPLE_ALPHA = 0.7
 
 
 class CoverageMapError(RuntimeError):
@@ -75,7 +89,12 @@ class CoverageMapError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class CoverageCell:
-    """One H3 cell's aggregated coverage statistics."""
+    """One H3 cell's aggregated Wikipedia text coverage statistics.
+
+    Polygon counts are retained so the renderer can include them in the
+    caption summary, but they are **not** encoded as opacity. Coverage
+    rate is the sole colour channel for eligible cells.
+    """
 
     h3_cell: str
     polygon_count: int
@@ -85,8 +104,22 @@ class CoverageCell:
 
 
 @dataclass(frozen=True, slots=True)
+class PolygonCountCell:
+    """One H3 cell's aggregated polygon count.
+
+    Polygons are conditional on the upstream ``wikidata=*`` filter from
+    the dataset schema. Low-sample cells remain visible on this map
+    because low counts are the metric and must not be greyed out.
+    """
+
+    h3_cell: str
+    polygon_count: int
+    is_low_sample: bool
+
+
+@dataclass(frozen=True, slots=True)
 class RenderResult:
-    """Outcome of :func:`render_geographic_text_coverage`.
+    """Outcome of a render function.
 
     The PNG is written to ``output_path`` and the exact caption text
     rendered onto the figure is exposed here so callers and tests can
@@ -115,7 +148,7 @@ def assign_h3_cell(lat: float, lon: float, *, resolution: int = DEFAULT_H3_RESOL
         raise CoverageMapError(
             f"Latitude and longitude must be numeric; got lat={lat!r}, lon={lon!r}."
         ) from error
-    if not (math_isfinite(lat_value) and math_isfinite(lon_value)):
+    if not (math.isfinite(lat_value) and math.isfinite(lon_value)):
         raise CoverageMapError(
             f"Latitude and longitude must be finite; got lat={lat_value!r}, lon={lon_value!r}."
         )
@@ -132,13 +165,6 @@ def assign_h3_cell(lat: float, lon: float, *, resolution: int = DEFAULT_H3_RESOL
             f"Could not assign H3 cell for ({lat_value}, {lon_value}) "
             f"at resolution {resolution}: {error}"
         ) from error
-
-
-def math_isfinite(value: float) -> bool:
-    """Local re-export so the function above is self-contained."""
-    import math
-
-    return math.isfinite(value)
 
 
 # --- I/O ---------------------------------------------------------------
@@ -292,7 +318,15 @@ def aggregate_geographic_text_coverage(
     h3_resolution: int = DEFAULT_H3_RESOLUTION,
     min_polygons_per_cell: int = DEFAULT_MIN_POLYGONS_PER_CELL,
 ) -> list[CoverageCell]:
-    """Aggregate coverage statistics per H3 cell from local Parquet artifacts."""
+    """Aggregate Wikipedia text coverage statistics per H3 cell.
+
+    The denominator counts every polygon row in
+    ``processed/polygons/*.parquet`` exactly once; the numerator
+    counts unique polygons (never polygon-article links) linked to at
+    least one article with non-empty full text. Both inputs are
+    inherited from the upstream schema where polygons must already
+    carry an OSM ``wikidata=*`` tag.
+    """
     if min_polygons_per_cell < 1:
         raise CoverageMapError(f"min_polygons_per_cell must be >= 1; got {min_polygons_per_cell}")
     polygons_dir = _require_directory(processed_root / "polygons", label="polygons")
@@ -333,10 +367,51 @@ def aggregate_geographic_text_coverage(
     return cells
 
 
-# --- Rendering ---------------------------------------------------------
+def aggregate_geographic_polygon_count(
+    processed_root: Path,
+    *,
+    h3_resolution: int = DEFAULT_H3_RESOLUTION,
+    min_polygons_per_cell: int = DEFAULT_MIN_POLYGONS_PER_CELL,
+) -> list[PolygonCountCell]:
+    """Aggregate raw polygon counts per H3 cell.
+
+    Every dataset polygon is counted exactly once. Polygons are
+    conditional on the upstream OSM ``wikidata=*`` filter; the count
+    ignores article text and link membership because the metric is the
+    raw count itself. Cells with fewer than ``min_polygons_per_cell``
+    polygons are flagged as low-sample but remain visible on the map.
+    """
+    if min_polygons_per_cell < 1:
+        raise CoverageMapError(f"min_polygons_per_cell must be >= 1; got {min_polygons_per_cell}")
+    polygons_dir = _require_directory(processed_root / "polygons", label="polygons")
+    polygon_cells = _load_polygon_cells(polygons_dir, h3_resolution=h3_resolution)
+
+    counts: dict[str, int] = {}
+    for _, cell in polygon_cells:
+        counts[cell] = counts.get(cell, 0) + 1
+
+    cells: list[PolygonCountCell] = []
+    for h3_cell in sorted(counts):
+        polygon_count = counts[h3_cell]
+        cells.append(
+            PolygonCountCell(
+                h3_cell=h3_cell,
+                polygon_count=polygon_count,
+                is_low_sample=polygon_count < min_polygons_per_cell,
+            )
+        )
+    LOGGER.info(
+        "Aggregated polygon counts for %d H3 cell(s); %d polygon(s) total.",
+        len(cells),
+        sum(c.polygon_count for c in cells),
+    )
+    return cells
 
 
-def _coerce_cells(cells: Sequence[CoverageCell]) -> list[CoverageCell]:
+# --- Rendering primitives ----------------------------------------------
+
+
+def _coerce_coverage_cells(cells: Sequence[CoverageCell]) -> list[CoverageCell]:
     """Validate and copy ``cells`` into a deterministic list."""
     coerced: list[CoverageCell] = []
     seen: set[str] = set()
@@ -353,62 +428,21 @@ def _coerce_cells(cells: Sequence[CoverageCell]) -> list[CoverageCell]:
     return coerced
 
 
-def _opacity_for_count(count: int) -> float:
-    """Deterministic log-scaled opacity in (0, 1] from polygon count."""
-    if count <= 0:
-        return 0.1
-    import math
-
-    # log10(1 + count) clamped to [0, 1], with a visible floor.
-    scaled = math.log10(1.0 + count) / 4.0  # log10(10_000+1) ~= 4
-    return max(0.15, min(1.0, scaled))
-
-
-def _draw_cell_polygon(
-    ax: Any, cell: CoverageCell, *, cmap: mcolors.Colormap, norm: mcolors.Normalize
-) -> None:
-    """Draw a single H3 cell on ``ax``, splitting antimeridian crossings."""
-    try:
-        boundary = h3.cell_to_boundary(cell.h3_cell)
-    except (ValueError, h3.H3ValueError):
-        LOGGER.warning("Could not fetch boundary for %s", cell.h3_cell)
-        return
-    if not boundary:
-        return
-
-    facecolor: Any
-    edgecolor: str
-    alpha: float
-    if cell.is_low_sample:
-        facecolor = _LOW_SAMPLE_COLOR
-        edgecolor = _LOW_SAMPLE_EDGE
-        alpha = 0.7
-    else:
-        facecolor = cmap(norm(cell.coverage_rate))
-        edgecolor = "#333333"
-        alpha = _opacity_for_count(cell.polygon_count)
-
-    # ``boundary`` is a sequence of (lat, lon) tuples in h3 4.x. Split
-    # rings at antimeridian crossings so we never draw across the world.
-    boundary_pairs = list(boundary)
-    raw_points: list[tuple[float, float]] = []
-    for pair in boundary_pairs:
-        if len(pair) >= 2:
-            raw_points.append((float(pair[0]), float(pair[1])))
-    points: list[tuple[float, float]] = [(lon, lat) for lat, lon in raw_points]
-    for ring in _split_antimeridian(points):
-        if len(ring) < 3:
-            continue
-        patch = mpatches.Polygon(
-            ring,
-            closed=True,
-            facecolor=facecolor,
-            edgecolor=edgecolor,
-            linewidth=0.2,
-            alpha=alpha,
-            zorder=3,
-        )
-        ax.add_patch(patch)
+def _coerce_count_cells(cells: Sequence[PolygonCountCell]) -> list[PolygonCountCell]:
+    """Validate and copy ``cells`` into a deterministic list."""
+    coerced: list[PolygonCountCell] = []
+    seen: set[str] = set()
+    for cell in cells:
+        if not isinstance(cell, PolygonCountCell):
+            raise CoverageMapError(
+                f"All entries must be PolygonCountCell instances; got {type(cell).__name__}."
+            )
+        if cell.h3_cell in seen:
+            raise CoverageMapError(f"Duplicate H3 cell id supplied to renderer: {cell.h3_cell}")
+        seen.add(cell.h3_cell)
+        coerced.append(cell)
+    coerced.sort(key=lambda entry: entry.h3_cell)
+    return coerced
 
 
 def _split_antimeridian(
@@ -437,6 +471,24 @@ def _split_antimeridian(
         else:
             rings.append(current)
     return rings
+
+
+def _cell_rings(cell: CoverageCell | PolygonCountCell) -> list[list[tuple[float, float]]]:
+    """Return the antimeridian-split ``(lon, lat)`` rings for ``cell``."""
+    try:
+        boundary = h3.cell_to_boundary(cell.h3_cell)
+    except (ValueError, h3.H3ValueError):
+        LOGGER.warning("Could not fetch boundary for %s", cell.h3_cell)
+        return []
+    if not boundary:
+        return []
+    boundary_pairs = list(boundary)
+    raw_points: list[tuple[float, float]] = []
+    for pair in boundary_pairs:
+        if len(pair) >= 2:
+            raw_points.append((float(pair[0]), float(pair[1])))
+    points: list[tuple[float, float]] = [(lon, lat) for lat, lon in raw_points]
+    return [ring for ring in _split_antimeridian(points) if len(ring) >= 3]
 
 
 def _load_land_basemap(cache_dir: Path) -> list[Any] | None:
@@ -492,6 +544,97 @@ def _draw_land_ring(ax: Any, ring: Sequence[Sequence[float]]) -> None:
     ax.add_patch(patch)
 
 
+def _init_axes(ax: Any) -> None:
+    """Apply the shared world-extent styling used by every visualization."""
+    ax.set_facecolor(_OCEAN_COLOR)
+    ax.set_xlim(-180.0, 180.0)
+    ax.set_ylim(-90.0, 90.0)
+    ax.set_xticks(range(-180, 181, 30))
+    ax.set_yticks(range(-90, 91, 30))
+    ax.grid(True, color="#ffffff", linewidth=0.3, alpha=0.4)
+    ax.tick_params(colors="#666666", labelsize=7)
+    ax.set_aspect("equal", adjustable="box")
+
+
+def _atomic_save_png(fig: Any, output_path: Path) -> None:
+    """Save ``fig`` to ``output_path`` via a temporary file then atomic rename."""
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=str(output_path.parent),
+        delete=False,
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+    try:
+        fig.savefig(
+            str(tmp_path),
+            format="png",
+            facecolor="white",
+            metadata={"Software": "osm-polygon-wikidata-only"},
+        )
+        os.replace(tmp_path, output_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _format_percent_tick(value: float, _position: int | None = None) -> str:
+    """Format a [0, 1] colorbar value as an integer percentage label."""
+    return f"{round(value * 100)}%"
+
+
+def _format_count_tick(value: float, _position: int | None = None) -> str:
+    """Format a polygon-count colorbar value as a human-readable integer label."""
+    count = round(value)
+    if count < 1_000:
+        return str(count)
+    if count < 1_000_000:
+        thousands = count / 1_000.0
+        return f"{thousands:.0f}k" if thousands.is_integer() else f"{thousands:.1f}k"
+    millions = count / 1_000_000.0
+    return f"{millions:.1f}M"
+
+
+# --- Coverage rendering -------------------------------------------------
+
+
+def _draw_coverage_cell(
+    ax: Any,
+    cell: CoverageCell,
+    *,
+    cmap: mcolors.Colormap,
+    norm: mcolors.Normalize,
+) -> None:
+    """Draw a single H3 cell on ``ax`` for the coverage map.
+
+    Eligible (non-low-sample) cells use the configured full alpha so
+    polygon count is not encoded as opacity. Grey is reserved for
+    low-sample cells flagged by the threshold.
+    """
+    facecolor: Any
+    edgecolor: str
+    alpha: float
+    if cell.is_low_sample:
+        facecolor = _LOW_SAMPLE_COLOR
+        edgecolor = _LOW_SAMPLE_EDGE
+        alpha = _LOW_SAMPLE_ALPHA
+    else:
+        facecolor = cmap(norm(cell.coverage_rate))
+        edgecolor = "#333333"
+        alpha = _COVERAGE_ALPHA
+    for ring in _cell_rings(cell):
+        patch = mpatches.Polygon(
+            ring,
+            closed=True,
+            facecolor=facecolor,
+            edgecolor=edgecolor,
+            linewidth=0.2,
+            alpha=alpha,
+            zorder=3,
+        )
+        ax.add_patch(patch)
+
+
 def render_geographic_text_coverage(
     cells: Sequence[CoverageCell],
     output_path: Path,
@@ -503,41 +646,35 @@ def render_geographic_text_coverage(
 
     The :class:`RenderResult` exposes the exact caption text drawn onto
     the figure so callers (and tests) can audit it without parsing the
-    rasterized PNG.
+    rasterized PNG. Cell colour encodes coverage (0%-100%); polygon
+    count is summarised in the caption but is **not** encoded as
+    opacity. Grey cells hold fewer than ``min_polygons_per_cell``
+    polygons and are not statistically meaningful.
     """
-    coerced = _coerce_cells(cells)
+    coerced = _coerce_coverage_cells(cells)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
     fig.set_facecolor("white")
-    ax.set_facecolor(_OCEAN_COLOR)
-    ax.set_xlim(-180.0, 180.0)
-    ax.set_ylim(-90.0, 90.0)
-    ax.set_xticks(range(-180, 181, 30))
-    ax.set_yticks(range(-90, 91, 30))
-    ax.grid(True, color="#ffffff", linewidth=0.3, alpha=0.4)
-    ax.tick_params(colors="#666666", labelsize=7)
-    ax.set_aspect("equal", adjustable="box")
-
+    _init_axes(ax)
     if land_features:
         _draw_landmasses(ax, land_features)
 
-    cmap = plt.get_cmap(_COLORMAP_NAME)
+    cmap = plt.get_cmap(_COVERAGE_COLORMAP_NAME)
     norm = mcolors.Normalize(vmin=_VMIN, vmax=_VMAX)
     for cell in coerced:
-        _draw_cell_polygon(ax, cell, cmap=cmap, norm=norm)
+        _draw_coverage_cell(ax, cell, cmap=cmap, norm=norm)
 
     covered_total = sum(c.covered_polygon_count for c in coerced)
     polygon_total = sum(c.polygon_count for c in coerced)
     overall_pct = 100.0 * covered_total / polygon_total if polygon_total > 0 else 0.0
     low_sample_count = sum(1 for c in coerced if c.is_low_sample)
     caption = (
-        "Geographic Wikipedia Text Coverage. Colour shows the share of dataset "
-        "polygons (already conditional on an OSM `wikidata=*` tag) linked to at "
-        "least one Wikipedia article with non-empty text. Cell fill encodes "
-        "coverage (0-100%); cell opacity encodes polygon count on a log scale. "
-        f"Grey cells hold fewer than {min_polygons_per_cell} polygons and "
-        "are not statistically meaningful. "
+        "Geographic Wikipedia Text Coverage. Colour encodes the share of "
+        "dataset polygons (already conditional on an OSM `wikidata=*` tag) "
+        "linked to at least one Wikipedia article with non-empty text, "
+        f"from 0% to 100%. Grey cells hold fewer than {min_polygons_per_cell} "
+        "polygons and are not statistically meaningful. "
         f"{polygon_total:,} polygons across {len(coerced):,} H3 cells "
         f"({covered_total:,} covered, {overall_pct:.1f}% overall; "
         f"{low_sample_count:,} low-sample)."
@@ -571,34 +708,12 @@ def render_geographic_text_coverage(
 
     try:
         fig.tight_layout(rect=(0, 0.06, 1, 0.95))
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{output_path.name}.",
-            suffix=".tmp",
-            dir=str(output_path.parent),
-            delete=False,
-        ) as tmp_file:
-            tmp_path = Path(tmp_file.name)
-        try:
-            fig.savefig(
-                str(tmp_path),
-                format="png",
-                facecolor="white",
-                metadata={"Software": "osm-polygon-wikidata-only"},
-            )
-            os.replace(tmp_path, output_path)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
+        _atomic_save_png(fig, output_path)
     finally:
         plt.close(fig)
 
     LOGGER.info("Wrote geographic Wikipedia text coverage map to %s", output_path)
     return RenderResult(output_path=output_path, caption=caption)
-
-
-def _format_percent_tick(value: float, _position: int | None = None) -> str:
-    """Format a [0, 1] colorbar value as an integer percentage label."""
-    return f"{round(value * 100)}%"
 
 
 def generate_geographic_text_coverage(
@@ -624,16 +739,158 @@ def generate_geographic_text_coverage(
     )
 
 
+# --- Polygon count rendering ------------------------------------------
+
+
+def _draw_count_cell(
+    ax: Any,
+    cell: PolygonCountCell,
+    *,
+    cmap: mcolors.Colormap,
+    norm: mcolors.LogNorm,
+) -> None:
+    """Draw a single H3 cell on ``ax`` for the polygon count map.
+
+    All cells use the colormap -- including low-sample cells, because
+    low counts are the metric and must remain visible. Opacity is not
+    used as a second data encoding.
+    """
+    safe_count = max(int(cell.polygon_count), 1)
+    facecolor: Any = cmap(norm(safe_count))
+    for ring in _cell_rings(cell):
+        patch = mpatches.Polygon(
+            ring,
+            closed=True,
+            facecolor=facecolor,
+            edgecolor="#333333",
+            linewidth=0.2,
+            alpha=_COUNT_ALPHA,
+            zorder=3,
+        )
+        ax.add_patch(patch)
+
+
+def render_geographic_polygon_count(
+    cells: Sequence[PolygonCountCell],
+    output_path: Path,
+    *,
+    land_features: Sequence[Any] | None = None,
+    min_polygons_per_cell: int = DEFAULT_MIN_POLYGONS_PER_CELL,
+) -> RenderResult:
+    """Render the polygon count PNG and atomically write it to ``output_path``.
+
+    Counts are encoded using a logarithmic normalization because
+    polygon counts per H3 cell are highly skewed. The colourbar shows
+    integer polygon counts (human-readable ``k`` / ``M`` suffixes for
+    large values). Opacity is constant so polygon count is the sole
+    data channel.
+    """
+    coerced = _coerce_count_cells(cells)
+    if not coerced:
+        raise CoverageMapError("Cannot render polygon count map: no H3 cells supplied.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
+    fig.set_facecolor("white")
+    _init_axes(ax)
+    if land_features:
+        _draw_landmasses(ax, land_features)
+
+    counts = [cell.polygon_count for cell in coerced]
+    minimum = max(min(counts), 1)
+    maximum = max(max(counts), minimum + 1)
+    cmap = plt.get_cmap(_COUNT_COLORMAP_NAME)
+    norm = mcolors.LogNorm(vmin=minimum, vmax=maximum)
+    for cell in coerced:
+        _draw_count_cell(ax, cell, cmap=cmap, norm=norm)
+
+    total_polygons = sum(counts)
+    low_sample_count = sum(1 for c in coerced if c.is_low_sample)
+    caption = (
+        "Geographic Polygon Density (Wikidata-tagged). Colour encodes the "
+        "number of dataset polygons per H3 cell on a logarithmic scale. "
+        "Each dataset polygon (already conditional on an OSM "
+        "`wikidata=*` tag) is counted exactly once. "
+        f"Grey cells (none here) are reserved for sub-threshold maps; on "
+        f"this map every cell is coloured. {total_polygons:,} polygons across "
+        f"{len(coerced):,} H3 cells ({low_sample_count:,} with fewer than "
+        f"{min_polygons_per_cell} polygons)."
+    )
+    fig.suptitle(
+        "Geographic Polygon Density",
+        fontsize=14,
+        color="#222222",
+        y=0.98,
+    )
+    fig.text(
+        0.5,
+        0.02,
+        caption,
+        ha="center",
+        va="bottom",
+        fontsize=7,
+        color="#444444",
+        wrap=True,
+    )
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    colorbar = fig.colorbar(sm, ax=ax, fraction=0.025, pad=0.02)
+    colorbar.set_label("Polygons per H3 cell", fontsize=8, color="#333333")
+    colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(_format_count_tick))
+    colorbar.ax.tick_params(labelsize=7)
+
+    try:
+        fig.tight_layout(rect=(0, 0.06, 1, 0.95))
+        _atomic_save_png(fig, output_path)
+    finally:
+        plt.close(fig)
+
+    LOGGER.info("Wrote geographic polygon count map to %s", output_path)
+    return RenderResult(output_path=output_path, caption=caption)
+
+
+def generate_geographic_polygon_count(
+    processed_root: Path,
+    output_path: Path,
+    *,
+    h3_resolution: int = DEFAULT_H3_RESOLUTION,
+    min_polygons_per_cell: int = DEFAULT_MIN_POLYGONS_PER_CELL,
+    land_cache_dir: Path | None = None,
+) -> RenderResult:
+    """Aggregate polygon counts and render the PNG to ``output_path``."""
+    cells = aggregate_geographic_polygon_count(
+        processed_root,
+        h3_resolution=h3_resolution,
+        min_polygons_per_cell=min_polygons_per_cell,
+    )
+    land_features = _load_land_basemap(land_cache_dir) if land_cache_dir else None
+    return render_geographic_polygon_count(
+        cells,
+        output_path,
+        land_features=land_features,
+        min_polygons_per_cell=min_polygons_per_cell,
+    )
+
+
 __all__ = [
     "DEFAULT_H3_RESOLUTION",
     "DEFAULT_MIN_POLYGONS_PER_CELL",
     "LOCAL_ASSET_PATH",
+    "LOCAL_POLYGON_COUNT_ASSET_PATH",
+    "LOCAL_TEXT_COVERAGE_ASSET_PATH",
     "REMOTE_ASSET_PATH",
+    "REMOTE_POLYGON_COUNT_ASSET_PATH",
+    "REMOTE_TEXT_COVERAGE_ASSET_PATH",
     "CoverageCell",
     "CoverageMapError",
+    "PolygonCountCell",
     "RenderResult",
+    "aggregate_geographic_polygon_count",
     "aggregate_geographic_text_coverage",
     "assign_h3_cell",
+    "generate_geographic_polygon_count",
     "generate_geographic_text_coverage",
+    "render_geographic_polygon_count",
     "render_geographic_text_coverage",
 ]
