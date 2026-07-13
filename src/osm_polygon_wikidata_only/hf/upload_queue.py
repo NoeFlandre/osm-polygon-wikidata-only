@@ -102,6 +102,10 @@ class BackgroundUploadQueue:
                             self._upload(job.files, job.message)
                             last_error = None
                             break
+                        # ``except Exception`` retained: ``huggingface_hub``
+                        # legitimately exposes a broad set of unstable
+                        # exception types; every retry attempt must see
+                        # them uniformly.
                         except Exception as error:
                             last_error = error
                     if last_error is not None:
@@ -109,6 +113,12 @@ class BackgroundUploadQueue:
                     if job.state_path is not None:
                         job.state_path.unlink(missing_ok=True)
                     LOGGER.info("Background upload complete: %s", job.message)
+                # ``except Exception`` retained: the outer branch
+                # isolates the worker thread from any failure (upload,
+                # state write, retry accounting) and records it into the
+                # ``failures`` list rather than crashing the daemon
+                # thread. The queue records failures; it does NOT
+                # translate every exception into ``UploadError``.
                 except Exception as error:
                     detail = f"{job.message}: {error}"
                     LOGGER.error("Background upload failed: %s", detail)

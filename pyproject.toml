@@ -97,7 +97,7 @@ ignore_missing_imports = false
 plugins = []
 # Third-party libs without complete type stubs.
 [[tool.mypy.overrides]]
-module = ["osmium.*", "datasets.*", "h3.*"]
+module = ["osmium.*", "h3.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

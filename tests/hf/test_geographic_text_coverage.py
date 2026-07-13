@@ -1297,3 +1297,131 @@ def test_polygon_count_cell_is_immutable() -> None:
     cell = PolygonCountCell(h3_cell="833969fffffffff", polygon_count=5, is_low_sample=False)
     with pytest.raises(Exception):
         cell.polygon_count = 0  # type: ignore[misc]
+
+
+# --- PyArrow schema-introspection fallback -------------------------------
+
+
+def test_read_required_columns_recovers_when_metadata_read_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The schema-introspection fallback in ``read_required_columns`` must
+    survive a failing ``pq.read_metadata`` call (e.g. corrupted file)
+    while still surfacing ``CoverageMapError`` when the column-pruned
+    read fails for a legitimate reason (e.g. missing columns).
+
+    The metadata-read ``except Exception`` is intentionally broad
+    because PyArrow's metadata API can raise across several unstable
+    exception types depending on the file corruption mode; we retain
+    the boundary and document it.
+    """
+    import pyarrow.parquet as pq_mod
+
+    processed = tmp_path / "processed"
+    polygons_dir = processed / "polygons"
+    polygons_dir.mkdir(parents=True)
+    parquet_path = _write_polygons_parquet(polygons_dir / "a.parquet", ["p:way:1"], [0.0], [0.0])
+
+    def _exploding_read_metadata(_path: Path) -> Any:
+        raise RuntimeError("simulated metadata corruption")
+
+    monkeypatch.setattr(pq_mod, "read_metadata", _exploding_read_metadata)
+
+    # Schema-introspection fails -> we fall through with an empty
+    # ``actual`` set. The subsequent column-pruned read succeeds for
+    # well-formed parquet, so the function returns rows unchanged.
+    # Import the private helper directly to exercise the fallback.
+    from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import (
+        read_required_columns,
+    )
+
+    rows = read_required_columns(parquet_path, ("polygon_id", "lat", "lon"), label="polygons")
+    assert rows == [
+        {
+            "polygon_id": "p:way:1",
+            "lat": 0.0,
+            "lon": 0.0,
+        }
+    ]
+
+
+def test_read_required_columns_still_propagates_coverage_error_when_columns_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the metadata read fails AND the column-pruned read fails,
+    the function must raise :class:`CoverageMapError` identifying the
+    missing columns. This proves the schema-introspection fallback
+    does not silently swallow genuine schema drift.
+    """
+    import pyarrow.parquet as pq_mod
+
+    processed = tmp_path / "processed"
+    polygons_dir = processed / "polygons"
+    polygons_dir.mkdir(parents=True)
+    parquet_path = polygons_dir / "a.parquet"
+    pq.write_table(pa.table({"polygon_id": ["p:way:1"]}), parquet_path)
+
+    def _exploding_read_metadata(_path: Path) -> Any:
+        raise RuntimeError("simulated metadata corruption")
+
+    monkeypatch.setattr(pq_mod, "read_metadata", _exploding_read_metadata)
+
+    from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import (
+        read_required_columns,
+    )
+
+    with pytest.raises(CoverageMapError, match=r"missing required columns"):
+        read_required_columns(parquet_path, ("polygon_id", "lat", "lon"), label="polygons")
+
+
+# --- world-map basemap fallback -----------------------------------------
+
+
+def test_load_land_basemap_returns_none_when_cache_missing(tmp_path: Path) -> None:
+    """``load_land_basemap`` returns ``None`` when no GeoJSON cache exists.
+
+    The implementation handles three cases explicitly: missing or
+    empty cache files, malformed JSON (``ValueError``), and read
+    errors (``OSError``). A non-dictionary parsed JSON payload
+    returns ``None`` directly without raising.
+    """
+    from osm_polygon_wikidata_only.hf._geographic.basemap import load_land_basemap
+
+    assert load_land_basemap(tmp_path) is None
+
+
+def test_load_land_basemap_returns_features_for_well_formed_geojson(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf._geographic.basemap import load_land_basemap
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    geojson = cache_dir / "ne_110m_land.geojson"
+    geojson.write_text(
+        '{"type":"FeatureCollection","features":[{"type":"Feature",'
+        '"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},'
+        '"properties":{}}]}'
+    )
+
+    features = load_land_basemap(cache_dir)
+    assert features is not None
+    assert len(features) == 1
+    assert features[0]["geometry"]["type"] == "Polygon"
+
+
+def test_load_land_basemap_returns_none_for_corrupt_geojson(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A malformed local file (truncated, non-JSON) must return ``None``
+    and emit a warning -- it must NOT raise. This proves the documented
+    ``(OSError, ValueError)`` boundary behaves correctly.
+    """
+    from osm_polygon_wikidata_only.hf._geographic.basemap import load_land_basemap
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    geojson = cache_dir / "ne_110m_land.geojson"
+    geojson.write_text("{not valid json")
+
+    caplog.set_level("WARNING")
+    assert load_land_basemap(cache_dir) is None
+    assert any("Could not read cached land GeoJSON" in r.getMessage() for r in caplog.records)
