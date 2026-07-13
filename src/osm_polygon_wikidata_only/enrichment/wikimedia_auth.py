@@ -38,20 +38,26 @@ class WikimediaAuthSnapshot:
 
     ``credentials_configured`` is True when bot-password environment
     variables were supplied; it does *not* mean any host has verified
-    them. ``authenticated_hosts``/``anonymous_hosts`` count only hosts
-    that have actually been contacted.
+    them. ``authenticated_hosts``/``anonymous_hosts``/``pending_hosts``
+    count only hosts that have actually been contacted. ``pending_hosts``
+    covers hosts whose first authentication attempt is either still in
+    flight or has not yet started; these are deliberately excluded from
+    the anonymous count so a host that *might* still verify is never
+    mislabelled.
     """
 
     credentials_configured: bool
     authenticated_hosts: int
     anonymous_hosts: int
+    pending_hosts: int = 0
 
     def __repr__(self) -> str:
         return (
             "WikimediaAuthSnapshot("
             f"credentials_configured={self.credentials_configured}, "
             f"authenticated_hosts={self.authenticated_hosts}, "
-            f"anonymous_hosts={self.anonymous_hosts})"
+            f"anonymous_hosts={self.anonymous_hosts}, "
+            f"pending_hosts={self.pending_hosts})"
         )
 
 
@@ -86,9 +92,22 @@ class _Opener(Protocol):
 
 
 class WikimediaHttpSession(Protocol):
-    """Transport boundary shared by Wikimedia API clients."""
+    """Transport boundary shared by Wikimedia API clients.
 
-    def read(self, request: urllib.request.Request) -> tuple[bytes, str]: ...
+    The session is the single place that knows per-host authentication
+    state, so it is also where per-host pacing is decided. Callers pass
+    the anonymous and authenticated per-host minimum intervals for their
+    request kind; the session picks the right one based on whether the
+    specific host has verified authentication.
+    """
+
+    def read(
+        self,
+        request: urllib.request.Request,
+        *,
+        min_interval_anonymous_s: float,
+        min_interval_authenticated_s: float,
+    ) -> tuple[bytes, str]: ...
 
 
 @dataclass
@@ -127,14 +146,36 @@ class WikimediaSession:
         self._fallback_warning_lock = threading.Lock()
         self._fallback_warning_emitted = False
 
-    def read(self, request: urllib.request.Request) -> tuple[bytes, str]:
-        """Authenticate the request host when configured, then read its response."""
+    def read(
+        self,
+        request: urllib.request.Request,
+        *,
+        min_interval_anonymous_s: float,
+        min_interval_authenticated_s: float,
+    ) -> tuple[bytes, str]:
+        """Authenticate the request host when configured, pace it, and read.
+
+        Centralises the per-host pacing decision: hosts that have
+        *verified* authentication are paced at
+        ``min_interval_authenticated_s``; hosts contacted anonymously
+        (no credentials) or whose bot password was rejected are paced
+        at ``min_interval_anonymous_s``. Every Wikidata, Wikipedia,
+        Wikivoyage, and parse request goes through this method, so the
+        decision is consistent across the whole pipeline.
+        """
         parsed_url = urllib.parse.urlparse(request.full_url)
         if not parsed_url.hostname:
             raise ValueError("Wikimedia request URL must include a hostname")
-        state = self._host_session(parsed_url.hostname)
+        host = parsed_url.hostname
+        state = self._host_session(host)
         if self._credentials is not None:
             self._ensure_authenticated(state, parsed_url.scheme, parsed_url.netloc)
+        # Single source of truth for per-host pacing.
+        if state.authenticated:
+            min_interval = min_interval_authenticated_s
+        else:
+            min_interval = min_interval_anonymous_s
+        self._scheduler.pace_host(host, min_interval_s=min_interval)
         return self._read(state.opener, request)
 
     def _host_session(self, hostname: str) -> _HostSession:
@@ -154,11 +195,15 @@ class WikimediaSession:
             try:
                 self._authenticate(state.opener, scheme, netloc)
             except WikimediaAuthenticationError as error:
-                # Bot passwords are bound to a single wiki. When the
-                # session contacts a host where the password is not
-                # registered, we mark the host as "no auth possible"
-                # and let the actual request proceed anonymously
-                # rather than aborting the whole pipeline.
+                # A Wikimedia Bot Password is created against the central
+                # SUL account and can authenticate on any Wikimedia wiki
+                # where the account is attached, but the API ``login``
+                # (and the resulting authenticated session cookies) is
+                # performed per-host. A rejection therefore means this
+                # specific host either does not have the bot's account
+                # attached or does not accept the credentials. We mark the
+                # host as "no auth possible" and continue anonymously so
+                # the rest of the pipeline keeps running.
                 state.auth_skipped = True
                 self._log_authentication_fallback(netloc, error)
                 return
@@ -178,19 +223,46 @@ class WikimediaSession:
         )
 
     def auth_snapshot(self) -> WikimediaAuthSnapshot:
-        """Count contacted hosts that verified authentication versus fell back.
+        """Count contacted hosts by their verified authentication status.
 
-        Distinguishes "credentials were supplied" (``credentials_configured``)
-        from "this request is actually authenticated". Hosts that have not yet
-        been contacted are not counted in either bucket.
+        Reads each host's state under its own lock (non-blocking) so:
+
+        * Hosts whose login is currently in flight (lock held by the
+          authenticating thread) are counted as ``pending``, never as
+          anonymous, so a host that might still verify is never
+          mislabelled.
+        * Hosts whose authentication has already completed are counted
+          as either ``authenticated`` or ``anonymous`` based on the
+          verified flag.
+        * Hosts contacted without credentials are counted as anonymous.
         """
         with self._hosts_lock:
-            hosts = list(self._hosts.values())
-        authenticated = sum(1 for state in hosts if state.authenticated)
+            states = list(self._hosts.values())
+        authenticated = anonymous = pending = 0
+        for state in states:
+            if not state.lock.acquire(blocking=False):
+                # Another thread is currently authenticating this host;
+                # do not wait and do not classify it as anonymous.
+                pending += 1
+                continue
+            try:
+                if state.authenticated:
+                    authenticated += 1
+                elif state.auth_skipped or self._credentials is None:
+                    anonymous += 1
+                else:
+                    # Credentials configured but neither flag set yet
+                    # (auth not started or just failed without setting
+                    # auth_skipped). Either way, not safe to call it
+                    # anonymous.
+                    pending += 1
+            finally:
+                state.lock.release()
         return WikimediaAuthSnapshot(
             credentials_configured=self._credentials is not None,
             authenticated_hosts=authenticated,
-            anonymous_hosts=len(hosts) - authenticated,
+            anonymous_hosts=anonymous,
+            pending_hosts=pending,
         )
 
     def _authenticate(self, opener: _Opener, scheme: str, netloc: str) -> None:

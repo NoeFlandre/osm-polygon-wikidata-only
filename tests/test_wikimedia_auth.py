@@ -21,6 +21,13 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
 )
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
+# The session now requires per-kind interval kwargs on every read.
+# Existing tests don't care about the values; pass placeholders.
+_SESSION_PACE = {
+    "min_interval_anonymous_s": 0.0,
+    "min_interval_authenticated_s": 0.0,
+}
+
 
 class FakeResponse:
     def __init__(self, payload: object) -> None:
@@ -157,7 +164,9 @@ def test_anonymous_session_performs_no_login() -> None:
         opener_factory=opener_factory,
     )
 
-    body, _ = session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php"))
+    body, _ = session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php"), **_SESSION_PACE
+    )
 
     assert json.loads(body) == {"query": {"ok": True}}
     assert len(openers) == 1
@@ -175,8 +184,8 @@ def test_authenticated_session_logs_in_then_reuses_host_session() -> None:
     )
     request = urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query")
 
-    session.read(request)
-    session.read(request)
+    session.read(request, **_SESSION_PACE)
+    session.read(request, **_SESSION_PACE)
 
     assert len(opener.requests) == 4
     token_request, login_request, first_query, second_query = opener.requests
@@ -211,8 +220,14 @@ def test_authenticated_session_logs_in_once_per_host() -> None:
         opener_factory=opener_factory,
     )
 
-    session.read(urllib.request.Request("https://www.wikidata.org/w/api.php?action=query"))
-    session.read(urllib.request.Request("https://fr.wikipedia.org/w/api.php?action=query"))
+    session.read(
+        urllib.request.Request("https://www.wikidata.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
+    session.read(
+        urllib.request.Request("https://fr.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
 
     assert len(openers) == 2
     assert [len(opener.requests) for opener in openers] == [3, 3]
@@ -236,7 +251,10 @@ def test_concurrent_first_use_logs_in_once() -> None:
         opener_factory=lambda: opener,
     )
     request = urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query")
-    threads = [threading.Thread(target=session.read, args=(request,)) for _ in range(2)]
+    threads = [
+        threading.Thread(target=session.read, args=(request,), kwargs=_SESSION_PACE)
+        for _ in range(2)
+    ]
 
     for thread in threads:
         thread.start()
@@ -285,7 +303,8 @@ def test_authentication_failure_falls_back_to_anonymous_for_that_host(
     )
 
     body, _ = session.read(
-        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query")
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
     )
 
     # The data request still came back (anonymously).
@@ -315,7 +334,10 @@ def test_authentication_failure_does_not_retry_on_subsequent_requests() -> None:
     )
 
     for _ in range(3):
-        session.read(urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"))
+        session.read(
+            urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+            **_SESSION_PACE,
+        )
 
     actions = [
         urllib.parse.parse_qs(
@@ -362,14 +384,16 @@ def test_authentication_failure_on_one_host_does_not_block_another() -> None:
 
     # Contact ru.wikipedia first; auth should be silently skipped.
     body_ru, _ = session.read(
-        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query")
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
     )
     assert json.loads(body_ru) == {"query": {"ok": True}}
 
     # Now contact en.wikipedia; the second opener should log in
     # successfully and the data request should complete.
     body_en, _ = session.read(
-        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query")
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
     )
     assert json.loads(body_en) == {"query": {"ok": True}}
 
@@ -396,8 +420,14 @@ def test_authentication_fallback_warns_once_per_session(
         opener_factory=lambda: FakeOpener(login_result={"login": {"result": "Failed"}}),
     )
 
-    session.read(urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"))
-    session.read(urllib.request.Request("https://de.wikipedia.org/w/api.php?action=query"))
+    session.read(
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
+    session.read(
+        urllib.request.Request("https://de.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
 
     fallback_records = [
         record for record in caplog.records if "continuing anonymously" in record.getMessage()
@@ -424,7 +454,8 @@ def test_malformed_login_response_is_sanitized_in_warning(
     )
 
     body, _ = session.read(
-        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query")
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
     )
 
     # The request must still come back, just anonymously.
@@ -457,8 +488,14 @@ def test_auth_snapshot_counts_authenticated_and_anonymous_hosts() -> None:
         credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
         opener_factory=factory,
     )
-    session.read(urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"))
-    session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
+    session.read(
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
+    session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
 
     snapshot = session.auth_snapshot()
 
@@ -475,7 +512,10 @@ def test_auth_snapshot_reports_all_anonymous_without_credentials() -> None:
         user_agent="test-agent",
         opener_factory=FakeOpener,
     )
-    session.read(urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"))
+    session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"),
+        **_SESSION_PACE,
+    )
 
     snapshot = session.auth_snapshot()
 
@@ -499,3 +539,148 @@ def test_auth_snapshot_starts_unverified_before_any_request() -> None:
     assert snapshot.credentials_configured is True
     assert snapshot.authenticated_hosts == 0
     assert snapshot.anonymous_hosts == 0
+    assert snapshot.pending_hosts == 0
+
+
+def test_session_uses_authenticated_pacing_only_for_verified_hosts() -> None:
+    """Per-host auth-aware pacing is centralised in the session.
+
+    The session must pace a host at ``min_interval_authenticated_s`` only
+    when that host has *verified* authentication, and at
+    ``min_interval_anonymous_s`` otherwise (anonymous mode, or a host
+    whose bot password was rejected). All request kinds — core
+    Wikipedia/Wikidata, augmentation, Wikivoyage, parse — go through
+    the same ``WikimediaSession.read``, so the centralised decision is
+    the single source of truth.
+    """
+    observed: list[tuple[str, float]] = []
+    observed_lock = threading.Lock()
+
+    class RecordingScheduler:
+        def __init__(self) -> None:
+            self.real = make_scheduler()
+
+        def pace_host(self, host, *, min_interval_s):
+            with observed_lock:
+                observed.append((host, min_interval_s))
+
+        def run(self, operation):
+            return self.real.run(operation)
+
+        def report_success(self) -> None:
+            self.real.report_success()
+
+    rejected_opener = FakeOpener(login_result={"login": {"result": "Failed"}})
+    accepted_opener = FakeOpener()
+    state = {"idx": 0}
+
+    def factory() -> FakeOpener:
+        current = state["idx"]
+        state["idx"] += 1
+        return rejected_opener if current == 0 else accepted_opener
+
+    scheduler = RecordingScheduler()
+    session = WikimediaSession(
+        scheduler=scheduler,  # type: ignore[arg-type]
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=factory,
+    )
+
+    session.read(
+        urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+        min_interval_anonymous_s=0.5,
+        min_interval_authenticated_s=0.05,
+    )
+    session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"),
+        min_interval_anonymous_s=0.5,
+        min_interval_authenticated_s=0.05,
+    )
+
+    by_host = {host: interval for host, interval in observed}
+    # ru.wikipedia.org rejected authentication -> anonymous pacing (0.5).
+    assert by_host["ru.wikipedia.org"] == 0.5
+    # en.wikipedia.org verified authentication -> authenticated pacing (0.05).
+    assert by_host["en.wikipedia.org"] == 0.05
+
+
+def test_session_uses_anonymous_pacing_when_no_credentials_configured() -> None:
+    """Without bot-password credentials every host is paced anonymously."""
+    observed: list[tuple[str, float]] = []
+
+    class RecordingScheduler:
+        def __init__(self) -> None:
+            self.real = make_scheduler()
+
+        def pace_host(self, host, *, min_interval_s):
+            observed.append((host, min_interval_s))
+
+        def run(self, operation):
+            return self.real.run(operation)
+
+        def report_success(self) -> None:
+            self.real.report_success()
+
+    scheduler = RecordingScheduler()
+    session = WikimediaSession(
+        scheduler=scheduler,  # type: ignore[arg-type]
+        timeout_s=5,
+        user_agent="test-agent",
+        opener_factory=FakeOpener,
+    )
+
+    session.read(
+        urllib.request.Request("https://en.wikipedia.org/w/api.php?action=query"),
+        min_interval_anonymous_s=0.5,
+        min_interval_authenticated_s=0.05,
+    )
+    assert observed == [("en.wikipedia.org", 0.5)]
+
+
+def test_auth_snapshot_does_not_classify_in_progress_auth_as_anonymous() -> None:
+    """A host whose login is still in flight must not be counted as anonymous."""
+    auth_started = threading.Event()
+    release_auth = threading.Event()
+
+    class SlowOpener(FakeOpener):
+        def open(self, request, *, timeout):
+            params = urllib.parse.parse_qs(
+                request.data.decode()
+                if request.data is not None
+                else urllib.parse.urlparse(request.full_url).query
+            )
+            if params.get("action") == ["login"]:
+                auth_started.set()
+                release_auth.wait(timeout=5)
+            return super().open(request, timeout=timeout)
+
+    opener = SlowOpener()
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
+        opener_factory=lambda: opener,
+    )
+
+    def first_read() -> None:
+        session.read(
+            urllib.request.Request("https://ru.wikipedia.org/w/api.php?action=query"),
+            **_SESSION_PACE,
+        )
+
+    thread = threading.Thread(target=first_read)
+    thread.start()
+    assert auth_started.wait(timeout=5)
+
+    snapshot = session.auth_snapshot()
+    assert snapshot.credentials_configured is True
+    # The host is mid-authentication: it must NOT appear in either bucket.
+    assert snapshot.authenticated_hosts == 0
+    assert snapshot.anonymous_hosts == 0
+    assert snapshot.pending_hosts == 1
+
+    release_auth.set()
+    thread.join(timeout=5)

@@ -43,7 +43,13 @@ class ThrottleThenSuccessSession:
     def __init__(self) -> None:
         self.calls = 0
 
-    def read(self, request: object) -> tuple[bytes, str]:
+    def read(
+        self,
+        request: object,
+        *,
+        min_interval_anonymous_s: float = 0.0,
+        min_interval_authenticated_s: float = 0.0,
+    ) -> tuple[bytes, str]:
         self.calls += 1
         if self.calls == 1:
             headers = Message()
