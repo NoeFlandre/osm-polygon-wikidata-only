@@ -69,6 +69,43 @@ def test_processor_facade_preserves_public_error() -> None:
     assert IncompleteEnrichmentError is FocusedError
 
 
+def test_processor_facade_re_exports_extractor_symbols() -> None:
+    """``pipeline.processor`` must re-export ``extract_pbf`` and
+    ``ExtractedPbf`` from the focused extractor module."""
+    from osm_polygon_wikidata_only.pipeline import extractor as extractor_mod
+    from osm_polygon_wikidata_only.pipeline import processor as processor_mod
+
+    assert processor_mod.extract_pbf is extractor_mod.extract_pbf
+    assert processor_mod.ExtractedPbf is extractor_mod.ExtractedPbf
+
+
+def test_rows_facade_re_exports_row_construction() -> None:
+    """``pipeline.rows`` keeps backwards-compatible re-exports of the
+    three row-construction helpers by identity."""
+    from osm_polygon_wikidata_only.pipeline import row_construction as focused
+    from osm_polygon_wikidata_only.pipeline import rows as legacy
+
+    assert legacy.enrich_polygon is focused.enrich_polygon
+    assert legacy.build_articles_and_links is focused.build_articles_and_links
+    assert legacy.article_row is focused.article_row
+
+
+def test_enrichment_phase_owns_unique_qids_helper() -> None:
+    """The ``unique_qids`` helper exposes a deterministic QID tuple."""
+    from dataclasses import dataclass
+
+    from osm_polygon_wikidata_only.pipeline.enrichment_phase import unique_qids
+
+    @dataclass(slots=True)
+    class _Stub:
+        wikidata: str
+
+    assert unique_qids([_Stub(wikidata="Q3"), _Stub(wikidata="Q1"), _Stub(wikidata="Q1")]) == (
+        "Q1",
+        "Q3",
+    )
+
+
 def test_cli_facade_preserves_parser() -> None:
     from osm_polygon_wikidata_only.cli.commands import build_parser
     from osm_polygon_wikidata_only.cli.parser import build_parser as focused_build_parser
