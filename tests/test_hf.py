@@ -11,6 +11,7 @@ import pytest
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
+    REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
@@ -457,3 +458,22 @@ def test_render_dataset_card_identifies_multilingual_scope_and_maintainer() -> N
     assert "every valid language-Wikipedia sitelink" in markdown
     assert "no per-QID article cap" in markdown
     assert "  - multilingual" in markdown
+
+
+def test_render_dataset_card_includes_geographic_text_coverage_section() -> None:
+
+    markdown = render_dataset_card(
+        repo_id="org/name",
+        stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
+        polygon_columns=["polygon_id"],
+        polygon_descriptions={"polygon_id": "id"},
+        article_columns=["article_id"],
+        article_descriptions={"article_id": "id"},
+        link_columns=["polygon_id"],
+        link_descriptions={"polygon_id": "id"},
+    )
+    assert "## Geographic Wikipedia Text Coverage" in markdown
+    assert (
+        f"![Geographic Wikipedia Text Coverage]({REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE})" in markdown
+    )
+    assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE == "assets/geographic_wikipedia_text_coverage.png"

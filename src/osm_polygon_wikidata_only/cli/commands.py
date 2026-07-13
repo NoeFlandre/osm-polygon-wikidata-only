@@ -49,9 +49,13 @@ from osm_polygon_wikidata_only.hf.dataset_stats import (
     compute_dataset_stats,
     render_stats_section,
 )
+from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
+    generate_geographic_text_coverage as _generate_geographic_text_coverage,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
     REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
@@ -133,6 +137,74 @@ def _augmentation_upload_files(
         *((path, str(path.relative_to(processed_root))) for path in artifacts),
         (readme, "README.md"),
     ]
+
+
+def _generate_geographic_text_coverage_snapshot(
+    data_root: DataRoot,
+    destination: Path,
+) -> Path:
+    """Build the geographic Wikipedia text coverage PNG into ``destination``.
+
+    The snapshot is deterministic, derived entirely from local processed
+    Parquet files, and runs only when core polygon/article/link inputs
+    have changed. The same helper is shared by the legacy core upload
+    path and the canonical ``sync-dir`` core publication path. Only the
+    resolved ``destination`` path is returned because callers do not need
+    the caption text.
+    """
+    land_cache = data_root.cache
+    result = _generate_geographic_text_coverage(
+        data_root.processed,
+        destination,
+        land_cache_dir=land_cache,
+    )
+    return result.output_path
+
+
+def _enqueue_core_upload(
+    upload_queue: BackgroundUploadQueue,
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+    commit_message: str,
+    result: ProcessResult,
+) -> None:
+    """Build core-publication snapshots and submit them as one atomic commit.
+
+    Errors from any snapshot step propagate without being swallowed; the
+    upload queue is never submitted to when a required artifact cannot
+    be produced, so a partial upload cannot reach the Hub.
+    """
+    snapshots = data_root.cache / "upload_manifest_snapshots"
+    snapshot = snapshots / f"{result.polygons_path.stem}.json"
+    atomic_write_text(snapshot, result.manifest_path.read_text(encoding="utf-8"))
+    map_snapshot = snapshots / f"{result.polygons_path.stem}-coverage_map.png"
+    lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
+    try:
+        land_path = ensure_world_land(data_root.cache)
+    except Exception:
+        LOGGER.warning("Could not fetch world land data; map will omit continents")
+        land_path = None
+    generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
+    geo_snapshot = snapshots / f"{result.polygons_path.stem}-geographic_text_coverage.png"
+    _generate_geographic_text_coverage_snapshot(data_root, geo_snapshot)
+    card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
+    _write_readme_snapshot(data_root, repo_id, card_snapshot)
+    upload_queue.submit(
+        [
+            (result.polygons_path, f"{REMOTE_POLYGONS_DIR}/{result.polygons_path.name}"),
+            (result.articles_path, f"{REMOTE_ARTICLES_DIR}/{result.articles_path.name}"),
+            (
+                result.polygon_articles_path,
+                f"{REMOTE_LINKS_DIR}/{result.polygon_articles_path.name}",
+            ),
+            (snapshot, REMOTE_MANIFEST_FILE),
+            (geo_snapshot, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+            (card_snapshot, "README.md"),
+            (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
+        ],
+        commit_message,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -251,32 +323,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     def enqueue_upload(result: ProcessResult) -> None:
         if upload_queue is None:
             return
-        snapshots = data_root.cache / "upload_manifest_snapshots"
-        snapshot = snapshots / f"{result.polygons_path.stem}.json"
-        atomic_write_text(snapshot, result.manifest_path.read_text(encoding="utf-8"))
-        card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
-        _write_readme_snapshot(data_root, settings.repo_id, card_snapshot)
-        map_snapshot = snapshots / f"{result.polygons_path.stem}-coverage_map.png"
-        lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-        try:
-            land_path = ensure_world_land(data_root.cache)
-        except Exception:
-            LOGGER.warning("Could not fetch world land data; map will omit continents")
-            land_path = None
-        generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
-        upload_queue.submit(
-            [
-                (result.polygons_path, f"{REMOTE_POLYGONS_DIR}/{result.polygons_path.name}"),
-                (result.articles_path, f"{REMOTE_ARTICLES_DIR}/{result.articles_path.name}"),
-                (
-                    result.polygon_articles_path,
-                    f"{REMOTE_LINKS_DIR}/{result.polygon_articles_path.name}",
-                ),
-                (snapshot, REMOTE_MANIFEST_FILE),
-                (card_snapshot, "README.md"),
-                (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
-            ],
-            args.commit_message or f"Update PBF {result.manifest_entry['source_pbf']}",
+        _enqueue_core_upload(
+            upload_queue,
+            data_root=data_root,
+            repo_id=settings.repo_id,
+            commit_message=args.commit_message
+            or f"Update PBF {result.manifest_entry['source_pbf']}",
+            result=result,
         )
 
     upload_failures: list[str] = []
@@ -436,7 +489,6 @@ def _sync_upload_files(
     augmentation_manifest = snapshots / "augmentation_manifest.json"
     atomic_write_text(augmentation_manifest, augmentation.manifest_path.read_text())
     readme = snapshots / "README.md"
-    _write_readme_snapshot(data_root, repo_id, readme)
     files = [
         (augmentation.wikipedia_documents_path, f"wikipedia/documents/{stem}.parquet"),
         (augmentation.wikipedia_sections_path, f"wikipedia/sections/{stem}.parquet"),
@@ -459,14 +511,18 @@ def _sync_upload_files(
         except Exception:
             land_path = None
         generate_coverage_map(lons, lats, coverage, land_geojson_path=land_path)
+        geographic_text_coverage = snapshots / "geographic_text_coverage.png"
+        _generate_geographic_text_coverage_snapshot(data_root, geographic_text_coverage)
         assert core is not None
         files[:0] = [
             (core.polygons_path, f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
             (core.articles_path, f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
             (core.polygon_articles_path, f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}"),
             (core_manifest, REMOTE_MANIFEST_FILE),
+            (geographic_text_coverage, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
             (coverage, REMOTE_COVERAGE_MAP_FILE),
         ]
+    _write_readme_snapshot(data_root, repo_id, readme)
     return files
 
 

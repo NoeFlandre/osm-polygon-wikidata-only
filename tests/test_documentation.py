@@ -59,3 +59,23 @@ def test_public_docs_explain_enrichment_progress_heartbeat() -> None:
         assert "articles attempted" in document
         assert "eta" in document
         assert "request pacing" in document
+
+
+def test_readme_documents_geographic_text_coverage_section() -> None:
+    """The README must reference the new visualization exactly once and link to the canonical asset."""
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    assert "## Geographic Wikipedia Text Coverage" in readme
+    assert "assets/geographic_wikipedia_text_coverage.png" in readme
+    # Only one image reference to the new asset, matching the single heading.
+    assert readme.count("assets/geographic_wikipedia_text_coverage.png") == 1
+    assert readme.count("## Geographic Wikipedia Text Coverage") == 1
+
+
+def test_architecture_documents_geographic_text_coverage_generation() -> None:
+    architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
+    assert "Geographic Wikipedia text coverage" in architecture or (
+        "Geographic Wikipedia Text Coverage" in architecture
+    )
+    assert "assets/geographic_wikipedia_text_coverage.png" in architecture
+    assert "H3" in architecture
+    assert "20 polygons" in architecture or "twenty polygons" in architecture.lower()
