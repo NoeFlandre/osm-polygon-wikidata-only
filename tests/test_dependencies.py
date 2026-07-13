@@ -89,7 +89,7 @@ def test_build_clients_logs_authenticated_mode_once_without_password(
     ]
     assert messages == [
         "Wikimedia API mode: authenticated as NoeFlandre@pipeline "
-        "(rate ceiling: 1200 requests/minute, in-flight=8, host interval: 0.05s)"
+        "(rate ceiling: 1200 requests/minute, in-flight=3, host interval: 0.05s)"
     ]
     assert "secret-value" not in caplog.text
 
@@ -129,16 +129,14 @@ def test_build_clients_shares_authenticated_session_and_ramps_to_default_ceiling
     assert wikidata._scheduler.current_requests_per_minute == 1_200
 
 
-def test_authenticated_clients_use_higher_concurrency_and_lower_host_interval(
+def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency(
     tmp_path: Path,
 ) -> None:
     """Authenticated bot sessions must exploit their higher rate ceiling.
 
-    Anonymous users are limited by both a per-host interval and a tiny
-    ``max_in_flight`` semaphore, which is polite for unauthenticated
-    traffic. Authenticated bot sessions have a much higher Wikimedia
-    ceiling, so the per-host interval should drop and concurrency
-    should scale so the 1200 rpm ceiling is actually reachable.
+    Authenticated bot sessions keep the full 1200 rpm pacing ceiling and
+    tighter host interval. Wikimedia's global guidance caps concurrent
+    requests at three, so batching—not extra in-flight calls—provides scale.
     """
     wikidata, wikipedia, _ = dependencies.build_clients(
         Settings(cache_enabled=False),
@@ -151,9 +149,8 @@ def test_authenticated_clients_use_higher_concurrency_and_lower_host_interval(
 
     assert isinstance(wikidata, dependencies.HttpWikidataClient)
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
-    # The shared scheduler must allow enough concurrent requests to
-    # plausibly reach the 1200 rpm ceiling.
-    assert wikidata._scheduler.max_in_flight >= 8
+    assert wikidata._scheduler.max_in_flight == 3
+    assert wikidata._scheduler.current_requests_per_minute == 1_200
     # The HTTP clients must use a much tighter per-host pacing.
     assert wikidata._settings.wikidata_min_interval_s <= 0.1
     assert wikipedia._settings.wikipedia_min_interval_s <= 0.1

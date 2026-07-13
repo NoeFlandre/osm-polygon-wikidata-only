@@ -42,10 +42,11 @@ one transport owns a cookie-preserving session per API host and lazily performs
 the MediaWiki token/login handshake once for Wikidata and each language-specific
 Wikipedia host. Without credentials, the same transport remains anonymous.
 
-Anonymous pacing stays fixed at 180 requests per minute. Authenticated pacing
-starts there and can rise gradually toward its configured ceiling; a 429 response
-applies `Retry-After` globally and halves the active rate before later successful
-windows restore it. The session, rather than either domain client, owns HTTP
+Anonymous pacing stays fixed at 180 requests per minute. Authenticated unified
+runs use their configured ceiling (1,200 requests per minute by default) while
+retaining the global three-request concurrency cap. A 429 response applies
+`Retry-After` globally and halves the active rate before later successful windows
+restore it. The session, rather than either domain client, owns HTTP
 cookies and scheduled response reads. Successful
 responses are cached atomically; transient failures never satisfy completion.
 When TextExtracts is empty for a valid page, enrichment uses the Action API's

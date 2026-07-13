@@ -17,7 +17,11 @@ from osm_polygon_wikidata_only.augmentation.models import (
     document_from_article_row,
     document_id,
 )
-from osm_polygon_wikidata_only.augmentation.orchestrator import augment_region, sidecar_paths
+from osm_polygon_wikidata_only.augmentation.orchestrator import (
+    augment_region,
+    augmentation_is_current,
+    sidecar_paths,
+)
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     FACT_COLUMNS,
@@ -263,3 +267,7 @@ def test_augment_region_writes_five_sidecars_without_modifying_core(tmp_path) ->
         pq.read_table(result.wikidata_facts_path).to_pylist()[0]["value_label_en"]
         == "English Q6256"
     )
+
+    assert augmentation_is_current(data_root, "andorra-latest") is True
+    pq.write_table(pa.Table.from_pylist([{"wikidata": "Q2"}]), polygons_path)
+    assert augmentation_is_current(data_root, "andorra-latest") is False

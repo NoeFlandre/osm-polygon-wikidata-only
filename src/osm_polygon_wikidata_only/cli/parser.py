@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pbf.add_argument("input", type=Path, help="Path to a .osm.pbf file")
     p_dir = sub.add_parser("process-dir", parents=[common], help="Process every PBF in a directory")
     p_dir.add_argument("input", type=Path, help="Directory containing *.osm.pbf files")
+    p_sync = sub.add_parser(
+        "sync-dir", parents=[common], help="Converge core and augmentation for every PBF"
+    )
+    p_sync.add_argument("input", type=Path, help="Directory containing *.osm.pbf files")
     p_augment = sub.add_parser(
         "augment-region", parents=[common], help="Augment one completed region without reading PBF"
     )
