@@ -1,9 +1,15 @@
 """HTTP retry helpers shared by the Wikimedia clients.
 
-This module is the canonical home for ``retry_after_seconds`` after
-Phase 2 of the modular quality sweep; the function was migrated
-unchanged from ``utils.rate_limit`` to remove the now-unused
-module-level host pacing state.
+Responsibility:
+    Parse HTTP ``Retry-After`` headers (numeric seconds or HTTP-date)
+    into a non-negative delay, clamped to a caller-defined ceiling.
+
+Invariants:
+    * The parser never raises; malformed or absent headers return
+      ``default_s``.
+    * Results are always in ``[0.0, max_s]``; HTTP-date headers in the
+      past produce ``0.0`` (no negative sleep).
+    * Naive HTTP-dates (no timezone) are interpreted as UTC.
 """
 
 from __future__ import annotations

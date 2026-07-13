@@ -26,7 +26,7 @@ def _http_error(
     return urllib.error.HTTPError("https://example.test", error_code, "limited", headers, None)
 
 
-def test_numeric_header_used_directly(monkeypatch: Any) -> None:
+def test_numeric_header_used_directly() -> None:
     """A numeric Retry-After value (in seconds) is parsed as ``float``."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -34,7 +34,7 @@ def test_numeric_header_used_directly(monkeypatch: Any) -> None:
     assert retry_after_seconds(error) == 12.5
 
 
-def test_numeric_header_is_clamped(monkeypatch: Any) -> None:
+def test_numeric_header_is_clamped() -> None:
     """Values above ``max_s`` are clamped to ``max_s``."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -42,7 +42,7 @@ def test_numeric_header_is_clamped(monkeypatch: Any) -> None:
     assert retry_after_seconds(error, max_s=600.0) == 600.0
 
 
-def test_numeric_header_does_not_go_negative(monkeypatch: Any) -> None:
+def test_numeric_header_does_not_go_negative() -> None:
     """Negative numeric values clamp at 0.0."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -64,7 +64,7 @@ def test_http_date_header_used_directly(monkeypatch: Any) -> None:
     assert retry_after_seconds(error) == 42.0
 
 
-def test_missing_header_returns_default(monkeypatch: Any) -> None:
+def test_missing_header_returns_default() -> None:
     """A missing Retry-After header falls back to ``default_s``."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -72,7 +72,7 @@ def test_missing_header_returns_default(monkeypatch: Any) -> None:
     assert retry_after_seconds(error) == 60.0
 
 
-def test_malformed_header_returns_default(monkeypatch: Any) -> None:
+def test_malformed_header_returns_default() -> None:
     """A header that is neither a number nor a date falls back to ``default_s``."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -80,7 +80,7 @@ def test_malformed_header_returns_default(monkeypatch: Any) -> None:
     assert retry_after_seconds(error, default_s=17.0) == 17.0
 
 
-def test_empty_header_returns_default(monkeypatch: Any) -> None:
+def test_empty_header_returns_default() -> None:
     """An empty Retry-After falls back to ``default_s``."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -102,7 +102,7 @@ def test_past_date_clamps_at_zero(monkeypatch: Any) -> None:
     assert retry_after_seconds(error) == 0.0
 
 
-def test_timezone_aware_http_date_uses_utc(monkeypatch: Any) -> None:
+def test_naive_http_date_is_assumed_utc(monkeypatch: Any) -> None:
     """An HTTP-date without an explicit timezone is assumed UTC."""
     from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 
@@ -113,8 +113,7 @@ def test_timezone_aware_http_date_uses_utc(monkeypatch: Any) -> None:
     )
     future = fixed_now + timedelta(seconds=120)
     error = _http_error(future.strftime("%a, %d %b %Y %H:%M:%S"))
-    result = retry_after_seconds(error)
-    assert 100.0 <= result <= 140.0
+    assert retry_after_seconds(error) == 120.0
 
 
 class _FrozenDatetime:
