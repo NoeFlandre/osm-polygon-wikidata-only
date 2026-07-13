@@ -811,8 +811,7 @@ def render_geographic_polygon_count(
         "number of dataset polygons per H3 cell on a logarithmic scale. "
         "Each dataset polygon (already conditional on an OSM "
         "`wikidata=*` tag) is counted exactly once. "
-        f"Grey cells (none here) are reserved for sub-threshold maps; on "
-        f"this map every cell is coloured. {total_polygons:,} polygons across "
+        f"{total_polygons:,} polygons across "
         f"{len(coerced):,} H3 cells ({low_sample_count:,} with fewer than "
         f"{min_polygons_per_cell} polygons)."
     )
