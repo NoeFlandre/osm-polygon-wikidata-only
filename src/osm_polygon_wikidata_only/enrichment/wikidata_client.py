@@ -13,8 +13,6 @@ A :class:`CachedWikidataClient` wraps any client and adds the
 
 from __future__ import annotations
 
-import gzip
-import json
 import logging
 import urllib.error
 import urllib.parse
@@ -23,12 +21,15 @@ from collections.abc import Iterable
 from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
+from osm_polygon_wikidata_only.enrichment.wikimedia import read_wikimedia_json
+from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
+    _NonObjectJsonError,
+)
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaHttpSession,
     WikimediaSession,
 )
 from osm_polygon_wikidata_only.io.cache import CacheEntry, JsonFileCache
-from osm_polygon_wikidata_only.utils.http_retry import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
     default_scheduler,
@@ -117,29 +118,19 @@ class HttpWikidataClient(WikidataClient):
             url,
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
         )
+        host = urllib.parse.urlparse(url).netloc
         try:
-            raw, encoding = self._session.read(
+            return read_wikimedia_json(
                 req,
-                min_interval_anonymous_s=self._settings.wikidata_min_interval_s,
-                min_interval_authenticated_s=self._settings.wikimedia_authenticated_min_interval_s,
+                self._session,
+                host=host,
+                anonymous_interval_s=self._settings.wikidata_min_interval_s,
+                authenticated_interval_s=self._settings.wikimedia_authenticated_min_interval_s,
+                throttle_callback=self._scheduler.report_host_throttled,
+                default_throttle_s=self._settings.rate_limit_retry_after_default_s,
             )
-            if encoding == "gzip":
-                raw = gzip.decompress(raw)
-        except urllib.error.HTTPError as e:
-            if e.code in (429, 503):
-                delay = retry_after_seconds(
-                    e, default_s=self._settings.rate_limit_retry_after_default_s
-                )
-                # Both 429 and 503 are scoped to the offending host. The
-                # scheduler escalates to a global backoff only when throttling
-                # becomes systemic across several distinct hosts, so a single
-                # host's rate limit never cripples unrelated healthy hosts.
-                self._scheduler.report_host_throttled(urllib.parse.urlparse(url).netloc, delay)
-            raise
-        parsed: object = json.loads(raw.decode("utf-8"))
-        if not isinstance(parsed, dict):
-            raise ValueError(f"Expected JSON object from {url}, got {type(parsed).__name__}")
-        return parsed
+        except _NonObjectJsonError as error:
+            raise ValueError(f"Expected JSON object from {url}, got {error.value_type}") from None
 
 
 class CachedWikidataClient(WikidataClient):
