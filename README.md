@@ -440,7 +440,6 @@ The denominator is every dataset polygon, already conditional on an OSM
 `wikidata=*` tag. Cell colour is the percentage of polygons linked to at
 least one article with non-empty Wikipedia text, from 0% to 100%. Grey
 cells hold fewer than 20 polygons and are not statistically meaningful.
-Cell opacity does not encode polygon count.
 
 ### Polygon density
 
@@ -450,7 +449,7 @@ Each dataset polygon (already conditional on an OSM `wikidata=*` tag) is
 counted exactly once and aggregated into H3 cells of the same resolution
 as the coverage map. Colour encodes the raw polygon count on a
 logarithmic scale because counts are highly skewed across the world. Low
-counts remain visible; opacity is not used as a second data encoding.
+counts remain visible.
 
 ---
 
