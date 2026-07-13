@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.utils.json import dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 from .models import Document, Section, WikidataFact, document_from_article_row
+from .progress import AugmentationProgress
 from .schema import (
     DOCUMENT_COLUMNS,
     FACT_COLUMNS,
@@ -99,8 +100,13 @@ def _label_maps(entities: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]
 
 
 def augment_region(
-    data_root: DataRoot, stem: str, client: AugmentationClient
+    data_root: DataRoot,
+    stem: str,
+    client: AugmentationClient,
+    *,
+    progress: AugmentationProgress | None = None,
 ) -> AugmentationResult:
+    progress = progress or AugmentationProgress()
     articles_path = data_root.processed_articles / f"{stem}.parquet"
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not articles_path.exists() or not polygons_path.exists():
@@ -112,33 +118,42 @@ def augment_region(
         (document_from_article_row(row) for row in article_rows), key=lambda row: row.document_id
     )
     qids = sorted({str(row["wikidata"]) for row in polygon_rows if row.get("wikidata")})
+    progress.start("Wikidata entities", total=len(qids))
     entities = client.entities(qids, props="sitelinks|claims")
+    progress.complete()
 
     voyage_links = [
         (qid, language, site, title)
         for qid, entity in sorted(entities.items())
         for language, site, title in discover_wikivoyage_sitelinks(entity)
     ]
+    progress.start("Wikivoyage documents", total=len(voyage_links))
+
+    def fetch_voyage(item: tuple[str, str, str, str]) -> Document | None:
+        try:
+            return client.wikivoyage_document(*item)
+        finally:
+            progress.advance()
+
     with ThreadPoolExecutor(max_workers=8) as executor:
         voyage_documents = [
             document
-            for document in executor.map(
-                lambda item: client.wikivoyage_document(*item), voyage_links
-            )
+            for document in executor.map(fetch_voyage, voyage_links)
             if document is not None
         ]
     voyage_documents.sort(key=lambda row: row.document_id)
 
     all_documents = wikipedia_documents + voyage_documents
+    progress.start("Article sections", total=len(all_documents))
+
+    def fetch_html(document: Document) -> str:
+        try:
+            return client.parse_html(document.project, document.language, document.revision_id)
+        finally:
+            progress.advance()
+
     with ThreadPoolExecutor(max_workers=8) as executor:
-        html_pages = list(
-            executor.map(
-                lambda document: client.parse_html(
-                    document.project, document.language, document.revision_id
-                ),
-                all_documents,
-            )
-        )
+        html_pages = list(executor.map(fetch_html, all_documents))
     sections_by_project: dict[str, list[Section]] = {"wikipedia": [], "wikivoyage": []}
     for document, html in zip(all_documents, html_pages, strict=True):
         sections_by_project[document.project].extend(parse_sections(document, html))
@@ -155,34 +170,42 @@ def augment_region(
                 if isinstance(value, dict) and value.get("id"):
                     label_ids.add(str(value["id"]))
     labels = _label_maps(client.entities(label_ids, props="labels"))
+    progress.start("Wikidata facts", total=len(entities))
     facts: list[WikidataFact] = []
     for entity in entities.values():
         facts.extend(normalize_facts(entity, labels))
+        progress.advance()
     facts.sort(key=lambda row: row.fact_id)
 
     paths = sidecar_paths(data_root, stem)
+    progress.start("Writing sidecars", total=len(paths))
     _write(
         paths[0],
         [row.to_dict() for row in wikipedia_documents],
         DOCUMENT_COLUMNS,
         document_schema(),
     )
+    progress.advance()
     _write(
         paths[1],
         [row.to_dict() for row in sections_by_project["wikipedia"]],
         SECTION_COLUMNS,
         section_schema(),
     )
+    progress.advance()
     _write(
         paths[2], [row.to_dict() for row in voyage_documents], DOCUMENT_COLUMNS, document_schema()
     )
+    progress.advance()
     _write(
         paths[3],
         [row.to_dict() for row in sections_by_project["wikivoyage"]],
         SECTION_COLUMNS,
         section_schema(),
     )
+    progress.advance()
     _write(paths[4], [row.to_dict() for row in facts], FACT_COLUMNS, fact_schema())
+    progress.advance()
     if core_hashes != {str(path): _hash(path) for path in (articles_path, polygons_path)}:
         raise RuntimeError("Core artifacts changed during augmentation")
 

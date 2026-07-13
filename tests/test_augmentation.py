@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
     sidecar_paths,
 )
+from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     FACT_COLUMNS,
@@ -271,3 +272,23 @@ def test_augment_region_writes_five_sidecars_without_modifying_core(tmp_path) ->
     assert augmentation_is_current(data_root, "andorra-latest") is True
     pq.write_table(pa.Table.from_pylist([{"wikidata": "Q2"}]), polygons_path)
     assert augmentation_is_current(data_root, "andorra-latest") is False
+
+
+def test_augment_region_reports_final_phase_progress(tmp_path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    pq.write_table(
+        pa.Table.from_pylist([article_row()]),
+        data_root.processed_articles / "andorra-latest.parquet",
+    )
+    pq.write_table(
+        pa.Table.from_pylist([{"wikidata": "Q1"}]),
+        data_root.processed_polygons / "andorra-latest.parquet",
+    )
+    progress = AugmentationProgress()
+
+    augment_region(data_root, "andorra-latest", FakeAugmentationClient(), progress=progress)
+
+    snapshot = progress.snapshot()
+    assert snapshot.phase == "Writing sidecars"
+    assert snapshot.completed == snapshot.total == 5
