@@ -24,11 +24,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     load_wikimedia_credentials,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import (
-    defer_host,
-    retry_after_seconds,
-    wait_for_host,
-)
+from osm_polygon_wikidata_only.utils.rate_limit import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
@@ -83,7 +79,7 @@ class AugmentationWikimediaClient:
         )
 
         def read() -> tuple[bytes, str]:
-            wait_for_host(host, min_interval_s=0.05)
+            self._scheduler.pace_host(host, min_interval_s=0.05)
             try:
                 return self._session.read(request)
             except urllib.error.HTTPError as error:
@@ -92,11 +88,9 @@ class AugmentationWikimediaClient:
                         error,
                         default_s=self._settings.rate_limit_retry_after_default_s,
                     )
-                    defer_host(host, delay)
-                    if error.code == 429:
-                        self._scheduler.report_throttled(delay)
-                    else:
-                        self._scheduler.report_host_throttled(host, delay)
+                    # Scope the throttle to the offending host; the scheduler
+                    # escalates globally only on systemic multi-host throttling.
+                    self._scheduler.report_host_throttled(host, delay)
                     LOGGER.warning(
                         "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
                         host,

@@ -88,8 +88,10 @@ def test_build_clients_logs_authenticated_mode_once_without_password(
         if record.name == dependencies.LOGGER.name and "Wikimedia API mode" in record.getMessage()
     ]
     assert messages == [
-        "Wikimedia API mode: authenticated as NoeFlandre@pipeline "
-        "(rate ceiling: 1200 requests/minute, in-flight=3, host interval: 0.05s)"
+        "Wikimedia API mode: credentials configured for NoeFlandre@pipeline; "
+        "verification is performed per host on first request "
+        "(rate ceiling: 1200 requests/minute, in-flight=8, host interval: 0.05s). "
+        "The ceiling is a client-side limit, not a guaranteed server allowance."
     ]
     assert "secret-value" not in caplog.text
 
@@ -134,9 +136,11 @@ def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency
 ) -> None:
     """Authenticated bot sessions must exploit their higher rate ceiling.
 
-    Authenticated bot sessions keep the full 1200 rpm pacing ceiling and
-    tighter host interval. Wikimedia's global guidance caps concurrent
-    requests at three, so batching—not extra in-flight calls—provides scale.
+    Authenticated bot sessions keep the full 1200 rpm pacing ceiling,
+    tighter host interval, and a conservative authenticated concurrency
+    default (8) sized to reach ~20 rps at typical API latency. Concurrency
+    is a client-side choice subordinate to the global rate ceiling and
+    per-host cooldowns; it is not a guaranteed server allowance.
     """
     wikidata, wikipedia, _ = dependencies.build_clients(
         Settings(cache_enabled=False),
@@ -149,7 +153,7 @@ def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency
 
     assert isinstance(wikidata, dependencies.HttpWikidataClient)
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
-    assert wikidata._scheduler.max_in_flight == 3
+    assert wikidata._scheduler.max_in_flight == 8
     assert wikidata._scheduler.current_requests_per_minute == 1_200
     # The HTTP clients must use a much tighter per-host pacing.
     assert wikidata._settings.wikidata_min_interval_s <= 0.1

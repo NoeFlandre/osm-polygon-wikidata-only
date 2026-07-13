@@ -498,6 +498,7 @@ def _run_sync_dir(args: argparse.Namespace, data_root: DataRoot, settings: Setti
             region_total=progress_total,
             augmentation_snapshot=progress.snapshot,
             scheduler_snapshot=runtime.scheduler.snapshot,
+            auth_snapshot=runtime.session.auth_snapshot,
             log=LOGGER.info,
         ):
             augmentation_result = augment_region(
