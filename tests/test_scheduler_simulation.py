@@ -60,6 +60,12 @@ _HOSTS_HEALTHY = tuple(
     )
 )
 _HOST_BAD = "ru.wikipedia.org"
+_HOST_ANON = "bg.wikipedia.org"  # a host whose bot password was rejected
+# Per-host pacing intervals model the centralised auth-aware decision
+# (see WikimediaSession.read): verified hosts use the tight authenticated
+# value, anonymous/rejected hosts use the per-kind anonymous value.
+_AUTH_MIN_INTERVAL_S = 0.05
+_ANON_MIN_INTERVAL_S = 1.2
 
 
 class _SimulatedClock:
@@ -90,25 +96,44 @@ def _build_scheduler(clock: _SimulatedClock, *, threshold: int) -> AdaptiveReque
     )
 
 
-def _run_simulation(*, mode: str, threshold: int = 100) -> tuple[int, int, dict[str, int], float]:
+def _run_simulation(
+    *,
+    mode: str,
+    threshold: int = 100,
+    include_anon_host: bool = False,
+) -> tuple[int, int, int, dict[str, int], float]:
     """Drive a round-robin of hosts until the simulated clock reaches ``_SIM_DURATION_S``.
 
     The bad host returns a 429 every fifth request with ``Retry-After: 2``.
     ``mode='before'`` mimics the OLD pipeline by calling the global
     ``report_throttled`` on every 429 (the cascade bug). ``mode='after'``
-    calls host-scoped ``report_host_throttled``. Returns the number of
-    healthy-host completions, the number of bad-host completions, the
+    calls host-scoped ``report_host_throttled``.
+
+    ``include_anon_host`` adds one host paced at the *anonymous* per-host
+    interval (simulating a host whose bot password was rejected) so the
+    simulation verifies the centralised auth-aware decision.
+
+    Returns the healthy total, the bad total, the anonymous total, the
     per-host breakdown, and the scheduler's final adaptive rate.
     """
     clock = _SimulatedClock()
     scheduler = _build_scheduler(clock, threshold=threshold)
-    completions: dict[str, int] = {host: 0 for host in (*_HOSTS_HEALTHY, _HOST_BAD)}
+    all_hosts = [*_HOSTS_HEALTHY, _HOST_BAD]
+    if include_anon_host:
+        all_hosts.append(_HOST_ANON)
+    completions: dict[str, int] = {host: 0 for host in all_hosts}
     bad_counter = [0]
-    workers = [*_HOSTS_HEALTHY, _HOST_BAD]
+    workers = all_hosts
+    host_min_interval = {h: _AUTH_MIN_INTERVAL_S for h in _HOSTS_HEALTHY}
+    host_min_interval[_HOST_BAD] = _AUTH_MIN_INTERVAL_S
+    if include_anon_host:
+        host_min_interval[_HOST_ANON] = _ANON_MIN_INTERVAL_S
     idx = 0
 
     def step(host: str) -> None:
-        scheduler.pace_host(host, min_interval_s=0.05)
+        # Centralised auth-aware pacing: the per-host min_interval models
+        # what WikimediaSession.read would choose for that host.
+        scheduler.pace_host(host, min_interval_s=host_min_interval[host])
 
         def operation() -> str:
             if host == _HOST_BAD:
@@ -137,9 +162,11 @@ def _run_simulation(*, mode: str, threshold: int = 100) -> tuple[int, int, dict[
         idx += 1
 
     healthy_total = sum(completions[h] for h in _HOSTS_HEALTHY)
+    anon_total = completions.get(_HOST_ANON, 0)
     return (
         healthy_total,
         completions[_HOST_BAD],
+        anon_total,
         completions,
         scheduler.current_requests_per_minute,
     )
@@ -152,7 +179,7 @@ def test_old_global_throttle_cascade_starves_healthy_hosts() -> None:
     the cascade comes purely from the per-host 429 calling the global
     ``report_throttled`` on every response.
     """
-    healthy_total, _bad, _completions, final_rate = _run_simulation(mode="before")
+    healthy_total, _bad, _anon, _completions, final_rate = _run_simulation(mode="before")
 
     # Under the old cascade the global rate halves after every bad-host
     # 429 and floors near the production minimum (200 rpm), so healthy
@@ -167,7 +194,7 @@ def test_old_global_throttle_cascade_starves_healthy_hosts() -> None:
 
 def test_new_host_scoped_throttle_keeps_healthy_hosts_productive() -> None:
     """A single host's 429 must not delay unrelated healthy hosts."""
-    healthy_total, bad_total, completions, final_rate = _run_simulation(mode="after")
+    healthy_total, bad_total, _anon, completions, final_rate = _run_simulation(mode="after")
 
     # Healthy hosts sustain near-ceiling throughput because the bad
     # host's 429 cools only itself.
@@ -184,8 +211,8 @@ def test_new_host_scoped_throttle_keeps_healthy_hosts_productive() -> None:
 
 def test_old_vs_new_throughput_improvement_is_material() -> None:
     """The fix yields a large, reproducible throughput improvement."""
-    before_healthy, _, _, before_rate = _run_simulation(mode="before")
-    after_healthy, _, _, after_rate = _run_simulation(mode="after")
+    before_healthy, _, _, _, before_rate = _run_simulation(mode="before")
+    after_healthy, _, _, _, after_rate = _run_simulation(mode="after")
 
     improvement = after_healthy - before_healthy
     ratio = after_healthy / max(1, before_healthy)
@@ -268,6 +295,38 @@ def test_throttled_host_cooldown_does_not_starve_others() -> None:
     scheduler.pace_host("b.wikipedia.org")
     assert scheduler.run(work) == "ok"
     assert completed[0]
+
+
+def test_anonymous_fallback_host_respects_host_budget_while_auth_hosts_productive() -> None:
+    """Auth-aware pacing: anonymous host bounded, authenticated healthy.
+
+    The simulation adds one host whose bot password was rejected and is
+    therefore paced at the anonymous per-host interval (1.2s -> <=50 rpm)
+    alongside the authenticated healthy hosts (0.05s -> up to ceiling).
+    The anonymous host must not exceed its host budget, while the
+    authenticated healthy hosts must remain productive at near-ceiling.
+    """
+    healthy_total, _bad, anon_total, _completions, final_rate = _run_simulation(
+        mode="after", include_anon_host=True
+    )
+
+    # Anonymous host budget: 1.2s interval -> at most 50 completions in 60s
+    # (+ a small slack for the round-robin visiting order).
+    anon_budget = int(_SIM_DURATION_S / _ANON_MIN_INTERVAL_S) + 2
+    assert 0 <= anon_total <= anon_budget, (
+        f"anonymous host exceeded its host budget: {anon_total} > {anon_budget}"
+    )
+
+    # Authenticated healthy hosts must remain productive near the ceiling.
+    assert healthy_total >= 800, (
+        f"authenticated healthy hosts must stay productive; got {healthy_total}"
+    )
+    assert final_rate == _AUTH_CEILING
+
+    print(
+        f"\n[simulation+anon] healthy={healthy_total} (rate {final_rate:.0f})  "
+        f"anonymous_host={anon_total} (budget <= {anon_budget})"
+    )
 
 
 @pytest.mark.parametrize("max_in_flight", [3, 8, 16])

@@ -79,9 +79,12 @@ class AugmentationWikimediaClient:
         )
 
         def read() -> tuple[bytes, str]:
-            self._scheduler.pace_host(host, min_interval_s=0.05)
             try:
-                return self._session.read(request)
+                return self._session.read(
+                    request,
+                    min_interval_anonymous_s=self._settings.augmentation_min_interval_s,
+                    min_interval_authenticated_s=self._settings.wikimedia_authenticated_min_interval_s,
+                )
             except urllib.error.HTTPError as error:
                 if error.code in (429, 503):
                     delay = retry_after_seconds(

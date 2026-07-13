@@ -149,15 +149,27 @@ class AdaptiveRequestScheduler:
         host in a long cooldown cannot hold a scarce global permit and
         block unrelated hosts. Honours per-host ``Retry-After`` cooldowns
         set by :meth:`report_host_throttled`.
+
+        After waking from the initial sleep, the cooldown is re-checked
+        so a 429 that arrived while the request was waiting cannot be
+        silently ignored.
         """
         state = self._host_state(host)
-        with state.lock:
-            now = self._clock()
-            ready_at = max(now, state.cooldown_until, state.next_request_at)
-            state.next_request_at = ready_at + max(0.0, min_interval_s)
-        wait = ready_at - self._clock()
-        if wait > 0:
+        while True:
+            with state.lock:
+                now = self._clock()
+                ready_at = max(now, state.cooldown_until, state.next_request_at)
+                state.next_request_at = ready_at + max(0.0, min_interval_s)
+            wait = ready_at - self._clock()
+            if wait <= 0:
+                return
             self._sleep(wait)
+            # Re-check: a 429 (Retry-After) may have been registered
+            # while we slept and pushed the cooldown past our wake time.
+            with state.lock:
+                if state.cooldown_until > self._clock():
+                    continue
+            return
 
     def report_success(self) -> None:
         """Gradually increase request pace after a successful request window."""
@@ -200,8 +212,11 @@ class AdaptiveRequestScheduler:
         and records the response in the rolling telemetry. The global rate is
         reduced at most once, only when ``host_throttle_threshold`` *distinct*
         hosts have been throttled within ``host_throttle_window_s`` seconds.
-        Repeated throttles from a single host therefore never halve the global
-        rate on their own.
+
+        The systemic decision and the ``_last_systemic_reduction_at`` update
+        happen inside a single critical section so that, even with many
+        threads reporting distinct hosts at the same instant, only the first
+        thread to acquire the lock wins the global reduction.
         """
         now = self._clock()
         delay = max(0.0, delay_s)
@@ -210,8 +225,8 @@ class AdaptiveRequestScheduler:
         with state.lock:
             state.cooldown_until = max(state.cooldown_until, now + delay)
             self._record_recent(state.recent_throttles, now)
-        # Rolling global throttle telemetry (one entry per response).
-        systemic = False
+        # Rolling global throttle telemetry + atomic systemic decision.
+        systemic_apply = False
         with self._lock:
             self._record_recent(self._global_throttle_times, now)
             cutoff = now - self._host_throttle_window_s
@@ -219,11 +234,19 @@ class AdaptiveRequestScheduler:
                 h: t for h, t in self._systemic_host_events.items() if t > cutoff
             }
             self._systemic_host_events[host] = now
-            systemic = len(self._systemic_host_events) >= self._host_throttle_threshold
-        if systemic and now - self._last_systemic_reduction_at > self._host_throttle_window_s:
-            self._apply_global_throttle(delay_s, count_event=False)
-            with self._lock:
+            systemic = (
+                len(self._systemic_host_events) >= self._host_throttle_threshold
+                and now - self._last_systemic_reduction_at > self._host_throttle_window_s
+            )
+            if systemic:
+                # Decision and suppression-timestamp update are one atomic
+                # operation: the next contender that acquires this lock will
+                # see the fresh ``_last_systemic_reduction_at`` and fail the
+                # guard, guaranteeing at most one reduction per window.
                 self._last_systemic_reduction_at = now
+                systemic_apply = True
+        if systemic_apply:
+            self._apply_global_throttle(delay_s, count_event=False)
 
     def _apply_global_throttle(self, delay_s: float, *, count_event: bool) -> None:
         with self._lock:

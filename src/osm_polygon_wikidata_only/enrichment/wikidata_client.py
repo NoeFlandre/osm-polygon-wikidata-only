@@ -113,14 +113,16 @@ class HttpWikidataClient(WikidataClient):
         return f"{self._endpoint}?{urllib.parse.urlencode(params)}"
 
     def _http_get(self, url: str) -> dict[str, Any]:
-        host = urllib.parse.urlparse(url).netloc or "www.wikidata.org"
-        self._scheduler.pace_host(host, min_interval_s=self._settings.wikidata_min_interval_s)
         req = urllib.request.Request(
             url,
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
         )
         try:
-            raw, encoding = self._session.read(req)
+            raw, encoding = self._session.read(
+                req,
+                min_interval_anonymous_s=self._settings.wikidata_min_interval_s,
+                min_interval_authenticated_s=self._settings.wikimedia_authenticated_min_interval_s,
+            )
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
@@ -132,7 +134,7 @@ class HttpWikidataClient(WikidataClient):
                 # scheduler escalates to a global backoff only when throttling
                 # becomes systemic across several distinct hosts, so a single
                 # host's rate limit never cripples unrelated healthy hosts.
-                self._scheduler.report_host_throttled(host, delay)
+                self._scheduler.report_host_throttled(urllib.parse.urlparse(url).netloc, delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):

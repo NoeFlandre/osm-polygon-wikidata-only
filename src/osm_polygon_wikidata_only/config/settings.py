@@ -65,6 +65,12 @@ class Settings:
     # Polite Wikimedia throttling.
     wikidata_min_interval_s: float = 1.2
     wikipedia_min_interval_s: float = 0.5
+    augmentation_min_interval_s: float = 0.5
+    # Per-host pacing interval used for hosts that have *verified*
+    # authentication. Anonymous/rejected hosts always use the
+    # per-kind anonymous interval above, so this tight value never
+    # applies to hosts whose bot password was rejected.
+    wikimedia_authenticated_min_interval_s: float = 0.05
     rate_limit_retry_after_default_s: float = 60.0
     enrichment_batch_size: int = 50
     enrichment_site_workers: int = 8

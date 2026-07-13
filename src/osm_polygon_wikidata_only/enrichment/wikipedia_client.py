@@ -259,8 +259,6 @@ class HttpWikipediaClient(WikipediaClient):
         return f"{endpoint}?{urllib.parse.urlencode(params)}"
 
     def _http_get(self, url: str) -> dict[str, Any]:
-        host = urllib.parse.urlparse(url).netloc
-        self._scheduler.pace_host(host, min_interval_s=self._settings.wikipedia_min_interval_s)
         req = urllib.request.Request(
             url,
             headers={
@@ -270,7 +268,11 @@ class HttpWikipediaClient(WikipediaClient):
             },
         )
         try:
-            raw, encoding = self._session.read(req)
+            raw, encoding = self._session.read(
+                req,
+                min_interval_anonymous_s=self._settings.wikipedia_min_interval_s,
+                min_interval_authenticated_s=self._settings.wikimedia_authenticated_min_interval_s,
+            )
             if encoding == "gzip":
                 raw = gzip.decompress(raw)
         except urllib.error.HTTPError as e:
@@ -280,7 +282,7 @@ class HttpWikipediaClient(WikipediaClient):
                 )
                 # Both 429 and 503 are scoped to the offending host; only
                 # systemic multi-host throttling triggers a global backoff.
-                self._scheduler.report_host_throttled(host, delay)
+                self._scheduler.report_host_throttled(urllib.parse.urlparse(url).netloc, delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):

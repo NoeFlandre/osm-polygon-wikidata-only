@@ -52,13 +52,25 @@ class RecordingSession:
         self._payload = payload
         self.requests: list[urllib.request.Request] = []
 
-    def read(self, request: urllib.request.Request) -> tuple[bytes, str]:
+    def read(
+        self,
+        request: urllib.request.Request,
+        *,
+        min_interval_anonymous_s: float = 0.0,
+        min_interval_authenticated_s: float = 0.0,
+    ) -> tuple[bytes, str]:
         self.requests.append(request)
         return json.dumps(self._payload).encode(), ""
 
 
 class ThrottledSession:
-    def read(self, request: urllib.request.Request) -> tuple[bytes, str]:
+    def read(
+        self,
+        request: urllib.request.Request,
+        *,
+        min_interval_anonymous_s: float = 0.0,
+        min_interval_authenticated_s: float = 0.0,
+    ) -> tuple[bytes, str]:
         headers = Message()
         headers["Retry-After"] = "17"
         raise urllib.error.HTTPError(request.full_url, 429, "limited", headers, None)

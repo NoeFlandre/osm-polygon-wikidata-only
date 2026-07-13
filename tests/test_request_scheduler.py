@@ -191,6 +191,84 @@ def test_operation_exception_releases_global_permit() -> None:
     assert completed.is_set()
 
 
+def test_simultaneous_distinct_host_throttles_trigger_at_most_one_global_reduction() -> None:
+    """Race: many threads reporting distinct hosts at the same instant.
+
+    Without atomicity between the systemic decision and the
+    ``_last_systemic_reduction_at`` update, several threads can each
+    observe the threshold crossed and each halve the global rate.
+    The fix collapses the decision and the timestamp update into one
+    critical section so only the first thread wins. The assertion is
+    repeated across many iterations so a fluky timing on the racy
+    version is caught.
+    """
+    for _ in range(25):
+        scheduler = AdaptiveRequestScheduler(
+            requests_per_minute=1200,
+            max_requests_per_minute=1200,
+            minimum_requests_per_minute=200,
+            host_throttle_threshold=3,
+            host_throttle_window_s=10.0,
+        )
+        barrier = threading.Barrier(8)
+        hosts = tuple(f"h{i}.wikipedia.org" for i in range(8))
+
+        def report(host: str) -> None:
+            barrier.wait(timeout=5)
+            scheduler.report_host_throttled(host, 1.0)
+
+        threads = [threading.Thread(target=report, args=(h,)) for h in hosts]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        # Exactly one halving: 1200 -> 600, not multiple halvings down to 200.
+        assert scheduler.current_requests_per_minute == 600.0
+
+
+def test_pace_host_rechecks_cooldown_after_waking() -> None:
+    """A 429 introduced while pace_host is sleeping must extend the wait.
+
+    Without the re-check, a request that already passed its initial
+    cooldown check could wake up after a fresh ``Retry-After`` and
+    proceed without honoring it.
+    """
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def clock() -> float:
+        return now[0]
+
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=100_000, clock=clock, sleep=lambda s: sleeps.append(s)
+    )
+    # Start a 5s cooldown so the first pace_host sleeps.
+    scheduler.report_host_throttled("a.wikipedia.org", 5.0)
+
+    introduced = [False]
+
+    def sleep_with_extension(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+        # While pace_host is "sleeping" the original 5s cooldown, extend
+        # it to 30s total so the request must wait the full extension.
+        if not introduced[0]:
+            introduced[0] = True
+            scheduler.report_host_throttled("a.wikipedia.org", 30.0)
+
+    # Override the scheduler's sleep for this test only.
+    object.__setattr__(scheduler, "_sleep", sleep_with_extension)
+
+    scheduler.pace_host("a.wikipedia.org")
+
+    # The first sleep honored the initial 5s; the re-check then caught
+    # the extension (5s elapsed + 30s delay = cooldown ends at t=35) and
+    # slept an additional 30s to reach t=35.
+    assert sleeps[0] == 5.0
+    assert sum(sleeps) == 35.0
+
+
 def test_global_recovery_is_gradual_and_bounded() -> None:
     _now, _sleeps, clock, sleep = _fake_clock()
     scheduler = AdaptiveRequestScheduler(
