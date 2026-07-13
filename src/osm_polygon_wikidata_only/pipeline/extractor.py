@@ -4,15 +4,26 @@ This module is the bridge between :mod:`io.pbf_reader` (which yields
 raw polygon candidates from osmium) and the :class:`Polygon` domain
 model. It computes geometry, analysis metadata, and stable IDs but
 does not perform any HTTP work.
+
+It also owns :func:`extract_pbf` -- the PBF-streaming helper that
+reads the source file, parses the filename into a :class:`PbfStem`,
+filters out malformed candidates, respects ``settings.limit``, and
+returns an immutable :class:`ExtractedPbf`. The processor facade
+re-exports both for callers that already import from
+``pipeline.processor``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only import __version__
+from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.analysis import area_bucket, bbox_from_geom, osm_primary_tag
 from osm_polygon_wikidata_only.domain.geometry import (
     GeometryError,
@@ -26,6 +37,47 @@ from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 LOGGER = logging.getLogger(__name__)
+# Lifecycle log messages ("Processing X (region=Y)" and
+# "Extracted N polygons from X") previously emitted under
+# :mod:`pipeline.processor`. Keep emitting them under that same
+# legacy logger name so existing log filters continue to fire.
+PROCESSOR_LOGGER = logging.getLogger("osm_polygon_wikidata_only.pipeline.processor")
+
+
+@dataclass(frozen=True, slots=True)
+class PbfStem:
+    """A parsed PBF filename.
+
+    ``stem`` is the part of the filename before ``.osm.pbf``
+    (e.g. ``monaco-latest``). ``region`` is the part before
+    ``-latest.osm.pbf`` (e.g. ``monaco``). The remote parquet paths
+    use ``stem`` so the layout is stable across reruns.
+    """
+
+    path: Path
+    stem: str
+    region: str
+
+    @classmethod
+    def from_path(cls, path: Path) -> PbfStem:
+        name = path.name
+        stem = name[: -len(".osm.pbf")] if name.endswith(".osm.pbf") else path.stem
+        region = stem[: -len("-latest")] if stem.endswith("-latest") else stem
+        return cls(path=path, stem=stem, region=region)
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedPbf:
+    """A PBF whose polygon rows are ready for enrichment.
+
+    Carries the parsed :class:`PbfStem`, the immutable polygon
+    tuple, and the wall-clock time spent streaming and converting
+    candidates.
+    """
+
+    stem: PbfStem
+    polygons: tuple[Polygon, ...]
+    extraction_duration_s: float
 
 
 def _parse_geom(geom_json: str) -> dict[str, object] | None:
@@ -76,8 +128,6 @@ def candidate_to_polygon(
 
     wikidata = tags.get("wikidata", "").strip()
     if not wikidata:
-        # Defensive: the reader already filters, but the extractor
-        # should also enforce this in case it is reused.
         return None
 
     cleaned_tags = {k: v for k, v in tags.items() if k != "wikidata"}
@@ -116,4 +166,59 @@ def polygon_to_dict(p: Polygon) -> dict[str, Any]:
     return _row_dict(p)
 
 
-__all__ = ["candidate_to_polygon", "polygon_to_dict"]
+def extract_pbf(pbf_path: Path, *, settings: Settings) -> ExtractedPbf:
+    """Stream *pbf_path* through the PBF reader and produce an
+    :class:`ExtractedPbf`. No HTTP work, no durable writes.
+
+    Reads candidates one at a time (``iter_polygon_candidates`` when
+    available, otherwise the batch ``collect_polygon_candidates``
+    fallback), filters out candidates missing a Wikidata tag or
+    with invalid geometry, applies ``settings.limit`` as a hard
+    cap, and records the elapsed time. The reader class is resolved
+    lazily via the ``io.pbf_reader`` module so tests can monkeypatch
+    ``PBFReader`` without importing it at extraction time.
+    """
+    stem = PbfStem.from_path(pbf_path)
+    stage_started = time.perf_counter()
+    extracted_at = utc_now_iso()
+    PROCESSOR_LOGGER.info("Processing %s (region=%s)", pbf_path.name, stem.region)
+
+    polygons: list[Polygon] = []
+    import osm_polygon_wikidata_only.io.pbf_reader as _pbf_reader_mod
+
+    reader = _pbf_reader_mod.PBFReader(pbf_path)
+
+    def add_candidate(candidate: object) -> None:
+        if settings.limit is not None and len(polygons) >= settings.limit:
+            return
+        polygon = candidate_to_polygon(
+            candidate,  # type: ignore[arg-type]
+            source_pbf_stem=stem.stem,
+            region=stem.region,
+            source_pbf=pbf_path.name,
+            extracted_at=extracted_at,
+        )
+        if polygon is not None:
+            polygons.append(polygon)
+
+    stream_candidates = getattr(reader, "iter_polygon_candidates", None)
+    if callable(stream_candidates):
+        stream_candidates(add_candidate)
+    else:
+        for candidate in reader.collect_polygon_candidates():
+            add_candidate(candidate)
+    PROCESSOR_LOGGER.info("Extracted %d polygons from %s", len(polygons), pbf_path.name)
+    return ExtractedPbf(
+        stem=stem,
+        polygons=tuple(polygons),
+        extraction_duration_s=time.perf_counter() - stage_started,
+    )
+
+
+__all__ = [
+    "ExtractedPbf",
+    "PbfStem",
+    "candidate_to_polygon",
+    "extract_pbf",
+    "polygon_to_dict",
+]

@@ -14,7 +14,10 @@ import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment import article_linker
-from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgress
+from osm_polygon_wikidata_only.enrichment.progress import (
+    EnrichmentProgress,
+    EnrichmentProgressSnapshot,
+)
 from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     clean_article_text,
     count_words,
@@ -1127,25 +1130,35 @@ def test_fetch_qids_reports_site_progress_as_sites_complete_not_in_input_order()
     )
     fetcher.start()
 
-    # Wait for the small sites (frwiki) to finish while enwiki is
-    # still gated. Once frwiki is in completed_sites, give the
-    # main thread a moment to advance the progress snapshot.
+    # Wait until BOTH (a) frwiki has reported completion to the stub
+    # client and (b) the worker thread has propagated that completion
+    # into the progress snapshot. Both conditions must hold while
+    # enwiki is still gated, because the heartbeat uses the snapshot.
+    # The progress update happens inside ``as_completed`` after the
+    # future resolves, so the two events are coupled but on different
+    # threads — we therefore poll for both with a bounded deadline.
     deadline = time.monotonic() + 5
+    snapshot: EnrichmentProgressSnapshot | None = None
     while time.monotonic() < deadline:
         with wiki._lock:
-            if "frwiki" in wiki.completed_sites:
-                break
-        time.sleep(0.02)
+            frwiki_done = "frwiki" in wiki.completed_sites
+        snapshot = progress.snapshot()
+        if frwiki_done and snapshot.sites_total == 2 and snapshot.sites_completed >= 1:
+            break
+        time.sleep(0.01)
     else:  # pragma: no cover - guard against real regressions
         slow_release.set()
         fetcher.join(timeout=5)
-        pytest.fail("frwiki never finished while enwiki was gated")
+        pytest.fail(
+            f"frwiki completion was not reflected in progress within the deadline; "
+            f"snapshot={snapshot}"
+        )
 
     # While enwiki is still gated, the progress must already reflect
     # the small site(s) that finished. This is exactly the heartbeat
     # scenario: the heartbeat should report "Wikipedia N/M sites" with
     # N>0 long before enwiki finishes.
-    snapshot = progress.snapshot()
+    assert snapshot is not None  # always assigned inside the loop
     assert snapshot.sites_total == 2
     assert snapshot.sites_completed == 1, (
         f"frwiki must advance progress while enwiki is still gated; snapshot={snapshot}"

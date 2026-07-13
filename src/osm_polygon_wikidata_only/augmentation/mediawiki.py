@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import gzip
-import json
 import logging
 import os
-import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
@@ -19,12 +16,15 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     count_words,
     estimate_tokens,
 )
+from osm_polygon_wikidata_only.enrichment.wikimedia import read_wikimedia_json
+from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
+    _NonObjectJsonError,
+)
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,
     load_wikimedia_credentials,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.rate_limit import retry_after_seconds
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
@@ -66,6 +66,8 @@ class AugmentationWikimediaClient:
         self._cache = cache
 
     def get_json(self, url: str, *, key: str) -> dict[str, Any]:
+        # Cache hits short-circuit BEFORE any URL validation or transport
+        # invocation: even a malformed cached URL must not be re-parsed.
         hit = self._cache.get(key)
         if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
             return hit.parsed_result
@@ -78,41 +80,49 @@ class AugmentationWikimediaClient:
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
         )
 
-        def read() -> tuple[bytes, str]:
-            try:
-                return self._session.read(
-                    request,
-                    min_interval_anonymous_s=self._settings.augmentation_min_interval_s,
-                    min_interval_authenticated_s=self._settings.wikimedia_authenticated_min_interval_s,
-                )
-            except urllib.error.HTTPError as error:
-                if error.code in (429, 503):
-                    delay = retry_after_seconds(
-                        error,
-                        default_s=self._settings.rate_limit_retry_after_default_s,
-                    )
-                    # Scope the throttle to the offending host; the scheduler
-                    # escalates globally only on systemic multi-host throttling.
-                    self._scheduler.report_host_throttled(host, delay)
-                    LOGGER.warning(
-                        "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
-                        host,
-                        error.code,
-                        delay,
-                    )
-                raise
+        # The helper parses Retry-After exactly once per throttled attempt
+        # and reports the parsed delay to the callback. We capture that
+        # delay here and reuse it in the warning below, so the scheduler
+        # notification and the logged warning always agree on the same
+        # value (matters for HTTP-date headers, where re-parsing after a
+        # sleep would yield a different number of seconds).
+        captured_delay: float | None = None
 
-        raw, encoding = with_retries(
-            read,
-            attempts=self._settings.request_max_retries,
-            base_delay=self._settings.request_base_delay_s,
-            retry_on=(urllib.error.URLError, TimeoutError, OSError),
-        )
-        if encoding == "gzip":
-            raw = gzip.decompress(raw)
-        parsed: object = json.loads(raw.decode())
-        if not isinstance(parsed, dict):
-            raise ValueError(f"Expected JSON object from {url}")
+        def on_throttled(h: str, delay: float) -> None:
+            nonlocal captured_delay
+            captured_delay = delay
+            self._scheduler.report_host_throttled(h, delay)
+
+        def read() -> dict[str, Any]:
+            try:
+                return read_wikimedia_json(
+                    request,
+                    self._session,
+                    host=host,
+                    anonymous_interval_s=self._settings.augmentation_min_interval_s,
+                    authenticated_interval_s=self._settings.wikimedia_authenticated_min_interval_s,
+                    throttle_callback=on_throttled,
+                    default_throttle_s=self._settings.rate_limit_retry_after_default_s,
+                )
+            except _NonObjectJsonError:
+                raise ValueError(f"Expected JSON object from {url}") from None
+
+        try:
+            parsed = with_retries(
+                read,
+                attempts=self._settings.request_max_retries,
+                base_delay=self._settings.request_base_delay_s,
+                retry_on=(urllib.error.URLError, TimeoutError, OSError),
+            )
+        except urllib.error.HTTPError as error:
+            if error.code in (429, 503):
+                LOGGER.warning(
+                    "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
+                    host,
+                    error.code,
+                    captured_delay if captured_delay is not None else 0.0,
+                )
+            raise
         self._cache.set(key, parsed, request_url=url, status="ok")
         return parsed
 

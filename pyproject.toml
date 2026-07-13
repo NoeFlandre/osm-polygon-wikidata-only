@@ -80,6 +80,7 @@ ignore = [
 "src/osm_polygon_wikidata_only/enrichment/*.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/coverage_map.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/uploader.py" = ["S310"]
+"tests/fixtures/_builders.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -96,7 +97,7 @@ ignore_missing_imports = false
 plugins = []
 # Third-party libs without complete type stubs.
 [[tool.mypy.overrides]]
-module = ["osmium.*", "datasets.*", "h3.*"]
+module = ["osmium.*", "h3.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

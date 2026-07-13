@@ -1,0 +1,276 @@
+{
+  "columns": [
+    "article_id",
+    "wikidata",
+    "language",
+    "site",
+    "title",
+    "url",
+    "page_id",
+    "revision_id",
+    "revision_timestamp",
+    "retrieved_at",
+    "wikidata_label",
+    "wikidata_description",
+    "wikidata_aliases",
+    "lead_text",
+    "extract",
+    "full_text",
+    "full_text_format",
+    "article_length_chars",
+    "article_length_words",
+    "article_length_tokens_estimate",
+    "thumbnail_url",
+    "thumbnail_width",
+    "thumbnail_height",
+    "categories",
+    "license",
+    "attribution",
+    "source_api",
+    "fetch_status",
+    "fetch_error",
+    "content_hash"
+  ],
+  "fields": [
+    {
+      "metadata": {
+        "description": "Deterministic ID: `<wikidata>:<language>:<page_id>:<revision_id>`."
+      },
+      "name": "article_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Wikidata Q-id this article is linked to."
+      },
+      "name": "wikidata",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Wikipedia language code, e.g. `en`."
+      },
+      "name": "language",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Wikidata sitelink site, e.g. `enwiki`."
+      },
+      "name": "site",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Article title as returned by the Wikipedia API."
+      },
+      "name": "title",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Canonical Wikipedia article URL."
+      },
+      "name": "url",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "MediaWiki page ID."
+      },
+      "name": "page_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Exact revision ID used for text extraction."
+      },
+      "name": "revision_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "ISO-8601 timestamp of the revision."
+      },
+      "name": "revision_timestamp",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "ISO-8601 UTC timestamp when this pipeline fetched the article."
+      },
+      "name": "retrieved_at",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Best Wikidata label for the article's language, fallback English."
+      },
+      "name": "wikidata_label",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Best Wikidata description for the article's language."
+      },
+      "name": "wikidata_description",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Deterministic JSON list of Wikidata aliases."
+      },
+      "name": "wikidata_aliases",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Lead section of the article, plain text."
+      },
+      "name": "lead_text",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Short summary/extract if the API provided one."
+      },
+      "name": "extract",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Full cleaned article text, plain text."
+      },
+      "name": "full_text",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Encoding of `full_text`; always `plain_text`."
+      },
+      "name": "full_text_format",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Length of `full_text` in characters."
+      },
+      "name": "article_length_chars",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Approximate whitespace-token count of `full_text`."
+      },
+      "name": "article_length_words",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Rough token count: `chars / 4`."
+      },
+      "name": "article_length_tokens_estimate",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Thumbnail URL only (no image bytes stored)."
+      },
+      "name": "thumbnail_url",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Thumbnail width in pixels, if known."
+      },
+      "name": "thumbnail_width",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Thumbnail height in pixels, if known."
+      },
+      "name": "thumbnail_height",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Deterministic JSON list of category titles, or `[]`."
+      },
+      "name": "categories",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "License string, e.g. `CC BY-SA`."
+      },
+      "name": "license",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Attribution string for the article."
+      },
+      "name": "attribution",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Which API was queried: `mediawiki_action_api` / `wikipedia_rest_api`."
+      },
+      "name": "source_api",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "One of: `ok`, `article_not_found`, `http_error`, `rate_limited`, `parse_error`, `empty_text`."
+      },
+      "name": "fetch_status",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Short diagnostic on failure, empty string on success."
+      },
+      "name": "fetch_error",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Stable SHA-256 of `full_text` for change tracking."
+      },
+      "name": "content_hash",
+      "nullable": true,
+      "type": "string"
+    }
+  ]
+}
