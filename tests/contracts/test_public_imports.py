@@ -212,3 +212,162 @@ def test_hf_geographic_text_coverage_facade_identity() -> None:
     # Spot-check one constant value for identity preservation.
     assert facade.LOCAL_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
     assert facade.REMOTE_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
+
+
+# ---------------------------------------------------------------------------
+# Frozen ``__all__`` equality contracts.
+#
+# Each facade's ``__all__`` must equal the Phase 1 frozen public list -- the
+# exact set of names the module publicly advertises. This is a stricter
+# check than the subset assertions above: a refactor must not silently add
+# names to (or remove names from) a facade's ``__all__``.
+# ---------------------------------------------------------------------------
+
+
+def test_config_paths_public_names_match_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.config import paths as facade
+
+    frozen = {"DataRoot", "resolve_data_root"}
+    assert set(facade.__dict__) | set(getattr(facade, "__all__", ())) >= frozen
+    # ``config.paths`` does not define ``__all__``; the Phase 1 contract is
+    # a documented-name subset, so the frozen list is enforced against the
+    # public attributes instead.
+    for name in frozen:
+        assert hasattr(facade, name), f"missing Phase 1 name on config.paths: {name}"
+
+
+def test_config_settings_public_names_match_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.config import settings as facade
+
+    frozen = {"Settings", "DEFAULT_REPO_ID", "DEFAULT_USER_AGENT"}
+    for name in frozen:
+        assert hasattr(facade, name), f"missing Phase 1 name on config.settings: {name}"
+
+
+def test_enrichment_wikidata_client_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.enrichment import wikidata_client as facade
+
+    frozen = {
+        "BatchWikidataClient",
+        "CachedWikidataClient",
+        "HttpWikidataClient",
+        "InMemoryWikidataClient",
+        "Sitelinks",
+        "WikidataClient",
+        "WikidataEntity",
+        "WikidataError",
+        "is_valid_qid",
+        "language_from_site",
+        "parse_wikidata_entity",
+    }
+    assert set(facade.__all__) == frozen
+
+
+def test_enrichment_wikipedia_client_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.enrichment import wikipedia_client as facade
+
+    frozen = {
+        "BatchWikipediaClient",
+        "CachedWikipediaClient",
+        "FetchResult",
+        "HttpWikipediaClient",
+        "InMemoryWikipediaClient",
+        "WikipediaArticle",
+        "WikipediaClient",
+        "parse_wikipedia_response",
+    }
+    assert set(facade.__all__) == frozen
+
+
+def test_pipeline_processor_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.pipeline import processor as facade
+
+    frozen = {
+        "ExtractedPbf",
+        "IncompleteEnrichmentError",
+        "PbfStem",
+        "ProcessResult",
+        "extract_pbf",
+        "process_extracted_pbf",
+        "process_pbf",
+    }
+    assert set(facade.__all__) == frozen
+
+
+def test_pipeline_orchestrator_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.pipeline import orchestrator as facade
+
+    frozen = {"already_processed", "collect_pbfs", "orchestrate"}
+    assert set(facade.__all__) == frozen
+
+
+def test_hf_dataset_card_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.hf import dataset_card as facade
+
+    frozen = {"render_dataset_card"}
+    assert set(facade.__all__) == frozen
+
+
+def test_hf_uploader_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.hf import uploader as facade
+
+    frozen = {
+        "HfHub",
+        "StubHfHub",
+        "UploadError",
+        "default_commit_message",
+        "resolve_hf_token",
+        "upload_card",
+        "upload_files",
+        "upload_manifest",
+        "upload_parquet",
+        "verify_hf_token",
+        "verify_repo_authorization",
+    }
+    assert set(facade.__all__) == frozen
+
+
+def test_hf_coverage_map_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.hf import coverage_map as facade
+
+    frozen = {
+        "WORLD_LAND_FILENAME",
+        "ensure_world_land",
+        "generate_coverage_map",
+        "load_centroids_from_parquet",
+    }
+    assert set(facade.__all__) == frozen
+
+
+def test_hf_geographic_text_coverage_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
+
+    frozen = {
+        "DEFAULT_H3_RESOLUTION",
+        "DEFAULT_MIN_POLYGONS_PER_CELL",
+        "LOCAL_ASSET_PATH",
+        "LOCAL_POLYGON_COUNT_ASSET_PATH",
+        "LOCAL_TEXT_COVERAGE_ASSET_PATH",
+        "REMOTE_ASSET_PATH",
+        "REMOTE_POLYGON_COUNT_ASSET_PATH",
+        "REMOTE_TEXT_COVERAGE_ASSET_PATH",
+        "CoverageCell",
+        "CoverageMapError",
+        "PolygonCountCell",
+        "RenderResult",
+        "aggregate_geographic_polygon_count",
+        "aggregate_geographic_text_coverage",
+        "assign_h3_cell",
+        "generate_geographic_polygon_count",
+        "generate_geographic_text_coverage",
+        "render_geographic_polygon_count",
+        "render_geographic_text_coverage",
+    }
+    assert set(facade.__all__) == frozen
+
+
+def test_cli_parser_all_equals_phase_1_frozen_list() -> None:
+    from osm_polygon_wikidata_only.cli import parser as facade
+
+    frozen = {"build_parser", "build_settings", "parse_languages"}
+    assert set(facade.__all__) == frozen

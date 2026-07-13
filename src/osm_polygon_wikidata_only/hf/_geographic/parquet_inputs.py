@@ -59,6 +59,15 @@ def read_required_columns(
     try:
         metadata = pq.read_metadata(parquet_path)  # type: ignore[no-untyped-call]
         actual = set(metadata.schema.names) - PYARROW_INTERNAL_COLUMNS
+    # ``except Exception`` retained: PyArrow's metadata API raises
+    # across several unstable exception types depending on the
+    # corruption mode. When the metadata read fails, we fall through
+    # with an empty ``actual`` column-name set and let the
+    # column-pruned ``pq.read_table`` call determine the outcome:
+    # a valid parquet with the requested columns still loads; missing
+    # columns are translated into ``CoverageMapError``. See
+    # ``tests/hf/test_geographic_text_coverage.py`` for the focused
+    # schema-introspection tests.
     except Exception:
         actual = set()
     try:

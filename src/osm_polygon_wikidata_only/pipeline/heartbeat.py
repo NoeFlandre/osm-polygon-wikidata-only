@@ -74,7 +74,15 @@ class EnrichmentHeartbeat:
         self._thread: ThreadHandle | None = None
 
     def run(self) -> None:
-        """Wait for each interval and emit the latest factual snapshot."""
+        """Wait for each interval and emit the latest factual snapshot.
+
+        Observational heartbeat failures (a transient snapshot
+        callable error or a torn-down downstream state) are
+        contained: the failure is logged at debug, the stop signal
+        is set, and the daemon thread exits cleanly. The heartbeat
+        is a liveness signal, not an ETA, and an observational
+        failure must not disrupt the surrounding pipeline.
+        """
         while not self._stop.wait(self._interval_s):
             try:
                 snapshot = self._snapshot()

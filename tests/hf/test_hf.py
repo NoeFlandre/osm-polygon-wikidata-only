@@ -361,6 +361,42 @@ def test_upload_files_translates_401_to_token_hint(tmp_path: Path) -> None:
         )
 
 
+def test_upload_files_translates_unexpected_exception_to_upload_error(
+    tmp_path: Path,
+) -> None:
+    """Unexpected (non-auth) Hugging Face errors must surface as ``UploadError``
+    with the documented ``Hugging Face upload to {repo_id} failed: ...``
+    message. This pins the ``except Exception`` boundary in
+    :mod:`hf._uploader.operations`: a narrow ``except`` would risk
+    leaking raw ``Exception`` types to callers. The boundary is
+    retained (not narrowed) because ``huggingface_hub`` legitimately
+    raises a broad set of unstable exception types.
+    """
+    from huggingface_hub.errors import HfHubHTTPError
+
+    class _ServerErrorApi:
+        token = "good"
+
+        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
+            return repo_id
+
+        def create_commit(self, **_kwargs: object) -> str:
+            raise HfHubHTTPError(
+                "500 Server Error",
+                response=_fake_hf_response(500, "Internal Server Error: disk full"),
+                server_message="Internal Server Error: disk full",
+            )
+
+    polygon = _small_parquet(tmp_path)
+    with pytest.raises(UploadError, match=r"Hugging Face upload to org/name failed"):
+        upload_files(
+            "org/name",
+            [(polygon, "polygons/x.parquet")],
+            hub=_ServerErrorApi(),
+            commit_message="x",
+        )
+
+
 def test_verify_repo_authorization_passes_when_user_matches_namespace() -> None:
     from osm_polygon_wikidata_only.hf.uploader import verify_repo_authorization
 

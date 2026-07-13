@@ -82,6 +82,11 @@ def _ensure_repo_exists(hub: HfHub, repo_id: str, *, repo_type: str = "dataset")
     LOGGER.info("Ensuring %s repo exists: %s", repo_type, repo_id)
     try:
         hub.create_repo(repo_id=repo_id, repo_type=repo_type, exist_ok=True)
+    # ``except Exception`` retained: ``huggingface_hub`` legitimately
+    # exposes a broad set of unstable exception types. Every one is
+    # translated into ``UploadError`` by ``_translate_hf_error`` so
+    # callers see a uniform exception type. See ``tests/hf/test_hf.py``
+    # for the focused upload-translation tests.
     except Exception as error:
         raise _translate_hf_error(error, repo_id=repo_id) from error
 
