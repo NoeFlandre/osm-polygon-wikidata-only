@@ -211,3 +211,52 @@ def test_dataset_stats_facade_preserves_public_symbols() -> None:
     assert facade.DatasetStats is focused_stats
     assert facade.compute_dataset_stats is focused_compute
     assert facade.render_stats_section is focused_render
+
+
+def test_uploader_facade_preserves_public_symbols() -> None:
+    """The uploader facade must re-export every documented public symbol
+    from its focused module unchanged. The exact list is the legacy
+    __all__: HfHub, StubHfHub, UploadError, default_commit_message,
+    resolve_hf_token, upload_card, upload_files, upload_manifest,
+    upload_parquet, verify_hf_token, verify_repo_authorization.
+    """
+    from osm_polygon_wikidata_only.hf import uploader as facade
+    from osm_polygon_wikidata_only.hf._uploader.authorization import (
+        verify_repo_authorization as focused_verify_repo,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError as focused_error
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        default_commit_message as focused_default_commit_message,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_card as focused_upload_card,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_files as focused_upload_files,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_manifest as focused_upload_manifest,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.operations import (
+        upload_parquet as focused_upload_parquet,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub as focused_protocol
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub as focused_stub
+    from osm_polygon_wikidata_only.hf._uploader.token import (
+        resolve_hf_token as focused_resolve,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.token import (
+        verify_hf_token as focused_verify,
+    )
+
+    assert facade.UploadError is focused_error
+    assert facade.HfHub is focused_protocol
+    assert facade.StubHfHub is focused_stub
+    assert facade.resolve_hf_token is focused_resolve
+    assert facade.verify_hf_token is focused_verify
+    assert facade.verify_repo_authorization is focused_verify_repo
+    assert facade.upload_parquet is focused_upload_parquet
+    assert facade.upload_files is focused_upload_files
+    assert facade.upload_manifest is focused_upload_manifest
+    assert facade.upload_card is focused_upload_card
+    assert facade.default_commit_message is focused_default_commit_message
