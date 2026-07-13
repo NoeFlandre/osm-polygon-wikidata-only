@@ -10,7 +10,7 @@ isolation.
 | `io` | PBF streaming, cache files, manifests, and Parquet persistence. |
 | `enrichment` | Wikidata/Wikipedia clients, cache wrappers, batching, and linking. |
 | `pipeline` | Extract, enrich, construct rows, write artifacts, and update manifests. |
-| `hf` | Remote paths, dataset card rendering, and atomic Hub uploads. |
+| `hf` | Remote paths, dataset card rendering, atomic Hub uploads. |
 | `cli` | Argument parsing and dependency wiring only. |
 
 ## Dependency direction
@@ -33,24 +33,43 @@ The largest workflows are split by responsibility:
 Private implementation modules may evolve, but the supported imports in
 [`docs/api.md`](api.md) are compatibility boundaries.
 
-## Completeness and publication
+## Wikimedia request scheduling
 
-Normal production runs fetch full text for every valid language-Wikipedia
-sitelink with no per-QID article cap. Wikimedia requests share one process-wide
-scheduler capped at three in-flight requests. With a configured Bot Password,
-one transport owns a cookie-preserving session per API host and lazily performs
-the MediaWiki token/login handshake once for Wikidata and each language-specific
-Wikipedia host. Without credentials, the same transport remains anonymous.
+One process-wide `AdaptiveRequestScheduler` is the single source of
+truth for Wikimedia request pacing. The scheduler is hierarchical:
 
-Anonymous pacing stays fixed at 180 requests per minute. Authenticated unified
-runs use their configured ceiling (1,200 requests per minute by default) while
-retaining the global three-request concurrency cap. A 429 response applies
-`Retry-After` globally and halves the active rate before later successful windows
-restore it. The session, rather than either domain client, owns HTTP
-cookies and scheduled response reads. Successful
-responses are cached atomically; transient failures never satisfy completion.
-When TextExtracts is empty for a valid page, enrichment uses the Action API's
-exact-revision parse output as a deterministic plain-text fallback.
+- A global **client-side rate ceiling** caps requests per minute. The
+  default is `180` rpm for anonymous runs and `1200` rpm for runs
+  authenticated via a Bot Password. This ceiling is *not* a guaranteed
+  server allowance; the API may still throttle clients below it.
+- A global **concurrency bound** (`max_in_flight`) caps simultaneous
+  in-flight requests across every Wikimedia host. The default is `3`
+  for anonymous runs and `8` for authenticated runs. `8` is enough to
+  saturate the `1200` rpm ceiling at typical API latency, while
+  staying well under the scheduler's hard cap of `16`.
+- Each host keeps **independent per-host state**: a cooldown clock
+  (set by `Retry-After` and back-pressure) and a minimum interval
+  between requests. Per-host pacing happens *before* the global
+  permit is acquired so a host stuck in a long cooldown cannot hold
+  a scarce global permit and starve unrelated hosts.
+- A single host's `429`/`503` cools down only that host. The global
+  rate is reduced **only when throttling is systemic** — when
+  several distinct hosts are throttled within a bounded window —
+  and the systemic decision plus its suppression-timestamp update
+  happen atomically, so a flurry of throttles does not repeatedly
+  halve the global rate within seconds.
+
+`WikimediaSession` is the single transport boundary. It owns the
+per-host authentication state (login handshake performed lazily per
+host, with the bot password verified against the host's API endpoint)
+and exposes the per-host pacing decision: hosts that have *verified*
+authentication are paced at the authenticated minimum interval;
+hosts contacted anonymously or whose bot password was rejected are
+paced at the per-kind anonymous interval. Authentication state is
+telemetry-reported via `WikimediaAuthSnapshot`, which counts
+`authenticated_hosts`, `anonymous_hosts`, and `pending_hosts`
+(hosts whose login is currently in flight), so a host that might
+still verify is never mislabelled as anonymous.
 
 Long enrichment is observable without request-level noise. A thread-safe tracker
 records completed and total QIDs, completed and total Wikipedia sites, and

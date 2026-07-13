@@ -1,0 +1,285 @@
+{
+  "columns": [
+    "polygon_id",
+    "region",
+    "source_pbf",
+    "osm_type",
+    "osm_id",
+    "wikidata",
+    "name",
+    "tags",
+    "tag_keys",
+    "tag_count",
+    "osm_primary_tag",
+    "centroid",
+    "lat",
+    "lon",
+    "bbox",
+    "geometry",
+    "area_m2",
+    "area_km2",
+    "area_bucket",
+    "has_name",
+    "has_wikidata",
+    "has_wikipedia",
+    "wikipedia_language_count",
+    "wikipedia_languages",
+    "wikipedia_article_count",
+    "has_english_wikipedia",
+    "has_french_wikipedia",
+    "text_available",
+    "best_language",
+    "extraction_version",
+    "extracted_at"
+  ],
+  "fields": [
+    {
+      "metadata": {
+        "description": "Deterministic ID: `<source_pbf_stem>:<osm_type>:<osm_id>`."
+      },
+      "name": "polygon_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Geofabrik region slug parsed from the source PBF filename (e.g. `monaco`)."
+      },
+      "name": "region",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Source PBF filename (e.g. `monaco-latest.osm.pbf`)."
+      },
+      "name": "source_pbf",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "OSM element type: `way` or `relation`."
+      },
+      "name": "osm_type",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "OpenStreetMap numeric identifier of the element."
+      },
+      "name": "osm_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Wikidata Q-id from the OSM `wikidata=*` tag."
+      },
+      "name": "wikidata",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Convenience: `tags.name` if present, empty string otherwise."
+      },
+      "name": "name",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Deterministic JSON object of all OSM tags except `wikidata`."
+      },
+      "name": "tags",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Deterministic JSON list of sorted OSM tag keys."
+      },
+      "name": "tag_keys",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Number of OSM tags (excluding `wikidata`)."
+      },
+      "name": "tag_count",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Best single tag for coarse analysis, e.g. `landuse=forest`."
+      },
+      "name": "osm_primary_tag",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Polygon centroid as a GeoJSON Point string (`[lon, lat]`)."
+      },
+      "name": "centroid",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Centroid latitude in decimal degrees (WGS84)."
+      },
+      "name": "lat",
+      "nullable": true,
+      "type": "double"
+    },
+    {
+      "metadata": {
+        "description": "Centroid longitude in decimal degrees (WGS84)."
+      },
+      "name": "lon",
+      "nullable": true,
+      "type": "double"
+    },
+    {
+      "metadata": {
+        "description": "Bounding box as JSON list `[min_lon, min_lat, max_lon, max_lat]`."
+      },
+      "name": "bbox",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Full polygon geometry as deterministic GeoJSON string in WGS84 lon/lat coordinates."
+      },
+      "name": "geometry",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Polygon area in square meters (WGS84 equirectangular approximation)."
+      },
+      "name": "area_m2",
+      "nullable": true,
+      "type": "double"
+    },
+    {
+      "metadata": {
+        "description": "Polygon area in square kilometers."
+      },
+      "name": "area_km2",
+      "nullable": true,
+      "type": "double"
+    },
+    {
+      "metadata": {
+        "description": "Human-readable size bucket (e.g. `1-10km2`)."
+      },
+      "name": "area_bucket",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "True if the polygon has a `name` tag."
+      },
+      "name": "has_name",
+      "nullable": true,
+      "type": "bool"
+    },
+    {
+      "metadata": {
+        "description": "True if the polygon has a `wikidata` tag (always true by filter)."
+      },
+      "name": "has_wikidata",
+      "nullable": true,
+      "type": "bool"
+    },
+    {
+      "metadata": {
+        "description": "True if at least one linked Wikipedia article was fetched."
+      },
+      "name": "has_wikipedia",
+      "nullable": true,
+      "type": "bool"
+    },
+    {
+      "metadata": {
+        "description": "Number of Wikipedia languages for which articles were linked."
+      },
+      "name": "wikipedia_language_count",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "Deterministic JSON list of language codes (e.g. `[\"en\",\"fr\"]`)."
+      },
+      "name": "wikipedia_languages",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Number of unique article revisions linked to this polygon."
+      },
+      "name": "wikipedia_article_count",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "True if `en` is among the available languages."
+      },
+      "name": "has_english_wikipedia",
+      "nullable": true,
+      "type": "bool"
+    },
+    {
+      "metadata": {
+        "description": "True if `fr` is among the available languages."
+      },
+      "name": "has_french_wikipedia",
+      "nullable": true,
+      "type": "bool"
+    },
+    {
+      "metadata": {
+        "description": "True if at least one linked article has non-empty full text."
+      },
+      "name": "text_available",
+      "nullable": true,
+      "type": "bool"
+    },
+    {
+      "metadata": {
+        "description": "Deterministic preferred language code (e.g. `en`)."
+      },
+      "name": "best_language",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Package version that produced the row."
+      },
+      "name": "extraction_version",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "ISO-8601 UTC timestamp at the moment the row was extracted."
+      },
+      "name": "extracted_at",
+      "nullable": true,
+      "type": "string"
+    }
+  ]
+}

@@ -32,6 +32,12 @@ data/
 .huggingface/
 **/__pycache__/
 
+# Tests ship a small set of synthetic parquet fixtures used to assert
+# the documented schemas. The exception below carves out exactly the
+# committed fixture location so users cannot accidentally push
+# real data into the repository.
+!tests/fixtures/**/*.parquet
+
 # Editor / OS noise
 .DS_Store
 .idea/
