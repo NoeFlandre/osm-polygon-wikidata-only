@@ -42,20 +42,26 @@ class AugmentationWikimediaClient:
     """Read exact Wikimedia revisions and Wikidata entities with a shared scheduler."""
 
     def __init__(
-        self, settings: Settings, cache: JsonFileCache, *, environ: Mapping[str, str] | None = None
+        self,
+        settings: Settings,
+        cache: JsonFileCache,
+        *,
+        environ: Mapping[str, str] | None = None,
+        scheduler: AdaptiveRequestScheduler | None = None,
+        session: WikimediaSession | None = None,
     ) -> None:
         source = os.environ if environ is None else environ
         credentials = load_wikimedia_credentials(source)
         rate = 1_200.0 if credentials else 180.0
         effective = replace(settings, request_timeout_s=max(settings.request_timeout_s, 60.0))
         self._settings = effective
-        self._scheduler = AdaptiveRequestScheduler(
-            max_in_flight=8 if credentials else 3,
+        self._scheduler = scheduler or AdaptiveRequestScheduler(
+            max_in_flight=3,
             requests_per_minute=rate,
             max_requests_per_minute=rate,
             minimum_requests_per_minute=min(200.0 if credentials else 60.0, rate),
         )
-        self._session = WikimediaSession(
+        self._session = session or WikimediaSession(
             scheduler=self._scheduler,
             timeout_s=effective.request_timeout_s,
             user_agent=effective.user_agent,
@@ -87,7 +93,10 @@ class AugmentationWikimediaClient:
                         default_s=self._settings.rate_limit_retry_after_default_s,
                     )
                     defer_host(host, delay)
-                    self._scheduler.report_host_throttled(host, delay)
+                    if error.code == 429:
+                        self._scheduler.report_throttled(delay)
+                    else:
+                        self._scheduler.report_host_throttled(host, delay)
                     LOGGER.warning(
                         "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
                         host,

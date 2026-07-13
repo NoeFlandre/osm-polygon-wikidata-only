@@ -226,7 +226,17 @@ def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
         return False
     manifest = json.loads(manifest_path.read_text())
     entry = manifest.get(stem, {})
-    return bool(entry.get("contract_version") == CONTRACT_VERSION)
+    if entry.get("contract_version") != CONTRACT_VERSION:
+        return False
+    core_paths = (
+        data_root.processed_articles / f"{stem}.parquet",
+        data_root.processed_polygons / f"{stem}.parquet",
+    )
+    if not all(path.exists() for path in core_paths):
+        return False
+    expected = entry.get("core_hashes")
+    current = {str(path): _hash(path) for path in core_paths}
+    return bool(expected == current)
 
 
 __all__ = [
