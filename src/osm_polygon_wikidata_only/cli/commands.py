@@ -9,6 +9,12 @@ Shared options: ``--push``, ``--repo-id``, ``--data-root``,
 ``--skip-existing``, ``--force``, ``--languages``, ``--all-languages``,
 ``--no-full-text``, ``--max-articles-per-qid``, ``--limit``,
 ``--commit-message``, ``--log-level``.
+
+This module owns argparse, runtime construction, and HF
+authentication. Publication assembly lives in
+:mod:`osm_polygon_wikidata_only.hf.publication`; CLI code here
+submits the file lists it returns through the upload queue or the
+direct ``upload_files`` helper.
 """
 
 from __future__ import annotations
@@ -27,39 +33,6 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     completed_region_stems,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.domain.schema import (
-    ARTICLE_COLUMNS,
-    ARTICLE_DESCRIPTIONS,
-    POLYGON_ARTICLE_COLUMNS,
-    POLYGON_ARTICLE_DESCRIPTIONS,
-    POLYGON_COLUMNS,
-    POLYGON_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.hf.coverage_map import (
-    ensure_world_land,
-    generate_coverage_map,
-    load_centroids_from_parquet,
-)
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
-from osm_polygon_wikidata_only.hf.dataset_stats import (
-    compute_dataset_stats,
-    render_stats_section,
-)
-from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-    generate_geographic_polygon_count as _generate_geographic_polygon_count,
-)
-from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-    generate_geographic_text_coverage as _generate_geographic_text_coverage,
-)
-from osm_polygon_wikidata_only.hf.repo_layout import (
-    REMOTE_ARTICLES_DIR,
-    REMOTE_COVERAGE_MAP_FILE,
-    REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
-    REMOTE_LINKS_DIR,
-    REMOTE_MANIFEST_FILE,
-    REMOTE_POLYGONS_DIR,
-)
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
@@ -69,9 +42,7 @@ from osm_polygon_wikidata_only.hf.uploader import (
     verify_hf_token,
     verify_repo_authorization,
 )
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.io.run_lock import RunLockError, exclusive_run_lock
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.pipeline.processor import (
@@ -87,90 +58,6 @@ from .parser import build_settings as _build_settings
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
 
-def _write_readme_snapshot(data_root: DataRoot, repo_id: str, destination: Path) -> None:
-    """Render the canonical dataset README from current local artifacts."""
-    entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
-    aggregate = {
-        key: sum(int(entry.get(key, 0)) for entry in entries.values())
-        for key in ("polygon_count", "article_count", "unique_wikidata_count")
-    }
-    stats_section = render_stats_section(compute_dataset_stats(data_root.processed))
-    atomic_write_text(
-        destination,
-        render_dataset_card(
-            repo_id=repo_id,
-            stats=aggregate,
-            polygon_columns=list(POLYGON_COLUMNS),
-            polygon_descriptions=POLYGON_DESCRIPTIONS,
-            article_columns=list(ARTICLE_COLUMNS),
-            article_descriptions=ARTICLE_DESCRIPTIONS,
-            link_columns=list(POLYGON_ARTICLE_COLUMNS),
-            link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
-            maintainer="Noé Flandre",
-            stats_section=stats_section,
-        ),
-    )
-
-
-def _augmentation_upload_files(
-    result: AugmentationResult, processed_root: Path, readme: Path
-) -> list[tuple[Path, str]]:
-    artifacts = (
-        result.wikipedia_documents_path,
-        result.wikipedia_sections_path,
-        result.wikivoyage_documents_path,
-        result.wikivoyage_sections_path,
-        result.wikidata_facts_path,
-        result.manifest_path,
-    )
-    return [
-        *((path, str(path.relative_to(processed_root))) for path in artifacts),
-        (readme, "README.md"),
-    ]
-
-
-def _generate_geographic_text_coverage_snapshot(
-    data_root: DataRoot,
-    destination: Path,
-) -> Path:
-    """Build the geographic Wikipedia text coverage PNG into ``destination``.
-
-    The snapshot is deterministic, derived entirely from local processed
-    Parquet files, and runs only when core polygon/article/link inputs
-    have changed. The same helper is shared by the legacy core upload
-    path and the canonical ``sync-dir`` core publication path. Only the
-    resolved ``destination`` path is returned because callers do not need
-    the caption text.
-    """
-    land_cache = data_root.cache
-    result = _generate_geographic_text_coverage(
-        data_root.processed,
-        destination,
-        land_cache_dir=land_cache,
-    )
-    return result.output_path
-
-
-def _generate_geographic_polygon_count_snapshot(
-    data_root: DataRoot,
-    destination: Path,
-) -> Path:
-    """Build the geographic polygon density PNG into ``destination``.
-
-    The snapshot mirrors :func:`_generate_geographic_text_coverage_snapshot`
-    but renders the logarithmic polygon-count visualization. Both
-    snapshots are produced before the README so a partial core upload
-    never reaches the Hub.
-    """
-    land_cache = data_root.cache
-    result = _generate_geographic_polygon_count(
-        data_root.processed,
-        destination,
-        land_cache_dir=land_cache,
-    )
-    return result.output_path
-
-
 def _enqueue_core_upload(
     upload_queue: BackgroundUploadQueue,
     *,
@@ -179,45 +66,23 @@ def _enqueue_core_upload(
     commit_message: str,
     result: ProcessResult,
 ) -> None:
-    """Build core-publication snapshots and submit them as one atomic commit.
+    """Submit one core publication via :mod:`hf.publication`.
 
-    Errors from any snapshot step propagate without being swallowed; the
-    upload queue is never submitted to when a required artifact cannot
-    be produced, so a partial upload cannot reach the Hub.
+    Thin CLI adapter: builds the ordered file list through
+    :func:`hf.publication.assemble_core_upload` and submits it
+    once through the upload queue. No assembly logic lives here.
+    The legacy ``Could not fetch world land data; map will omit
+    continents`` WARNING is preserved on the CLI logger.
     """
-    snapshots = data_root.cache / "upload_manifest_snapshots"
-    snapshot = snapshots / f"{result.polygons_path.stem}.json"
-    atomic_write_text(snapshot, result.manifest_path.read_text(encoding="utf-8"))
-    map_snapshot = snapshots / f"{result.polygons_path.stem}-coverage_map.png"
-    lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-    try:
-        land_path = ensure_world_land(data_root.cache)
-    except Exception:
-        LOGGER.warning("Could not fetch world land data; map will omit continents")
-        land_path = None
-    generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
-    geo_snapshot = snapshots / f"{result.polygons_path.stem}-geographic_text_coverage.png"
-    _generate_geographic_text_coverage_snapshot(data_root, geo_snapshot)
-    polygon_count_snapshot = snapshots / f"{result.polygons_path.stem}-geographic_polygon_count.png"
-    _generate_geographic_polygon_count_snapshot(data_root, polygon_count_snapshot)
-    card_snapshot = snapshots / f"{result.polygons_path.stem}-README.md"
-    _write_readme_snapshot(data_root, repo_id, card_snapshot)
-    upload_queue.submit(
-        [
-            (result.polygons_path, f"{REMOTE_POLYGONS_DIR}/{result.polygons_path.name}"),
-            (result.articles_path, f"{REMOTE_ARTICLES_DIR}/{result.articles_path.name}"),
-            (
-                result.polygon_articles_path,
-                f"{REMOTE_LINKS_DIR}/{result.polygon_articles_path.name}",
-            ),
-            (snapshot, REMOTE_MANIFEST_FILE),
-            (geo_snapshot, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-            (polygon_count_snapshot, REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-            (card_snapshot, "README.md"),
-            (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
-        ],
-        commit_message,
+    from osm_polygon_wikidata_only.hf.publication import assemble_core_upload
+
+    files = assemble_core_upload(
+        data_root=data_root,
+        repo_id=repo_id,
+        core=result,
+        world_land_warning=LOGGER.warning,
     )
+    upload_queue.submit(files, commit_message)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -263,31 +128,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "sync-dir":
         from .run_sync import execute as cli_run_sync
 
-        def _build_upload_files(
-            state: object,
-            augmentation: object,
-            core: object | None,
-        ) -> list[tuple[Path, str]]:
-            return _sync_upload_files(
-                data_root,
-                settings.repo_id,
-                getattr(state, "stem", ""),
-                augmentation,  # type: ignore[arg-type]
-                core,  # type: ignore[arg-type]
-            )
-
         try:
             with exclusive_run_lock(data_root.cache / "sync.lock"):
                 return cli_run_sync(
                     args,
                     data_root=data_root,
                     settings=settings,
-                    build_upload_files=_build_upload_files,
+                    # No build_upload_files override: the CLI shell owns
+                    # the production region-publication builder via
+                    # hf.publication.assemble_region_upload.
+                    build_upload_files=None,
                 )
         except RunLockError as error:
             parser.error(str(error))
 
     if args.command in {"augment-region", "augment-dir"}:
+        from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+
         augmentation_client = AugmentationWikimediaClient(
             settings,
             JsonFileCache(data_root.cache / "augmentation", contract_version="text-sidecars-v1"),
@@ -304,19 +161,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             augmentation_results.append(augmentation_result)
             LOGGER.info("Augmented %s: %s", stem, augmentation_result.counts)
             if args.push:
-                snapshots = data_root.cache / "augmentation_upload_snapshots"
-                readme_snapshot = snapshots / f"{stem}-README.md"
-                _write_readme_snapshot(data_root, settings.repo_id, readme_snapshot)
-                files = _augmentation_upload_files(
-                    augmentation_result, data_root.processed, readme_snapshot
+                hub = StubHfHub() if args.dry_run else None
+
+                def _submit(
+                    files: list[tuple[Path, str]],
+                    message: str,
+                    _hub: StubHfHub | None = hub,
+                ) -> None:
+                    upload_files(
+                        settings.repo_id,
+                        files,
+                        hub=_hub,
+                        token=settings.hf_token,
+                        commit_message=message,
+                        num_threads=args.upload_threads,
+                    )
+
+                files = assemble_augmentation_upload(
+                    data_root=data_root,
+                    repo_id=settings.repo_id,
+                    augmentation=augmentation_result,
                 )
-                upload_files(
-                    settings.repo_id,
+                _submit(
                     files,
-                    hub=StubHfHub() if args.dry_run else None,
-                    token=settings.hf_token,
-                    commit_message=args.commit_message or f"Add text augmentation for {stem}",
-                    num_threads=args.upload_threads,
+                    args.commit_message or f"Add text augmentation for {stem}",
                 )
         LOGGER.info("Done. %d region augmentation(s).", len(augmentation_results))
         return 0
@@ -394,63 +262,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.error("%d background upload(s) failed", len(upload_failures))
         return 1
     return 0
-
-
-def _sync_upload_files(
-    data_root: DataRoot,
-    repo_id: str,
-    stem: str,
-    augmentation: AugmentationResult,
-    core: ProcessResult | None,
-) -> list[tuple[Path, str]]:
-    """Snapshot manifests and assemble one complete atomic region upload."""
-    snapshots = data_root.cache / "sync_upload_snapshots" / stem
-    augmentation_manifest = snapshots / "augmentation_manifest.json"
-    atomic_write_text(augmentation_manifest, augmentation.manifest_path.read_text())
-    readme = snapshots / "README.md"
-    files = [
-        (augmentation.wikipedia_documents_path, f"wikipedia/documents/{stem}.parquet"),
-        (augmentation.wikipedia_sections_path, f"wikipedia/sections/{stem}.parquet"),
-        (augmentation.wikivoyage_documents_path, f"wikivoyage/documents/{stem}.parquet"),
-        (augmentation.wikivoyage_sections_path, f"wikivoyage/sections/{stem}.parquet"),
-        (augmentation.wikidata_facts_path, f"wikidata/facts/{stem}.parquet"),
-        (augmentation_manifest, "augmentation/manifests/augmentation_manifest.json"),
-        (readme, "README.md"),
-    ]
-    if _coverage_refresh_required(core):
-        core_manifest = snapshots / "processed_pbfs.json"
-        atomic_write_text(
-            core_manifest,
-            (data_root.processed_manifests / "processed_pbfs.json").read_text(),
-        )
-        coverage = snapshots / "coverage_map.png"
-        lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-        try:
-            land_path = ensure_world_land(data_root.cache)
-        except Exception:
-            land_path = None
-        generate_coverage_map(lons, lats, coverage, land_geojson_path=land_path)
-        geographic_text_coverage = snapshots / "geographic_text_coverage.png"
-        _generate_geographic_text_coverage_snapshot(data_root, geographic_text_coverage)
-        geographic_polygon_count = snapshots / "geographic_polygon_count.png"
-        _generate_geographic_polygon_count_snapshot(data_root, geographic_polygon_count)
-        assert core is not None
-        files[:0] = [
-            (core.polygons_path, f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
-            (core.articles_path, f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
-            (core.polygon_articles_path, f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}"),
-            (core_manifest, REMOTE_MANIFEST_FILE),
-            (geographic_text_coverage, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-            (geographic_polygon_count, REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-            (coverage, REMOTE_COVERAGE_MAP_FILE),
-        ]
-    _write_readme_snapshot(data_root, repo_id, readme)
-    return files
-
-
-def _coverage_refresh_required(core: object | None) -> bool:
-    """Coverage changes only when a core polygon artifact changes."""
-    return core is not None
 
 
 if __name__ == "__main__":  # pragma: no cover

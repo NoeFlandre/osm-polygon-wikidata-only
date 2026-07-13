@@ -4,6 +4,9 @@ The dataset card Markdown and the unified-sync publication file list
 are public, stable artifacts. Any drift is a regression; the golden
 files in ``tests/fixtures/golden/`` capture the exact expected
 output.
+
+These tests exercise :mod:`osm_polygon_wikidata_only.hf.publication`
+directly, which is the production assembly owner.
 """
 
 from __future__ import annotations
@@ -12,7 +15,6 @@ import json
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
-from osm_polygon_wikidata_only.cli.commands import _sync_upload_files
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
@@ -23,6 +25,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_DESCRIPTIONS,
 )
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
+from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
@@ -181,7 +184,7 @@ def test_publication_file_list_matches_golden(tmp_path: Path) -> None:
     """The unified-sync publication file list is locked by a golden JSON.
 
     This test invokes the production assembly path used by
-    ``sync-dir`` (``osm_polygon_wikidata_only.cli.commands._sync_upload_files``)
+    ``sync-dir`` (:func:`osm_polygon_wikidata_only.hf.publication.assemble_region_upload`)
     with deterministic stubs derived from the committed parquet
     fixtures. It captures the remote-path ordering returned by the
     real production function and compares it byte-for-byte against
@@ -190,7 +193,14 @@ def test_publication_file_list_matches_golden(tmp_path: Path) -> None:
     data_root = _seed_data_root(tmp_path)
     core, augmentation = _build_result_objects(data_root)
 
-    files = _sync_upload_files(data_root, REPO_ID, STEM, augmentation, core)
+    files = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=augmentation,
+        core=core,
+        world_land_warning=None,
+    )
     remote_by_split = _split_publication(files)
 
     golden_path = GOLDEN / "publication_file_list.json"

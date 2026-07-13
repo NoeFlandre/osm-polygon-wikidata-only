@@ -10,9 +10,10 @@ this module only builds collaborators and calls
 When ``--push`` is disabled, ``build_upload_files`` and
 ``submit_upload`` are both passed as ``None`` so the runner
 never invokes publication assembly. When ``--push`` is enabled,
-the existing :func:`cli.commands._sync_upload_files` helper is
-pre-bound into ``build_upload_files`` until the Phase 7
-publication refactor moves it into :mod:`hf.publication`.
+the CLI shell builds the region-publication list through
+:func:`hf.publication.assemble_region_upload` (a pure assembler
+that performs NO upload) and submits the returned list through
+the upload queue exactly once per region.
 """
 
 from __future__ import annotations
@@ -62,6 +63,16 @@ def execute(
     ``--push`` is disabled, both ``build_upload_files`` and
     ``submit_upload`` are ``None`` and the runner never invokes
     the publication assembly.
+
+    When ``--push`` is enabled, the CLI shell builds the region
+    file list through
+    :func:`hf.publication.assemble_region_upload` (a pure assembler
+    that returns the ordered list) and the runner submits it via
+    the upload queue. The CLI shell and runner together produce
+    exactly ONE atomic commit per region: the assembler never
+    submits, and the runner submits the assembled list exactly
+    once. The unified-sync path silently swallows the legacy
+    world-land exception (the ``warning_callback`` is ``None``).
     """
     runtime = build_wikimedia_runtime(settings, data_root=data_root)
     augmentation_client = AugmentationWikimediaClient(
@@ -159,15 +170,44 @@ def execute(
             return
         upload_queue.submit(files, message)
 
+    def _build_region_publication(
+        state: object,
+        augmentation: object,
+        core: object | None,
+    ) -> list[tuple[Path, str]]:
+        """Region-publication builder injected into ``pipeline.sync_runner``.
+
+        Pure assembly: delegates to
+        :func:`hf.publication.assemble_region_upload`, which
+        returns the ordered file list and performs NO upload.
+        Submission is the upload queue's responsibility, executed
+        exactly once by ``_maybe_submit`` in the runner. The
+        unified-sync world-land fallback is silent (``None``).
+        """
+        from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
+
+        stem = getattr(state, "stem", "")
+        return assemble_region_upload(
+            data_root=data_root,
+            repo_id=settings.repo_id,
+            stem=stem,
+            augmentation=augmentation,  # type: ignore[arg-type]
+            core=core,  # type: ignore[arg-type]
+            world_land_warning=None,
+        )
+
     def _close_uploads() -> list[str]:
         if upload_queue is None:
             return []
         return upload_queue.close_and_wait()
 
     # Push-disabled: do not even hand the runner a publication
-    # builder. The runner will skip _maybe_submit entirely.
+    # builder. The runner will skip _maybe_submit entirely. When the
+    # CLI shell is given an override builder (legacy compatibility),
+    # use it; otherwise default to the production
+    # ``hf.publication.assemble_region_upload`` builder.
     publish_builder: Callable[..., list[tuple[Path, str]]] | None = (
-        build_upload_files if push_enabled else None
+        (build_upload_files or _build_region_publication) if push_enabled else None
     )
     submit_callback: Callable[[list[tuple[Path, str]], str], None] | None = (
         _submit_upload if push_enabled else None
