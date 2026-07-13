@@ -80,6 +80,7 @@ ignore = [
 "src/osm_polygon_wikidata_only/enrichment/*.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/coverage_map.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/uploader.py" = ["S310"]
+"tests/fixtures/_builders.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"

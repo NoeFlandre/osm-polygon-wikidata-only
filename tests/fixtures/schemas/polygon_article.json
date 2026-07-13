@@ -1,0 +1,105 @@
+{
+  "columns": [
+    "polygon_id",
+    "article_id",
+    "wikidata",
+    "language",
+    "source_pbf",
+    "region",
+    "osm_type",
+    "osm_id",
+    "page_id",
+    "revision_id",
+    "is_best_language"
+  ],
+  "fields": [
+    {
+      "metadata": {
+        "description": "FK to `polygons.polygon_id`."
+      },
+      "name": "polygon_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "FK to `articles.article_id`."
+      },
+      "name": "article_id",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Wikidata Q-id (denormalized for fast filtering)."
+      },
+      "name": "wikidata",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Wikipedia language code."
+      },
+      "name": "language",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Source PBF filename (denormalized)."
+      },
+      "name": "source_pbf",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "Geofabrik region slug."
+      },
+      "name": "region",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "OSM element type."
+      },
+      "name": "osm_type",
+      "nullable": true,
+      "type": "string"
+    },
+    {
+      "metadata": {
+        "description": "OSM numeric identifier."
+      },
+      "name": "osm_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "MediaWiki page ID of the linked article."
+      },
+      "name": "page_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "MediaWiki revision ID of the linked article."
+      },
+      "name": "revision_id",
+      "nullable": true,
+      "type": "int64"
+    },
+    {
+      "metadata": {
+        "description": "True if this row's language matches the polygon's `best_language`."
+      },
+      "name": "is_best_language",
+      "nullable": true,
+      "type": "bool"
+    }
+  ]
+}
