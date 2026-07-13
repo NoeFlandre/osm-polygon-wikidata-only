@@ -118,14 +118,20 @@ def build_wikimedia_runtime(
     )
     if credentials is not None:
         LOGGER.info(
-            "Wikimedia API mode: credentials configured for %s; verification is "
-            "performed per host on first request (rate ceiling: %.0f requests/minute, "
-            "in-flight=%d, host interval: %.2fs). The ceiling is a client-side limit, "
-            "not a guaranteed server allowance.",
+            "Wikimedia API mode: credentials configured for %s; "
+            "verification occurs per host; "
+            "rate ceiling=%.0f rpm; "
+            "in-flight=%d; "
+            "authenticated host interval=%.2fs; "
+            "anonymous intervals: Wikipedia=%.2fs, Wikidata=%.2fs, augmentation=%.2fs. "
+            "The ceiling is a client-side limit, not a guaranteed server allowance.",
             credentials.username,
             ceiling,
             effective.wikimedia_max_in_flight,
+            effective.wikimedia_authenticated_min_interval_s,
             effective.wikipedia_min_interval_s,
+            effective.wikidata_min_interval_s,
+            effective.augmentation_min_interval_s,
         )
     else:
         LOGGER.info(
@@ -183,8 +189,6 @@ def _effective_settings(
     return replace(
         settings,
         wikimedia_max_in_flight=max_in_flight,
-        wikipedia_min_interval_s=min(settings.wikipedia_min_interval_s, AUTH_MIN_HOST_INTERVAL_S),
-        wikidata_min_interval_s=min(settings.wikidata_min_interval_s, AUTH_MIN_HOST_INTERVAL_S),
         wikimedia_requests_per_minute=ceiling,
     )
 
