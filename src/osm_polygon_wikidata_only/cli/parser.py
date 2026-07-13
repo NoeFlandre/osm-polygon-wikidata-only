@@ -47,6 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Concurrent Hugging Face upload workers per atomic commit",
     )
     common.add_argument(
+        "--hf-token",
+        default=None,
+        help=(
+            "Hugging Face write token. Defaults to the HF_TOKEN env var "
+            "or the saved `huggingface-cli login` token."
+        ),
+    )
+    common.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     common.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
@@ -84,6 +92,7 @@ def build_settings(args: argparse.Namespace) -> Settings:
         skip_existing=args.skip_existing,
         force=args.force,
         limit=args.limit,
+        hf_token=args.hf_token,
     )
 
 

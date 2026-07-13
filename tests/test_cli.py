@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
 import osm_polygon_wikidata_only.cli.commands as commands
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
@@ -79,6 +81,117 @@ def test_parser_accepts_upload_worker_count() -> None:
     parser = build_parser()
     args = parser.parse_args(["process-pbf", "/tmp/x.osm.pbf", "--upload-threads", "8"])
     assert args.upload_threads == 8
+
+
+def test_parser_accepts_explicit_hf_token() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["process-pbf", "/tmp/x.osm.pbf", "--push", "--hf-token", "hf_secret"])
+    assert args.hf_token == "hf_secret"
+    settings = _build_settings(args)
+    assert settings.hf_token == "hf_secret"
+
+
+def test_main_push_without_token_fails_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: None)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
+    assert excinfo.value.code == 2
+
+
+def test_main_push_rejects_token_rejected_by_whoami(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.hf.uploader import UploadError
+
+    def _fake_verify(token: str | None) -> str | None:
+        raise UploadError("Hugging Face rejected HF_TOKEN: invalid.")
+
+    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "present")
+    monkeypatch.setattr(commands, "verify_hf_token", _fake_verify)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
+    assert excinfo.value.code == 2
+
+
+def test_main_push_logs_authenticated_username(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "present")
+    monkeypatch.setattr(commands, "verify_hf_token", lambda value: "noeflandre")
+    monkeypatch.setattr(commands, "verify_repo_authorization", lambda token, repo_id: "noeflandre")
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push", "--dry-run"]) == 0
+    assert any("noeflandre" in record.getMessage() for record in caplog.records)
+
+
+def test_main_push_aborts_when_namespace_does_not_match_token_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.hf.uploader import UploadError
+
+    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "present")
+    monkeypatch.setattr(commands, "verify_hf_token", lambda value: "someoneelse")
+
+    def _fake_authorize(token: str | None, repo_id: str) -> str:
+        raise UploadError(
+            "HF_TOKEN authenticates as 'someoneelse', but --repo-id "
+            "'NoeFlandre/osm-polygon-wikidata-only' lives in the 'NoeFlandre' namespace."
+        )
+
+    monkeypatch.setattr(commands, "verify_repo_authorization", _fake_authorize)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
+    assert excinfo.value.code == 2
+
+
+def test_main_push_distinguishes_missing_token_from_invalid_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "hf_xxxxxxxxxxxxxxxxxxxx")
+    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: None)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "rejected" in err or "invalid" in err
+    assert "https://huggingface.co/settings/tokens" in err
+
+
+def test_main_push_reports_invalid_explicit_hf_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: None)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "process-dir",
+                str(raw),
+                "--data-root",
+                str(tmp_path),
+                "--push",
+                "--hf-token",
+                "definitely-not-a-real-token",
+            ]
+        )
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "--hf-token" in err
+    assert "rejected" in err or "invalid" in err
 
 
 def test_normal_command_defaults_to_every_language_without_article_cap() -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 
 
@@ -72,3 +74,49 @@ def test_long_cache_key_uses_a_filesystem_safe_filename(tmp_path: Path) -> None:
     assert entry is not None
     assert entry.parsed_result == {"ok": True}
     assert max(len(path.name.encode()) for path in tmp_path.iterdir()) <= 255
+
+
+def test_get_returns_none_on_corrupted_non_utf8_cache_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from osm_polygon_wikidata_only.io.cache import JsonFileCache as _Cache
+
+    cache = _Cache(tmp_path)
+    cache.set("foo", {"a": 1})
+    # Replace the on-disk JSON with non-UTF-8 bytes (simulates a write that
+    # was truncated or interrupted by a binary blob from another process).
+    path = next(tmp_path.glob("*.json"))
+    path.write_bytes(b"\x00\xfc\xff garbage \xfe\x00")
+
+    caplog.set_level("WARNING", logger="osm_polygon_wikidata_only.io.cache")
+    assert cache.get("foo") is None
+    assert any(
+        "decode" in record.getMessage().lower() or "corrupt" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+def test_get_returns_none_on_invalid_json_cache_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache = JsonFileCache(tmp_path)
+    cache.set("foo", {"a": 1})
+    path = next(tmp_path.glob("*.json"))
+    path.write_text("{ this is not json", encoding="utf-8")
+
+    caplog.set_level("DEBUG", logger="osm_polygon_wikidata_only.io.cache")
+    assert cache.get("foo") is None
+
+
+def test_get_removes_corrupted_cache_file_so_subsequent_runs_dont_re_hit_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache = JsonFileCache(tmp_path)
+    cache.set("foo", {"a": 1})
+    path = next(tmp_path.glob("*.json"))
+    path.write_bytes(b"\x00\xfc\xff garbage \xfe\x00")
+
+    caplog.set_level("WARNING", logger="osm_polygon_wikidata_only.io.cache")
+    assert cache.get("foo") is None
+    # The corrupted entry is removed so the next run starts clean.
+    assert not path.exists()

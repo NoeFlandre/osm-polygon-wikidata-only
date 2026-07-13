@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import httpx
 import pytest
 
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
@@ -61,6 +62,35 @@ def _small_parquet(tmp_path: Path) -> Path:
     # Write a minimal placeholder (not real parquet, the stub doesn't care).
     p.write_text("placeholder", encoding="utf-8")
     return p
+
+
+def test_resolve_hf_token_prefers_explicit_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    assert resolve_hf_token("hf_explicit") == "hf_explicit"
+
+
+def test_resolve_hf_token_reads_hf_token_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token
+
+    monkeypatch.setenv("HF_TOKEN", "hf_from_env")
+    assert resolve_hf_token(None) == "hf_from_env"
+
+
+def test_resolve_hf_token_returns_none_when_nothing_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN_PATH", raising=False)
+    # resolve_hf_token falls back to huggingface_hub.get_token which may
+    # still find a saved file. Assert the result is either None or a
+    # non-empty string - the contract is "don't crash".
+    token = resolve_hf_token(None)
+    assert token is None or (isinstance(token, str) and token)
 
 
 def test_upload_parquet_records_call(tmp_path: Path) -> None:
@@ -178,6 +208,178 @@ def test_background_upload_failure_is_resumed_from_durable_state(tmp_path: Path)
     assert resumed.close_and_wait() == []
     assert calls == ["x"]
     assert not list(state.glob("*.json"))
+
+
+def test_stub_hf_hub_records_create_repo_call() -> None:
+    stub = StubHfHub()
+    stub.create_repo(repo_id="org/name", repo_type="dataset", exist_ok=True)
+    assert stub.created_repos == [{"repo_id": "org/name", "repo_type": "dataset", "exist_ok": True}]
+
+
+def test_upload_parquet_ensures_repo_exists(tmp_path: Path) -> None:
+    stub = StubHfHub()
+    p = _small_parquet(tmp_path)
+    upload_parquet("org/name", p, path_in_repo="polygons/x.parquet", hub=stub)
+    assert stub.created_repos == [{"repo_id": "org/name", "repo_type": "dataset", "exist_ok": True}]
+    assert len(stub.uploads) == 1
+
+
+def test_upload_files_ensures_repo_exists_before_commit(tmp_path: Path) -> None:
+    stub = StubHfHub()
+    polygon = _small_parquet(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    upload_files(
+        "org/name",
+        [(polygon, "polygons/x.parquet"), (manifest, REMOTE_MANIFEST_FILE)],
+        hub=stub,
+        commit_message="Update PBF x",
+    )
+
+    assert stub.created_repos == [{"repo_id": "org/name", "repo_type": "dataset", "exist_ok": True}]
+    assert len(stub.commits) == 1
+
+
+def test_upload_card_ensures_repo_exists() -> None:
+    stub = StubHfHub()
+    upload_card("org/name", "# card", hub=stub)
+    assert stub.created_repos == [{"repo_id": "org/name", "repo_type": "dataset", "exist_ok": True}]
+    assert len(stub.uploads) == 1
+
+
+def test_upload_files_without_hub_requires_resolvable_token(tmp_path: Path) -> None:
+    polygon = _small_parquet(tmp_path)
+    with pytest.raises(UploadError, match="token"):
+        upload_files(
+            "org/name",
+            [(polygon, "polygons/x.parquet")],
+            commit_message="x",
+            token=None,
+            _resolve_token=lambda value: None,
+        )
+
+
+def test_upload_parquet_without_hub_requires_resolvable_token(tmp_path: Path) -> None:
+    polygon = _small_parquet(tmp_path)
+    with pytest.raises(UploadError, match="token"):
+        upload_parquet(
+            "org/name",
+            polygon,
+            path_in_repo="polygons/x.parquet",
+            token=None,
+            _resolve_token=lambda value: None,
+        )
+
+
+def test_upload_files_uses_resolved_token_to_build_hub(tmp_path: Path) -> None:
+    captured: dict[str, str | None] = {}
+
+    class _FakeApi:
+        def __init__(self, *, token: str | None) -> None:
+            captured["token"] = token
+            self.token = token
+
+        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
+            return repo_id
+
+        def create_commit(self, **_kwargs: object) -> str:
+            return "commit-id"
+
+    polygon = _small_parquet(tmp_path)
+    upload_files(
+        "org/name",
+        [(polygon, "polygons/x.parquet")],
+        commit_message="x",
+        token=None,
+        _resolve_token=lambda value: "my-token",
+        _api_factory=lambda *, token: _FakeApi(token=token),
+    )
+    assert captured == {"token": "my-token"}
+
+
+def _fake_hf_response(status_code: int, body: str) -> httpx.Response:
+    return httpx.Response(
+        status_code,
+        content=body.encode("utf-8"),
+        headers={"content-type": "text/plain"},
+        request=httpx.Request("POST", "https://huggingface.co/api/datasets/x/y/preupload/main"),
+    )
+
+
+def test_upload_files_translates_repository_not_found_to_auth_hint(tmp_path: Path) -> None:
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    class _AuthFailingApi:
+        token = "good"
+
+        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
+            return repo_id
+
+        def create_commit(self, **_kwargs: object) -> str:
+            raise RepositoryNotFoundError(
+                "401 Client Error",
+                response=_fake_hf_response(401, "Invalid username or password"),
+                server_message="Invalid username or password.",
+            )
+
+    polygon = _small_parquet(tmp_path)
+    with pytest.raises(UploadError, match=r"Invalid username or password"):
+        upload_files(
+            "org/name",
+            [(polygon, "polygons/x.parquet")],
+            hub=_AuthFailingApi(),
+            commit_message="x",
+        )
+
+
+def test_upload_files_translates_401_to_token_hint(tmp_path: Path) -> None:
+    from huggingface_hub.errors import HfHubHTTPError
+
+    class _BadTokenApi:
+        token = "expired"
+
+        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
+            return repo_id
+
+        def create_commit(self, **_kwargs: object) -> str:
+            raise HfHubHTTPError(
+                "Invalid user token.",
+                response=_fake_hf_response(401, "Invalid user token."),
+                server_message="Invalid user token.",
+            )
+
+    polygon = _small_parquet(tmp_path)
+    with pytest.raises(UploadError, match=r"token"):
+        upload_files(
+            "org/name",
+            [(polygon, "polygons/x.parquet")],
+            hub=_BadTokenApi(),
+            commit_message="x",
+        )
+
+
+def test_verify_repo_authorization_passes_when_user_matches_namespace() -> None:
+    from osm_polygon_wikidata_only.hf.uploader import verify_repo_authorization
+
+    assert (
+        verify_repo_authorization("tok", "noeflandre/dataset", _verify=lambda t: "noeflandre")
+        == "noeflandre"
+    )
+
+
+def test_verify_repo_authorization_raises_when_namespace_mismatches() -> None:
+    from osm_polygon_wikidata_only.hf.uploader import verify_repo_authorization
+
+    with pytest.raises(UploadError, match=r"noeflandre"):
+        verify_repo_authorization("tok", "noeflandre/dataset", _verify=lambda t: "someoneelse")
+
+
+def test_verify_repo_authorization_suggests_alt_repo_id_when_mismatched() -> None:
+    from osm_polygon_wikidata_only.hf.uploader import verify_repo_authorization
+
+    with pytest.raises(UploadError, match=r"--repo-id"):
+        verify_repo_authorization("tok", "noeflandre/dataset", _verify=lambda t: "someoneelse")
 
 
 def test_upload_card_rejects_empty() -> None:

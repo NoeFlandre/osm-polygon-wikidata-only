@@ -14,6 +14,7 @@ The cache is intentionally simple:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -75,14 +76,28 @@ class JsonFileCache:
         """Return the entry for ``key`` if present and fresh.
 
         Returns ``None`` on miss, on stale entries, or on parse errors.
+        A corrupted entry (non-UTF-8 bytes, invalid JSON) is treated as
+        a miss, logged at WARNING so the operator notices, and removed
+        so subsequent runs do not re-hit the same file.
         """
         path = self._path_for(key)
         if not path.exists():
             return None
         try:
             raw = json_loads(path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError as e:
+            LOGGER.warning(
+                "Cache entry %s is corrupted (non-UTF-8 bytes: %s); removing it.",
+                path,
+                e,
+            )
+            with contextlib.suppress(OSError):
+                path.unlink()
+            return None
         except (OSError, json.JSONDecodeError) as e:
-            LOGGER.debug("Cache get parse error for %s: %s", key, e)
+            LOGGER.warning("Cache entry %s could not be parsed (%s); removing it.", path, e)
+            with contextlib.suppress(OSError):
+                path.unlink()
             return None
         expires_at = float(raw.get("meta", {}).get("expires_at", 0))
         if raw.get("meta", {}).get("contract_version", "v1") != self.contract_version:

@@ -14,6 +14,7 @@ Shared options: ``--push``, ``--repo-id``, ``--data-root``,
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -54,7 +55,11 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
+    UploadError,
+    resolve_hf_token,
     upload_files,
+    verify_hf_token,
+    verify_repo_authorization,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
@@ -124,6 +129,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     data_root.ensure()
     settings = _build_settings(args)
 
+    if args.push and not args.dry_run:
+        resolved = resolve_hf_token(settings.hf_token)
+        if not resolved:
+            env_token = os.environ.get("HF_TOKEN")
+            explicit = bool(settings.hf_token)
+            if env_token or explicit:
+                # Token was supplied but huggingface_hub rejected it (placeholder,
+                # expired, revoked, malformed). Give a more actionable hint than
+                # the generic "no token" message.
+                source = "--hf-token" if explicit else "HF_TOKEN"
+                parser.error(
+                    f"--push: {source} is set but Hugging Face rejected it as invalid. "
+                    "Generate a fresh write token at https://huggingface.co/settings/tokens "
+                    "and replace the current value."
+                )
+            parser.error(
+                "--push requires a Hugging Face write token: pass --hf-token, "
+                "set HF_TOKEN, or run `huggingface-cli login`."
+            )
+        try:
+            username = verify_hf_token(settings.hf_token)
+        except UploadError as error:
+            parser.error(str(error))
+        try:
+            verify_repo_authorization(settings.hf_token, settings.repo_id)
+        except UploadError as error:
+            parser.error(str(error))
+        LOGGER.info("Authenticated to Hugging Face as %s (target: %s)", username, settings.repo_id)
+
     if args.command in {"augment-region", "augment-dir"}:
         augmentation_client = AugmentationWikimediaClient(
             settings,
@@ -151,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     settings.repo_id,
                     files,
                     hub=StubHfHub() if args.dry_run else None,
+                    token=settings.hf_token,
                     commit_message=args.commit_message or f"Add text augmentation for {stem}",
                     num_threads=args.upload_threads,
                 )
@@ -175,6 +210,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 settings.repo_id,
                 files,
                 hub=hub,
+                token=settings.hf_token,
                 commit_message=message,
                 num_threads=args.upload_threads,
             )
