@@ -22,7 +22,21 @@ def test_parser_has_two_subcommands() -> None:
         "augment-region",
         "process-pbf",
         "process-dir",
+        "sync-dir",
     }
+
+
+def test_parser_accepts_canonical_sync_dir() -> None:
+    args = build_parser().parse_args(["sync-dir", "/tmp/raw", "--skip-existing", "--push"])
+    assert args.command == "sync-dir"
+    assert args.input == Path("/tmp/raw")
+    assert args.skip_existing is True
+
+
+def test_sync_dir_handles_empty_directory_without_network(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    assert main(["sync-dir", str(raw), "--data-root", str(tmp_path), "--skip-existing"]) == 0
 
 
 def test_parser_accepts_additive_region_augmentation() -> None:

@@ -283,7 +283,10 @@ class HttpWikipediaClient(WikipediaClient):
                     e, default_s=self._settings.rate_limit_retry_after_default_s
                 )
                 defer_host(host, delay)
-                self._scheduler.report_host_throttled(host, delay)
+                if e.code == 429:
+                    self._scheduler.report_throttled(delay)
+                else:
+                    self._scheduler.report_host_throttled(host, delay)
             raise
         parsed: object = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
