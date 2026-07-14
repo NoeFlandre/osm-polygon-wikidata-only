@@ -69,7 +69,7 @@ Maintained by **Noé Flandre**.
 
 ## Coverage
 
-![Coverage Map](coverage_map.png)
+![Coverage Map](assets/coverage_map.png)
 
 ## Geographic coverage
 

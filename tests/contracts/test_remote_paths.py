@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+    LEGACY_REMOTE_COVERAGE_MAP_FILE,
     REMOTE_ARTICLES_DIR,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_COVERAGE_MAP_FILE,
@@ -25,7 +26,8 @@ def test_directory_constants_are_stable() -> None:
 
 
 def test_asset_paths_are_stable() -> None:
-    assert REMOTE_COVERAGE_MAP_FILE == "coverage_map.png"
+    assert REMOTE_COVERAGE_MAP_FILE == "assets/coverage_map.png"
+    assert LEGACY_REMOTE_COVERAGE_MAP_FILE == "coverage_map.png"
     assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE == ("assets/geographic_wikipedia_text_coverage.png")
     assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE == "assets/geographic_polygon_count.png"
 

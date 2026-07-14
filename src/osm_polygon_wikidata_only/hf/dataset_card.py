@@ -32,6 +32,11 @@ from osm_polygon_wikidata_only.augmentation.schema_descriptions import (
     FACT_DESCRIPTIONS,
     SECTION_DESCRIPTIONS,
 )
+from osm_polygon_wikidata_only.hf.repo_layout import (
+    REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+)
 
 
 def render_dataset_card(
@@ -107,20 +112,20 @@ def render_dataset_card(
         f"Generated on {today}.\n\n"
         f"Maintained by **{maintainer}**.\n\n"
         "## Coverage\n\n"
-        "![Coverage Map](coverage_map.png)\n\n"
+        f"![Coverage Map]({REMOTE_COVERAGE_MAP_FILE})\n\n"
         "## Geographic coverage\n\n"
         "Both maps below aggregate dataset polygons into H3 cells at the "
         "same resolution. All denominators and counts are conditional on "
         "each polygon carrying an OSM `wikidata=*` tag.\n\n"
         "### Wikipedia text coverage\n\n"
-        "![Geographic Wikipedia Text Coverage](assets/geographic_wikipedia_text_coverage.png)\n\n"
+        f"![Geographic Wikipedia Text Coverage]({REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE})\n\n"
         "`coverage_rate(h) = covered_polygons(h) / all_dataset_polygons(h)`, "
         "where a covered polygon has at least one linked Wikipedia article "
         "with non-empty text. Cell colour encodes this fraction from 0% to "
         "100%; grey cells hold fewer than 20 polygons and are not "
         "statistically meaningful.\n\n"
         "### Polygon density\n\n"
-        "![Geographic Polygon Density](assets/geographic_polygon_count.png)\n\n"
+        f"![Geographic Polygon Density]({REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE})\n\n"
         "`polygon_count(h) = number of dataset polygons whose centroid "
         "belongs to H3 cell h`. Colour encodes the raw count on a "
         "logarithmic scale because counts are highly skewed across the world. "

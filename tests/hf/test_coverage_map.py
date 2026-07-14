@@ -15,13 +15,17 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     generate_coverage_map,
     load_centroids_from_parquet,
 )
-from osm_polygon_wikidata_only.hf.repo_layout import REMOTE_COVERAGE_MAP_FILE
+from osm_polygon_wikidata_only.hf.repo_layout import (
+    LEGACY_REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_COVERAGE_MAP_FILE,
+)
 
 # --- repo_layout --------------------------------------------------------
 
 
 def test_remote_coverage_map_path() -> None:
-    assert REMOTE_COVERAGE_MAP_FILE == "coverage_map.png"
+    assert REMOTE_COVERAGE_MAP_FILE == "assets/coverage_map.png"
+    assert LEGACY_REMOTE_COVERAGE_MAP_FILE == "coverage_map.png"
 
 
 # --- helpers ------------------------------------------------------------
@@ -324,5 +328,8 @@ def test_render_dataset_card_includes_coverage_map() -> None:
         link_columns=["polygon_id"],
         link_descriptions={"polygon_id": "id"},
     )
-    assert "coverage_map.png" in markdown
-    assert "![Coverage" in markdown or "![Coverage Map]" in markdown
+    import re
+
+    assert "assets/coverage_map.png" in markdown
+    # The card no longer references the root path directly
+    assert not re.search(r"!\[[^]]*\]\(coverage_map\.png\)", markdown)

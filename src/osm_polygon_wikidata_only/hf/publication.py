@@ -127,6 +127,7 @@ from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+    LEGACY_REMOTE_COVERAGE_MAP_FILE,
     REMOTE_ARTICLES_DIR,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_COVERAGE_MAP_FILE,
@@ -416,6 +417,7 @@ def assemble_core_upload(
         add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(card_snapshot, path_in_repo="README.md"),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
+        delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
     ]
 
 
@@ -504,6 +506,7 @@ def assemble_region_upload(
                     path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
                 ),
                 add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
+                delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
             ]
         )
 

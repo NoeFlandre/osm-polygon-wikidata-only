@@ -45,7 +45,7 @@ def test_card_has_yaml_front_matter() -> None:
 
 def test_card_embeds_coverage_map_reference() -> None:
     md = _render()
-    assert "![Coverage Map](coverage_map.png)" in md
+    assert "![Coverage Map](assets/coverage_map.png)" in md
 
 
 def test_card_embeds_geographic_assets() -> None:

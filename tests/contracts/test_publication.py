@@ -351,8 +351,9 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
     assert remotes[3] == "manifests/processed_pbfs.json"
     assert remotes[4] == "assets/geographic_wikipedia_text_coverage.png"
     assert remotes[5] == "assets/geographic_polygon_count.png"
-    assert remotes[6] == "coverage_map.png"
-    assert remotes[7:] == [
+    assert remotes[6] == "assets/coverage_map.png"
+    assert remotes[7] == "coverage_map.png"
+    assert remotes[8:] == [
         "wikipedia/documents/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
         "wikivoyage/documents/monaco-latest.parquet",
@@ -362,7 +363,7 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
-    assert len(ops) == 15
+    assert len(ops) == 16
 
 
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
@@ -467,9 +468,10 @@ def test_assemble_core_upload_returns_eight_entries(
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
         "README.md",
+        "assets/coverage_map.png",
         "coverage_map.png",
     ]
-    assert len(ops) == 8
+    assert len(ops) == 9
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -799,7 +801,7 @@ def test_legacy_core_command_submits_exactly_once(
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 8
+    assert len(ops) == 9
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -975,9 +977,9 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
         "Sync complete region monaco-latest",
         "Sync complete region andorra-latest",
     }
-    # PROCESS state (with core): 15 ops (7 core + 7 augmentation
-    # + migration ``delete`` op).
-    assert len(by_message["Sync complete region monaco-latest"]) == 15
+    # PROCESS state (with core): 16 ops (7 core + 7 augmentation
+    # + 2 migration ``delete`` ops).
+    assert len(by_message["Sync complete region monaco-latest"]) == 16
     # AUGMENT state (no core): 8 ops (5 sidecars + canonical
     # augmentation ``add`` + legacy augmentation ``delete`` + README).
     assert len(by_message["Sync complete region andorra-latest"]) == 8
@@ -1339,9 +1341,10 @@ def test_publication_plan_is_deterministic_and_unique(
         )
         == 1
     )
+    assert sum(op.path_in_repo == "coverage_map.png" for op in deletions) == 1
     # 7 core + 7 augmentation additions (5 sidecars + README + canonical manifest)
-    # + 1 legacy deletion = 15 total ops.
-    assert len(ops) == 15, f"unexpected plan length: {len(ops)} {ops}"
+    # + 2 legacy deletions = 16 total ops.
+    assert len(ops) == 16, f"unexpected plan length: {len(ops)} {ops}"
 
 
 # ---------------------------------------------------------------------------
@@ -1446,5 +1449,63 @@ def test_upload_files_deletion_is_idempotent_when_remote_missing(tmp_path: Path)
         {
             "action": "add",
             "path_in_repo": "manifests/augmentation_manifest.json",
+        }
+    ]
+
+
+def test_upload_files_rejects_legacy_coverage_map_only_when_canonical_missing() -> None:
+    """Safety net: a publication commit that deletes the legacy coverage map
+    without uploading the canonical replacement must be refused.
+    """
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    hub = StubHfHub()
+    with pytest.raises(UploadError, match="canonical"):
+        ops_mod.upload_files(
+            REPO_ID,
+            ops=[delete_op("coverage_map.png")],
+            hub=hub,
+            token="stub-token",
+            commit_message="dangling delete",
+        )
+
+
+def test_upload_files_coverage_map_deletion_is_idempotent_when_remote_missing(
+    tmp_path: Path,
+) -> None:
+    """Deleting a remote coverage map that doesn't exist (e.g. after migration)
+    must be a no-op, not an error.
+    """
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.plan import (
+        add_op,
+        delete_op,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    canonical = tmp_path / "c.png"
+    canonical.touch()
+
+    hub = StubHfHub(remote_files=set())
+    plan = [
+        add_op(canonical, path_in_repo="assets/coverage_map.png"),
+        delete_op("coverage_map.png"),
+    ]
+    ops_mod.upload_files(
+        REPO_ID,
+        ops=plan,
+        hub=hub,
+        token="stub-token",
+        commit_message="migration commit",
+    )
+    # Exactly one commit containing only the canonical addition.
+    assert len(hub.commits) == 1
+    assert hub.commits[0]["operations"] == [
+        {
+            "action": "add",
+            "path_in_repo": "assets/coverage_map.png",
         }
     ]

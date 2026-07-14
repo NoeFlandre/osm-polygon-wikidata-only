@@ -46,6 +46,7 @@ __all__ = [
 # in the same commit is unsafe; ``upload_files`` enforces that.
 LEGACY_PATHS_REQUIRING_CANONICAL: dict[str, str] = {
     "augmentation/manifests/augmentation_manifest.json": "manifests/augmentation_manifest.json",
+    "coverage_map.png": "assets/coverage_map.png",
 }
 
 
