@@ -33,6 +33,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     completed_region_stems,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
@@ -76,13 +77,13 @@ def _enqueue_core_upload(
     """
     from osm_polygon_wikidata_only.hf.publication import assemble_core_upload
 
-    files = assemble_core_upload(
+    ops = assemble_core_upload(
         data_root=data_root,
         repo_id=repo_id,
         core=result,
         world_land_warning=LOGGER.warning,
     )
-    upload_queue.submit(files, commit_message)
+    upload_queue.submit(ops, commit_message)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -164,26 +165,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 hub = StubHfHub() if args.dry_run else None
 
                 def _submit(
-                    files: list[tuple[Path, str]],
+                    ops: list[PublicationOp],
                     message: str,
                     _hub: StubHfHub | None = hub,
                 ) -> None:
                     upload_files(
                         settings.repo_id,
-                        files,
+                        ops=ops,
                         hub=_hub,
                         token=settings.hf_token,
                         commit_message=message,
                         num_threads=args.upload_threads,
                     )
 
-                files = assemble_augmentation_upload(
+                ops = assemble_augmentation_upload(
                     data_root=data_root,
                     repo_id=settings.repo_id,
                     augmentation=augmentation_result,
                 )
                 _submit(
-                    files,
+                    ops,
                     args.commit_message or f"Add text augmentation for {stem}",
                 )
         LOGGER.info("Done. %d region augmentation(s).", len(augmentation_results))
@@ -202,10 +203,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     hub = StubHfHub() if args.push and args.dry_run else None
     if args.push:
 
-        def upload_job(files: list[tuple[Path, str]], message: str) -> None:
+        def upload_job(ops: list[PublicationOp], message: str) -> None:
             upload_files(
                 settings.repo_id,
-                files,
+                ops=ops,
                 hub=hub,
                 token=settings.hf_token,
                 commit_message=message,

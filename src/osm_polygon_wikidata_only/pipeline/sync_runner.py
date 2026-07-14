@@ -52,10 +52,9 @@ def run_sync(
     extract_pbf: Callable[[Path], Any],
     process_extracted_pbf: Callable[[Any], Any],
     augment_region: Callable[[RegionSyncState], Any],
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[tuple[Path, str]]]
-    | None = None,
+    build_upload_files: Callable[..., list[Any]] | None = None,
     commit_message: Callable[[RegionSyncState], str] | None = None,
-    submit_upload: Callable[[list[tuple[Path, str]], str], None] | None = None,
+    submit_upload: Callable[[list[Any], str], None] | None = None,
     close_uploads: Callable[[], list[str]] | None = None,
     on_complete: Callable[[RegionSyncState, Any], None] | None = None,
 ) -> int:
@@ -78,11 +77,13 @@ def run_sync(
     Optional collaborators (default ``None``):
 
     * ``build_upload_files(state, augmentation, core)``: returns a
-      list of ``(local_path, remote_path)`` tuples to commit as
-      one atomic upload. ``None`` means no publication assembly.
+      list of ``PublicationOp`` records (one atomic unit of work
+      per op, see ``osm_polygon_wikidata_only.hf._uploader.plan``)
+      to commit as one atomic upload. ``None`` means no
+      publication assembly.
     * ``commit_message(state)``: returns the per-region commit
       message. Defaults to ``f"Sync complete region {state.stem}"``.
-    * ``submit_upload(files, message)``: enqueues one atomic
+    * ``submit_upload(ops, message)``: enqueues one atomic
       commit. ``None`` means no upload submission.
     * ``close_uploads()``: returns a list of failed-job names from
       the upload queue. ``None`` means no queue is open.
@@ -189,18 +190,18 @@ def _maybe_submit(
     state: RegionSyncState,
     augmentation: Any,
     core: Any | None,
-    submit_upload: Callable[[list[tuple[Path, str]], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[tuple[Path, str]]] | None,
+    submit_upload: Callable[[list[Any], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
     commit_message: Callable[[RegionSyncState], str] | None,
 ) -> None:
     if submit_upload is None or build_upload_files is None:
         return
-    files = build_upload_files(state, augmentation, core)
-    if not files:
+    ops = build_upload_files(state, augmentation, core)
+    if not ops:
         return
     message = (
         commit_message(state)
         if commit_message is not None
         else f"Sync complete region {state.stem}"
     )
-    submit_upload(files, message)
+    submit_upload(ops, message)

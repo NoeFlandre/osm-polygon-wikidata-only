@@ -3,7 +3,8 @@
 This module owns:
 
 * :func:`upload_parquet`: per-file upload.
-* :func:`upload_files`: atomic, concurrent commit of multiple files.
+* :func:`upload_files`: atomic, concurrent commit of multiple files,
+  optionally with deletes via the ``ops`` parameter.
 * :func:`upload_manifest`: thin wrapper over :func:`upload_parquet`
   with a manifest-default commit message.
 * :func:`upload_card`: in-memory README upload via a buffered
@@ -20,11 +21,12 @@ from __future__ import annotations
 
 import io
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
 from .errors import UploadError
+from .plan import PublicationOp
 from .protocol import HfHub
 from .token import _resolve_hf_token
 
@@ -37,6 +39,14 @@ __all__ = [
     "upload_manifest",
     "upload_parquet",
 ]
+
+
+# Remote paths whose deletion is part of the canonical-plan
+# migration. Deleting one of these WITHOUT its canonical companion
+# in the same commit is unsafe; ``upload_files`` enforces that.
+LEGACY_PATHS_REQUIRING_CANONICAL: dict[str, str] = {
+    "augmentation/manifests/augmentation_manifest.json": "manifests/augmentation_manifest.json",
+}
 
 
 def _build_hf_api(
@@ -168,8 +178,9 @@ def upload_parquet(
 
 def upload_files(
     repo_id: str,
-    files: Iterable[tuple[Path, str]],
+    files: Iterable[tuple[Path, str]] | None = None,
     *,
+    ops: Sequence[PublicationOp] | None = None,
     hub: HfHub | None = None,
     token: str | None = None,
     commit_message: str,
@@ -177,33 +188,55 @@ def upload_files(
     _resolve_token: Any = _resolve_hf_token,
     _api_factory: Any = None,
 ) -> str:
-    """Publish multiple files in one atomic, concurrent Hub commit."""
-    entries = list(files)
-    if not entries:
+    """Publish multiple files (and optional deletes) in one atomic, concurrent Hub commit.
+
+    Two equally supported signatures:
+
+    * Legacy ``upload_files(repo_id, files=[(local, remote), ...], commit_message=...)``
+      -- a homogeneous list of additive uploads. Used by the existing
+      CLI flows.
+    * New ``upload_files(repo_id, ops=[PublicationOp(...)], commit_message=...)``
+      -- a heterogeneous list of additive and deletion ops. The op
+      API lets the publication layer unify the augmentation manifest
+      under ``manifests/`` by DELETING the legacy augmentation path
+      in the SAME atomic commit as the canonical upload.
+
+    Exactly one of ``files`` or ``ops`` must be supplied. Mixing
+    both raises ``UploadError``. The atomic-commit guarantee holds
+    for both signatures: a single ``create_commit`` call always
+    represents the full set of operations.
+    """
+    if (files is None) == (ops is None):
+        raise UploadError("upload_files requires exactly one of `files=` or `ops=`")
+    operations_obj, add_paths, delete_paths = _build_operations(
+        files=list(files) if files is not None else None,
+        ops=list(ops) if ops is not None else None,
+    )
+    # Safety net: refuse a commit that DELETES a legacy remote path
+    # WITHOUT uploading its canonical replacement in the same commit.
+    # Production code emits paired (add canonical, delete legacy)
+    # via ``hf._uploader.plan.add_op`` / ``delete_op`` in
+    # publication.py; this check is the structural safety net
+    # preventing any accidental dangling-delete of a manifest
+    # migration target.
+    for legacy, canonical in LEGACY_PATHS_REQUIRING_CANONICAL.items():
+        if legacy in delete_paths and canonical not in add_paths:
+            raise UploadError(
+                f"Refusing to delete legacy {legacy!r} without also uploading its "
+                f"canonical replacement {canonical!r} in the same commit."
+            )
+    if not operations_obj:
         raise UploadError("Cannot create an empty upload commit")
-    if num_threads < 1:
-        raise ValueError("num_threads must be >= 1")
-    remote_paths = [remote for _, remote in entries]
+    remote_paths = [op.path_in_repo for op in operations_obj]
     if len(remote_paths) != len(set(remote_paths)):
         raise UploadError("Upload commit contains duplicate remote paths")
-    for local_path, _ in entries:
-        if not local_path.exists():
-            raise UploadError(f"Local file does not exist: {local_path}")
-    try:
-        from huggingface_hub import CommitOperationAdd
-    except ImportError as e:  # pragma: no cover
-        raise UploadError("huggingface_hub is required for batch uploads.") from e
-    operations = [
-        CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=str(local_path))
-        for local_path, remote_path in entries
-    ]
     client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
     _ensure_repo_exists(client, repo_id)
-    LOGGER.info("Uploading %d files atomically to %s", len(operations), repo_id)
+    LOGGER.info("Uploading %d ops atomically to %s", len(operations_obj), repo_id)
     try:
         result = client.create_commit(
             repo_id=repo_id,
-            operations=operations,
+            operations=operations_obj,
             commit_message=commit_message,
             repo_type="dataset",
             num_threads=num_threads,
@@ -211,6 +244,56 @@ def upload_files(
     except Exception as error:
         raise _translate_hf_error(error, repo_id=repo_id) from error
     return str(result)
+
+
+def _build_operations(
+    *,
+    files: list[tuple[Path, str]] | None,
+    ops: list[PublicationOp] | None,
+) -> tuple[list[Any], set[str], set[str]]:
+    """Translate either signature into HF commit operations.
+
+    Returns ``(operations, add_paths, delete_paths)``. ``add_paths``
+    is the set of remote paths present in any ``add`` op;
+    ``delete_paths`` is the set of remote paths targeted by any
+    ``delete`` op. Both sets feed the migration safety-net.
+    """
+    from huggingface_hub import CommitOperationAdd, CommitOperationDelete
+
+    add_paths: set[str] = set()
+    delete_paths: set[str] = set()
+    out: list[Any] = []
+    if ops is not None:
+        for op in ops:
+            if op.action == "add":
+                assert op.local_path is not None
+                if not op.local_path.exists():
+                    raise UploadError(f"Local file does not exist: {op.local_path}")
+                out.append(
+                    CommitOperationAdd(
+                        path_in_repo=op.path_in_repo,
+                        path_or_fileobj=str(op.local_path),
+                    )
+                )
+                add_paths.add(op.path_in_repo)
+            elif op.action == "delete":
+                out.append(CommitOperationDelete(path_in_repo=op.path_in_repo))
+                delete_paths.add(op.path_in_repo)
+            else:  # pragma: no cover - dataclass enforces the union
+                raise UploadError(f"Unknown action: {op.action!r}")
+    else:
+        assert files is not None
+        for local_path, remote_path in files:
+            if not local_path.exists():
+                raise UploadError(f"Local file does not exist: {local_path}")
+            out.append(
+                CommitOperationAdd(
+                    path_in_repo=remote_path,
+                    path_or_fileobj=str(local_path),
+                )
+            )
+            add_paths.add(remote_path)
+    return out, add_paths, delete_paths
 
 
 def upload_manifest(

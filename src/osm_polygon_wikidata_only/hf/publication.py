@@ -1,7 +1,10 @@
 """Pure dataset publication assembly.
 
-This module owns the construction of ``(local_path, remote_path)``
-upload file lists for the three documented publication contracts:
+This module owns the construction of publication-op lists for the
+three documented publication contracts. Assemblers return
+``list[PublicationOp]`` -- one ``add`` op per local artifact, plus
+an explicit ``delete`` op for the legacy augmentation-manifest path
+so the migration commit unifies the remote manifests directory.
 
 * Legacy core publication
   (called by :func:`cli.commands._enqueue_core_upload`):
@@ -13,6 +16,7 @@ upload file lists for the three documented publication contracts:
     6. geographic polygon count
     7. README
     8. legacy coverage map
+
 * Unified sync with changed core
   (called by ``cli.run_sync._build_region_publication``):
     1. polygons
@@ -27,8 +31,10 @@ upload file lists for the three documented publication contracts:
     10. wikivoyage documents
     11. wikivoyage sections
     12. wikidata facts
-    13. augmentation manifest snapshot
-    14. README
+    13. canonical augmentation manifest (add)
+    14. legacy augmentation manifest (delete)
+    15. README
+
 * Augmentation-only publication (legacy
   ``cli.commands._augmentation_upload_files`` behavior):
     1. wikipedia documents
@@ -36,17 +42,31 @@ upload file lists for the three documented publication contracts:
     3. wikivoyage documents
     4. wikivoyage sections
     5. wikidata facts
-    6. augmentation manifest (the original
-       ``augmentation_result.manifest_path``, NOT a stem snapshot)
-    7. README
+    6. canonical augmentation manifest (add)
+    7. legacy augmentation manifest (delete)
+    8. README
 
-The assembly functions are PURE: each returns the ordered file
-list but performs no upload and accepts no ``submit`` callable.
-CLI code performs exactly one queue/direct submission after
-successful assembly. Failures inside an assembler raise BEFORE
-any file is published: required local artifacts are validated at
-the top of each entry point, and snapshot generation failures
-propagate without being swallowed.
+Canonical remote layout
+------------------------
+::
+
+  manifests/
+    processed_pbfs.json
+    augmentation_manifest.json
+
+The legacy ``augmentation/manifests/augmentation_manifest.json``
+path is referenced only by the explicitly-named
+:data:`osm_polygon_wikidata_only.hf.repo_layout.LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE`
+constant and disappears from the remote after the first atomic
+migration commit succeeds.
+
+The assembly functions are PURE: each returns the ordered op list
+but performs no upload and accepts no ``submit`` callable. CLI code
+performs exactly one queue/direct submission after successful
+assembly. Failures inside an assembler raise BEFORE any file is
+published: required local artifacts are validated at the top of
+each entry point, and snapshot generation failures propagate
+without being swallowed.
 
 The module owns no HF upload state, no
 :class:`BackgroundUploadQueue`, and no CLI concerns. Snapshot
@@ -84,6 +104,11 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
     compute_augmentation_stats,
 )
+from osm_polygon_wikidata_only.hf._uploader.plan import (
+    PublicationOp,
+    add_op,
+    delete_op,
+)
 from osm_polygon_wikidata_only.hf.coverage_map import (
     ensure_world_land,
     generate_coverage_map,
@@ -101,7 +126,9 @@ from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     generate_geographic_text_coverage as _generate_geographic_text_coverage,
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
+    LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_ARTICLES_DIR,
+    REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
@@ -114,6 +141,31 @@ from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.publication")
+
+
+def _augmentation_migration_ops(
+    augmentation_manifest_path: Path,
+) -> list[PublicationOp]:
+    """Return the augmentation-manifest ops that unify the remote layout.
+
+    Always two ops:
+
+    * ``add`` of the canonical
+      ``REMOTE_AUGMENTATION_MANIFEST_FILE`` (whose local source is
+      the per-region augmentation-manifest snapshot or the original
+      ``augmentation_result.manifest_path``).
+    * ``delete`` of the legacy
+      ``LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE`` -- safely
+      idempotent on every subsequent publication (the remote file
+      is already gone).
+    """
+    return [
+        add_op(
+            augmentation_manifest_path,
+            path_in_repo=REMOTE_AUGMENTATION_MANIFEST_FILE,
+        ),
+        delete_op(LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +364,7 @@ def coverage_refresh_required(core: object | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Assembly contracts (pure: each returns the ordered file list)
+# Assembly contracts (pure: each returns the ordered op list)
 # ---------------------------------------------------------------------------
 
 
@@ -322,10 +374,10 @@ def assemble_core_upload(
     repo_id: str,
     core: ProcessResult,
     world_land_warning: Callable[[str], None],
-) -> list[tuple[Path, str]]:
-    """Assemble the legacy core publication file list.
+) -> list[PublicationOp]:
+    """Assemble the legacy core publication op list.
 
-    Returns the ordered list of ``(local_path, remote_path)`` tuples:
+    Returns the ordered list of :class:`PublicationOp` records:
 
     1. polygons
     2. articles
@@ -339,7 +391,9 @@ def assemble_core_upload(
     The function is pure: no HF upload state is owned here. The
     caller submits the returned list. Required artifacts are
     validated before any snapshot is written, and any snapshot
-    failure propagates without producing a partial file list.
+    failure propagates without producing a partial op list. The
+    legacy core publication does NOT touch the augmentation
+    manifests directory at all.
     """
     _validate_core_artifacts(core)
     snapshot, card_snapshot = snapshot_upload_manifests(data_root=data_root, core=core)
@@ -351,17 +405,17 @@ def assemble_core_upload(
     )
     write_readme_snapshot(data_root, repo_id, card_snapshot)
     return [
-        (core.polygons_path, f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
-        (core.articles_path, f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
-        (
+        add_op(core.polygons_path, path_in_repo=f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
+        add_op(core.articles_path, path_in_repo=f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
+        add_op(
             core.polygon_articles_path,
-            f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
+            path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
         ),
-        (snapshot, REMOTE_MANIFEST_FILE),
-        (geo_snapshot, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-        (polygon_count_snapshot, REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-        (card_snapshot, "README.md"),
-        (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
+        add_op(snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+        add_op(geo_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+        add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+        add_op(card_snapshot, path_in_repo="README.md"),
+        add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
     ]
 
 
@@ -373,7 +427,7 @@ def assemble_region_upload(
     augmentation: AugmentationResult,
     core: ProcessResult | None,
     world_land_warning: Callable[[str], None] | None,
-) -> list[tuple[Path, str]]:
+) -> list[PublicationOp]:
     """Assemble one atomic region upload (sync-dir publication).
 
     File ordering follows the documented contract. When ``core`` is
@@ -382,15 +436,16 @@ def assemble_region_upload(
     augmentation block is produced. Coverage assets are refreshed
     only when ``core`` is not ``None``.
 
+    The augmentation block ALWAYS emits the canonical
+    ``add`` op + the legacy ``delete`` op. The first publication
+    after the migration picks up the new canonical path and removes
+    the legacy object. Subsequent publications are idempotent: the
+    delete op affects a path that no longer exists.
+
     The function is pure: no HF upload state is owned here. The
     caller submits the returned list. Required artifacts are
     validated before any snapshot is written, and any snapshot
-    failure propagates without producing a partial file list.
-
-    ``world_land_warning`` controls the world-land fallback policy.
-    Pass a logging-like callable to record a warning when land
-    data is unavailable, or ``None`` to swallow the exception
-    silently (the unified-sync policy).
+    failure propagates without producing a partial op list.
     """
     if core is not None:
         _validate_core_artifacts(core)
@@ -401,7 +456,7 @@ def assemble_region_upload(
     atomic_write_text(augmentation_manifest_snapshot, augmentation.manifest_path.read_text())
     readme_snapshot = snapshots / "README.md"
 
-    files: list[tuple[Path, str]] = []
+    ops: list[PublicationOp] = []
 
     if coverage_refresh_required(core):
         assert core is not None
@@ -428,52 +483,58 @@ def assemble_region_upload(
         _generate_geographic_text_coverage_snapshot(data_root, geographic_text_snapshot)
         geographic_polygon_count_snapshot = snapshots / "geographic_polygon_count.png"
         _generate_geographic_polygon_count_snapshot(data_root, geographic_polygon_count_snapshot)
-        files.extend(
+        ops.extend(
             [
-                (core.polygons_path, f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
-                (core.articles_path, f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
-                (
+                add_op(
+                    core.polygons_path,
+                    path_in_repo=f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}",
+                ),
+                add_op(
+                    core.articles_path,
+                    path_in_repo=f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}",
+                ),
+                add_op(
                     core.polygon_articles_path,
-                    f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
+                    path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
                 ),
-                (processed_manifest_snapshot, REMOTE_MANIFEST_FILE),
-                (geographic_text_snapshot, REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-                (
+                add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+                add_op(geographic_text_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+                add_op(
                     geographic_polygon_count_snapshot,
-                    REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
+                    path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
                 ),
-                (map_snapshot, REMOTE_COVERAGE_MAP_FILE),
+                add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
             ]
         )
 
-    files.extend(
+    ops.extend(
         [
-            (
+            add_op(
                 augmentation.wikipedia_documents_path,
-                f"wikipedia/documents/{stem}.parquet",
+                path_in_repo=f"wikipedia/documents/{stem}.parquet",
             ),
-            (
+            add_op(
                 augmentation.wikipedia_sections_path,
-                f"wikipedia/sections/{stem}.parquet",
+                path_in_repo=f"wikipedia/sections/{stem}.parquet",
             ),
-            (
+            add_op(
                 augmentation.wikivoyage_documents_path,
-                f"wikivoyage/documents/{stem}.parquet",
+                path_in_repo=f"wikivoyage/documents/{stem}.parquet",
             ),
-            (
+            add_op(
                 augmentation.wikivoyage_sections_path,
-                f"wikivoyage/sections/{stem}.parquet",
+                path_in_repo=f"wikivoyage/sections/{stem}.parquet",
             ),
-            (augmentation.wikidata_facts_path, f"wikidata/facts/{stem}.parquet"),
-            (
-                augmentation_manifest_snapshot,
-                "augmentation/manifests/augmentation_manifest.json",
+            add_op(
+                augmentation.wikidata_facts_path,
+                path_in_repo=f"wikidata/facts/{stem}.parquet",
             ),
-            (readme_snapshot, "README.md"),
+            *_augmentation_migration_ops(augmentation_manifest_snapshot),
+            add_op(readme_snapshot, path_in_repo="README.md"),
         ]
     )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
-    return files
+    return ops
 
 
 def assemble_augmentation_upload(
@@ -481,8 +542,8 @@ def assemble_augmentation_upload(
     data_root: DataRoot,
     repo_id: str,
     augmentation: AugmentationResult,
-) -> list[tuple[Path, str]]:
-    """Assemble one augmentation-only publication file list.
+) -> list[PublicationOp]:
+    """Assemble one augmentation-only publication op list.
 
     File ordering follows the documented contract:
 
@@ -491,17 +552,17 @@ def assemble_augmentation_upload(
     3. wikivoyage documents
     4. wikivoyage sections
     5. wikidata facts
-    6. augmentation manifest (the original
-       ``augmentation_result.manifest_path``, NOT a stem snapshot)
-    7. README
+    6. canonical augmentation manifest (add)
+    7. legacy augmentation manifest (delete)
+    8. README
 
     No coverage assets are regenerated. No new stem-augmentation
     manifest snapshot is created for this contract: the legacy
-    augmentation command uploads ``augmentation_result.manifest_path``
-    directly. The README snapshot is rendered by this function
-    immediately before returning, so the caller can submit the
-    resulting list directly. The function is pure: no HF upload
-    state is owned here.
+    augmentation command uploads the original
+    ``augmentation_result.manifest_path`` directly. The README
+    snapshot is rendered by this function immediately before
+    returning. The function is pure: no HF upload state is owned
+    here.
     """
     _validate_augmentation_artifacts(augmentation)
     snapshots = data_root.cache / "augmentation_upload_snapshots"
@@ -509,28 +570,34 @@ def assemble_augmentation_upload(
     readme_snapshot = snapshots / f"{augmentation.wikipedia_documents_path.stem}-README.md"
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
     return [
-        (
+        add_op(
             augmentation.wikipedia_documents_path,
-            str(augmentation.wikipedia_documents_path.relative_to(data_root.processed)),
+            path_in_repo=str(
+                augmentation.wikipedia_documents_path.relative_to(data_root.processed)
+            ),
         ),
-        (
+        add_op(
             augmentation.wikipedia_sections_path,
-            str(augmentation.wikipedia_sections_path.relative_to(data_root.processed)),
+            path_in_repo=str(augmentation.wikipedia_sections_path.relative_to(data_root.processed)),
         ),
-        (
+        add_op(
             augmentation.wikivoyage_documents_path,
-            str(augmentation.wikivoyage_documents_path.relative_to(data_root.processed)),
+            path_in_repo=str(
+                augmentation.wikivoyage_documents_path.relative_to(data_root.processed)
+            ),
         ),
-        (
+        add_op(
             augmentation.wikivoyage_sections_path,
-            str(augmentation.wikivoyage_sections_path.relative_to(data_root.processed)),
+            path_in_repo=str(
+                augmentation.wikivoyage_sections_path.relative_to(data_root.processed)
+            ),
         ),
-        (
+        add_op(
             augmentation.wikidata_facts_path,
-            str(augmentation.wikidata_facts_path.relative_to(data_root.processed)),
+            path_in_repo=str(augmentation.wikidata_facts_path.relative_to(data_root.processed)),
         ),
-        (augmentation.manifest_path, "augmentation/manifests/augmentation_manifest.json"),
-        (readme_snapshot, "README.md"),
+        *_augmentation_migration_ops(augmentation.manifest_path),
+        add_op(readme_snapshot, path_in_repo="README.md"),
     ]
 
 

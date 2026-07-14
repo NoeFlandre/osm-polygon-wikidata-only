@@ -12,6 +12,8 @@ from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
+from .plan import PublicationOp
+
 __all__ = ["StubHfHub"]
 
 
@@ -68,11 +70,32 @@ class StubHfHub:
         repo_type: str,
         num_threads: int,
     ) -> str:
-        paths = [str(operation.path_in_repo) for operation in operations]
+        ops: list[dict[str, Any]] = []
+        for operation in operations:
+            if isinstance(operation, PublicationOp):
+                ops.append(
+                    {
+                        "action": operation.action,
+                        "path_in_repo": operation.path_in_repo,
+                    }
+                )
+            else:  # real ``CommitOperationAdd`` / ``CommitOperationDelete``
+                # or similar duck-typed shape. Detect by class name
+                # because ``huggingface_hub.CommitOperationDelete``
+                # exposes no ``.action`` attribute.
+                cls_name = type(operation).__name__
+                action = "delete" if "Delete" in cls_name else "add"
+                ops.append(
+                    {
+                        "action": action,
+                        "path_in_repo": getattr(operation, "path_in_repo", None),
+                    }
+                )
         self.commits.append(
             {
                 "repo_id": repo_id,
-                "paths": paths,
+                "paths": [op["path_in_repo"] for op in ops],
+                "operations": ops,
                 "commit_message": commit_message,
                 "repo_type": repo_type,
                 "num_threads": num_threads,
