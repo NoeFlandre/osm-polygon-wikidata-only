@@ -109,3 +109,39 @@ def test_architecture_documents_geographic_coverage_generation() -> None:
     assert "logarithmic" in architecture.lower()
     # The architecture doc must no longer claim opacity encodes polygon count.
     assert "opacity encodes" not in architecture.lower()
+
+
+def test_readme_documents_five_augmentation_sidecars() -> None:
+    """The source README must mention the five augmentation sidecars in the
+    Output schema section without claiming hardcoded counts."""
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    for path in (
+        "wikipedia/documents",
+        "wikipedia/sections",
+        "wikivoyage/documents",
+        "wikivoyage/sections",
+        "wikidata/facts",
+    ):
+        assert path in readme, f"missing augmentation path {path} in README"
+
+
+def test_readme_documents_regenerated_dataset_card() -> None:
+    """The source README must explain that the published dataset card is
+    regenerated automatically and reports factual statistics derived from
+    the local Parquet files."""
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    assert "Generated dataset card" in readme
+    # 'regenerated' is on one line and 'automatically' on the next.
+    assert "regenerated" in readme and "automatically" in readme
+    assert "local finalized Parquet" in readme or "local finalized Parquet files" in readme
+    assert "write_readme_snapshot" in readme
+
+
+def test_architecture_documents_augmentation_readme_recomputation() -> None:
+    """Architecture doc must document that ``write_readme_snapshot``
+    recomputes both core and augmentation statistics."""
+    architecture = (REPOSITORY / "docs" / "architecture.md").read_text(encoding="utf-8")
+    assert "write_readme_snapshot" in architecture
+    assert "core and augmentation stats" in architecture or (
+        "recomputes both" in architecture.lower()
+    )

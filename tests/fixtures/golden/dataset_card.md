@@ -6,6 +6,7 @@ tags:
   - openstreetmap
   - wikidata
   - wikipedia
+  - wikivoyage
   - polygons
   - geospatial
   - multilingual
@@ -22,6 +23,26 @@ configs:
     data_files:
       - split: polygon_articles
         path: polygon_articles/*.parquet
+  - config_name: wikipedia_documents
+    data_files:
+      - split: wikipedia_documents
+        path: wikipedia/documents/*.parquet
+  - config_name: wikipedia_sections
+    data_files:
+      - split: wikipedia_sections
+        path: wikipedia/sections/*.parquet
+  - config_name: wikivoyage_documents
+    data_files:
+      - split: wikivoyage_documents
+        path: wikivoyage/documents/*.parquet
+  - config_name: wikivoyage_sections
+    data_files:
+      - split: wikivoyage_sections
+        path: wikivoyage/sections/*.parquet
+  - config_name: wikidata_facts
+    data_files:
+      - split: wikidata_facts
+        path: wikidata/facts/*.parquet
 dataset_info:
   polygon_count: 1
   unique_wikidata_count: 1
@@ -42,7 +63,7 @@ Optional additive text augmentation is published without replacing those tables:
 - `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`
 - `wikidata/facts/<stem>.parquet`
 
-Generated on 2026-07-13.
+Generated on YYYY-MM-DD.
 
 Maintained by **Noé Flandre**.
 
@@ -155,6 +176,83 @@ Both maps below aggregate dataset polygons into H3 cells at the same resolution.
 | `page_id` | MediaWiki page ID of the linked article. |
 | `revision_id` | MediaWiki revision ID of the linked article. |
 | `is_best_language` | True if this row's language matches the polygon's `best_language`. |
+
+### `wikipedia/documents` and `wikivoyage/documents`
+
+| Column | Description |
+| --- | --- |
+| `document_id` | Deterministic document identifier (`<wikidata>:<project>:<language>:<page_id>:<revision_id>`). |
+| `article_id` | Stable article identifier that pairs this document with its `articles/<stem>.parquet` row. |
+| `wikidata` | Wikidata QID this document is linked to. |
+| `project` | Wiki project name: `wikipedia` or `wikivoyage`. |
+| `language` | Wikipedia or Wikivoyage language code (e.g. `en`). |
+| `site` | Wikidata sitelink host, e.g. `enwiki` or `enwikivoyage`. |
+| `title` | Page title as returned by the MediaWiki API. |
+| `url` | Canonical URL of the page. |
+| `page_id` | MediaWiki page ID (integer). |
+| `revision_id` | MediaWiki revision ID used to fetch the page text (integer). |
+| `revision_timestamp` | ISO-8601 timestamp of the revision. |
+| `retrieved_at` | ISO-8601 UTC timestamp when the pipeline fetched the page. |
+| `full_text` | Cleaned plain-text document body (Wikipedia articles or Wikivoyage pages). |
+| `full_text_format` | Encoding of `full_text`; always `plain_text`. |
+| `article_length_chars` | Length of `full_text` in characters. |
+| `article_length_words` | Approximate whitespace-token count of `full_text`. |
+| `article_length_tokens_estimate` | Rough token estimate: `chars / 4`. |
+| `license` | License string (`CC BY-SA` for Wikipedia/Wikivoyage text). |
+| `attribution` | Attribution string for the page. |
+| `source_api` | Which API was queried: `mediawiki_action_api` or `wikivoyage_rest_api`. |
+| `fetch_status` | One of: `ok`, `page_not_found`, `http_error`, `rate_limited`, `parse_error`, `empty_text`. |
+| `fetch_error` | Short diagnostic on failure, empty string on success. |
+| `content_hash` | Stable SHA-256 of `full_text` for change tracking. |
+
+### `wikipedia/sections` and `wikivoyage/sections`
+
+| Column | Description |
+| --- | --- |
+| `section_id` | Deterministic SHA-256 over `(document_id, section_index, anchor)`. |
+| `document_id` | FK back to `documents` (Wikipedia or Wikivoyage). |
+| `article_id` | FK back to the corresponding `articles` row. |
+| `wikidata` | Wikidata QID (denormalized for fast filtering). |
+| `project` | Wiki project name: `wikipedia` or `wikivoyage`. |
+| `language` | Wikipedia or Wikivoyage language code. |
+| `site` | Wikidata sitelink host. |
+| `page_id` | MediaWiki page ID (integer). |
+| `revision_id` | MediaWiki revision ID (integer). |
+| `section_index` | Sequential position of the section inside the document (integer). |
+| `heading` | Section heading, or empty string when the section is the lead. |
+| `anchor` | Section anchor after MediaWiki parsing. |
+| `level` | Heading level (1..6), or 0 for the lead section (integer). |
+| `parent_section_id` | Section ID of the enclosing section, or empty string. |
+| `section_path` | JSON array of ancestor section IDs, in order. |
+| `text` | Plain-text section body. |
+| `text_length_chars` | Length of `text` in characters (integer). |
+| `text_length_words` | Approximate whitespace-token count of `text` (integer). |
+| `text_length_tokens_estimate` | Rough token estimate: `chars / 4` (integer). |
+| `content_hash` | Stable SHA-256 of `section.text`. |
+| `license` | License string for this section. |
+| `attribution` | Attribution string for this section. |
+
+### `wikidata/facts`
+
+| Column | Description |
+| --- | --- |
+| `fact_id` | Deterministic SHA-256 over `(subject, property, value, ordinal)`. |
+| `wikidata` | Wikidata QID the fact belongs to (the subject). |
+| `property_id` | Property P-id (e.g. `P17`). |
+| `property_label_en` | English label for the property, when available. |
+| `property_labels` | Deterministic JSON object of property labels per language. |
+| `value_type` | Wikidata value datatype: `wikibase-entityid`, `string`, `quantity`, `time`, ... |
+| `value_entity_id` | Entity-valued object QID, when the value is a Wikidata entity. |
+| `value_label_en` | English label for the value entity, when available. |
+| `value_labels` | Deterministic JSON object of value labels per language. |
+| `value_text` | Rendered text representation of the value. |
+| `numeric_value` | Numeric amount for `quantity`-typed values, otherwise null. |
+| `unit_entity_id` | Wikidata QID of the unit (e.g. `Q11573` for metre). |
+| `rank` | Wikidata rank: `preferred`, `normal`, or `deprecated`. |
+| `qualifiers` | Deterministic JSON object of qualifier snaks, or `{}` when absent. |
+| `references` | Deterministic JSON array of reference groups, or `[]` when absent. |
+| `retrieved_at` | ISO-8601 UTC timestamp when the pipeline fetched the entity. |
+| `source_api` | Which API was queried (always `wikidata_action_api`). |
 
 
 ## Data sources & licenses

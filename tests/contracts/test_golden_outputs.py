@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
@@ -174,10 +176,68 @@ def _build_result_objects(data_root: DataRoot) -> tuple[ProcessResult, Augmentat
 
 
 def test_dataset_card_matches_golden() -> None:
-    """The dataset card Markdown must match the checked-in golden file exactly."""
+    """The dataset card Markdown must match the checked-in golden file exactly.
+
+    The deterministic ``Generated on <date>`` line is normalized to a
+    fixed placeholder in BOTH expected and actual Markdown, so the
+    golden never depends on today/tomorrow or wall-clock drift.
+    """
     golden_path = GOLDEN / "dataset_card.md"
     assert golden_path.exists(), "dataset card golden fixture missing"
-    assert _render_card() == golden_path.read_text(encoding="utf-8")
+    import re
+
+    actual = re.sub(DATE_LINE_PATTERN, DATE_PLACEHOLDER_LINE, _render_card())
+    expected = re.sub(DATE_LINE_PATTERN, DATE_PLACEHOLDER_LINE, golden_path.read_text())
+    assert actual == expected
+
+
+# The placeholder used in place of any wall-clock-derived date inside
+# the dataset card. Constants are kept module-level so the same
+# normalization is shared across tests/inspection.
+DATE_LINE_PATTERN = r"Generated on \d{4}-\d{2}-\d{2}\."
+DATE_PLACEHOLDER_LINE = "Generated on YYYY-MM-DD."
+
+
+def test_dataset_card_golden_date_is_invariant_to_injected_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The golden comparison must reject any dependency on wall-clock.
+
+    We monkeypatch ``datetime.now()`` to two distinct values and
+    re-render the card under each. After substituting both renders
+    with the fixed placeholder, the two outputs MUST be byte-identical
+    and MUST also match the golden fixture. A regression that adds
+    a wall-clock dependency would manifest as the two renders
+    diverging. The public ``render_dataset_card`` signature and
+    behaviour stay unchanged: the injection happens through the
+    test-only ``monkeypatch.setattr`` seam, not via a function arg.
+    """
+    import re
+    from datetime import datetime
+
+    from osm_polygon_wikidata_only.hf import dataset_card as dataset_card_mod
+
+    golden_path = GOLDEN / "dataset_card.md"
+    expected = re.sub(DATE_LINE_PATTERN, DATE_PLACEHOLDER_LINE, golden_path.read_text())
+
+    clock_2024 = datetime(2024, 1, 15, 12, 0, 0)
+    clock_2030 = datetime(2030, 7, 22, 6, 30, 0)
+
+    def render_at(clock_dt: datetime) -> str:
+        # Pin datetime.now(UTC) to the requested instant.
+        class _FrozenDatetime:
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                return clock_dt
+
+        monkeypatch.setattr(dataset_card_mod, "datetime", _FrozenDatetime)
+        rendered = _render_card()
+        monkeypatch.undo()
+        return rendered
+
+    rendered_one = re.sub(DATE_LINE_PATTERN, DATE_PLACEHOLDER_LINE, render_at(clock_2024))
+    rendered_two = re.sub(DATE_LINE_PATTERN, DATE_PLACEHOLDER_LINE, render_at(clock_2030))
+    assert rendered_one == rendered_two == expected
 
 
 def test_publication_file_list_matches_golden(tmp_path: Path) -> None:

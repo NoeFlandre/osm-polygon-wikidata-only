@@ -302,10 +302,18 @@ def test_pipeline_orchestrator_all_equals_phase_1_frozen_list() -> None:
 
 
 def test_hf_dataset_card_all_equals_phase_1_frozen_list() -> None:
+    """The Phase 1 frozen public surface is exactly ``render_dataset_card``.
+
+    The front-matter validator is NOT part of the public facade. It is
+    reachable only via direct module attribute access; this test pins
+    both the exact ``__all__`` membership and the documented invariant
+    that no new export was added to legitimize a private helper.
+    """
     from osm_polygon_wikidata_only.hf import dataset_card as facade
 
     frozen = {"render_dataset_card"}
     assert set(facade.__all__) == frozen
+    assert facade.render_dataset_card is not None
 
 
 def test_hf_uploader_all_equals_phase_1_frozen_list() -> None:
