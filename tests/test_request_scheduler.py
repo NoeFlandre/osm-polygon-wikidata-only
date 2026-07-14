@@ -297,6 +297,330 @@ def test_global_recovery_is_gradual_and_bounded() -> None:
     assert scheduler.current_requests_per_minute == 400
 
 
+# ---------------------------------------------------------------------------
+# Proportional systemic backoff tests (TDD Red)
+# ---------------------------------------------------------------------------
+
+
+def _make_proportional_scheduler(
+    now: list[float],
+    clock: object,
+    sleep: object,
+    *,
+    requests_per_minute: float = 1200.0,
+    active_host_window_s: float = 60.0,
+    minimum_systemic_hosts: int = 5,
+    systemic_host_fraction: float = 0.10,
+    host_throttle_window_s: float = 10.0,
+) -> AdaptiveRequestScheduler:
+    """Create a scheduler with the new proportional systemic parameters."""
+    return AdaptiveRequestScheduler(
+        max_in_flight=8,
+        requests_per_minute=requests_per_minute,
+        max_requests_per_minute=requests_per_minute,
+        minimum_requests_per_minute=200.0,
+        host_throttle_window_s=host_throttle_window_s,
+        active_host_window_s=active_host_window_s,
+        minimum_systemic_hosts=minimum_systemic_hosts,
+        systemic_host_fraction=systemic_host_fraction,
+        clock=clock,
+        sleep=sleep,
+    )
+
+
+def _activate_hosts(
+    scheduler: AdaptiveRequestScheduler,
+    hosts: tuple[str, ...],
+    *,
+    min_interval_s: float = 0.0,
+) -> None:
+    """Pace all hosts so they register as active."""
+    for host in hosts:
+        scheduler.pace_host(host, min_interval_s=min_interval_s)
+
+
+def test_proportional_195_hosts_3_throttled_no_global_reduction() -> None:
+    """With 195 active hosts, throttling 3 must NOT reduce the global rate."""
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    for i in range(3):
+        scheduler.report_host_throttled(hosts[i], 2.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_195_hosts_7_throttled_no_global_reduction() -> None:
+    """With 195 active hosts, throttling 7 must NOT reduce the global rate."""
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    for i in range(7):
+        scheduler.report_host_throttled(hosts[i], 2.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_every_throttled_host_gets_retry_after_cooldown() -> None:
+    """Each throttled host must receive its own Retry-After cooldown."""
+    now, sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    scheduler.report_host_throttled(hosts[0], 15.0)
+    scheduler.report_host_throttled(hosts[1], 30.0)
+
+    # Host[0] sleeps its full 15s cooldown.
+    scheduler.pace_host(hosts[0])
+    assert sleeps[-1] == pytest.approx(15.0)
+    # Host[1] had a 30s cooldown set at t=0. After host[0]'s sleep
+    # advanced the clock to t=15, the remaining cooldown is 15s.
+    scheduler.pace_host(hosts[1])
+    assert sleeps[-1] == pytest.approx(15.0)
+
+    # Rate is unchanged (only 2 of 195).
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_healthy_hosts_productive_while_bad_cool_down() -> None:
+    """Healthy hosts must keep working while throttled hosts are cooling down."""
+    now, sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    # Throttle 5 hosts with large cooldowns.
+    for i in range(5):
+        scheduler.report_host_throttled(hosts[i], 60.0)
+
+    # Healthy hosts must not be delayed by throttled host cooldowns.
+    before_len = len(sleeps)
+    scheduler.pace_host(hosts[100])
+    assert len(sleeps) == before_len  # no sleep for a healthy host
+
+    # Rate unchanged (5 < ceil(195 * 0.10) = 20).
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_threshold_triggers_exactly_one_global_reduction() -> None:
+    """Reaching the proportional threshold triggers exactly one global reduction.
+
+    For 195 active hosts with 10% fraction and min 5:
+    threshold = min(195, max(5, ceil(195 * 0.10))) = min(195, max(5, 20)) = 20
+    """
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    # Throttle exactly 20 distinct hosts (= threshold).
+    for i in range(20):
+        scheduler.report_host_throttled(hosts[i], 1.0)
+
+    assert scheduler.current_requests_per_minute == 600.0  # exactly one halving
+
+
+def test_proportional_one_below_threshold_no_reduction() -> None:
+    """One fewer than the threshold must NOT trigger global reduction.
+
+    threshold = 20 for 195 hosts; throttling 19 should not reduce.
+    """
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    for i in range(19):
+        scheduler.report_host_throttled(hosts[i], 1.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_small_population_all_throttled() -> None:
+    """Small population: 3 hosts, all 3 throttled → one global reduction.
+
+    threshold = min(3, max(5, ceil(3 * 0.10))) = min(3, 5) = 3
+    """
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = ("a.wikipedia.org", "b.wikipedia.org", "c.wikipedia.org")
+    _activate_hosts(scheduler, hosts)
+
+    for host in hosts:
+        scheduler.report_host_throttled(host, 1.0)
+
+    assert scheduler.current_requests_per_minute == 600.0
+
+
+def test_proportional_small_population_partial_no_reduction() -> None:
+    """Small population: 3 hosts, 2 throttled → no global reduction.
+
+    threshold = min(3, max(5, ceil(3 * 0.10))) = min(3, 5) = 3
+    Only 2 < 3 so no reduction.
+    """
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = ("a.wikipedia.org", "b.wikipedia.org", "c.wikipedia.org")
+    _activate_hosts(scheduler, hosts)
+
+    scheduler.report_host_throttled(hosts[0], 1.0)
+    scheduler.report_host_throttled(hosts[1], 1.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_inactive_hosts_expire_from_denominator() -> None:
+    """Hosts inactive beyond the active-host window must expire from the denominator.
+
+    Start with 195 active hosts (threshold=20). After the window elapses
+    with only 5 hosts refreshed, threshold = min(5, max(5, 1)) = 5.
+    """
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep, active_host_window_s=60.0)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    # Advance past the active window.
+    now[0] += 61.0
+
+    # Only 5 hosts are refreshed.
+    live_hosts = hosts[:5]
+    _activate_hosts(scheduler, live_hosts)
+
+    # threshold = min(5, max(5, ceil(5 * 0.10))) = min(5, 5) = 5
+    # Throttle all 5 → global reduction.
+    for host in live_hosts:
+        scheduler.report_host_throttled(host, 1.0)
+
+    assert scheduler.current_requests_per_minute == 600.0
+
+
+def test_proportional_host_reactivation_enters_denominator() -> None:
+    """A host becoming active again re-enters the denominator.
+
+    With 5 active hosts (threshold=5), adding a 6th raises threshold:
+    min(6, max(5, ceil(6 * 0.10))) = min(6, 5) = 5
+    Still 5. But with 50 active → min(50, max(5, 5)) = 5 ... so
+    let's test with 50 hosts: threshold=max(5, ceil(50*0.10))=5.
+    Actually for clean test: 60 hosts → ceil(60*0.10)=6 → threshold=6.
+    """
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep, active_host_window_s=60.0)
+    # Start with 10 active hosts → threshold = max(5, ceil(10*0.10)) = max(5,1) = 5
+    hosts_initial = tuple(f"h{i}.wikipedia.org" for i in range(10))
+    _activate_hosts(scheduler, hosts_initial)
+
+    # Advance past window so initial hosts expire.
+    now[0] += 61.0
+
+    # Re-activate 60 hosts (some new, some old) → threshold = max(5, ceil(60*0.10)) = 6
+    hosts_new = tuple(f"h{i}.wikipedia.org" for i in range(60))
+    _activate_hosts(scheduler, hosts_new)
+
+    # Throttle exactly 5 → below threshold (6), no reduction.
+    for i in range(5):
+        scheduler.report_host_throttled(hosts_new[i], 1.0)
+    assert scheduler.current_requests_per_minute == 1200.0
+
+    # Throttle one more (6th) → meets threshold, one reduction.
+    scheduler.report_host_throttled(hosts_new[5], 1.0)
+    assert scheduler.current_requests_per_minute == 600.0
+
+
+def test_proportional_duplicate_throttles_count_once() -> None:
+    """Duplicate throttles from one host count once toward systemic detection."""
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    # Throttle the same host 20 times — should count as 1 distinct host.
+    for _ in range(20):
+        scheduler.report_host_throttled(hosts[0], 1.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0
+
+
+def test_proportional_concurrent_reports_at_threshold_at_most_one_reduction() -> None:
+    """Concurrent reports at the threshold cause at most one global reduction."""
+    for _ in range(25):
+        now, _sleeps, clock, sleep = _fake_clock()
+        scheduler = _make_proportional_scheduler(now, clock, sleep)
+        hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+        _activate_hosts(scheduler, hosts)
+
+        # Use real threading to race 25 distinct host throttles (threshold=20).
+        barrier = threading.Barrier(25)
+
+        def report(host: str) -> None:
+            barrier.wait(timeout=5)
+            scheduler.report_host_throttled(host, 1.0)
+
+        threads = [threading.Thread(target=report, args=(hosts[i],)) for i in range(25)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        # Exactly one halving: 1200 → 600, not 300 or lower.
+        assert scheduler.current_requests_per_minute == 600.0
+
+
+def test_proportional_suppression_window_unchanged() -> None:
+    """Suppression window prevents a second reduction within the same window."""
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep, host_throttle_window_s=10.0)
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    _activate_hosts(scheduler, hosts)
+
+    # First wave: 20 throttled → one reduction (1200 → 600).
+    for i in range(20):
+        scheduler.report_host_throttled(hosts[i], 1.0)
+    assert scheduler.current_requests_per_minute == 600.0
+
+    # Second wave (within the same 10s window): additional throttles
+    # must NOT cause a second reduction.
+    for i in range(20, 40):
+        scheduler.report_host_throttled(hosts[i], 1.0)
+    assert scheduler.current_requests_per_minute == 600.0
+
+    # After the suppression window passes, a new wave CAN reduce.
+    now[0] += 11.0
+    _activate_hosts(scheduler, hosts)  # refresh active set
+    for i in range(40, 60):
+        scheduler.report_host_throttled(hosts[i], 1.0)
+    assert scheduler.current_requests_per_minute == 300.0
+
+
+def test_proportional_explicit_report_throttled_still_reduces() -> None:
+    """The process-wide report_throttled still unconditionally reduces."""
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+
+    scheduler.report_throttled(5.0)
+    assert scheduler.current_requests_per_minute == 600.0
+
+
+def test_proportional_existing_ceiling_and_inflight_enforced() -> None:
+    """Existing ceiling and in-flight limits remain enforced."""
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = _make_proportional_scheduler(now, clock, sleep)
+
+    assert scheduler.max_in_flight == 8
+    # Run operations and verify the rate doesn't exceed the configured max.
+    for _ in range(10):
+        scheduler.run(lambda: None)
+
+    snapshot = scheduler.snapshot()
+    assert snapshot.maximum_requests_per_minute == 1200.0
+    assert snapshot.max_in_flight == 8
+
+
 def test_concurrent_snapshots_are_thread_safe() -> None:
     scheduler = AdaptiveRequestScheduler(max_in_flight=4, requests_per_minute=100_000)
     stop = threading.Event()

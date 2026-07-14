@@ -25,7 +25,12 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     load_wikimedia_credentials,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+    SYSTEMIC_HOST_FRACTION,
+    SYSTEMIC_MINIMUM_HOSTS,
+    AdaptiveRequestScheduler,
+)
 from osm_polygon_wikidata_only.utils.retry import with_retries
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -56,6 +61,9 @@ class AugmentationWikimediaClient:
             requests_per_minute=rate,
             max_requests_per_minute=rate,
             minimum_requests_per_minute=min(200.0 if credentials else 60.0, rate),
+            active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+            minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+            systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
         )
         self._session = session or WikimediaSession(
             scheduler=self._scheduler,

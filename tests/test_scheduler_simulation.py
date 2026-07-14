@@ -356,3 +356,214 @@ def test_concurrency_scaling_demonstrates_in_flight_bottleneck(max_in_flight: in
 
     assert completions[0] >= 1
     assert scheduler.snapshot().max_in_flight == max_in_flight
+
+
+# ---------------------------------------------------------------------------
+# Production-topology proportional systemic backoff simulation
+# ---------------------------------------------------------------------------
+
+_PRODUCTION_HOSTS = tuple(f"h{i}.wikipedia.org" for i in range(195))
+_PRODUCTION_THROTTLED_COUNT = 5  # 3-7 in the real scenario, pick middle
+
+
+def _build_proportional_scheduler_via_cli(
+    clock: _SimulatedClock, tmp_path
+) -> AdaptiveRequestScheduler:
+    """Build a scheduler with proportional systemic threshold via CLI path."""
+    from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
+    from osm_polygon_wikidata_only.config.paths import DataRoot
+    from osm_polygon_wikidata_only.config.settings import Settings
+
+    environ = {
+        "WIKIMEDIA_BOT_USERNAME": "User@pipeline",
+        "WIKIMEDIA_BOT_PASSWORD": "secret",
+    }
+    runtime = build_wikimedia_runtime(Settings(), data_root=DataRoot(tmp_path), environ=environ)
+    scheduler = runtime.scheduler
+    object.__setattr__(scheduler, "_clock", clock.now)
+    object.__setattr__(scheduler, "_sleep", clock.sleep)
+    return scheduler
+
+
+def test_production_topology_proportional_keeps_ceiling(tmp_path) -> None:
+    """With ~195 hosts and 3-7 throttled, proportional policy keeps ceiling near max."""
+    clock = _SimulatedClock()
+    scheduler = _build_proportional_scheduler_via_cli(clock, tmp_path)
+    healthy = _PRODUCTION_HOSTS[_PRODUCTION_THROTTLED_COUNT:]
+    throttled = _PRODUCTION_HOSTS[:_PRODUCTION_THROTTLED_COUNT]
+
+    # Activate all hosts.
+    for host in list(healthy) + list(throttled):
+        scheduler.pace_host(host, min_interval_s=0.0)
+
+    # Throttle the bad hosts.
+    for host in throttled:
+        scheduler.report_host_throttled(host, 2.0)
+
+    # The active ceiling must remain at the maximum.
+    assert scheduler.current_requests_per_minute == _AUTH_CEILING
+
+
+def test_production_topology_fixed_threshold_collapses() -> None:
+    """With the old fixed threshold=3, 5 throttled hosts collapse the rate."""
+    clock = _SimulatedClock()
+    scheduler = _build_scheduler(clock, threshold=3)
+    throttled = _PRODUCTION_HOSTS[:5]
+
+    # Activate all hosts.
+    for host in list(_PRODUCTION_HOSTS):
+        scheduler.pace_host(host, min_interval_s=0.0)
+
+    for host in throttled:
+        scheduler.report_host_throttled(host, 2.0)
+
+    # Fixed threshold=3 → triggers at the 3rd host → halving.
+    assert scheduler.current_requests_per_minute < _AUTH_CEILING
+
+
+def test_production_topology_genuinely_systemic_still_reduces(tmp_path) -> None:
+    """With ~195 hosts and 20+ throttled, proportional policy DOES reduce.
+
+    threshold = min(195, max(5, ceil(195 * 0.10))) = 20
+    """
+    clock = _SimulatedClock()
+    scheduler = _build_proportional_scheduler_via_cli(clock, tmp_path)
+    all_hosts = _PRODUCTION_HOSTS
+
+    # Activate all hosts.
+    for host in all_hosts:
+        scheduler.pace_host(host, min_interval_s=0.0)
+
+    # Throttle 25 hosts (above threshold of 20).
+    for host in all_hosts[:25]:
+        scheduler.report_host_throttled(host, 2.0)
+
+    assert scheduler.current_requests_per_minute == _AUTH_CEILING / 2
+
+
+def test_production_topology_proportional_vs_fixed_improvement(tmp_path) -> None:
+    """Proportional policy must materially improve throughput vs fixed threshold."""
+    # Fixed threshold simulation
+    clock_fixed = _SimulatedClock()
+    sched_fixed = _build_scheduler(clock_fixed, threshold=3)
+    all_hosts = list(_PRODUCTION_HOSTS)
+    throttled_hosts = all_hosts[:_PRODUCTION_THROTTLED_COUNT]
+
+    # Activate and run fixed-threshold schedule.
+    for host in all_hosts:
+        sched_fixed.pace_host(host, min_interval_s=0.0)
+
+    completions_fixed: dict[str, int] = {h: 0 for h in all_hosts}
+    bad_counter_fixed: dict[str, int] = {h: 0 for h in throttled_hosts}
+    idx = 0
+    while clock_fixed.now() < _SIM_DURATION_S:
+        host = all_hosts[idx % len(all_hosts)]
+        sched_fixed.pace_host(host, min_interval_s=_AUTH_MIN_INTERVAL_S)
+
+        is_bad = host in bad_counter_fixed
+        should_throttle = False
+        if is_bad:
+            bad_counter_fixed[host] = bad_counter_fixed.get(host, 0) + 1
+            should_throttle = bad_counter_fixed[host] % 5 == 0
+
+        def make_op_fixed(h: str, throttle: bool) -> object:
+            def op() -> str:
+                if throttle:
+                    import urllib.error
+                    from email.message import Message
+
+                    headers = Message()
+                    headers["Retry-After"] = "2"
+                    raise urllib.error.HTTPError(
+                        f"https://{h}/w/api.php", 429, "limited", headers, None
+                    )
+                completions_fixed[h] += 1
+                return "ok"
+
+            return op
+
+        try:
+            sched_fixed.run(make_op_fixed(host, should_throttle))
+            sched_fixed.report_success()
+        except Exception:
+            sched_fixed.report_host_throttled(host, 2.0)
+        idx += 1
+
+    fixed_healthy = sum(completions_fixed[h] for h in all_hosts if h not in throttled_hosts)
+    fixed_rate = sched_fixed.current_requests_per_minute
+
+    # Proportional threshold simulation
+    clock_prop = _SimulatedClock()
+    sched_prop = _build_proportional_scheduler_via_cli(clock_prop, tmp_path)
+
+    for host in all_hosts:
+        sched_prop.pace_host(host, min_interval_s=0.0)
+
+    completions_prop: dict[str, int] = {h: 0 for h in all_hosts}
+    bad_counter_prop: dict[str, int] = {h: 0 for h in throttled_hosts}
+    idx = 0
+    while clock_prop.now() < _SIM_DURATION_S:
+        host = all_hosts[idx % len(all_hosts)]
+        sched_prop.pace_host(host, min_interval_s=_AUTH_MIN_INTERVAL_S)
+
+        is_bad = host in bad_counter_prop
+        should_throttle = False
+        if is_bad:
+            bad_counter_prop[host] = bad_counter_prop.get(host, 0) + 1
+            should_throttle = bad_counter_prop[host] % 5 == 0
+
+        def make_op_prop(h: str, throttle: bool) -> object:
+            def op() -> str:
+                if throttle:
+                    import urllib.error
+                    from email.message import Message
+
+                    headers = Message()
+                    headers["Retry-After"] = "2"
+                    raise urllib.error.HTTPError(
+                        f"https://{h}/w/api.php", 429, "limited", headers, None
+                    )
+                completions_prop[h] += 1
+                return "ok"
+
+            return op
+
+        try:
+            sched_prop.run(make_op_prop(host, should_throttle))
+            sched_prop.report_success()
+        except Exception:
+            sched_prop.report_host_throttled(host, 2.0)
+        idx += 1
+
+    prop_healthy = sum(completions_prop[h] for h in all_hosts if h not in throttled_hosts)
+    prop_rate = sched_prop.current_requests_per_minute
+
+    print(
+        f"\n[production-sim] fixed: healthy={fixed_healthy} rate={fixed_rate:.0f}  "
+        f"proportional: healthy={prop_healthy} rate={prop_rate:.0f}  "
+        f"improvement=+{prop_healthy - fixed_healthy}"
+    )
+
+    # Proportional must be materially better.
+    assert prop_healthy > fixed_healthy, (
+        f"proportional ({prop_healthy}) must beat fixed ({fixed_healthy})"
+    )
+    assert prop_rate >= fixed_rate, (
+        f"proportional rate ({prop_rate}) must be >= fixed rate ({fixed_rate})"
+    )
+    # Active ceiling should stay near max for proportional.
+    assert prop_rate >= _AUTH_CEILING * 0.9, (
+        f"proportional rate ({prop_rate}) should be near ceiling ({_AUTH_CEILING})"
+    )
+
+    # Per-host cooldown compliance: every throttled host must have fewer completions.
+    for host in throttled_hosts:
+        non_throttled_avg = prop_healthy / len([h for h in all_hosts if h not in throttled_hosts])
+        # Throttled hosts get some completions but substantially fewer.
+        assert completions_prop[host] <= non_throttled_avg * 1.5, (
+            f"throttled host {host} got {completions_prop[host]} vs avg {non_throttled_avg:.0f}"
+        )
+
+    # Global reductions: proportional should have 0, fixed should have ≥1.
+    assert prop_rate == _AUTH_CEILING
+    assert fixed_rate < _AUTH_CEILING

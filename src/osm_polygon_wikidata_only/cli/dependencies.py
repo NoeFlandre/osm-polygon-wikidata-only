@@ -30,7 +30,12 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     WikipediaClient,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+    SYSTEMIC_HOST_FRACTION,
+    SYSTEMIC_MINIMUM_HOSTS,
+    AdaptiveRequestScheduler,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +114,9 @@ def build_wikimedia_runtime(
         requests_per_minute=effective.wikimedia_requests_per_minute,
         max_requests_per_minute=ceiling,
         minimum_requests_per_minute=minimum_rate,
+        active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+        minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+        systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
     )
     session = WikimediaSession(
         scheduler=scheduler,
