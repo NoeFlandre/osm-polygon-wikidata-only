@@ -42,11 +42,20 @@ The largest workflows are split by responsibility:
 - `hf.publication` owns the three pure upload-file assemblers
   (`assemble_core_upload`, `assemble_region_upload`,
   `assemble_augmentation_upload`) and the coverage refresh / README
-  snapshot helpers;
+  snapshot helpers; the same `write_readme_snapshot` recomputes both
+  core and augmentation stats from finalized local Parquet inputs before
+  each publication path (legacy core, unified sync, augmentation-only);
 - `hf.coverage_map` and `hf.geographic_text_coverage` produce the
   deterministic PNG visualizations;
-- `hf.dataset_stats` computes the factual README stats from the processed
-  Parquet files.
+- `hf.dataset_stats` exposes the canonical `DatasetStats` /
+  `compute_dataset_stats` / `render_stats_section` facade. The private
+  augmentation scanner and private aggregation models live under
+  `hf._dataset_stats.augmentation` and `hf._dataset_stats.models`
+  and are NOT exported by the public facade;
+- `hf.dataset_card` renders the multi-table README with the documented
+  YAML configurations (one per core and augmentation table) and the
+  augmentation schema descriptions sourced from
+  `osm_polygon_wikidata_only.augmentation.schema_descriptions`.
 
 Private implementation modules may evolve, but the supported imports in
 [`docs/api.md`](api.md) are compatibility boundaries.

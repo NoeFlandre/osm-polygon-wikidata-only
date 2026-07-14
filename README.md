@@ -401,9 +401,12 @@ It does not require a real PBF, external data root, or Wikimedia request.
 
 ## Output schema
 
-Each PBF produces three parquet files. The schema lives in
-`osm_polygon_wikidata_only.domain.schema` so the dataset card, the
-parquet writer, and the tests share a single source of truth.
+Each PBF produces three core parquet files plus, after the additive
+augmentation pass, up to five sidecar parquet files. The schema
+definitions live in `osm_polygon_wikidata_only.domain.schema` and
+`osm_polygon_wikidata_only.augmentation.schema` so the dataset
+card, the parquet writers, and the tests share a single source of
+truth.
 
 ### `polygons/<stem>.parquet`
 
@@ -427,6 +430,41 @@ Many-to-many links joining polygons to articles, plus a boolean
 
 Aggregate stats per source PBF: polygon/article counts, language
 coverage, area-bucket counts, top tag keys.
+
+### Additive augmentation sidecars
+
+Optional text and fact sidecars are published on top of the three
+core tables when the augmentation pipeline has run for a region.
+They never replace the core artifacts.
+
+- `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`
+- `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`
+- `wikidata/facts/<stem>.parquet`
+
+Column lists for documents, sections, and facts live in
+`osm_polygon_wikidata_only.augmentation.schema` (`DOCUMENT_COLUMNS`,
+`SECTION_COLUMNS`, `FACT_COLUMNS`) and the documented column
+descriptions live in
+`osm_polygon_wikidata_only.augmentation.schema_descriptions`. The
+generated Hugging Face dataset card (`README.md`) embeds every
+augmentation column with its description; the dataset card renderer
+is the source of truth for what's published.
+
+## Generated dataset card
+
+The published dataset card on the Hugging Face Hub is regenerated
+automatically before every publication path. It reports factual
+core, Wikipedia, Wikivoyage, section, and Wikidata-fact statistics
+computed directly from the local finalized Parquet files under
+`<processed>/`. No hardcoded counts live in the source repository
+or the generated card; every figure is recomputed on each
+publication.
+
+The canonical renderer is `osm_polygon_wikidata_only.hf.publication.write_readme_snapshot`,
+backed by `osm_polygon_wikidata_only.hf.dataset_stats.render_stats_section`
+and `osm_polygon_wikidata_only.hf.dataset_card.render_dataset_card`.
+The renderer pulls both the core `DatasetStats` snapshot and the
+private augmentation snapshot from the local sidecars.
 
 ---
 

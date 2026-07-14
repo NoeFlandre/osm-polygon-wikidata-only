@@ -35,15 +35,16 @@ def safe_table(
 
     Returns the table on success, or ``None`` after emitting the
     ``Skipping {path}: {error}`` warning when PyArrow raises
-    :class:`OSError` or :class:`KeyError`. Any other exception
-    propagates unchanged.
+    :class:`OSError`, :class:`KeyError`, or :class:`ArrowInvalid`
+    (the documented recoverable modes for malformed parquets or
+    missing columns). Any other exception propagates unchanged.
     """
     try:
         return pq.read_table(  # type: ignore[no-untyped-call]
             parquet_path,
             columns=list(columns),
         )
-    except (OSError, KeyError) as e:
+    except (OSError, KeyError, pa.ArrowInvalid) as e:
         LOGGER.warning("Skipping %s: %s", parquet_path, e)
         return None
 
@@ -52,7 +53,7 @@ def safe_metadata_row_count(parquet_path: Path) -> int | None:
     """Read the row count from parquet metadata with the same skip policy."""
     try:
         rows = pq.read_metadata(parquet_path).num_rows  # type: ignore[no-untyped-call]
-    except (OSError, KeyError) as e:
+    except (OSError, KeyError, pa.ArrowInvalid) as e:
         LOGGER.warning("Skipping %s: %s", parquet_path, e)
         return None
     return int(rows)

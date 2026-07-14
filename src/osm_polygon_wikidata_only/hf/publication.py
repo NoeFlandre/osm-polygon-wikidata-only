@@ -81,6 +81,9 @@ from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_COLUMNS,
     POLYGON_DESCRIPTIONS,
 )
+from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
+    compute_augmentation_stats,
+)
 from osm_polygon_wikidata_only.hf.coverage_map import (
     ensure_world_land,
     generate_coverage_map,
@@ -146,6 +149,22 @@ def write_readme_snapshot(
 ) -> None:
     """Render the canonical dataset README from current local artifacts.
 
+    The README is recomputed by:
+
+    1. Aggregating the processed-PBFs manifest counts for the headline
+       row.
+    2. Computing the core :class:`DatasetStats` snapshot via
+       :func:`compute_dataset_stats`.
+    3. Computing the augmentation :class:`AugmentationStats` snapshot
+       via :func:`compute_augmentation_stats`. The per-file summary
+       cache lives under ``data_root.cache``, so a warm refresh
+       performs zero Parquet table reads.
+    4. Passing both snapshots to :func:`render_stats_section` so the
+       rendered card always includes the documented sections -- the
+       legacy three sections plus the augmentation coverage,
+       Wikipedia and Wikivoyage corpora, Wikidata facts, and storage
+       accounting.
+
     The README must be written AFTER every other snapshot so a
     partial core upload never reaches the Hub. The destination is
     written atomically via
@@ -156,7 +175,15 @@ def write_readme_snapshot(
         key: sum(int(entry.get(key, 0)) for entry in entries.values())
         for key in ("polygon_count", "article_count", "unique_wikidata_count")
     }
-    stats_section = render_stats_section(compute_dataset_stats(data_root.processed))
+    core_stats = compute_dataset_stats(data_root.processed)
+    augmentation_stats = compute_augmentation_stats(
+        data_root.processed,
+        cache_index_dir=data_root.cache,
+    )
+    stats_section = render_stats_section(
+        core_stats,
+        augmentation_stats=augmentation_stats,
+    )
     atomic_write_text(
         destination,
         render_dataset_card(
