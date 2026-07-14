@@ -15,7 +15,8 @@ so the migration commit unifies the remote manifests directory.
     5. geographic text coverage
     6. geographic polygon count
     7. README
-    8. legacy coverage map
+    8. canonical coverage map (add)
+    9. legacy coverage map (delete)
 
 * Unified sync with changed core
   (called by ``cli.run_sync._build_region_publication``):
@@ -25,15 +26,16 @@ so the migration commit unifies the remote manifests directory.
     4. processed manifest
     5. geographic text coverage
     6. geographic polygon count
-    7. legacy coverage map
-    8. wikipedia documents
-    9. wikipedia sections
-    10. wikivoyage documents
-    11. wikivoyage sections
-    12. wikidata facts
-    13. canonical augmentation manifest (add)
-    14. legacy augmentation manifest (delete)
-    15. README
+    7. canonical coverage map (add)
+    8. legacy coverage map (delete)
+    9. wikipedia documents
+    10. wikipedia sections
+    11. wikivoyage documents
+    12. wikivoyage sections
+    13. wikidata facts
+    14. canonical augmentation manifest (add)
+    15. legacy augmentation manifest (delete)
+    16. README
 
 * Augmentation-only publication (legacy
   ``cli.commands._augmentation_upload_files`` behavior):
@@ -387,7 +389,8 @@ def assemble_core_upload(
     5. geographic text coverage
     6. geographic polygon count
     7. README
-    8. legacy coverage map
+    8. canonical coverage map (add)
+    9. legacy coverage map (delete)
 
     The function is pure: no HF upload state is owned here. The
     caller submits the returned list. Required artifacts are
@@ -433,8 +436,8 @@ def assemble_region_upload(
     """Assemble one atomic region upload (sync-dir publication).
 
     File ordering follows the documented contract. When ``core`` is
-    provided, the seven core artifacts are prepended to the seven
-    augmentation artifacts. When ``core`` is ``None``, only the
+    provided, the eight core operations are prepended to the eight
+    augmentation operations. When ``core`` is ``None``, only the
     augmentation block is produced. Coverage assets are refreshed
     only when ``core`` is not ``None``.
 
