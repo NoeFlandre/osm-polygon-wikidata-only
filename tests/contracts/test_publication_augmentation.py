@@ -399,9 +399,8 @@ def test_readme_remains_last_in_core_upload(
         core=core,
         world_land_warning=lambda msg: None,
     )
-    # The README is the 7th entry (index 6) of 8. The legacy coverage
-    # map remains the last entry, as documented.
-    assert files[-2].path_in_repo == "README.md"
+    # The README is the 7th entry (index 6) of 9.
+    assert files[6].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_region_upload(

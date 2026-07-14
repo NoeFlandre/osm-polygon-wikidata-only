@@ -153,11 +153,12 @@ invocation. The dataset and pipeline are maintained by Noé Flandre.
 
 ## Geographic coverage visualizations
 
-Every successful core publication regenerates two deterministic PNGs
+Every successful core publication regenerates three deterministic PNGs
 before the README snapshot is rendered, both using the same H3 resolution
 3 layout, basemap, world extent, deterministic ordering, and atomic
 write-through-temp-file:
 
+- `assets/coverage_map.png` displays the global distribution of the dataset polygons as a scatter plot of centroids.
 - `assets/geographic_wikipedia_text_coverage.png` aggregates polygons
   into H3 cells and colours each cell by the fraction linked to at least
   one Wikipedia article with non-empty text. The denominator is the full

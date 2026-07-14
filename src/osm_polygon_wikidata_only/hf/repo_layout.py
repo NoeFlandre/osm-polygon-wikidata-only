@@ -35,7 +35,8 @@ REMOTE_AUGMENTATION_MANIFEST_FILE = "manifests/augmentation_manifest.json"
 LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE = "augmentation/manifests/augmentation_manifest.json"
 
 # The coverage map PNG embedded in the dataset README.
-REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
+REMOTE_COVERAGE_MAP_FILE = "assets/coverage_map.png"
+LEGACY_REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
 
 # The geographic Wikipedia text coverage PNG embedded in the dataset README.
 REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE = "assets/geographic_wikipedia_text_coverage.png"
@@ -63,6 +64,7 @@ def local_to_remote(local_path: Path, processed_subdir: str) -> str:
 
 __all__ = [
     "LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE",
+    "LEGACY_REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_ARTICLES_DIR",
     "REMOTE_AUGMENTATION_MANIFEST_FILE",
     "REMOTE_COVERAGE_MAP_FILE",

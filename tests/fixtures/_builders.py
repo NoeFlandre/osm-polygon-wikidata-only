@@ -407,6 +407,7 @@ def build_golden_publication(out: Path) -> Path:
             "manifests/processed_pbfs.json",
             "assets/geographic_wikipedia_text_coverage.png",
             "assets/geographic_polygon_count.png",
+            "assets/coverage_map.png",
             "coverage_map.png",
         ],
         "augmentation": [
