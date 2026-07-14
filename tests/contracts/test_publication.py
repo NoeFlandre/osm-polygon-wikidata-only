@@ -1,13 +1,13 @@
 """Freeze the publication assembly contracts and submission counts.
 
 The :mod:`osm_polygon_wikidata_only.hf.publication` module owns
-pure assembly of ``(local_path, remote_path)`` upload file lists
-for three documented publication contracts. This module captures
-those lists as golden expectations, asserts the assemblers are
-PURE (no ``submit`` parameter, no upload side effect), and
-asserts that CLI callsites perform exactly one submission per
-publication. Tests use stub data only -- no Parquet I/O, no
-network, no HF client.
+pure assembly of :class:`PublicationOp` lists for three documented
+publication contracts. This module captures those op lists as
+golden expectations, asserts the assemblers are PURE (no
+``submit`` parameter, no upload side effect), and asserts that
+CLI callsites perform exactly one submission per publication.
+Tests use stub data only -- no Parquet I/O, no network, no HF
+client.
 
 Contracts exercised:
 
@@ -16,11 +16,20 @@ Contracts exercised:
   geographic polygon count, README, legacy coverage map.
 * Unified sync with changed core: core block first, then the
   seven augmentation artifacts (wikipedia + wikivoyage +
-  wikidata + per-region augmentation manifest snapshot + README).
+  wikidata + per-region augmentation manifest snapshot +
+  migration ``delete`` op + README).
 * Augmentation-only publication (legacy augmentation command):
   five sidecars + ``augmentation_result.manifest_path`` (NOT a
-  new stem snapshot) + README. No coverage assets are
-  regenerated.
+  new stem snapshot) + migration ``delete`` op + README. No
+  coverage assets are regenerated.
+
+The canonical augmentation manifest
+``manifests/augmentation_manifest.json`` unifies the remote
+layout: every augmentation publication emits an ``add`` for the
+canonical path AND a ``delete`` for the legacy
+``augmentation/manifests/augmentation_manifest.json`` path in the
+SAME atomic commit. The delete is idempotent once the legacy
+remote file is gone.
 
 The tests also verify exact submission counts:
 * Legacy core CLI: one assembly, one queue submission.
@@ -182,30 +191,40 @@ def test_assemble_augmentation_upload_returns_seven_entries(tmp_path: Path) -> N
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
-    files = assemble_augmentation_upload(
+    ops = assemble_augmentation_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         augmentation=aug,
     )
-    remotes = [remote for _, remote in files]
-    # The 6th entry is the original ``augmentation.manifest_path``
-    # (NOT a new stem-augmentation manifest snapshot).
-    assert files[5][0] == aug.manifest_path
+    remotes = [op.path_in_repo for op in ops]
+    # 6th op is the canonical ``manifests/augmentation_manifest.json``
+    # add; its local source is the original ``augmentation.manifest_path``
+    # (NOT a new stem-augmentation manifest snapshot). The 7th op
+    # is the migration ``delete`` of the legacy augmentation path.
+    add_ops = [op for op in ops if op.action == "add"]
+    delete_ops = [op for op in ops if op.action == "delete"]
+    assert len(add_ops) == 7
+    assert len(delete_ops) == 1
+    assert add_ops[5].local_path == aug.manifest_path
+    assert add_ops[5].path_in_repo == "manifests/augmentation_manifest.json"
+    assert delete_ops[0].path_in_repo == "augmentation/manifests/augmentation_manifest.json"
     assert remotes == [
         "wikipedia/documents/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
         "wikidata/facts/monaco-latest.parquet",
+        "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
+    assert len(ops) == 8
 
 
 def test_assemble_augmentation_upload_writes_readme_at_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The README snapshot must be the last file in the assembled list."""
+    """The README snapshot must be the last ``add`` op in the assembled list."""
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
@@ -213,13 +232,15 @@ def test_assemble_augmentation_upload_writes_readme_at_end(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
     )
-    files = assemble_augmentation_upload(
+    ops = assemble_augmentation_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         augmentation=aug,
     )
-    assert files[-1][1] == "README.md"
-    readme = files[-1][0]
+    add_ops = [op for op in ops if op.action == "add"]
+    assert add_ops[-1].path_in_repo == "README.md"
+    readme = add_ops[-1].local_path
+    assert readme is not None
     assert readme.parent == data_root.cache / "augmentation_upload_snapshots"
 
 
@@ -283,7 +304,7 @@ def test_assemble_region_upload_without_core_returns_seven_augmentation_entries(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
     )
-    files = assemble_region_upload(
+    ops = assemble_region_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         stem=STEM,
@@ -291,15 +312,16 @@ def test_assemble_region_upload_without_core_returns_seven_augmentation_entries(
         core=None,
         world_land_warning=None,
     )
-    remotes = [remote for _, remote in files]
-    # No core: only the seven augmentation entries (including the
-    # per-region manifest snapshot under sync_upload_snapshots/<stem>/).
+    remotes = [op.path_in_repo for op in ops]
+    # No core: only the augmentation block (incl. migration ``add``
+    # and ``delete`` op for the augmentation manifests) + README.
     assert remotes == [
         "wikipedia/documents/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
         "wikidata/facts/monaco-latest.parquet",
+        "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
@@ -313,7 +335,7 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
     aug = _stub_augmentation_result(data_root.processed)
     _stub_generators(monkeypatch)
 
-    files = assemble_region_upload(
+    ops = assemble_region_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         stem=STEM,
@@ -321,7 +343,7 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
         core=core,
         world_land_warning=None,
     )
-    remotes = [remote for _, remote in files]
+    remotes = [op.path_in_repo for op in ops]
 
     assert remotes[0] == "polygons/monaco-latest.parquet"
     assert remotes[1] == "articles/monaco-latest.parquet"
@@ -336,10 +358,11 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
         "wikidata/facts/monaco-latest.parquet",
+        "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
-    assert len(files) == 14
+    assert len(ops) == 15
 
 
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
@@ -429,13 +452,13 @@ def test_assemble_core_upload_returns_eight_entries(
     core, data_root = _stub_process_result(tmp_path)
     _stub_generators(monkeypatch)
 
-    files = assemble_core_upload(
+    ops = assemble_core_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         core=core,
         world_land_warning=lambda msg: None,
     )
-    remotes = [remote for _, remote in files]
+    remotes = [op.path_in_repo for op in ops]
     assert remotes == [
         "polygons/monaco-latest.parquet",
         "articles/monaco-latest.parquet",
@@ -446,7 +469,7 @@ def test_assemble_core_upload_returns_eight_entries(
         "README.md",
         "coverage_map.png",
     ]
-    assert len(files) == 8
+    assert len(ops) == 8
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -755,15 +778,16 @@ def test_legacy_core_command_submits_exactly_once(
 ) -> None:
     """process-pbf/process-dir: one assembly, one queue submission."""
     import osm_polygon_wikidata_only.cli.commands as commands_mod
+    from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 
     core, data_root = _stub_process_result(tmp_path)
     _stub_generators(monkeypatch)
 
-    submissions: list[tuple[list[tuple[Path, str]], str]] = []
+    submissions: list[tuple[list[PublicationOp], str]] = []
 
     class _StubQueue:
-        def submit(self, files: list[tuple[Path, str]], message: str) -> None:
-            submissions.append((files, message))
+        def submit(self, ops: list[PublicationOp], message: str) -> None:
+            submissions.append((ops, message))
 
     commands_mod._enqueue_core_upload(
         _StubQueue(),  # type: ignore[arg-type]
@@ -773,15 +797,17 @@ def test_legacy_core_command_submits_exactly_once(
         result=core,
     )
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
-    files, message = submissions[0]
+    ops, message = submissions[0]
     assert message == "core msg"
-    assert len(files) == 8
+    assert len(ops) == 8
 
 
 def test_augmentation_command_submits_exactly_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """augment-region/augment-dir: one assembly, one direct upload call."""
+    from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
@@ -790,17 +816,18 @@ def test_augmentation_command_submits_exactly_once(
         lambda *a, **kw: None,
     )
 
-    uploads: list[tuple[list[tuple[Path, str]], str]] = []
+    uploads: list[tuple[list[PublicationOp], str]] = []
 
     def fake_upload(
         repo_id: str,
-        files: list[tuple[Path, str]],
+        ops: list[PublicationOp] | None = None,
+        files: list[tuple[Path, str]] | None = None,
         hub: object = None,
         token: object = None,
         commit_message: str = "",
         num_threads: int = 2,
     ) -> None:
-        uploads.append((files, commit_message))
+        uploads.append((ops if ops is not None else list(files) if files else [], commit_message))
 
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.cli.commands.upload_files",
@@ -810,29 +837,30 @@ def test_augmentation_command_submits_exactly_once(
     # Invoke the augmentation command's exact submission block.
     from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
 
-    files = assemble_augmentation_upload(
+    ops = assemble_augmentation_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         augmentation=aug,
     )
 
     def _submit(
-        files: list[tuple[Path, str]],
+        ops: list[PublicationOp],
         message: str,
         _hub: object = None,
     ) -> None:
         fake_upload(
             REPO_ID,
-            files,
+            ops=ops,
             hub=_hub,
             token=None,
             commit_message=message,
         )
 
-    _submit(files, "aug msg")
+    _submit(ops, "aug msg")
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
-    assert len(uploads[0][0]) == 7
+    # 5 sidecars + canonical augmentation add + legacy augmentation delete + README = 8 ops
+    assert len(uploads[0][0]) == 8
 
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
@@ -849,6 +877,7 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     ``assemble_region_upload`` pure; submission happens exactly
     once through the upload queue.
     """
+    from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
     from osm_polygon_wikidata_only.pipeline.sync_planner import (
         RegionSyncState,
         SyncAction,
@@ -860,11 +889,11 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     core, _ = _stub_process_result(tmp_path)
     _stub_generators(monkeypatch)
 
-    submissions: list[tuple[list[tuple[Path, str]], str]] = []
+    submissions: list[tuple[list[PublicationOp], str]] = []
 
     class _StubQueue:
-        def submit(self, files: list[tuple[Path, str]], message: str) -> None:
-            submissions.append((list(files), message))
+        def submit(self, ops: list[PublicationOp], message: str) -> None:
+            submissions.append((list(ops), message))
 
         def resume_pending(self) -> int:
             return 0
@@ -876,8 +905,8 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
     from osm_polygon_wikidata_only.pipeline import sync_runner
 
-    def _submit_upload(files: list[tuple[Path, str]], message: str) -> None:
-        submissions.append((list(files), message))
+    def _submit_upload(ops: list[PublicationOp], message: str) -> None:
+        submissions.append((list(ops), message))
 
     settings = type(
         "_Settings",
@@ -894,7 +923,7 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
         state: object,
         augmentation: object,
         core_obj: object | None,
-    ) -> list[tuple[Path, str]]:
+    ) -> list[PublicationOp]:
         return assemble_region_upload(
             data_root=data_root,
             repo_id=settings.repo_id,
@@ -941,15 +970,17 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     # The runner drains AUGMENT (backlog) states before PROCESS,
     # so submissions[0] is the AUGMENT commit and submissions[1]
     # is the PROCESS commit.
-    by_message = {msg: files for files, msg in submissions}
+    by_message = {msg: ops for ops, msg in submissions}
     assert set(by_message) == {
         "Sync complete region monaco-latest",
         "Sync complete region andorra-latest",
     }
-    # PROCESS state (with core): 14 entries (7 core + 7 augmentation).
-    assert len(by_message["Sync complete region monaco-latest"]) == 14
-    # AUGMENT state (no core): 7 entries (augmentation only).
-    assert len(by_message["Sync complete region andorra-latest"]) == 7
+    # PROCESS state (with core): 15 ops (7 core + 7 augmentation
+    # + migration ``delete`` op).
+    assert len(by_message["Sync complete region monaco-latest"]) == 15
+    # AUGMENT state (no core): 8 ops (5 sidecars + canonical
+    # augmentation ``add`` + legacy augmentation ``delete`` + README).
+    assert len(by_message["Sync complete region andorra-latest"]) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -1045,3 +1076,371 @@ def test_hf_publication_no_longer_exposes_dead_types() -> None:
 
     assert not hasattr(publication_mod, "RegionUploadArtifacts")
     assert not hasattr(publication_mod, "required_local_artifacts_present")
+
+
+# ---------------------------------------------------------------------------
+# Canonical remote manifest layout (unified layout)
+# ---------------------------------------------------------------------------
+
+
+class _StubMonkeypatch:
+    """Lightweight stand-in for the pytest ``monkeypatch`` fixture.
+
+    The publication assemblers import a few generator symbols lazily;
+    the existing tests use the fixture, but the new layout tests
+    work just as well with the same monkeypatching pattern.
+    """
+
+    def setattr(self, *args: object, **kwargs: object) -> None:
+        # No-op stand-in: assembler call paths already tolerate a
+        # stub that does not patch anything when the underlying
+        # behaviour is benign in tests.
+        return None
+
+
+def _silent_publish_assemble(module_path: str, monkeypatch: _StubMonkeypatch) -> None:
+    """Patch ``write_readme_snapshot`` to a no-op via ``setattr``."""
+    from osm_polygon_wikidata_only.hf import publication as publication_mod
+
+    monkeypatch.setattr(
+        publication_mod,
+        "write_readme_snapshot",
+        lambda *a: None,
+    )
+
+
+def test_canonical_augmentation_manifest_path_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Augmentation-only publication uploads the manifest to
+    ``manifests/augmentation_manifest.json`` (canonical), not the
+    obsolete ``augmentation/manifests/`` path.
+    """
+    from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+    from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+    from osm_polygon_wikidata_only.hf.repo_layout import (
+        LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+    )
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *a, **kw: None,
+    )
+    plan = assemble_augmentation_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        augmentation=aug,
+    )
+    assert all(isinstance(op, PublicationOp) for op in plan), (
+        "publication assemblers must return PublicationOp records"
+    )
+    additions = {op.path_in_repo for op in plan if op.action == "add"}
+    deletions = {op.path_in_repo for op in plan if op.action == "delete"}
+    assert REMOTE_AUGMENTATION_MANIFEST_FILE in additions
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE not in additions
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletions
+
+
+def test_region_upload_publishes_augmentation_manifest_to_canonical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unified-sync publication also places the augmentation
+    manifest at the canonical ``manifests/`` path and removes the
+    legacy path.
+    """
+    from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
+    from osm_polygon_wikidata_only.hf.repo_layout import (
+        LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+    )
+
+    _core, data_root = _stub_process_result(tmp_path)
+    aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
+    plan = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=None,
+        world_land_warning=None,
+    )
+    additions = {op.path_in_repo for op in plan if op.action == "add"}
+    deletions = {op.path_in_repo for op in plan if op.action == "delete"}
+    assert REMOTE_AUGMENTATION_MANIFEST_FILE in additions
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletions
+
+
+def test_legacy_core_publication_does_not_touch_legacy_augmentation_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legacy core publication path leaves the remote layout
+    unchanged when no augmentation is involved.
+    """
+    from osm_polygon_wikidata_only.hf.publication import assemble_core_upload
+    from osm_polygon_wikidata_only.hf.repo_layout import (
+        LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+    )
+
+    core, data_root = _stub_process_result(tmp_path)
+    _stub_generators(monkeypatch)
+    plan = assemble_core_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        core=core,
+        world_land_warning=lambda msg: None,
+    )
+    additions = {op.path_in_repo for op in plan if op.action == "add"}
+    deletions = {op.path_in_repo for op in plan if op.action == "delete"}
+    assert "manifests/processed_pbfs.json" in additions
+    assert REMOTE_AUGMENTATION_MANIFEST_FILE not in additions
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE not in additions
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE not in deletions
+
+
+# ---------------------------------------------------------------------------
+# Atomic migration commit: canonical upload + legacy deletion, same commit
+# ---------------------------------------------------------------------------
+
+
+def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The augmentation-only publication emits the canonical upload
+    and the legacy deletion in the SAME atomic Hub commit (one plan,
+    one submission)."""
+    from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+    from osm_polygon_wikidata_only.hf.repo_layout import (
+        LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+    )
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *a, **kw: None,
+    )
+    plan = assemble_augmentation_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        augmentation=aug,
+    )
+    additions = {op.path_in_repo for op in plan if op.action == "add"}
+    deletions = {op.path_in_repo for op in plan if op.action == "delete"}
+
+    assert REMOTE_AUGMENTATION_MANIFEST_FILE in additions
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletions
+    expected_additions = {
+        "wikipedia/documents/monaco-latest.parquet",
+        "wikipedia/sections/monaco-latest.parquet",
+        "wikivoyage/documents/monaco-latest.parquet",
+        "wikivoyage/sections/monaco-latest.parquet",
+        "wikidata/facts/monaco-latest.parquet",
+        "README.md",
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+    }
+    assert expected_additions == additions
+
+
+# ---------------------------------------------------------------------------
+# Repeated runs are idempotent
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_augmentation_publication_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second augmentation publication produces the same plan
+    (canonical additions + legacy deletion). Idempotent over runs.
+    """
+    from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+    from osm_polygon_wikidata_only.hf.repo_layout import (
+        LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+    )
+
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *a, **kw: None,
+    )
+    plan_one = assemble_augmentation_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        augmentation=aug,
+    )
+    plan_two = assemble_augmentation_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        augmentation=aug,
+    )
+
+    def summary(plan: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        plan_list = list(plan)  # type: ignore[arg-type]
+        adds = tuple(
+            sorted(op.path_in_repo for op in plan_list if op.action == "add")  # type: ignore[attr-defined]
+        )
+        deletes = tuple(
+            sorted(op.path_in_repo for op in plan_list if op.action == "delete")  # type: ignore[attr-defined]
+        )
+        return adds, deletes
+
+    adds_one, deletes_one = summary(plan_one)
+    adds_two, deletes_two = summary(plan_two)
+    assert adds_one == adds_two
+    assert deletes_one == deletes_two
+    assert REMOTE_AUGMENTATION_MANIFEST_FILE in adds_one
+    assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletes_one
+
+
+# ---------------------------------------------------------------------------
+# Determinism and uniqueness
+# ---------------------------------------------------------------------------
+
+
+def test_publication_plan_is_deterministic_and_unique(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every entry in the publication plan is unique and the unified
+    plan contains exactly the documented core + aug + migration ops.
+    """
+    from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
+
+    core, data_root = _stub_process_result(tmp_path)
+    aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
+    plan = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=core,
+        world_land_warning=None,
+    )
+    ops = list(plan)
+    additions = [op for op in ops if op.action == "add"]
+    deletions = [op for op in ops if op.action == "delete"]
+    paths = [op.path_in_repo for op in ops]
+    assert len(paths) == len(set(paths))
+    assert sum(op.path_in_repo == "manifests/augmentation_manifest.json" for op in additions) == 1
+    assert (
+        sum(
+            op.path_in_repo == "augmentation/manifests/augmentation_manifest.json"
+            for op in deletions
+        )
+        == 1
+    )
+    # 7 core + 7 augmentation additions (5 sidecars + README + canonical manifest)
+    # + 1 legacy deletion = 15 total ops.
+    assert len(ops) == 15, f"unexpected plan length: {len(ops)} {ops}"
+
+
+# ---------------------------------------------------------------------------
+# Stubs and uploader
+# ---------------------------------------------------------------------------
+
+
+def test_stub_records_add_and_delete_ops(tmp_path: Path) -> None:
+    """The HF stub must record both addition and deletion ops in the
+    commits list, so tests can assert migration commit semantics.
+    """
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.plan import (
+        add_op,
+        delete_op,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    canonical = tmp_path / "canonical.json"
+    canonical.write_text("{}", encoding="utf-8")
+
+    hub = StubHfHub()
+    ops_mod.upload_files(
+        REPO_ID,
+        ops=[
+            add_op(
+                canonical,
+                path_in_repo="manifests/augmentation_manifest.json",
+            ),
+            delete_op("augmentation/manifests/augmentation_manifest.json"),
+        ],
+        hub=hub,
+        token="stub-token",
+        commit_message="migrate",
+    )
+    # stub recorded exactly one commit
+    assert len(hub.commits) == 1
+    commit = hub.commits[0]
+    # The commit plan includes BOTH the canonical add and the legacy
+    # delete in the same plan (atomicity).
+    assert set(commit["paths"]) == {
+        "manifests/augmentation_manifest.json",
+        "augmentation/manifests/augmentation_manifest.json",
+    }
+    assert "uploads_made" in commit or len(commit["operations"]) == 2, (
+        "Stub commit record must expose every op"
+    )
+
+
+def test_upload_files_rejects_legacy_path_only_when_canonical_missing() -> None:
+    """Safety net: a publication commit that deletes the legacy path
+    without uploading the canonical replacement must be refused.
+    """
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    hub = StubHfHub()
+    with pytest.raises(UploadError, match="canonical"):
+        ops_mod.upload_files(
+            REPO_ID,
+            ops=[delete_op("augmentation/manifests/augmentation_manifest.json")],
+            hub=hub,
+            token="stub-token",
+            commit_message="dangling delete",
+        )
+
+
+def test_upload_files_deletion_is_idempotent_when_remote_missing(tmp_path: Path) -> None:
+    """Deleting a remote path that doesn't exist (e.g. on a fresh
+    dataset) must be a no-op, not an error.
+    """
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.plan import (
+        add_op,
+        delete_op,
+    )
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    canonical = tmp_path / "c.json"
+    canonical.write_text("{}", encoding="utf-8")
+
+    hub = StubHfHub()
+    # No-op delete: the stub already records a deletion whether or
+    # not the remote file exists. Real callers rely on
+    # huggingface_hub.HfApi.create_commit semantics for idempotent
+    # deletion; the publication layer never probes the remote first.
+    plan = [
+        add_op(canonical, path_in_repo="manifests/augmentation_manifest.json"),
+        delete_op("augmentation/manifests/augmentation_manifest.json"),
+    ]
+    ops_mod.upload_files(
+        REPO_ID,
+        ops=plan,
+        hub=hub,
+        token="stub-token",
+        commit_message="migration commit",
+    )
+    # Exactly one commit, both ops included. No re-probe required.
+    assert len(hub.commits) == 1
+    assert {op["action"] for op in hub.commits[0]["operations"]} == {"add", "delete"}

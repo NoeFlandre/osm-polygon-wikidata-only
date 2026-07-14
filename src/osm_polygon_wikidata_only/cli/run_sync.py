@@ -33,6 +33,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
 from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import StubHfHub, upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
@@ -53,7 +54,7 @@ def execute(
     *,
     data_root: DataRoot,
     settings: Settings,
-    build_upload_files: Callable[..., list[tuple[Path, str]]] | None = None,
+    build_upload_files: Callable[..., list[PublicationOp]] | None = None,
 ) -> int:
     """Run the ``sync-dir`` CLI command by wiring collaborators to
     :func:`pipeline.sync_runner.run_sync`.
@@ -165,21 +166,21 @@ def execute(
         )
         return augmentation_result
 
-    def _submit_upload(files: list[tuple[Path, str]], message: str) -> None:
+    def _submit_upload(ops: list[PublicationOp], message: str) -> None:
         if upload_queue is None:
             return
-        upload_queue.submit(files, message)
+        upload_queue.submit(ops, message)
 
     def _build_region_publication(
         state: object,
         augmentation: object,
         core: object | None,
-    ) -> list[tuple[Path, str]]:
+    ) -> list[PublicationOp]:
         """Region-publication builder injected into ``pipeline.sync_runner``.
 
         Pure assembly: delegates to
         :func:`hf.publication.assemble_region_upload`, which
-        returns the ordered file list and performs NO upload.
+        returns the ordered op list and performs NO upload.
         Submission is the upload queue's responsibility, executed
         exactly once by ``_maybe_submit`` in the runner. The
         unified-sync world-land fallback is silent (``None``).
@@ -206,10 +207,10 @@ def execute(
     # CLI shell is given an override builder (legacy compatibility),
     # use it; otherwise default to the production
     # ``hf.publication.assemble_region_upload`` builder.
-    publish_builder: Callable[..., list[tuple[Path, str]]] | None = (
+    publish_builder: Callable[..., list[PublicationOp]] | None = (
         (build_upload_files or _build_region_publication) if push_enabled else None
     )
-    submit_callback: Callable[[list[tuple[Path, str]], str], None] | None = (
+    submit_callback: Callable[[list[PublicationOp], str], None] | None = (
         _submit_upload if push_enabled else None
     )
 
@@ -265,10 +266,10 @@ def _build_upload_queue(
 
     hub = StubHfHub() if dry_run else None
 
-    def upload_job(files: list[tuple[Path, str]], message: str) -> None:
+    def upload_job(ops: list[PublicationOp], message: str) -> None:
         upload_files(
             settings.repo_id,
-            files,
+            ops=ops,
             hub=hub,
             token=settings.hf_token,
             commit_message=message,

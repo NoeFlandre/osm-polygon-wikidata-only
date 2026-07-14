@@ -11,7 +11,7 @@ isolation.
 | `enrichment` | Wikidata/Wikipedia clients, cache wrappers, batching, and linking. |
 | `pipeline` | Extract, enrich, construct rows, write artifacts, update manifests, run sync. |
 | `augmentation` | Augmentation orchestrator, focused pipeline steps, Wikimedia discovery, normalization. |
-| `hf` | Remote paths, dataset card, dataset stats, geographic visualizations, publication, atomic Hub uploads. |
+| `hf` | Remote paths, dataset card, dataset stats, geographic visualizations, publication, atomic Hub uploads. ALL remote paths published by this codebase are centralized in `hf.repo_layout`; the single exception is the named legacy migration constant `LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE` consumed only by the atomic migration commit that unifies the augmentation manifest under `manifests/`. |
 | `cli` | Argument parsing and dependency wiring only. |
 | `utils` | Small utilities: JSON, time, retry, request scheduler. |
 
@@ -73,7 +73,7 @@ Underscore-prefixed (private) packages:
 
 - `osm_polygon_wikidata_only.hf._dataset_stats.{models,scanning,aggregation,rendering}`
 - `osm_polygon_wikidata_only.hf._geographic.{models,parquet_inputs,h3_geometry,aggregation,basemap,rendering,coverage,polygon_count}`
-- `osm_polygon_wikidata_only.hf._uploader.{errors,protocol,stub,token,authorization,operations}`
+- `osm_polygon_wikidata_only.hf._uploader.{errors,protocol,stub,token,authorization,operations,plan}`
 
 Other focused modules (not underscore-prefixed but still implementation
 details behind facades):

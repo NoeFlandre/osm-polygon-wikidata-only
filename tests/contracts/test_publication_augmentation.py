@@ -215,7 +215,10 @@ def test_write_readme_snapshot_includes_core_and_augmentation_stats(
         core=core,
         world_land_warning=lambda msg: None,
     )
-    readme_path = files[-2][0]  # README is the 7th entry of 8 in legacy core.
+    add_ops = [op for op in files if op.action == "add"]
+    # README is the 7th add (index -2 in legacy core; legacy coverage map
+    # is the last add).
+    readme_path = add_ops[-2].local_path
     md = readme_path.read_text(encoding="utf-8")
     # Core stats sections remain.
     assert "## Dataset snapshot" in md
@@ -241,7 +244,8 @@ def test_write_readme_snapshot_core_only_when_no_augmentation_dirs(
         core=core,
         world_land_warning=lambda msg: None,
     )
-    readme_path = files[-2][0]
+    add_ops = [op for op in files if op.action == "add"]
+    readme_path = add_ops[-2].local_path
     md = readme_path.read_text(encoding="utf-8")
     # Core sections always present.
     assert "## Dataset snapshot" in md
@@ -397,7 +401,7 @@ def test_readme_remains_last_in_core_upload(
     )
     # The README is the 7th entry (index 6) of 8. The legacy coverage
     # map remains the last entry, as documented.
-    assert files[-2][1] == "README.md"
+    assert files[-2].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_region_upload(
@@ -414,7 +418,8 @@ def test_readme_remains_last_in_region_upload(
         core=core,
         world_land_warning=None,
     )
-    assert files[-1][1] == "README.md"
+    add_ops = [op for op in files if op.action == "add"]
+    assert add_ops[-1].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_augmentation_only_upload(
@@ -428,7 +433,8 @@ def test_readme_remains_last_in_augmentation_only_upload(
         repo_id=REPO_ID,
         augmentation=aug,
     )
-    assert files[-1][1] == "README.md"
+    add_ops = [op for op in files if op.action == "add"]
+    assert add_ops[-1].path_in_repo == "README.md"
 
 
 # ---------------------------------------------------------------------------

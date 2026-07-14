@@ -120,16 +120,18 @@ def _seed_data_root(tmp: Path) -> DataRoot:
     return data_root
 
 
-def _split_publication(files: list[tuple[Path, str]]) -> dict[str, list[str]]:
+def _split_publication(ops: list) -> dict[str, list[str]]:
     """Mirror the documented split: core artifacts before augmentation.
 
     The production assembly path always emits the seven core artifacts
     (parquets + manifest + coverage maps) before the seven augmentation
-    artifacts (parquets + manifests + README). The split is fixed by
-    the documented ``core``/``augmentation`` keys.
+    artifacts (5 sidecars + README + canonical manifest ``add``),
+    followed by one legacy-deletion ``delete`` op. The split is
+    fixed by the documented ``core``/``augmentation`` keys.
     """
-    remote = [remote for _, remote in files]
-    cut = len(remote) - 7 if len(remote) >= 14 else 7
+    remote = [op.path_in_repo for op in ops]
+    # unified-sync layout: 7 core + 5 sidecars + canonical-add + legacy-delete + README = 15
+    cut = len(remote) - 8 if len(remote) >= 15 else 7
     return {"core": remote[:cut], "augmentation": remote[cut:]}
 
 

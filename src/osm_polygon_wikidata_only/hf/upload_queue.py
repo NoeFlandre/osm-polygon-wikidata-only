@@ -10,19 +10,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 
 LOGGER = logging.getLogger(__name__)
 
-UploadFiles = list[tuple[Path, str]]
-UploadOperation = Callable[[UploadFiles, str], None]
+UploadOps = list[PublicationOp]
+UploadOperation = Callable[[UploadOps, str], None]
 
 
 @dataclass(frozen=True)
 class _UploadJob:
-    files: UploadFiles
+    ops: UploadOps
     message: str
     state_path: Path | None
 
@@ -53,7 +54,7 @@ class BackgroundUploadQueue:
         self._closed = False
         self._thread.start()
 
-    def submit(self, files: UploadFiles, message: str) -> None:
+    def submit(self, ops: UploadOps, message: str) -> None:
         if self._closed:
             raise RuntimeError("upload queue is closed")
         state_path = None
@@ -64,12 +65,19 @@ class BackgroundUploadQueue:
                 json_dumps(
                     {
                         "message": message,
-                        "files": [[str(local), remote] for local, remote in files],
+                        "ops": [
+                            {
+                                "action": op.action,
+                                "path_in_repo": op.path_in_repo,
+                                "local_path": str(op.local_path) if op.local_path else None,
+                            }
+                            for op in ops
+                        ],
                     }
                 )
                 + "\n",
             )
-        self._jobs.put(_UploadJob(list(files), message, state_path))
+        self._jobs.put(_UploadJob(list(ops), message, state_path))
         LOGGER.info("Queued background upload: %s", message)
 
     def resume_pending(self) -> int:
@@ -78,8 +86,15 @@ class BackgroundUploadQueue:
         paths = sorted(self._state_dir.glob("*.json"))
         for path in paths:
             raw = json_loads(path.read_text(encoding="utf-8"))
-            files = [(Path(local), str(remote)) for local, remote in raw["files"]]
-            self._jobs.put(_UploadJob(files, str(raw["message"]), path))
+            ops = [
+                PublicationOp(
+                    action=entry["action"],
+                    path_in_repo=entry["path_in_repo"],
+                    local_path=Path(entry["local_path"]) if entry["local_path"] else None,
+                )
+                for entry in raw["ops"]
+            ]
+            self._jobs.put(_UploadJob(ops, str(raw["message"]), path))
         return len(paths)
 
     def close_and_wait(self) -> list[str]:
@@ -99,7 +114,7 @@ class BackgroundUploadQueue:
                     last_error: Exception | None = None
                     for _ in range(self._attempts):
                         try:
-                            self._upload(job.files, job.message)
+                            self._upload(job.ops, job.message)
                             last_error = None
                             break
                         # ``except Exception`` retained: ``huggingface_hub``
@@ -127,4 +142,4 @@ class BackgroundUploadQueue:
                 self._jobs.task_done()
 
 
-__all__ = ["BackgroundUploadQueue", "UploadFiles", "UploadOperation"]
+__all__ = ["BackgroundUploadQueue", "UploadOperation", "UploadOps"]

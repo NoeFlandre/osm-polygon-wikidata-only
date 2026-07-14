@@ -167,43 +167,48 @@ def test_upload_files_commits_every_artifact_atomically(tmp_path: Path) -> None:
 def test_background_upload_submit_does_not_wait_for_upload(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
+    from osm_polygon_wikidata_only.hf._uploader.plan import add_op
 
-    def upload(files: list[tuple[Path, str]], message: str) -> None:
+    def upload(ops: list, message: str) -> None:
         started.set()
         release.wait(timeout=2)
 
     queue = BackgroundUploadQueue(upload=upload, max_pending=2)
-    queue.submit([(_small_parquet(tmp_path), "polygons/x.parquet")], "x")
+    queue.submit([add_op(_small_parquet(tmp_path), path_in_repo="polygons/x.parquet")], "x")
     assert started.wait(timeout=1)
     release.set()
     assert queue.close_and_wait() == []
 
 
 def test_background_upload_reports_worker_failure(tmp_path: Path) -> None:
-    def upload(files: list[tuple[Path, str]], message: str) -> None:
+    from osm_polygon_wikidata_only.hf._uploader.plan import add_op
+
+    def upload(ops: list, message: str) -> None:
         raise UploadError("offline")
 
     queue = BackgroundUploadQueue(upload=upload, max_pending=2)
-    queue.submit([(_small_parquet(tmp_path), "polygons/x.parquet")], "x")
+    queue.submit([add_op(_small_parquet(tmp_path), path_in_repo="polygons/x.parquet")], "x")
     failures = queue.close_and_wait()
     assert len(failures) == 1
     assert "offline" in failures[0]
 
 
 def test_background_upload_failure_is_resumed_from_durable_state(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf._uploader.plan import add_op
+
     state = tmp_path / "jobs"
     artifact = _small_parquet(tmp_path)
     failing = BackgroundUploadQueue(
-        upload=lambda files, message: (_ for _ in ()).throw(UploadError("offline")),
+        upload=lambda ops, message: (_ for _ in ()).throw(UploadError("offline")),
         state_dir=state,
     )
-    failing.submit([(artifact, "polygons/x.parquet")], "x")
+    failing.submit([add_op(artifact, path_in_repo="polygons/x.parquet")], "x")
     assert failing.close_and_wait()
     assert len(list(state.glob("*.json"))) == 1
 
     calls: list[str] = []
     resumed = BackgroundUploadQueue(
-        upload=lambda files, message: calls.append(message),
+        upload=lambda ops, message: calls.append(message),
         state_dir=state,
     )
     assert resumed.resume_pending() == 1

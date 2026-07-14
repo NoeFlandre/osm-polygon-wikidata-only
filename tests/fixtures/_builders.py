@@ -415,6 +415,7 @@ def build_golden_publication(out: Path) -> Path:
             "wikivoyage/documents/monaco-latest.parquet",
             "wikivoyage/sections/monaco-latest.parquet",
             "wikidata/facts/monaco-latest.parquet",
+            "manifests/augmentation_manifest.json",
             "augmentation/manifests/augmentation_manifest.json",
             "README.md",
         ],
