@@ -2,10 +2,11 @@
 
 ALL remote paths published by this codebase MUST be defined here.
 Production code MUST NOT scatter literal remote-path strings across
-CLI or pipeline code. The single exception is
-:data:`LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE`, an explicitly-named
-constant used solely by the migration commit that unifies the
-augmentation manifest under ``manifests/``.
+CLI or pipeline code. Explicitly-named constants:
+* :data:`LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE`: used solely by the migration
+  commit that unifies the augmentation manifest under ``manifests/``.
+* :data:`LEGACY_REMOTE_COVERAGE_MAP_FILE`: used solely by the migration
+  commit that unifies the coverage map under ``assets/``.
 """
 
 from __future__ import annotations
