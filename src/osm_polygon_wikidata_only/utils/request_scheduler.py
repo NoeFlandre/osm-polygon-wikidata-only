@@ -16,6 +16,7 @@ starve unrelated healthy hosts.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections import deque
@@ -28,6 +29,13 @@ T = TypeVar("T")
 # Length of the rolling window used for "requests/429s in the last
 # minute" telemetry. Centralised so the snapshot and pruning agree.
 ROLLING_WINDOW_S = 60.0
+
+# Proportional systemic-throttle defaults.  Callers that want the
+# active-host-aware decision should pass these (or import them).
+# See :meth:`AdaptiveRequestScheduler._systemic_threshold`.
+SYSTEMIC_ACTIVE_HOST_WINDOW_S = 60.0
+SYSTEMIC_MINIMUM_HOSTS = 5
+SYSTEMIC_HOST_FRACTION = 0.10
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +82,9 @@ class AdaptiveRequestScheduler:
         successes_per_increase: int = 100,
         host_throttle_window_s: float = 10.0,
         host_throttle_threshold: int = 3,
+        active_host_window_s: float | None = None,
+        minimum_systemic_hosts: int | None = None,
+        systemic_host_fraction: float | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -96,6 +107,30 @@ class AdaptiveRequestScheduler:
             raise ValueError("host_throttle_window_s must be positive")
         if host_throttle_threshold < 1:
             raise ValueError("host_throttle_threshold must be at least 1")
+        # Proportional systemic threshold: when any of the new parameters
+        # are provided, use proportional mode; otherwise fall back to the
+        # fixed ``host_throttle_threshold``.
+        proportional = (
+            active_host_window_s is not None
+            or minimum_systemic_hosts is not None
+            or systemic_host_fraction is not None
+        )
+        self._proportional_mode = proportional
+        self._active_host_window_s = (
+            active_host_window_s if active_host_window_s is not None else 60.0
+        )
+        self._minimum_systemic_hosts = (
+            minimum_systemic_hosts if minimum_systemic_hosts is not None else 5
+        )
+        self._systemic_host_fraction = (
+            systemic_host_fraction if systemic_host_fraction is not None else 0.10
+        )
+        if self._active_host_window_s <= 0:
+            raise ValueError("active_host_window_s must be positive")
+        if self._minimum_systemic_hosts < 1:
+            raise ValueError("minimum_systemic_hosts must be at least 1")
+        if not 0 < self._systemic_host_fraction <= 1.0:
+            raise ValueError("systemic_host_fraction must be between 0 (exclusive) and 1")
         self._max_in_flight = max_in_flight
         self._semaphore = threading.BoundedSemaphore(max_in_flight)
         self._current_requests_per_minute = requests_per_minute
@@ -119,6 +154,9 @@ class AdaptiveRequestScheduler:
         self._hosts_lock = threading.Lock()
         self._request_started_at: deque[float] = deque()
         self._in_flight = 0
+        # Active host tracking for proportional systemic detection.
+        # Maps host -> last activity timestamp. Protected by ``_lock``.
+        self._active_host_timestamps: dict[str, float] = {}
         # Monotonic timestamp of the last systemic global reduction. A
         # second escalation within ``host_throttle_window_s`` is suppressed
         # so a flurry of throttles from many hosts does not repeatedly
@@ -154,6 +192,9 @@ class AdaptiveRequestScheduler:
         so a 429 that arrived while the request was waiting cannot be
         silently ignored.
         """
+        # Record this host as active for proportional threshold.
+        with self._lock:
+            self._active_host_timestamps[host] = self._clock()
         state = self._host_state(host)
         while True:
             with state.lock:
@@ -235,7 +276,7 @@ class AdaptiveRequestScheduler:
             }
             self._systemic_host_events[host] = now
             systemic = (
-                len(self._systemic_host_events) >= self._host_throttle_threshold
+                len(self._systemic_host_events) >= self._systemic_threshold()
                 and now - self._last_systemic_reduction_at > self._host_throttle_window_s
             )
             if systemic:
@@ -261,6 +302,46 @@ class AdaptiveRequestScheduler:
                 self._current_requests_per_minute / 2,
             )
             self._successful_requests = 0
+
+    def _systemic_threshold(self) -> int:
+        """Compute the dynamic systemic threshold based on active host population.
+
+        In proportional mode the threshold scales with the active host count:
+        ``min(active, max(minimum_systemic_hosts, ceil(active * fraction)))``.
+
+        For small populations (active ≤ minimum_systemic_hosts) this clamps
+        to the total active count, requiring *all* active hosts to be
+        throttled before declaring systemic throttling.
+
+        In legacy mode (no proportional parameters provided), the fixed
+        ``host_throttle_threshold`` is returned unchanged.
+
+        Must be called while ``self._lock`` is held.
+        """
+        if not self._proportional_mode:
+            return self._host_throttle_threshold
+        active = self._active_host_count()
+        if active == 0:
+            return self._host_throttle_threshold
+        return min(
+            active,
+            max(
+                self._minimum_systemic_hosts,
+                math.ceil(active * self._systemic_host_fraction),
+            ),
+        )
+
+    def _active_host_count(self) -> int:
+        """Count hosts active within the rolling window.
+
+        Must be called while ``self._lock`` is held.
+        """
+        now = self._clock()
+        cutoff = now - self._active_host_window_s
+        self._active_host_timestamps = {
+            h: t for h, t in self._active_host_timestamps.items() if t > cutoff
+        }
+        return len(self._active_host_timestamps)
 
     def _host_state(self, host: str) -> _HostState:
         with self._hosts_lock:
@@ -343,11 +424,22 @@ class AdaptiveRequestScheduler:
                     self._in_flight -= 1
 
 
-_DEFAULT_SCHEDULER = AdaptiveRequestScheduler()
+_DEFAULT_SCHEDULER = AdaptiveRequestScheduler(
+    active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+    minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+    systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+)
 
 
 def default_scheduler() -> AdaptiveRequestScheduler:
     return _DEFAULT_SCHEDULER
 
 
-__all__ = ["AdaptiveRequestScheduler", "RequestSchedulerSnapshot", "default_scheduler"]
+__all__ = [
+    "SYSTEMIC_ACTIVE_HOST_WINDOW_S",
+    "SYSTEMIC_HOST_FRACTION",
+    "SYSTEMIC_MINIMUM_HOSTS",
+    "AdaptiveRequestScheduler",
+    "RequestSchedulerSnapshot",
+    "default_scheduler",
+]

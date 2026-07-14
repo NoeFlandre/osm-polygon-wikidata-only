@@ -72,3 +72,92 @@ def test_startup_log_distinguishes_configured_credentials_from_verified(
     # Must not claim the whole run is already authenticated.
     assert "authenticated as" not in rendered
     assert "secret" not in rendered
+
+
+# ---------------------------------------------------------------------------
+# Integration: production scheduler uses proportional systemic backoff
+# ---------------------------------------------------------------------------
+
+
+def test_production_scheduler_proportional_195_hosts_throttle_3(tmp_path) -> None:
+    """build_wikimedia_runtime() scheduler must NOT globally reduce when only 3
+    of ~195 hosts are throttled.
+
+    threshold = min(195, max(5, ceil(195 * 0.10))) = 20
+    """
+    runtime = build_wikimedia_runtime(Settings(), data_root=DataRoot(tmp_path), environ=_AUTH_ENV)
+    scheduler = runtime.scheduler
+
+    # Activate 195 hosts so the proportional denominator is large.
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    for host in hosts:
+        scheduler.pace_host(host)
+
+    # Throttle 3 distinct hosts.
+    for i in range(3):
+        scheduler.report_host_throttled(hosts[i], 2.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0, (
+        f"3 of 195 hosts throttled must NOT reduce global rate; "
+        f"got {scheduler.current_requests_per_minute}"
+    )
+
+
+def test_production_scheduler_proportional_195_hosts_throttle_7(tmp_path) -> None:
+    """Throttling 7 of 195 hosts must also NOT reduce the global rate."""
+    runtime = build_wikimedia_runtime(Settings(), data_root=DataRoot(tmp_path), environ=_AUTH_ENV)
+    scheduler = runtime.scheduler
+
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    for host in hosts:
+        scheduler.pace_host(host)
+
+    for i in range(7):
+        scheduler.report_host_throttled(hosts[i], 2.0)
+
+    assert scheduler.current_requests_per_minute == 1200.0, (
+        f"7 of 195 hosts throttled must NOT reduce global rate; "
+        f"got {scheduler.current_requests_per_minute}"
+    )
+
+
+def test_production_scheduler_systemic_20_of_195_reduces(tmp_path) -> None:
+    """Throttling 20 of 195 hosts MUST trigger exactly one global reduction."""
+    runtime = build_wikimedia_runtime(Settings(), data_root=DataRoot(tmp_path), environ=_AUTH_ENV)
+    scheduler = runtime.scheduler
+
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    for host in hosts:
+        scheduler.pace_host(host)
+
+    for i in range(20):
+        scheduler.report_host_throttled(hosts[i], 1.0)
+
+    assert scheduler.current_requests_per_minute == 600.0, (
+        f"20 of 195 hosts throttled must trigger exactly one halving; "
+        f"got {scheduler.current_requests_per_minute}"
+    )
+
+
+def test_standalone_augmentation_scheduler_uses_proportional_policy(tmp_path) -> None:
+    """The standalone AugmentationWikimediaClient scheduler must also
+    use proportional systemic backoff."""
+    client = AugmentationWikimediaClient(
+        Settings(),
+        JsonFileCache(tmp_path / "augmentation"),
+        environ=_AUTH_ENV,
+    )
+    scheduler = client._scheduler
+
+    hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
+    for host in hosts:
+        scheduler.pace_host(host)
+
+    # 5 throttled out of 195: no global reduction.
+    for i in range(5):
+        scheduler.report_host_throttled(hosts[i], 2.0)
+
+    assert scheduler.current_requests_per_minute == scheduler._max_requests_per_minute, (
+        f"standalone augmentation scheduler should use proportional policy; "
+        f"5 of 195 throttled should not reduce; got {scheduler.current_requests_per_minute}"
+    )
