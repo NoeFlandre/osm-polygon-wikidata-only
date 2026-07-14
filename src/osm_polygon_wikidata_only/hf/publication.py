@@ -3,8 +3,8 @@
 This module owns the construction of publication-op lists for the
 three documented publication contracts. Assemblers return
 ``list[PublicationOp]`` -- one ``add`` op per local artifact, plus
-an explicit ``delete`` op for the legacy augmentation-manifest path
-so the migration commit unifies the remote manifests directory.
+explicit ``delete`` ops for the legacy paths (augmentation manifest
+and coverage map) to migrate the remote layout.
 
 * Legacy core publication
   (called by :func:`cli.commands._enqueue_core_upload`):
