@@ -24,10 +24,23 @@ class StubHfHub:
     network.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, remote_files: set[str] | None = None) -> None:
         self.uploads: list[dict[str, Any]] = []
         self.commits: list[dict[str, Any]] = []
         self.created_repos: list[dict[str, Any]] = []
+        # ``None`` preserves the historical permissive stub behavior.
+        # Supplying a set enables explicit remote-state simulation.
+        self.remote_files = remote_files
+
+    def file_exists(
+        self,
+        repo_id: str,
+        filename: str,
+        *,
+        repo_type: str,
+    ) -> bool:
+        del repo_id, repo_type
+        return self.remote_files is None or filename in self.remote_files
 
     def upload_file(
         self,
@@ -101,6 +114,12 @@ class StubHfHub:
                 "num_threads": num_threads,
             }
         )
+        if self.remote_files is not None:
+            for op in ops:
+                if op["action"] == "add":
+                    self.remote_files.add(op["path_in_repo"])
+                else:
+                    self.remote_files.discard(op["path_in_repo"])
         return str(uuid4())
 
     def create_repo(

@@ -232,6 +232,23 @@ def upload_files(
         raise UploadError("Upload commit contains duplicate remote paths")
     client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
     _ensure_repo_exists(client, repo_id)
+    if delete_paths:
+        try:
+            existing_deletes = {
+                path
+                for path in delete_paths
+                if client.file_exists(repo_id, path, repo_type="dataset")
+            }
+        except Exception as error:
+            raise _translate_hf_error(error, repo_id=repo_id) from error
+        skipped_deletes = delete_paths - existing_deletes
+        for path in sorted(skipped_deletes):
+            LOGGER.info("Legacy remote path already absent; skipping delete: %s", path)
+        operations_obj = [
+            operation
+            for operation in operations_obj
+            if operation.path_in_repo not in skipped_deletes
+        ]
     LOGGER.info("Uploading %d ops atomically to %s", len(operations_obj), repo_id)
     try:
         result = client.create_commit(

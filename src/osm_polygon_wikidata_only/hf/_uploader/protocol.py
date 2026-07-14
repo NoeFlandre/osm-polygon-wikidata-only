@@ -43,3 +43,11 @@ class HfHub(Protocol):
         repo_type: str,
         exist_ok: bool,
     ) -> Any: ...
+
+    def file_exists(
+        self,
+        repo_id: str,
+        filename: str,
+        *,
+        repo_type: str,
+    ) -> bool: ...

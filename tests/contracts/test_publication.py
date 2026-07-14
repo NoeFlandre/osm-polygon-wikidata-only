@@ -1425,11 +1425,10 @@ def test_upload_files_deletion_is_idempotent_when_remote_missing(tmp_path: Path)
     canonical = tmp_path / "c.json"
     canonical.write_text("{}", encoding="utf-8")
 
-    hub = StubHfHub()
-    # No-op delete: the stub already records a deletion whether or
-    # not the remote file exists. Real callers rely on
-    # huggingface_hub.HfApi.create_commit semantics for idempotent
-    # deletion; the publication layer never probes the remote first.
+    hub = StubHfHub(remote_files=set())
+    # Hugging Face rejects CommitOperationDelete when the target does
+    # not exist. The uploader must therefore omit the legacy delete
+    # after confirming that the remote path is already absent.
     plan = [
         add_op(canonical, path_in_repo="manifests/augmentation_manifest.json"),
         delete_op("augmentation/manifests/augmentation_manifest.json"),
@@ -1441,6 +1440,11 @@ def test_upload_files_deletion_is_idempotent_when_remote_missing(tmp_path: Path)
         token="stub-token",
         commit_message="migration commit",
     )
-    # Exactly one commit, both ops included. No re-probe required.
+    # Exactly one commit containing only the canonical addition.
     assert len(hub.commits) == 1
-    assert {op["action"] for op in hub.commits[0]["operations"]} == {"add", "delete"}
+    assert hub.commits[0]["operations"] == [
+        {
+            "action": "add",
+            "path_in_repo": "manifests/augmentation_manifest.json",
+        }
+    ]
