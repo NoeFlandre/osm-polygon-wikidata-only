@@ -30,7 +30,11 @@ def compute_dataset_stats(processed_dir: Path) -> DatasetStats:
     data, never hardcoded.
     """
     polygons_dir = processed_dir / "polygons"
-    articles_dir = processed_dir / "articles"
+    canonical_documents_dir = processed_dir / "wikipedia" / "documents"
+    legacy_articles_dir = processed_dir / "articles"
+    articles_dir = (
+        canonical_documents_dir if canonical_documents_dir.exists() else legacy_articles_dir
+    )
     links_dir = processed_dir / "polygon_articles"
 
     polygon_count = 0

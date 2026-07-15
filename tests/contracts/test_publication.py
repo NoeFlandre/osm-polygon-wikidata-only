@@ -47,10 +47,13 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.schema import article_schema
 from osm_polygon_wikidata_only.hf.publication import (
     assemble_augmentation_upload,
     assemble_core_upload,
@@ -72,9 +75,10 @@ def _stub_process_result(tmp_path: Path) -> tuple[ProcessResult, DataRoot]:
     articles = data_root.processed_articles / f"{STEM}.parquet"
     links = data_root.processed_links / f"{STEM}.parquet"
     manifest = data_root.processed_manifests / "processed_pbfs.json"
-    for p in (polygons, articles, links, manifest):
+    for p in (polygons, links, manifest):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b"")
+    pq.write_table(pa.Table.from_pylist([], schema=article_schema()), articles)
     manifest.write_text("{}", encoding="utf-8")
     return (
         ProcessResult(
@@ -204,12 +208,16 @@ def test_assemble_augmentation_upload_returns_seven_entries(tmp_path: Path) -> N
     add_ops = [op for op in ops if op.action == "add"]
     delete_ops = [op for op in ops if op.action == "delete"]
     assert len(add_ops) == 7
-    assert len(delete_ops) == 1
+    assert len(delete_ops) == 2
     assert add_ops[5].local_path == aug.manifest_path
     assert add_ops[5].path_in_repo == "manifests/augmentation_manifest.json"
-    assert delete_ops[0].path_in_repo == "augmentation/manifests/augmentation_manifest.json"
+    assert {op.path_in_repo for op in delete_ops} == {
+        "articles/monaco-latest.parquet",
+        "augmentation/manifests/augmentation_manifest.json",
+    }
     assert remotes == [
         "wikipedia/documents/monaco-latest.parquet",
+        "articles/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
@@ -218,7 +226,7 @@ def test_assemble_augmentation_upload_returns_seven_entries(tmp_path: Path) -> N
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
-    assert len(ops) == 8
+    assert len(ops) == 9
 
 
 def test_assemble_augmentation_upload_writes_readme_at_end(
@@ -317,6 +325,7 @@ def test_assemble_region_upload_without_core_returns_seven_augmentation_entries(
     # and ``delete`` op for the augmentation manifests) + README.
     assert remotes == [
         "wikipedia/documents/monaco-latest.parquet",
+        "articles/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
@@ -346,15 +355,15 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
     remotes = [op.path_in_repo for op in ops]
 
     assert remotes[0] == "polygons/monaco-latest.parquet"
-    assert remotes[1] == "articles/monaco-latest.parquet"
-    assert remotes[2] == "polygon_articles/monaco-latest.parquet"
-    assert remotes[3] == "manifests/processed_pbfs.json"
-    assert remotes[4] == "assets/geographic_wikipedia_text_coverage.png"
-    assert remotes[5] == "assets/geographic_polygon_count.png"
-    assert remotes[6] == "assets/coverage_map.png"
-    assert remotes[7] == "coverage_map.png"
-    assert remotes[8:] == [
+    assert remotes[1] == "polygon_articles/monaco-latest.parquet"
+    assert remotes[2] == "manifests/processed_pbfs.json"
+    assert remotes[3] == "assets/geographic_wikipedia_text_coverage.png"
+    assert remotes[4] == "assets/geographic_polygon_count.png"
+    assert remotes[5] == "assets/coverage_map.png"
+    assert remotes[6] == "coverage_map.png"
+    assert remotes[7:] == [
         "wikipedia/documents/monaco-latest.parquet",
+        "articles/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
@@ -462,6 +471,7 @@ def test_assemble_core_upload_returns_eight_entries(
     remotes = [op.path_in_repo for op in ops]
     assert remotes == [
         "polygons/monaco-latest.parquet",
+        "wikipedia/documents/monaco-latest.parquet",
         "articles/monaco-latest.parquet",
         "polygon_articles/monaco-latest.parquet",
         "manifests/processed_pbfs.json",
@@ -471,7 +481,7 @@ def test_assemble_core_upload_returns_eight_entries(
         "assets/coverage_map.png",
         "coverage_map.png",
     ]
-    assert len(ops) == 9
+    assert len(ops) == 10
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -801,7 +811,7 @@ def test_legacy_core_command_submits_exactly_once(
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 9
+    assert len(ops) == 10
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -862,7 +872,7 @@ def test_augmentation_command_submits_exactly_once(
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
     # 5 sidecars + canonical augmentation add + legacy augmentation delete + README = 8 ops
-    assert len(uploads[0][0]) == 8
+    assert len(uploads[0][0]) == 9
 
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
@@ -982,7 +992,7 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     assert len(by_message["Sync complete region monaco-latest"]) == 16
     # AUGMENT state (no core): 8 ops (5 sidecars + canonical
     # augmentation ``add`` + legacy augmentation ``delete`` + README).
-    assert len(by_message["Sync complete region andorra-latest"]) == 8
+    assert len(by_message["Sync complete region andorra-latest"]) == 9
 
 
 # ---------------------------------------------------------------------------
@@ -1470,6 +1480,48 @@ def test_upload_files_rejects_legacy_coverage_map_only_when_canonical_missing() 
             hub=hub,
             token="stub-token",
             commit_message="dangling delete",
+        )
+
+
+def test_upload_files_rejects_legacy_article_without_lossless_replacement() -> None:
+    """A legacy article cannot be deleted without the same-stem document add."""
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    with pytest.raises(UploadError, match="canonical replacement"):
+        ops_mod.upload_files(
+            REPO_ID,
+            ops=[delete_op("articles/monaco-latest.parquet")],
+            hub=StubHfHub(),
+            token="stub-token",
+            commit_message="unsafe retirement",
+        )
+
+
+def test_upload_files_pairs_article_retirement_by_exact_stem(tmp_path: Path) -> None:
+    """A replacement for another stem cannot authorize deletion."""
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+    from osm_polygon_wikidata_only.hf._uploader.plan import add_op, delete_op
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    replacement = tmp_path / "andorra-latest.parquet"
+    replacement.touch()
+    with pytest.raises(UploadError, match="monaco-latest"):
+        ops_mod.upload_files(
+            REPO_ID,
+            ops=[
+                add_op(
+                    replacement,
+                    path_in_repo="wikipedia/documents/andorra-latest.parquet",
+                ),
+                delete_op("articles/monaco-latest.parquet"),
+            ],
+            hub=StubHfHub(),
+            token="stub-token",
+            commit_message="wrong replacement",
         )
 
 

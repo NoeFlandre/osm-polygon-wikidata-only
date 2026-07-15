@@ -522,7 +522,7 @@ def _rebuild_table_for_write(sp: StemPlan, processed_dir: Path, target: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def plan_migration(processed_dir: Path) -> MigrationPlan:
+def plan_migration(processed_dir: Path, stems: set[str] | None = None) -> MigrationPlan:
     """Read-only planning stage.
 
     Discovers the deterministic union of article and Wikipedia-document stems,
@@ -537,6 +537,8 @@ def plan_migration(processed_dir: Path) -> MigrationPlan:
     processed_dir:
         Path to the ``processed/`` directory containing ``articles/``,
         ``wikipedia/documents/``, and other dataset tables.
+    stems:
+        Optional set of specific stems to scope/restrict the migration plan to.
 
     Returns
     -------
@@ -544,7 +546,10 @@ def plan_migration(processed_dir: Path) -> MigrationPlan:
         Immutable, validated plan with per-stem classifications.
     """
     stems_data: list[StemPlan] = []
-    for stem in _discover_all_stems(processed_dir):
+    discovered = _discover_all_stems(processed_dir)
+    if stems is not None:
+        discovered = [s for s in discovered if s in stems]
+    for stem in discovered:
         stems_data.append(_classify_stem(stem, processed_dir))
 
     return MigrationPlan(
@@ -597,7 +602,10 @@ def apply_migration(plan: MigrationPlan) -> ApplyResult:
     # Phase 2: Re-plan all stems before any writes (zero writes on failure).
     # The caller-supplied plan contains metadata only and is never a source
     # of rows written to disk.
-    current_plan = plan_migration(processed_dir)
+    current_plan = plan_migration(
+        processed_dir,
+        stems={stem_plan.stem for stem_plan in plan.stems},
+    )
     if tuple(sp.stem for sp in current_plan.stems) != tuple(sp.stem for sp in plan.stems):
         raise MigrationError("Migration plan stem set changed after validation")
 

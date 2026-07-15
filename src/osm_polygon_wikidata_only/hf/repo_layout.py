@@ -16,7 +16,13 @@ from pathlib import Path
 # Top-level directories inside the HF dataset repo. These must
 # match the column lists in ``domain.schema``.
 REMOTE_POLYGONS_DIR = "polygons"
-REMOTE_ARTICLES_DIR = "articles"
+# Canonical Wikipedia corpus. ``articles/`` is retained only as the
+# explicitly named legacy path during the atomic remote migration.
+REMOTE_WIKIPEDIA_DOCUMENTS_DIR = "wikipedia/documents"
+LEGACY_REMOTE_ARTICLES_DIR = "articles"
+# Backward-compatible import alias. New publication code must use the
+# explicitly named legacy constant instead.
+REMOTE_ARTICLES_DIR = LEGACY_REMOTE_ARTICLES_DIR
 REMOTE_LINKS_DIR = "polygon_articles"
 REMOTE_MANIFESTS_DIR = "manifests"
 
@@ -64,6 +70,7 @@ def local_to_remote(local_path: Path, processed_subdir: str) -> str:
 
 
 __all__ = [
+    "LEGACY_REMOTE_ARTICLES_DIR",
     "LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE",
     "LEGACY_REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_ARTICLES_DIR",
@@ -75,6 +82,7 @@ __all__ = [
     "REMOTE_MANIFESTS_DIR",
     "REMOTE_MANIFEST_FILE",
     "REMOTE_POLYGONS_DIR",
+    "REMOTE_WIKIPEDIA_DOCUMENTS_DIR",
     "local_to_remote",
     "remote_dataset_card_path",
     "remote_parquet_path",

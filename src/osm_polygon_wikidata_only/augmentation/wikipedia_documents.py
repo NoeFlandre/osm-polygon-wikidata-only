@@ -1,10 +1,9 @@
 """Canonical Wikipedia document contract: lossless 32-column schema, model, and conversion.
 
-This module provides the future-state schema for migrating the legacy
-articles/ table into wikipedia/documents/.  It is additive only:
-the existing ``DOCUMENT_COLUMNS``, ``Document``, ``document_schema()``,
-and ``document_from_article_row()`` in the augmentation package remain
-unchanged.
+This module provides the canonical schema used to migrate the legacy
+``articles/`` table into ``wikipedia/documents/`` without losing a
+field. The smaller shared ``Document`` model remains in use internally
+for section extraction and Wikivoyage.
 
 The canonical 32-column layout preserves every article field plus
 ``document_id`` (deterministic identity) and ``project`` (always

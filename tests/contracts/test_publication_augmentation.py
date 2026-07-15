@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     AugmentationResult,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.schema import article_schema
 from osm_polygon_wikidata_only.hf.publication import (
     assemble_augmentation_upload,
     assemble_core_upload,
@@ -42,15 +43,24 @@ _POLYGON_TABLE = pa.table(
         "wikipedia_languages": ['["en"]'],
     }
 )
-_ARTICLE_TABLE = pa.table(
+_ARTICLE_ROW = {
+    field.name: ("" if pa.types.is_string(field.type) else None) for field in article_schema()
+}
+_ARTICLE_ROW.update(
     {
-        "article_id": ["Q235:en:1:1"],
-        "wikidata": ["Q235"],
-        "language": ["en"],
-        "article_length_words": [100],
-        "article_length_tokens_estimate": [25],
+        "article_id": "Q235:en:1:1",
+        "wikidata": "Q235",
+        "language": "en",
+        "site": "enwiki",
+        "title": "Monaco",
+        "page_id": 1,
+        "revision_id": 1,
+        "article_length_chars": 400,
+        "article_length_words": 100,
+        "article_length_tokens_estimate": 25,
     }
 )
+_ARTICLE_TABLE = pa.Table.from_pylist([_ARTICLE_ROW], schema=article_schema())
 _LINK_TABLE = pa.table(
     {
         "polygon_id": ["monaco-latest:relation:1"],
@@ -399,8 +409,8 @@ def test_readme_remains_last_in_core_upload(
         core=core,
         world_land_warning=lambda msg: None,
     )
-    # The README is the 7th entry (index 6) of 9.
-    assert files[6].path_in_repo == "README.md"
+    # The README follows the canonical document retirement and coverage assets.
+    assert files[7].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_region_upload(

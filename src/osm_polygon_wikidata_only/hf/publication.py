@@ -93,7 +93,12 @@ import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+import pyarrow.parquet as pq
+
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    build_wikipedia_document_table,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
@@ -128,9 +133,9 @@ from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     generate_geographic_text_coverage as _generate_geographic_text_coverage,
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
+    LEGACY_REMOTE_ARTICLES_DIR,
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
     LEGACY_REMOTE_COVERAGE_MAP_FILE,
-    REMOTE_ARTICLES_DIR,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
@@ -138,6 +143,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
+    REMOTE_WIKIPEDIA_DOCUMENTS_DIR,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.manifest import load_manifest
@@ -169,6 +175,28 @@ def _augmentation_migration_ops(
         ),
         delete_op(LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE),
     ]
+
+
+def _legacy_article_retirement_ops(
+    *, stem: str, canonical_document_path: Path
+) -> list[PublicationOp]:
+    """Atomically replace one legacy article object with its canonical document."""
+    return [
+        add_op(
+            canonical_document_path,
+            path_in_repo=f"{REMOTE_WIKIPEDIA_DOCUMENTS_DIR}/{stem}.parquet",
+        ),
+        delete_op(f"{LEGACY_REMOTE_ARTICLES_DIR}/{stem}.parquet"),
+    ]
+
+
+def _snapshot_canonical_document(core: ProcessResult, destination: Path) -> Path:
+    """Convert a core article table to the canonical document schema for publication."""
+    article_table = pq.read_table(core.articles_path)  # type: ignore[no-untyped-call]
+    canonical = build_wikipedia_document_table(article_table)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(canonical, destination, compression="snappy")  # type: ignore[no-untyped-call]
+    return destination
 
 
 # ---------------------------------------------------------------------------
@@ -408,9 +436,18 @@ def assemble_core_upload(
         world_land_warning=world_land_warning,
     )
     write_readme_snapshot(data_root, repo_id, card_snapshot)
+    canonical_document = _snapshot_canonical_document(
+        core,
+        data_root.cache
+        / "upload_manifest_snapshots"
+        / f"{core.articles_path.stem}-wikipedia-documents.parquet",
+    )
     return [
         add_op(core.polygons_path, path_in_repo=f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
-        add_op(core.articles_path, path_in_repo=f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}"),
+        *_legacy_article_retirement_ops(
+            stem=core.articles_path.stem,
+            canonical_document_path=canonical_document,
+        ),
         add_op(
             core.polygon_articles_path,
             path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
@@ -495,10 +532,6 @@ def assemble_region_upload(
                     path_in_repo=f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}",
                 ),
                 add_op(
-                    core.articles_path,
-                    path_in_repo=f"{REMOTE_ARTICLES_DIR}/{core.articles_path.name}",
-                ),
-                add_op(
                     core.polygon_articles_path,
                     path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
                 ),
@@ -515,9 +548,9 @@ def assemble_region_upload(
 
     ops.extend(
         [
-            add_op(
-                augmentation.wikipedia_documents_path,
-                path_in_repo=f"wikipedia/documents/{stem}.parquet",
+            *_legacy_article_retirement_ops(
+                stem=stem,
+                canonical_document_path=augmentation.wikipedia_documents_path,
             ),
             add_op(
                 augmentation.wikipedia_sections_path,
@@ -576,11 +609,9 @@ def assemble_augmentation_upload(
     readme_snapshot = snapshots / f"{augmentation.wikipedia_documents_path.stem}-README.md"
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
     return [
-        add_op(
-            augmentation.wikipedia_documents_path,
-            path_in_repo=str(
-                augmentation.wikipedia_documents_path.relative_to(data_root.processed)
-            ),
+        *_legacy_article_retirement_ops(
+            stem=augmentation.wikipedia_documents_path.stem,
+            canonical_document_path=augmentation.wikipedia_documents_path,
         ),
         add_op(
             augmentation.wikipedia_sections_path,

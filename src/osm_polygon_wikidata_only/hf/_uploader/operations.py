@@ -226,6 +226,15 @@ def upload_files(
                 f"Refusing to delete legacy {legacy!r} without also uploading its "
                 f"canonical replacement {canonical!r} in the same commit."
             )
+    for legacy_path in sorted(delete_paths):
+        if not legacy_path.startswith("articles/") or not legacy_path.endswith(".parquet"):
+            continue
+        canonical_path = f"wikipedia/documents/{Path(legacy_path).name}"
+        if canonical_path not in add_paths:
+            raise UploadError(
+                f"Refusing to delete legacy {legacy_path!r} without also uploading its "
+                f"canonical replacement {canonical_path!r} in the same commit"
+            )
     if not operations_obj:
         raise UploadError("Cannot create an empty upload commit")
     remote_paths = [op.path_in_repo for op in operations_obj]

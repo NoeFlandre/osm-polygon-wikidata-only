@@ -402,7 +402,6 @@ def build_golden_publication(out: Path) -> Path:
     pub = {
         "core": [
             "polygons/monaco-latest.parquet",
-            "articles/monaco-latest.parquet",
             "polygon_articles/monaco-latest.parquet",
             "manifests/processed_pbfs.json",
             "assets/geographic_wikipedia_text_coverage.png",
@@ -412,6 +411,7 @@ def build_golden_publication(out: Path) -> Path:
         ],
         "augmentation": [
             "wikipedia/documents/monaco-latest.parquet",
+            "articles/monaco-latest.parquet",
             "wikipedia/sections/monaco-latest.parquet",
             "wikivoyage/documents/monaco-latest.parquet",
             "wikivoyage/sections/monaco-latest.parquet",

@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from concurrent.futures import Executor
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,7 +73,12 @@ from osm_polygon_wikidata_only.augmentation.wikimedia import (
     discover_wikivoyage_sitelinks,
     normalize_facts,
 )
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    build_wikipedia_document_table,
+    wikipedia_document_schema,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
@@ -117,19 +123,44 @@ class CoreInputs:
     core_hashes: dict[str, str]
 
 
-def _write(
+def _write_atomic(path: Path, table: pa.Table) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(raw_tmp)
+    os.close(fd)
+    try:
+        pq.write_table(table, tmp_path, compression="snappy")  # type: ignore[no-untyped-call]
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _write_atomic_from_rows(
     path: Path, rows: list[dict[str, Any]], columns: tuple[str, ...], schema: pa.Schema
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".parquet.tmp")
     normalized = [{column: row.get(column) for column in columns} for row in rows]
-    table = (
-        pa.Table.from_pylist(normalized, schema=schema)
-        if normalized
-        else pa.Table.from_pylist([], schema=schema)
-    )
-    pq.write_table(table, temporary, compression="snappy")  # type: ignore[no-untyped-call]
-    os.replace(temporary, path)
+    table = pa.Table.from_pylist(normalized, schema=schema)
+    _write_atomic(path, table)
+
+
+def _normalized_article_table(path: Path) -> pa.Table:
+    """Read articles and fill only historically absent nullable columns."""
+    source = pq.read_table(path)  # type: ignore[no-untyped-call]
+    unknown = set(source.column_names) - set(ARTICLE_COLUMNS)
+    if unknown:
+        raise ValueError(f"Core article Parquet has unknown columns at {path}: {sorted(unknown)}")
+    schema = article_schema()
+    rows = []
+    for source_row in source.to_pylist():
+        row: dict[str, Any] = {}
+        for column in ARTICLE_COLUMNS:
+            if column in source_row:
+                row[column] = source_row[column]
+            else:
+                row[column] = "" if pa.types.is_string(schema.field(column).type) else None
+        rows.append(row)
+    return pa.Table.from_pylist(rows, schema=schema)
 
 
 def _label_maps(entities: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
@@ -153,18 +184,28 @@ def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
     """Load the core artifacts for *stem* and capture pre-processing
     hashes. Raises :class:`FileNotFoundError` if either core parquet
     is missing."""
-    articles_path = data_root.processed_articles / f"{stem}.parquet"
+    legacy_articles_path = data_root.processed_articles / f"{stem}.parquet"
+    canonical_documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    articles_path = (
+        legacy_articles_path if legacy_articles_path.exists() else canonical_documents_path
+    )
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not articles_path.exists() or not polygons_path.exists():
         raise FileNotFoundError(f"Core region is incomplete: {stem}")
     core_paths = (articles_path, polygons_path)
     core_hashes = {str(path): sha256_file(path) for path in core_paths}
-    article_rows = pq.read_table(articles_path).to_pylist()  # type: ignore[no-untyped-call]
+
+    source_table = pq.read_table(articles_path)  # type: ignore[no-untyped-call]
+    if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
+        wikipedia_documents = [
+            Document(**{column: row[column] for column in DOCUMENT_COLUMNS})
+            for row in source_table.to_pylist()
+        ]
+    else:
+        article_table = _normalized_article_table(articles_path)
+        wikipedia_documents = [document_from_article_row(row) for row in article_table.to_pylist()]
     polygon_rows = pq.read_table(polygons_path, columns=["wikidata"]).to_pylist()  # type: ignore[no-untyped-call]
-    wikipedia_documents = sorted(
-        (document_from_article_row(row) for row in article_rows),
-        key=lambda row: row.document_id,
-    )
+    wikipedia_documents.sort(key=lambda row: row.document_id)
     qids = sorted({str(row["wikidata"]) for row in polygon_rows if row.get("wikidata")})
     return CoreInputs(
         wikipedia_documents=tuple(wikipedia_documents),
@@ -310,39 +351,63 @@ def write_sidecars(
     sections_by_project: dict[str, list[Section]],
     facts: list[WikidataFact],
     progress: AugmentationProgress,
+    articles_path: Path | None = None,
 ) -> None:
     """Write the five sidecar parquets in the canonical order and
     advance the ``Writing sidecars`` phase once per file."""
     progress.start("Writing sidecars", total=len(paths))
-    _write(
-        paths[0],
-        [row.to_dict() for row in wikipedia_documents],
-        DOCUMENT_COLUMNS,
-        document_schema(),
-    )
+
+    if articles_path is None:
+        table = pa.Table.from_pylist(
+            [row.to_dict() for row in wikipedia_documents],
+            schema=document_schema(),
+        )
+    else:
+        try:
+            source_table = pq.read_table(articles_path)  # type: ignore[no-untyped-call]
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to read core article Parquet from {articles_path}: {exc}"
+            ) from exc
+        table = (
+            source_table
+            if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True)
+            else build_wikipedia_document_table(_normalized_article_table(articles_path))
+        )
+
+    _write_atomic(paths[0], table)
     progress.advance()
-    _write(
+
+    _write_atomic_from_rows(
         paths[1],
         [row.to_dict() for row in sections_by_project["wikipedia"]],
         SECTION_COLUMNS,
         section_schema(),
     )
     progress.advance()
-    _write(
+
+    _write_atomic_from_rows(
         paths[2],
         [row.to_dict() for row in wikivoyage_documents],
         DOCUMENT_COLUMNS,
         document_schema(),
     )
     progress.advance()
-    _write(
+
+    _write_atomic_from_rows(
         paths[3],
         [row.to_dict() for row in sections_by_project["wikivoyage"]],
         SECTION_COLUMNS,
         section_schema(),
     )
     progress.advance()
-    _write(paths[4], [row.to_dict() for row in facts], FACT_COLUMNS, fact_schema())
+
+    _write_atomic_from_rows(
+        paths[4],
+        [row.to_dict() for row in facts],
+        FACT_COLUMNS,
+        fact_schema(),
+    )
     progress.advance()
 
 

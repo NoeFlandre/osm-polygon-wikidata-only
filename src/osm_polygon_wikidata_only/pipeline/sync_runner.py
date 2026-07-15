@@ -57,6 +57,7 @@ def run_sync(
     submit_upload: Callable[[list[Any], str], None] | None = None,
     close_uploads: Callable[[], list[str]] | None = None,
     on_complete: Callable[[RegionSyncState, Any], None] | None = None,
+    load_existing_augmentation: Callable[[RegionSyncState], Any] | None = None,
 ) -> int:
     """Execute the unified sync plan as a pure state executor.
 
@@ -100,17 +101,9 @@ def run_sync(
        current region, augment it.
     4. After each successful augmentation, if both
        ``build_upload_files`` and ``submit_upload`` are provided,
-       build the upload list and submit one atomic commit.
-
-    Exception semantics: processing, extraction, and
-    augmentation exceptions all propagate through the same
-    boundary. The extraction executor and the upload queue are
-    always shut down in ``finally``. No logging is performed
-    inside the runner -- the CLI shell owns all log emission.
-
-    Returns ``0`` on a clean close with no upload failures, ``1``
-    when ``close_uploads`` reports any failure. Execution
-    exceptions are not converted to ``1``.
+       assemble and submit one atomic publication.
+    5. Publish already-migrated regions without repeating remote
+       enrichment.
     """
     if extract_pbf is None or process_extracted_pbf is None or augment_region is None:
         raise RuntimeError(
@@ -119,6 +112,7 @@ def run_sync(
 
     process_states = [state for state in states if state.action is SyncAction.PROCESS]
     augment_states = [state for state in states if state.action is SyncAction.AUGMENT]
+    publish_states = [state for state in states if state.action is SyncAction.PUBLISH]
 
     extraction_executor = ThreadPoolExecutor(max_workers=1)
     core_results: dict[str, Any] = {}
@@ -172,6 +166,24 @@ def run_sync(
                 state=state,
                 augmentation=augmentation,
                 core=result,
+                submit_upload=submit_upload,
+                build_upload_files=build_upload_files,
+                commit_message=commit_message,
+            )
+
+        # Step 5: drain PUBLISH states.
+        for state in publish_states:
+            if load_existing_augmentation is None:
+                raise RuntimeError(
+                    "run_sync requires load_existing_augmentation collaborator for PUBLISH states"
+                )
+            augmentation = load_existing_augmentation(state)
+            if on_complete is not None:
+                on_complete(state, augmentation)
+            _maybe_submit(
+                state=state,
+                augmentation=augmentation,
+                core=core_results.get(state.stem),
                 submit_upload=submit_upload,
                 build_upload_files=build_upload_files,
                 commit_message=commit_message,
