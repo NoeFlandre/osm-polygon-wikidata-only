@@ -26,6 +26,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+import pyarrow.parquet as pq
+
+from osm_polygon_wikidata_only.augmentation.schema import (
+    document_schema,
+    fact_schema,
+    section_schema,
+)
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    wikipedia_document_schema,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -104,6 +114,9 @@ def augment_region(
 
     facts = build_wikidata_facts(client, entities=entities, progress=progress)
 
+    if core_inputs.core_hashes != {str(path): sha256_file(path) for path in core_inputs.core_paths}:
+        raise RuntimeError("Core artifacts changed during augmentation")
+
     write_sidecars(
         paths,
         wikipedia_documents=wikipedia_documents,
@@ -111,6 +124,7 @@ def augment_region(
         sections_by_project=sections_by_project,
         facts=facts,
         progress=progress,
+        articles_path=core_inputs.core_paths[0],
     )
 
     if core_inputs.core_hashes != {str(path): sha256_file(path) for path in core_inputs.core_paths}:
@@ -138,6 +152,9 @@ def augment_region(
 
 def completed_region_stems(data_root: DataRoot) -> list[str]:
     article_stems = {path.stem for path in data_root.processed_articles.glob("*.parquet")}
+    article_stems.update(
+        path.stem for path in (data_root.processed / "wikipedia" / "documents").glob("*.parquet")
+    )
     polygon_stems = {path.stem for path in data_root.processed_polygons.glob("*.parquet")}
     return sorted(article_stems & polygon_stems)
 
@@ -154,8 +171,10 @@ def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
     entry = manifest.get(stem, {})
     if entry.get("contract_version") != CONTRACT_VERSION:
         return False
+    legacy_articles = data_root.processed_articles / f"{stem}.parquet"
+    canonical_documents = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
     core_paths = (
-        data_root.processed_articles / f"{stem}.parquet",
+        legacy_articles if legacy_articles.exists() else canonical_documents,
         data_root.processed_polygons / f"{stem}.parquet",
     )
     if not all(path.exists() for path in core_paths):
@@ -165,10 +184,91 @@ def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
     return bool(expected == current)
 
 
+def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> AugmentationResult:
+    """Load and validate an existing augmentation result without remote work."""
+    manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Augmentation manifest not found: {manifest_path}")
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Augmentation manifest is not valid JSON: {exc}") from exc
+
+    if not isinstance(manifest, dict):
+        raise TypeError("Augmentation manifest must be a JSON object")
+
+    if stem not in manifest:
+        raise KeyError(f"Stem {stem!r} not found in augmentation manifest")
+
+    entry = manifest[stem]
+    if not isinstance(entry, dict):
+        raise TypeError(f"Manifest entry for {stem!r} must be a JSON object")
+
+    if entry.get("contract_version") != CONTRACT_VERSION:
+        raise ValueError(
+            f"Invalid contract version for {stem!r} in manifest: expected {CONTRACT_VERSION!r}, got {entry.get('contract_version')!r}"
+        )
+
+    counts = entry.get("counts")
+    if not isinstance(counts, dict):
+        raise TypeError(f"Manifest entry counts for {stem!r} must be a JSON object")
+
+    expected_keys = {
+        "wikipedia_documents",
+        "wikipedia_sections",
+        "wikivoyage_documents",
+        "wikivoyage_sections",
+        "wikidata_facts",
+    }
+    if not expected_keys.issubset(counts.keys()):
+        raise ValueError(
+            f"Manifest entry counts for {stem!r} is missing required fields: expected {expected_keys}, got {set(counts.keys())}"
+        )
+
+    for k in expected_keys:
+        if not isinstance(counts[k], int) or counts[k] < 0:
+            raise TypeError(f"Manifest count for {k!r} must be a non-negative integer")
+
+    # Validate sidecar files
+    paths = sidecar_paths(data_root, stem)
+
+    expected_schemas = (
+        wikipedia_document_schema(),
+        section_schema(),
+        document_schema(),
+        section_schema(),
+        fact_schema(),
+    )
+
+    for path, expected_schema in zip(paths, expected_schemas, strict=True):
+        if not path.is_file():
+            raise FileNotFoundError(f"Sidecar file is missing: {path}")
+        try:
+            actual_schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Sidecar file is unreadable: {path} ({exc})") from exc
+        if not actual_schema.equals(expected_schema, check_metadata=True):
+            raise ValueError(f"Sidecar schema mismatch for {path}")
+
+    return AugmentationResult(
+        wikipedia_documents_path=paths[0],
+        wikipedia_sections_path=paths[1],
+        wikivoyage_documents_path=paths[2],
+        wikivoyage_sections_path=paths[3],
+        wikidata_facts_path=paths[4],
+        manifest_path=manifest_path,
+        counts=counts,
+    )
+
+
 __all__ = [
     "AugmentationResult",
     "augment_region",
     "augmentation_is_current",
     "completed_region_stems",
+    "load_existing_augmentation_result",
     "sidecar_paths",
 ]

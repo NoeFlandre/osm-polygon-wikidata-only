@@ -29,10 +29,9 @@ Documentation: [architecture](docs/architecture.md) ·
    descriptions) and then fetches each linked Wikipedia article
    (lead text, full plain text, page/revision ID, license,
    attribution).
-5. Publishes the result as **three parquet files per PBF** on the
-   Hugging Face Hub, plus a manifest:
+5. Publishes the canonical region tables on the Hugging Face Hub:
    * `polygons/<stem>.parquet` — one row per polygon.
-   * `articles/<stem>.parquet` — one row per unique Wikipedia article.
+   * `wikipedia/documents/<stem>.parquet` — one lossless row per unique Wikipedia article.
    * `polygon_articles/<stem>.parquet` — many-to-many polygon↔article links.
    * `manifests/processed_pbfs.json` — aggregate stats per source PBF.
 6. Can augment completed regions without reprocessing their PBFs, adding:
@@ -146,7 +145,8 @@ Default sub-directories under the data root:
 |---|---|
 | `raw/` | Geofabrik `.osm.pbf` files (input) |
 | `processed/polygons/` | Written `polygons/<stem>.parquet` files |
-| `processed/articles/` | Written `articles/<stem>.parquet` files |
+| `processed/articles/` | Local legacy staging files, retained only until their verified canonical publication succeeds |
+| `processed/wikipedia/documents/` | Canonical lossless Wikipedia documents |
 | `processed/polygon_articles/` | Written `polygon_articles/<stem>.parquet` files |
 | `processed/manifests/` | `processed_pbfs.json` aggregate manifest |
 | `logs/` | Reserved for pipeline logs |
@@ -401,8 +401,8 @@ It does not require a real PBF, external data root, or Wikimedia request.
 
 ## Output schema
 
-Each PBF produces three core parquet files plus, after the additive
-augmentation pass, up to five sidecar parquet files. The schema
+Each PBF produces polygon and link tables plus canonical Wikipedia
+documents and the derived text/fact tables. The schema
 definitions live in `osm_polygon_wikidata_only.domain.schema` and
 `osm_polygon_wikidata_only.augmentation.schema` so the dataset
 card, the parquet writers, and the tests share a single source of
@@ -413,12 +413,14 @@ truth.
 One row per polygon. Includes geometry metadata, OSM tags, primary
 OSM tag, area bucket, and Wikipedia coverage counters.
 
-### `articles/<stem>.parquet`
+### `wikipedia/documents/<stem>.parquet`
 
 One row per unique Wikipedia article
 (`(wikidata, language, page_id, revision_id)`). Includes lead text,
 plain-text full text, thumbnails, license, attribution, and a
-deterministic SHA-256 `content_hash`.
+deterministic SHA-256 `content_hash`. It preserves every field from
+the former `articles/` table and adds stable `document_id` and
+`project` fields.
 
 ### `polygon_articles/<stem>.parquet`
 
@@ -431,11 +433,12 @@ Many-to-many links joining polygons to articles, plus a boolean
 Aggregate stats per source PBF: polygon/article counts, language
 coverage, area-bucket counts, top tag keys.
 
-### Additive augmentation sidecars
+### Derived text and fact tables
 
-Optional text and fact sidecars are published on top of the three
-core tables when the augmentation pipeline has run for a region.
-They never replace the core artifacts.
+Text sections, Wikivoyage documents, and Wikidata facts are published
+when augmentation has run for a region. Wikipedia sections reference
+the canonical document IDs; retiring the legacy article table never
+removes or rewrites section content.
 
 - `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`
 - `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`

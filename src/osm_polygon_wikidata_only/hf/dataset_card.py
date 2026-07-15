@@ -32,6 +32,10 @@ from osm_polygon_wikidata_only.augmentation.schema_descriptions import (
     FACT_DESCRIPTIONS,
     SECTION_DESCRIPTIONS,
 )
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    WIKIPEDIA_DOCUMENT_COLUMNS,
+    WIKIPEDIA_DOCUMENT_DESCRIPTIONS,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
@@ -62,11 +66,7 @@ def render_dataset_card(
     factual dataset statistics (snapshot, funnel, language distribution).
     When provided, it is included verbatim after the coverage map.
 
-    The YAML front matter declares eight dataset configurations:
-    the three legacy core configurations plus five additive
-    augmentation configurations. The Wikipedia and Wikivoyage
-    documents/sections share a single schema; the schema section
-    documents each table once with full-column descriptions.
+    The YAML front matter declares the canonical dataset tables.
 
     The ``Generated on`` line uses the current UTC date at every
     invocation. Tests that compare against a golden fixture must
@@ -100,13 +100,12 @@ def render_dataset_card(
         "OSM polygons tagged with a `wikidata=*` reference, "
         "enriched with Wikidata descriptions and Wikipedia article "
         "text for every valid language-Wikipedia sitelink, with full text "
-        "and no per-QID article cap. One PBF produces three parquet files "
-        "in this Hub:\n\n"
+        "and no per-QID article cap. Core and text tables are published as:\n\n"
         "- `polygons/<stem>.parquet` — one row per polygon\n"
-        "- `articles/<stem>.parquet` — one row per unique Wikipedia article\n"
+        "- `wikipedia/documents/<stem>.parquet` — one lossless row per unique Wikipedia article\n"
         "- `polygon_articles/<stem>.parquet` — many-to-many link table\n\n"
-        "Optional additive text augmentation is published without replacing those tables:\n\n"
-        "- `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`\n"
+        "Additional derived text and fact tables are:\n\n"
+        "- `wikipedia/sections/<stem>.parquet`\n"
         "- `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`\n"
         "- `wikidata/facts/<stem>.parquet`\n\n"
         f"Generated on {today}.\n\n"
@@ -178,10 +177,6 @@ def _render_front_matter(
         "    data_files:\n"
         "      - split: polygons\n"
         "        path: polygons/*.parquet\n"
-        "  - config_name: articles\n"
-        "    data_files:\n"
-        "      - split: articles\n"
-        "        path: articles/*.parquet\n"
         "  - config_name: polygon_articles\n"
         "    data_files:\n"
         "      - split: polygon_articles\n"
@@ -224,11 +219,17 @@ def _render_schema(
 ) -> str:
     parts = ["## Schema\n"]
     parts.append(_render_table("polygons", poly_cols, poly_desc))
-    parts.append(_render_table("articles", art_cols, art_desc))
+    parts.append(
+        _render_table(
+            "wikipedia/documents",
+            list(WIKIPEDIA_DOCUMENT_COLUMNS),
+            WIKIPEDIA_DOCUMENT_DESCRIPTIONS,
+        )
+    )
     parts.append(_render_table("polygon_articles", link_cols, link_desc))
     parts.append(
         _render_combined_table(
-            "`wikipedia/documents` and `wikivoyage/documents`",
+            "`wikivoyage/documents`",
             list(DOCUMENT_COLUMNS),
             DOCUMENT_DESCRIPTIONS,
         )

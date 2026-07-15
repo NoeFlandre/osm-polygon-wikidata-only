@@ -10,6 +10,7 @@ from pathlib import Path
 class SyncAction(StrEnum):
     AUGMENT = "augment"
     PROCESS = "process"
+    PUBLISH = "publish"
     COMPLETE = "complete"
 
 
@@ -26,8 +27,10 @@ def plan_sync_states(
     core_stems: set[str],
     augmentation_stems: set[str],
     force: bool = False,
+    pending_stems: set[str] | None = None,
 ) -> list[RegionSyncState]:
     """Classify PBFs and order missing augmentation before new core work."""
+    pending = pending_stems or set()
     states: list[RegionSyncState] = []
     for pbf in pbfs:
         stem = pbf.name.removesuffix(".osm.pbf")
@@ -35,10 +38,17 @@ def plan_sync_states(
             action = SyncAction.PROCESS
         elif stem not in augmentation_stems:
             action = SyncAction.AUGMENT
+        elif stem in pending:
+            action = SyncAction.PUBLISH
         else:
             action = SyncAction.COMPLETE
         states.append(RegionSyncState(stem, pbf, action))
-    priority = {SyncAction.AUGMENT: 0, SyncAction.PROCESS: 1, SyncAction.COMPLETE: 2}
+    priority = {
+        SyncAction.AUGMENT: 0,
+        SyncAction.PROCESS: 1,
+        SyncAction.PUBLISH: 2,
+        SyncAction.COMPLETE: 3,
+    }
     return sorted(states, key=lambda state: (priority[state.action], state.stem))
 
 

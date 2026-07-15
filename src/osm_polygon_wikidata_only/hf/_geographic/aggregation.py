@@ -40,7 +40,12 @@ def aggregate_geographic_text_coverage(
     if min_polygons_per_cell < 1:
         raise CoverageMapError(f"min_polygons_per_cell must be >= 1; got {min_polygons_per_cell}")
     polygons_dir = require_directory(processed_root / "polygons", label="polygons")
-    articles_dir = require_directory(processed_root / "articles", label="articles")
+    canonical_documents_dir = processed_root / "wikipedia" / "documents"
+    legacy_articles_dir = processed_root / "articles"
+    articles_dir = require_directory(
+        canonical_documents_dir if canonical_documents_dir.exists() else legacy_articles_dir,
+        label=("wikipedia/documents" if canonical_documents_dir.exists() else "articles"),
+    )
     links_dir = require_directory(processed_root / "polygon_articles", label="polygon_articles")
 
     qualifying_article_ids = load_qualifying_article_ids(articles_dir)

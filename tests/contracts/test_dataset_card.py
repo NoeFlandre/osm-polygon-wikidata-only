@@ -54,9 +54,9 @@ def test_card_embeds_geographic_assets() -> None:
     assert "assets/geographic_polygon_count.png" in md
 
 
-def test_card_documents_three_tables() -> None:
+def test_card_documents_canonical_core_tables() -> None:
     md = _render()
-    for table in ("polygons", "articles", "polygon_articles"):
+    for table in ("polygons", "wikipedia/documents", "polygon_articles"):
         assert f"### `{table}`" in md
 
 

@@ -1,6 +1,7 @@
 {
   "augmentation": [
     "wikipedia/documents/monaco-latest.parquet",
+    "articles/monaco-latest.parquet",
     "wikipedia/sections/monaco-latest.parquet",
     "wikivoyage/documents/monaco-latest.parquet",
     "wikivoyage/sections/monaco-latest.parquet",
@@ -11,7 +12,6 @@
   ],
   "core": [
     "polygons/monaco-latest.parquet",
-    "articles/monaco-latest.parquet",
     "polygon_articles/monaco-latest.parquet",
     "manifests/processed_pbfs.json",
     "assets/geographic_wikipedia_text_coverage.png",

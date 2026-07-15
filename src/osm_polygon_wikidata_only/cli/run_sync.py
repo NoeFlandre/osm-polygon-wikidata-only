@@ -29,6 +29,17 @@ from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimed
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augment_region,
     augmentation_is_current,
+    load_existing_augmentation_result,
+)
+from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import (
+    MigrationError,
+    MigrationOperation,
+    apply_migration,
+    plan_migration,
+)
+from osm_polygon_wikidata_only.augmentation.wikipedia_retirement import (
+    finalize_local_retirement,
+    prepare_local_retirement,
 )
 from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -39,6 +50,11 @@ from osm_polygon_wikidata_only.hf.uploader import StubHfHub, upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
+from osm_polygon_wikidata_only.pipeline.pending_publications import (
+    add_pending_publications,
+    load_pending_publications,
+    remove_pending_publications,
+)
 from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf
 from osm_polygon_wikidata_only.pipeline.sync_planner import (
     RegionSyncState,
@@ -75,6 +91,40 @@ def execute(
     once. The unified-sync path silently swallows the legacy
     world-land exception (the ``warning_callback`` is ``None``).
     """
+    pbfs = collect_pbfs([args.input])
+    input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
+
+    # Validate and durably record local migrations before constructing
+    # network clients, so a crash cannot strand unpublished output.
+    pending_stems = load_pending_publications(data_root)
+    scoped_stems = input_stems | pending_stems
+    legacy_stems = {path.stem for path in data_root.processed_articles.glob("*.parquet")}
+
+    migration_plan = plan_migration(
+        data_root.processed,
+        stems=scoped_stems & legacy_stems,
+    )
+    if not migration_plan.is_safe_to_apply:
+        blocked = list(migration_plan.blocked_stems)
+        raise MigrationError(
+            f"Plan is not safe to apply: {len(blocked)} blocked stem(s): {blocked}"
+        )
+
+    # 2. Persist publication intent for all CREATE_MISSING and UPGRADE_LEGACY stems BEFORE applying
+    stems_to_persist = {
+        stem_plan.stem
+        for stem_plan in migration_plan.stems
+        if stem_plan.operation
+        in (MigrationOperation.CREATE_MISSING, MigrationOperation.UPGRADE_LEGACY)
+    }
+    add_pending_publications(data_root, stems_to_persist)
+
+    # 3. Apply migration
+    apply_migration(migration_plan)
+    for stem in sorted(stems_to_persist):
+        prepare_local_retirement(data_root, stem)
+
+    # 4. Construct remote collaborators after migration is applied
     runtime = build_wikimedia_runtime(settings, data_root=data_root)
     augmentation_client = AugmentationWikimediaClient(
         runtime.settings,
@@ -82,7 +132,9 @@ def execute(
         scheduler=runtime.scheduler,
         session=runtime.session,
     )
-    pbfs = collect_pbfs([args.input])
+
+    # 5. Plan sync states
+    all_pending_stems = load_pending_publications(data_root)
     entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
     core_stems = {name.removesuffix(".osm.pbf") for name in entries}
     current_augmentation = {stem for stem in core_stems if augmentation_is_current(data_root, stem)}
@@ -91,6 +143,7 @@ def execute(
         core_stems=core_stems,
         augmentation_stems=current_augmentation,
         force=settings.force or not settings.skip_existing,
+        pending_stems=all_pending_stems,
     )
 
     push_enabled = bool(getattr(args, "push", False))
@@ -104,10 +157,11 @@ def execute(
 
     counts = {action: sum(state.action is action for state in states) for action in SyncAction}
     LOGGER.info(
-        "Unified sync plan: %d augmentation backlog, %d core missing, %d complete",
+        "Unified sync plan: %d augmentation backlog, %d core missing, %d complete, %d publish",
         counts[SyncAction.AUGMENT],
         counts[SyncAction.PROCESS],
         counts[SyncAction.COMPLETE],
+        counts[SyncAction.PUBLISH],
     )
 
     # Capture settings + clients once so the closures below don't
@@ -165,6 +219,18 @@ def execute(
             augmentation_result.counts,
         )
         return augmentation_result
+
+    def _load_existing(state: RegionSyncState) -> Any:
+        return load_existing_augmentation_result(data_root, state.stem)
+
+    def _prepare_publication(state: RegionSyncState, result: Any) -> None:
+        # Test doubles and third-party collaborators predating canonical
+        # documents may not produce a sidecar. Production augmentation
+        # always returns this path; only then is retirement applicable.
+        if getattr(result, "wikipedia_documents_path", None) is None:
+            return
+        prepare_local_retirement(data_root, state.stem)
+        add_pending_publications(data_root, {state.stem})
 
     def _submit_upload(ops: list[PublicationOp], message: str) -> None:
         if upload_queue is None:
@@ -226,6 +292,8 @@ def execute(
             commit_message=_commit_message(getattr(args, "commit_message", None)),
             submit_upload=submit_callback,
             close_uploads=_close_uploads,
+            load_existing_augmentation=_load_existing,
+            on_complete=_prepare_publication,
         )
     except Exception as error:
         if upload_queue is not None:
@@ -275,6 +343,17 @@ def _build_upload_queue(
             commit_message=message,
             num_threads=num_threads,
         )
+        if not dry_run:
+            published_stems = {
+                Path(op.path_in_repo).stem
+                for op in ops
+                if op.action == "add"
+                and op.path_in_repo.startswith("wikipedia/documents/")
+                and op.path_in_repo.endswith(".parquet")
+            }
+            for stem in sorted(published_stems):
+                finalize_local_retirement(data_root, stem)
+            remove_pending_publications(data_root, published_stems)
 
     queue = BackgroundUploadQueue(
         upload=upload_job,

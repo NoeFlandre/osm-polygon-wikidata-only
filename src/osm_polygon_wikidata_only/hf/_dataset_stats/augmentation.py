@@ -110,7 +110,7 @@ KIND_SECTION = "sections"
 KIND_FACT = "facts"
 
 # Core sub-directories whose parquet sizes count toward core_parquet_bytes.
-CORE_SUBDIRS: tuple[str, ...] = ("polygons", "articles", "polygon_articles")
+CORE_SUBDIRS: tuple[str, ...] = ("polygons", "polygon_articles")
 
 
 # ---------------------------------------------------------------------------
@@ -754,10 +754,11 @@ def compute_augmentation_stats(
 
     Storage accounting
     ------------------
-    Core parquet bytes include every file under the legacy
-    ``polygons/``, ``articles/``, and ``polygon_articles/``
-    sub-directories of ``<processed>/``. Augmentation parquet bytes
-    include every file under the augmentation sidecar
+    Core parquet bytes include every file under ``polygons/`` and
+    ``polygon_articles/``. Canonical Wikipedia documents are counted
+    once with the text sidecars; retired local ``articles/`` staging
+    files are deliberately excluded from published-dataset storage.
+    Augmentation parquet bytes include every file under the sidecar
     sub-directories. The invariant
     ``core + augmentation == total`` always holds.
     """

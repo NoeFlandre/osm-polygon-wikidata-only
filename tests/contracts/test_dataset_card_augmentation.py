@@ -43,14 +43,11 @@ def _render_with_stats_section(stats_section: str) -> str:
 # --- augmentation YAML front matter --------------------------------
 
 
-def test_dataset_card_yaml_lists_all_eight_configurations() -> None:
-    """The front matter must list the augmentation config names alongside
-    the three legacy configurations."""
+def test_dataset_card_yaml_lists_all_canonical_configurations() -> None:
     stats_section = "## Dataset snapshot\n\n| Metric | Value |\n| --- | --- |\n| 1 | 1 |\n"
     md = _render_with_stats_section(stats_section)
     for name in (
         "polygons",
-        "articles",
         "polygon_articles",
         "wikipedia_documents",
         "wikipedia_sections",
@@ -66,7 +63,6 @@ def test_dataset_card_yaml_paths_match_repo_layout() -> None:
     md = _render_with_stats_section("## Dataset snapshot\n")
     expected_globs = (
         "polygons/*.parquet",
-        "articles/*.parquet",
         "polygon_articles/*.parquet",
         "wikipedia/documents/*.parquet",
         "wikipedia/sections/*.parquet",
@@ -78,14 +74,12 @@ def test_dataset_card_yaml_paths_match_repo_layout() -> None:
         assert f"path: {glob}" in md, f"missing glob {glob} in YAML front matter"
 
 
-def test_dataset_card_yaml_lists_legacy_three_configurations() -> None:
+def test_dataset_card_yaml_omits_retired_articles_configuration() -> None:
     md = _render_with_stats_section("## Dataset snapshot\n")
-    for legacy in (
-        "config_name: polygons",
-        "config_name: articles",
-        "config_name: polygon_articles",
-    ):
-        assert legacy in md
+    assert "config_name: polygons" in md
+    assert "config_name: polygon_articles" in md
+    assert "config_name: articles" not in md
+    assert "path: articles/*.parquet" not in md
 
 
 def test_dataset_card_yaml_contains_wikivoyage_tag() -> None:
@@ -130,7 +124,8 @@ def test_dataset_card_front_matter_passes_structural_validator() -> None:
 
 def test_dataset_card_documents_augmentation_schemas() -> None:
     md = _render_with_stats_section("## Dataset snapshot\n")
-    assert "### `wikipedia/documents` and `wikivoyage/documents`" in md
+    assert "### `wikipedia/documents`" in md
+    assert "### `wikivoyage/documents`" in md
     assert "### `wikipedia/sections` and `wikivoyage/sections`" in md
     assert "### `wikidata/facts`" in md
 
@@ -146,9 +141,7 @@ def test_dataset_card_documents_fact_columns() -> None:
 
 def test_dataset_card_documents_document_columns() -> None:
     md = _render_with_stats_section("## Dataset snapshot\n")
-    doc_section = md.split("### `wikipedia/documents` and `wikivoyage/documents`", 1)[1].split(
-        "### ", 1
-    )[0]
+    doc_section = md.split("### `wikivoyage/documents`", 1)[1].split("### ", 1)[0]
     for column in DOCUMENT_COLUMNS:
         assert f"| `{column}` |" in doc_section, f"missing document column {column!r}"
 
@@ -167,8 +160,8 @@ def test_dataset_card_documents_every_column_exactly_once() -> None:
     (Wikipedia and Wikivoyage documents share one schema; sections share
     another)."""
     md = _render_with_stats_section("## Dataset snapshot\n")
-    # Documents section once, not duplicated for wikipedia/wikivoyage.
-    assert md.count("### `wikipedia/documents` and `wikivoyage/documents`") == 1
+    assert md.count("### `wikipedia/documents`") == 1
+    assert md.count("### `wikivoyage/documents`") == 1
     assert md.count("### `wikipedia/sections` and `wikivoyage/sections`") == 1
     assert md.count("### `wikidata/facts`") == 1
 

@@ -15,10 +15,6 @@ configs:
     data_files:
       - split: polygons
         path: polygons/*.parquet
-  - config_name: articles
-    data_files:
-      - split: articles
-        path: articles/*.parquet
   - config_name: polygon_articles
     data_files:
       - split: polygon_articles
@@ -51,19 +47,19 @@ dataset_info:
 
 # NoeFlandre/osm-polygon-wikidata-only
 
-OSM polygons tagged with a `wikidata=*` reference, enriched with Wikidata descriptions and Wikipedia article text for every valid language-Wikipedia sitelink, with full text and no per-QID article cap. One PBF produces three parquet files in this Hub:
+OSM polygons tagged with a `wikidata=*` reference, enriched with Wikidata descriptions and Wikipedia article text for every valid language-Wikipedia sitelink, with full text and no per-QID article cap. Core and text tables are published as:
 
 - `polygons/<stem>.parquet` — one row per polygon
-- `articles/<stem>.parquet` — one row per unique Wikipedia article
+- `wikipedia/documents/<stem>.parquet` — one lossless row per unique Wikipedia article
 - `polygon_articles/<stem>.parquet` — many-to-many link table
 
-Optional additive text augmentation is published without replacing those tables:
+Additional derived text and fact tables are:
 
-- `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`
+- `wikipedia/sections/<stem>.parquet`
 - `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`
 - `wikidata/facts/<stem>.parquet`
 
-Generated on YYYY-MM-DD.
+Generated on 2026-07-15.
 
 Maintained by **Noé Flandre**.
 
@@ -126,12 +122,14 @@ Both maps below aggregate dataset polygons into H3 cells at the same resolution.
 | `extraction_version` | Package version that produced the row. |
 | `extracted_at` | ISO-8601 UTC timestamp at the moment the row was extracted. |
 
-### `articles`
+### `wikipedia/documents`
 
 | Column | Description |
 | --- | --- |
+| `document_id` | Deterministic document identifier (`<wikidata>:<project>:<language>:<page_id>:<revision_id>`). |
 | `article_id` | Deterministic ID: `<wikidata>:<language>:<page_id>:<revision_id>`. |
 | `wikidata` | Wikidata Q-id this article is linked to. |
+| `project` | Wiki project name: always `wikipedia` for this table. |
 | `language` | Wikipedia language code, e.g. `en`. |
 | `site` | Wikidata sitelink site, e.g. `enwiki`. |
 | `title` | Article title as returned by the Wikipedia API. |
@@ -177,12 +175,12 @@ Both maps below aggregate dataset polygons into H3 cells at the same resolution.
 | `revision_id` | MediaWiki revision ID of the linked article. |
 | `is_best_language` | True if this row's language matches the polygon's `best_language`. |
 
-### `wikipedia/documents` and `wikivoyage/documents`
+### `wikivoyage/documents`
 
 | Column | Description |
 | --- | --- |
 | `document_id` | Deterministic document identifier (`<wikidata>:<project>:<language>:<page_id>:<revision_id>`). |
-| `article_id` | Stable article identifier that pairs this document with its `articles/<stem>.parquet` row. |
+| `article_id` | Stable article identifier referenced by `polygon_articles/<stem>.parquet`. |
 | `wikidata` | Wikidata QID this document is linked to. |
 | `project` | Wiki project name: `wikipedia` or `wikivoyage`. |
 | `language` | Wikipedia or Wikivoyage language code (e.g. `en`). |

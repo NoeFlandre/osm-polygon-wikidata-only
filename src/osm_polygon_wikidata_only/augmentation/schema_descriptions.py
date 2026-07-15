@@ -22,7 +22,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 # descriptions are kept short and renderer-friendly.
 DOCUMENT_DESCRIPTIONS: dict[str, str] = {
     "document_id": "Deterministic document identifier (`<wikidata>:<project>:<language>:<page_id>:<revision_id>`).",
-    "article_id": "Stable article identifier that pairs this document with its `articles/<stem>.parquet` row.",
+    "article_id": "Stable article identifier referenced by `polygon_articles/<stem>.parquet`.",
     "wikidata": "Wikidata QID this document is linked to.",
     "project": "Wiki project name: `wikipedia` or `wikivoyage`.",
     "language": "Wikipedia or Wikivoyage language code (e.g. `en`).",

@@ -142,17 +142,45 @@ def test_orchestrator_skips_processed_pbfs_when_skip_existing(tmp_path: Path) ->
 
     aug_manifest = data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     aug_manifest.parent.mkdir(parents=True, exist_ok=True)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from osm_polygon_wikidata_only.augmentation.schema import (
+        document_schema,
+        fact_schema,
+        section_schema,
+    )
+    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
+
+    schemas = {
+        ("wikipedia", "documents"): wikipedia_document_schema(),
+        ("wikipedia", "sections"): section_schema(),
+        ("wikivoyage", "documents"): document_schema(),
+        ("wikivoyage", "sections"): section_schema(),
+        ("wikidata", "facts"): fact_schema(),
+    }
+
     for sub in (
-        ("wikipedia", "documents"),
         ("wikipedia", "sections"),
         ("wikivoyage", "documents"),
         ("wikivoyage", "sections"),
         ("wikidata", "facts"),
     ):
-        (data_root.processed / sub[0] / sub[1] / "monaco-latest.parquet").parent.mkdir(
-            parents=True, exist_ok=True
-        )
-        (data_root.processed / sub[0] / sub[1] / "monaco-latest.parquet").write_bytes(b"")
+        path = data_root.processed / sub[0] / sub[1] / "monaco-latest.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        table = pa.Table.from_pylist([], schema=schemas[sub])
+        pq.write_table(table, path)
+
+    # Seed correct canonical Wikipedia documents matching the articles fixture
+    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+        build_wikipedia_document_table,
+    )
+
+    article_table = pq.read_table(articles)
+    canonical_doc_table = build_wikipedia_document_table(article_table)
+    doc_path = data_root.processed / "wikipedia" / "documents" / "monaco-latest.parquet"
+    doc_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(canonical_doc_table, doc_path)
 
     aug_manifest.write_text(
         json.dumps(
