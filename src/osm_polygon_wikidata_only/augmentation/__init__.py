@@ -1,1 +1,1 @@
-"""Additive Wikipedia, Wikivoyage, and Wikidata sidecars."""
+"""Wikipedia, Wikivoyage, and Wikidata augmentation sidecars."""

@@ -45,8 +45,14 @@ from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
+from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+from osm_polygon_wikidata_only.hf.repo_layout import (
+    LEGACY_REMOTE_ARTICLES_DIR,
+    REMOTE_WIKIPEDIA_DOCUMENTS_DIR,
+)
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
-from osm_polygon_wikidata_only.hf.uploader import StubHfHub, upload_files
+from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
@@ -63,6 +69,56 @@ from osm_polygon_wikidata_only.pipeline.sync_planner import (
 )
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
+
+
+def _run_pre_publication_migration(
+    data_root: DataRoot,
+    input_stems: set[str],
+) -> None:
+    """Execute the safe pre-runtime Wikipedia-document migration sequence.
+
+    This coordinator owns steps 2-8 of the documented ``sync-dir``
+    ordering so that :func:`execute` stays focused on CLI concerns and
+    runtime construction.  No network or Wikimedia collaborators are
+    constructed here, so a crash before this function returns cannot
+    strand unpublished output beyond the durable
+    pending-publications manifest.
+
+    Sequence (matching the documented contract):
+
+    1. Load durable pending publication intent.
+    2. Scope migration only to stems that still have legacy articles.
+    3. Plan the migration read-only.
+    4. Abort before runtime/network construction if the plan is unsafe.
+    5. Persist publication intent before applying local migration.
+    6. Apply migration atomically.
+    7. Prepare/repoint manifests only after canonical data passes validation.
+    """
+    pending_stems = load_pending_publications(data_root)
+    scoped_stems = input_stems | pending_stems
+    legacy_stems = {path.stem for path in data_root.processed_articles.glob("*.parquet")}
+
+    migration_plan = plan_migration(
+        data_root.processed,
+        stems=scoped_stems & legacy_stems,
+    )
+    if not migration_plan.is_safe_to_apply:
+        blocked = list(migration_plan.blocked_stems)
+        raise MigrationError(
+            f"Plan is not safe to apply: {len(blocked)} blocked stem(s): {blocked}"
+        )
+
+    stems_to_persist = {
+        stem_plan.stem
+        for stem_plan in migration_plan.stems
+        if stem_plan.operation
+        in (MigrationOperation.CREATE_MISSING, MigrationOperation.UPGRADE_LEGACY)
+    }
+    add_pending_publications(data_root, stems_to_persist)
+
+    apply_migration(migration_plan)
+    for stem in sorted(stems_to_persist):
+        prepare_local_retirement(data_root, stem)
 
 
 def execute(
@@ -94,37 +150,9 @@ def execute(
     pbfs = collect_pbfs([args.input])
     input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
 
-    # Validate and durably record local migrations before constructing
-    # network clients, so a crash cannot strand unpublished output.
-    pending_stems = load_pending_publications(data_root)
-    scoped_stems = input_stems | pending_stems
-    legacy_stems = {path.stem for path in data_root.processed_articles.glob("*.parquet")}
+    _run_pre_publication_migration(data_root, input_stems)
 
-    migration_plan = plan_migration(
-        data_root.processed,
-        stems=scoped_stems & legacy_stems,
-    )
-    if not migration_plan.is_safe_to_apply:
-        blocked = list(migration_plan.blocked_stems)
-        raise MigrationError(
-            f"Plan is not safe to apply: {len(blocked)} blocked stem(s): {blocked}"
-        )
-
-    # 2. Persist publication intent for all CREATE_MISSING and UPGRADE_LEGACY stems BEFORE applying
-    stems_to_persist = {
-        stem_plan.stem
-        for stem_plan in migration_plan.stems
-        if stem_plan.operation
-        in (MigrationOperation.CREATE_MISSING, MigrationOperation.UPGRADE_LEGACY)
-    }
-    add_pending_publications(data_root, stems_to_persist)
-
-    # 3. Apply migration
-    apply_migration(migration_plan)
-    for stem in sorted(stems_to_persist):
-        prepare_local_retirement(data_root, stem)
-
-    # 4. Construct remote collaborators after migration is applied
+    # Construct remote collaborators after migration is applied
     runtime = build_wikimedia_runtime(settings, data_root=data_root)
     augmentation_client = AugmentationWikimediaClient(
         runtime.settings,
@@ -320,6 +348,146 @@ def _commit_message(
     return _factory_default
 
 
+def _post_upload_publication_cleanup(
+    data_root: DataRoot,
+    ops: list[PublicationOp],
+    *,
+    dry_run: bool,
+) -> None:
+    """Retire local legacy articles and clear pending intent after a confirmed upload.
+
+    Runs *after* the Hub upload succeeds. A stem is retired only when
+    the operation list contains BOTH the canonical
+    ``add wikipedia/documents/<stem>.parquet`` and the matching legacy
+    ``delete articles/<stem>.parquet`` for the same stem. An add
+    without its matching delete, a delete for another stem, a delete
+    without an add, nested or traversal paths, lookalike prefixes, or
+    conflicting duplicate adds do NOT authorize local retirement or
+    pending-intent cleanup. Pending intent is cleared only after
+    every selected stem's local retirement succeeds.
+
+    The commit message is never inspected; stems are derived strictly
+    from ``PublicationOp`` entries that match the canonical layout.
+    When ``dry_run`` is true the local filesystem is left untouched so
+    repeated dry-runs remain safe.
+    """
+    if dry_run:
+        return
+
+    paired_stems = _paired_retirement_stems(data_root, ops)
+    if not paired_stems:
+        return
+
+    retired: list[str] = []
+    for stem in sorted(paired_stems):
+        finalize_local_retirement(data_root, stem)
+        retired.append(stem)
+
+    remove_pending_publications(data_root, set(retired))
+
+
+def _is_valid_stem(stem: str) -> bool:
+    """A stem must be non-empty, free of traversal and path separators."""
+    if not stem or stem in {".", ".."}:
+        return False
+    return not ("/" in stem or "\\" in stem)
+
+
+def _paired_retirement_stems(data_root: DataRoot, ops: list[PublicationOp]) -> set[str]:
+    """Return stems whose ops list contains a correctly-paired add+delete.
+
+    Each canonical add must:
+
+    * use ``path_in_repo == wikipedia/documents/<stem>.parquet`` exactly
+      (no nested paths, no traversal, no lookalike prefixes);
+    * carry a ``local_path`` whose resolved absolute path equals
+      ``data_root.processed / wikipedia / documents / <stem>.parquet``.
+
+    Each legacy delete must use ``path_in_repo == articles/<stem>.parquet``
+    exactly with the same restrictions.
+
+    Duplicate or conflicting canonical add operations for the same stem
+    cause that stem to be excluded (fail closed). Other correctly-paired
+    stems remain authorized.
+    """
+    canonical_add_count: dict[str, int] = {}
+    canonical_adds_valid: dict[str, Path] = {}
+    legacy_deletes: set[str] = set()
+
+    for op in ops:
+        path_in_repo = op.path_in_repo
+        if not isinstance(path_in_repo, str) or not path_in_repo:
+            continue
+        stem = Path(path_in_repo).stem
+        if not _is_valid_stem(stem):
+            continue
+        if op.action == "add":
+            expected_remote = f"{REMOTE_WIKIPEDIA_DOCUMENTS_DIR}/{stem}.parquet"
+            if path_in_repo != expected_remote:
+                continue
+            canonical_add_count[stem] = canonical_add_count.get(stem, 0) + 1
+            local = op.local_path
+            if local is None:
+                continue
+            try:
+                resolved = Path(local).resolve(strict=False)
+            except (OSError, RuntimeError):
+                continue
+            expected_local = (
+                data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+            ).resolve()
+            if resolved != expected_local:
+                continue
+            if not expected_local.is_file():
+                continue
+            prior = canonical_adds_valid.get(stem)
+            if prior is not None and prior != resolved:
+                canonical_adds_valid[stem] = Path("__conflict__")
+            else:
+                canonical_adds_valid[stem] = resolved
+        elif op.action == "delete":
+            expected_remote = f"{LEGACY_REMOTE_ARTICLES_DIR}/{stem}.parquet"
+            if path_in_repo != expected_remote:
+                continue
+            legacy_deletes.add(stem)
+
+    single_add_stems = {stem for stem, count in canonical_add_count.items() if count == 1}
+    valid_singles = {
+        stem
+        for stem, marker in canonical_adds_valid.items()
+        if marker != Path("__conflict__") and stem in single_add_stems
+    }
+    return valid_singles & legacy_deletes
+
+
+def _execute_upload_job(
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+    ops: list[PublicationOp],
+    message: str,
+    num_threads: int,
+    hub: HfHub | None,
+    dry_run: bool,
+) -> None:
+    """Production upload-job callback: upload, then clean up local state.
+
+    The upload is the network boundary. When it raises, the cleanup
+    helper is never invoked, so the local legacy staging file and the
+    durable pending-publications manifest survive intact for the next
+    invocation to retry.
+    """
+    upload_files(
+        settings.repo_id,
+        ops=ops,
+        hub=hub,
+        token=settings.hf_token,
+        commit_message=message,
+        num_threads=num_threads,
+    )
+    _post_upload_publication_cleanup(data_root, ops, dry_run=dry_run)
+
+
 def _build_upload_queue(
     *,
     push: bool,
@@ -335,25 +503,15 @@ def _build_upload_queue(
     hub = StubHfHub() if dry_run else None
 
     def upload_job(ops: list[PublicationOp], message: str) -> None:
-        upload_files(
-            settings.repo_id,
+        _execute_upload_job(
+            data_root=data_root,
+            settings=settings,
             ops=ops,
-            hub=hub,
-            token=settings.hf_token,
-            commit_message=message,
+            message=message,
             num_threads=num_threads,
+            hub=hub,
+            dry_run=dry_run,
         )
-        if not dry_run:
-            published_stems = {
-                Path(op.path_in_repo).stem
-                for op in ops
-                if op.action == "add"
-                and op.path_in_repo.startswith("wikipedia/documents/")
-                and op.path_in_repo.endswith(".parquet")
-            }
-            for stem in sorted(published_stems):
-                finalize_local_retirement(data_root, stem)
-            remove_pending_publications(data_root, published_stems)
 
     queue = BackgroundUploadQueue(
         upload=upload_job,

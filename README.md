@@ -164,7 +164,7 @@ export OSM_POLYGON_DATA_ROOT=/Volumes/Seagate\ M3/projects/osm-polygon-wikidata-
 
 ## Usage
 
-After `uv sync`, the processing and additive augmentation commands are:
+After `uv sync`, the processing and augmentation commands are:
 
 ```bash
 uv run osm-polygon-wikidata-only sync-dir <dir> [--options]
@@ -420,7 +420,10 @@ One row per unique Wikipedia article
 plain-text full text, thumbnails, license, attribution, and a
 deterministic SHA-256 `content_hash`. It preserves every field from
 the former `articles/` table and adds stable `document_id` and
-`project` fields.
+`project` fields. The legacy remote `articles/` path is deleted in
+the same atomic Hub commit as the canonical upload; the local
+`processed/articles/` staging file is removed only after confirmed
+publication and reference validation.
 
 ### `polygon_articles/<stem>.parquet`
 
@@ -567,7 +570,8 @@ multi-GB artifacts.
   licensed under
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
   Attribution and license are stored inline in the
-  `articles.parquet` `license` and `attribution` columns.
+  `wikipedia/documents/<stem>.parquet` `license` and `attribution`
+  columns.
 
 Any derivative dataset must preserve OSM attribution as described on
 <https://www.openstreetmap.org/copyright>.

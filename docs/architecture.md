@@ -146,10 +146,14 @@ not an ETA, and it does not alter request pacing, ordering, retries, or output
 construction.
 
 A PBF is published locally only after every expected article succeeds. Its
-three Parquet files, manifest snapshot, and generated Hugging Face dataset card
+core Parquet files (polygons, the temporary local `articles/` staging table,
+and polygon links), manifest snapshot, and generated Hugging Face dataset card
 are then queued in one background upload commit while the next PBF begins.
-Failed upload jobs persist under the external data root and resume on the next
-invocation. The dataset and pipeline are maintained by Noé Flandre.
+The remote upload atomically adds the canonical `wikipedia/documents/` table
+and deletes the legacy `articles/` path in the same commit; the local staging
+file is removed only after confirmed publication. Failed upload jobs persist
+under the external data root and resume on the next invocation. The dataset
+and pipeline are maintained by Noé Flandre.
 
 ## Geographic coverage visualizations
 

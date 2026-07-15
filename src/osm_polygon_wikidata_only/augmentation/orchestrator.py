@@ -171,17 +171,84 @@ def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
     entry = manifest.get(stem, {})
     if entry.get("contract_version") != CONTRACT_VERSION:
         return False
-    legacy_articles = data_root.processed_articles / f"{stem}.parquet"
-    canonical_documents = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
-    core_paths = (
-        legacy_articles if legacy_articles.exists() else canonical_documents,
-        data_root.processed_polygons / f"{stem}.parquet",
-    )
-    if not all(path.exists() for path in core_paths):
+    expected_hashes = entry.get("core_hashes")
+    if not _is_valid_core_hashes(expected_hashes, data_root, stem):
         return False
-    expected = entry.get("core_hashes")
-    current = {str(path): sha256_file(path) for path in core_paths}
-    return bool(expected == current)
+    # Validate exactly the source paths named by the manifest. After
+    # ``prepare_local_retirement`` repoints the manifest to the canonical
+    # document, the legacy staging file may still exist but must NOT be
+    # chosen over the canonical source the manifest records.
+    expected_paths = [Path(key) for key in expected_hashes]
+    if not all(path.is_file() for path in expected_paths):
+        return False
+    current = {str(path): sha256_file(path) for path in expected_paths}
+    return bool(expected_hashes == current)
+
+
+_SHA256_HEX_LENGTH = 64
+
+
+def _is_valid_core_hashes(value: object, data_root: DataRoot, stem: str) -> bool:
+    """Return True iff *value* is the exact two-entry hash dict we accept.
+
+    Accepts only:
+
+    * ``processed/polygons/<stem>.parquet`` (the polygon table), and
+    * exactly one of:
+      - ``processed/articles/<stem>.parquet``, or
+      - ``processed/wikipedia/documents/<stem>.parquet``.
+
+    Rejects missing entries, extra entries, duplicate keys, malformed
+    paths (wrong stem, directory traversal, non-string keys), malformed
+    hashes (non-string values, wrong length, non-hex), and paths outside
+    the resolved ``data_root.processed`` subtree. The polygon path is
+    never used to select between legacy and canonical; both layout
+    variants share it.
+    """
+    if not isinstance(value, dict) or not value:
+        return False
+    if len(value) != 2:
+        return False
+
+    polygon_path = data_root.processed_polygons / f"{stem}.parquet"
+    legacy_path = data_root.processed_articles / f"{stem}.parquet"
+    canonical_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    processed_root = data_root.processed.resolve()
+
+    polygon_key = str(polygon_path)
+    legacy_key = str(legacy_path)
+    canonical_key = str(canonical_path)
+
+    if polygon_key not in value:
+        return False
+    sources_present = sum(1 for key in (legacy_key, canonical_key) if key in value)
+    if sources_present != 1:
+        return False
+
+    for key, hash_value in value.items():
+        if not isinstance(key, str):
+            return False
+        if not isinstance(hash_value, str):
+            return False
+        if len(hash_value) != _SHA256_HEX_LENGTH:
+            return False
+        if not all(ch in "0123456789abcdef" for ch in hash_value):
+            return False
+        # Only the two allowed paths are accepted.
+        if key not in {polygon_key, legacy_key, canonical_key}:
+            return False
+        # Traversal and out-of-tree paths are rejected even if they
+        # coincidentally match the allowed layout.
+        try:
+            resolved = Path(key).resolve(strict=False)
+        except (OSError, RuntimeError):
+            return False
+        try:
+            resolved.relative_to(processed_root)
+        except ValueError:
+            return False
+
+    return True
 
 
 def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> AugmentationResult:
