@@ -1,4 +1,4 @@
-"""Stable PyArrow schemas for additive augmentation tables."""
+"""Stable PyArrow schemas for augmentation tables."""
 
 from __future__ import annotations
 

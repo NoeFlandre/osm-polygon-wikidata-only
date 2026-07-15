@@ -94,6 +94,65 @@ class AugmentationClient(Protocol):
 CONTRACT_VERSION = "text-sidecars-v1"
 
 
+# ---------------------------------------------------------------------------
+# Wikipedia source-path selection
+# ---------------------------------------------------------------------------
+
+
+def _validate_source_stem(stem: str) -> None:
+    """Reject empty stems, path separators, and traversal-like names."""
+    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
+        raise ValueError(f"Invalid Wikipedia source stem: {stem!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class WikipediaSourcePaths:
+    """Canonical and legacy local paths for one stem's Wikipedia data.
+
+    During migration both files may coexist. The *legacy* article is the
+    read source of truth until :func:`~osm_polygon_wikidata_only.augmentation.wikipedia_retirement.finalize_local_retirement`
+    deletes it; afterwards the *canonical* document is the only source.
+
+    Consumers must choose the appropriate policy explicitly:
+    :func:`read_source_path` for augmentation input loading, or
+    :func:`~osm_polygon_wikidata_only.augmentation.orchestrator.augmentation_is_current`
+    for manifest-aware validation.
+    """
+
+    canonical: Path
+    legacy: Path
+
+    @property
+    def either_exists(self) -> bool:
+        """True when either source file is present."""
+        return self.legacy.exists() or self.canonical.exists()
+
+
+def wikipedia_source_paths(data_root: DataRoot, stem: str) -> WikipediaSourcePaths:
+    """Return the canonical-document and legacy-article paths for *stem*.
+
+    Side-effect-free: no directories are created and no files are read.
+    Raises :class:`ValueError` for malformed or traversal-like stems.
+    """
+    _validate_source_stem(stem)
+    return WikipediaSourcePaths(
+        canonical=data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet",
+        legacy=data_root.processed_articles / f"{stem}.parquet",
+    )
+
+
+def read_source_path(data_root: DataRoot, stem: str) -> Path:
+    """Return the legacy article path if present, else the canonical document path.
+
+    Used by augmentation input loading. During migration both files may
+    coexist; the legacy article is read as the source of truth.
+    After retirement the canonical document is the only remaining source.
+    The returned path may not yet exist for a never-augmented stem.
+    """
+    sources = wikipedia_source_paths(data_root, stem)
+    return sources.legacy if sources.legacy.exists() else sources.canonical
+
+
 def sha256_file(path: Path) -> str:
     """SHA-256 of *path* streamed in 1 MiB chunks.
 
@@ -184,11 +243,7 @@ def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
     """Load the core artifacts for *stem* and capture pre-processing
     hashes. Raises :class:`FileNotFoundError` if either core parquet
     is missing."""
-    legacy_articles_path = data_root.processed_articles / f"{stem}.parquet"
-    canonical_documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
-    articles_path = (
-        legacy_articles_path if legacy_articles_path.exists() else canonical_documents_path
-    )
+    articles_path = read_source_path(data_root, stem)
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not articles_path.exists() or not polygons_path.exists():
         raise FileNotFoundError(f"Core region is incomplete: {stem}")
