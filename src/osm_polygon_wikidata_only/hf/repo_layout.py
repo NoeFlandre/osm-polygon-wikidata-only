@@ -69,6 +69,19 @@ def local_to_remote(local_path: Path, processed_subdir: str) -> str:
     return remote_parquet_path(parts[-2], local_path.stem)
 
 
+def canonical_region_paths(stem: str) -> dict[str, str]:
+    """Return mapping of expected local relative paths (under processed/) to remote paths for a region."""
+    return {
+        f"polygons/{stem}.parquet": f"polygons/{stem}.parquet",
+        f"polygon_articles/{stem}.parquet": f"polygon_articles/{stem}.parquet",
+        f"wikipedia/documents/{stem}.parquet": f"wikipedia/documents/{stem}.parquet",
+        f"wikipedia/sections/{stem}.parquet": f"wikipedia/sections/{stem}.parquet",
+        f"wikivoyage/documents/{stem}.parquet": f"wikivoyage/documents/{stem}.parquet",
+        f"wikivoyage/sections/{stem}.parquet": f"wikivoyage/sections/{stem}.parquet",
+        f"wikidata/facts/{stem}.parquet": f"wikidata/facts/{stem}.parquet",
+    }
+
+
 __all__ = [
     "LEGACY_REMOTE_ARTICLES_DIR",
     "LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE",
@@ -83,6 +96,7 @@ __all__ = [
     "REMOTE_MANIFEST_FILE",
     "REMOTE_POLYGONS_DIR",
     "REMOTE_WIKIPEDIA_DOCUMENTS_DIR",
+    "canonical_region_paths",
     "local_to_remote",
     "remote_dataset_card_path",
     "remote_parquet_path",

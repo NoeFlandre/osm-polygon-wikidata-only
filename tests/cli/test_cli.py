@@ -236,3 +236,12 @@ def test_main_drains_dry_run_upload_queue_for_empty_directory(tmp_path: Path) ->
         )
         == 0
     )
+
+
+def test_commands_main_signature() -> None:
+    import inspect
+
+    sig = inspect.signature(main)
+    assert len(sig.parameters) == 1
+    assert "argv" in sig.parameters
+    assert sig.parameters["argv"].default is None

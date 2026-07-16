@@ -89,9 +89,12 @@ new logger identity.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pyarrow.parquet as pq
 
@@ -358,13 +361,20 @@ def _generate_geographic_polygon_count_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def _validate_core_artifacts(core: ProcessResult) -> None:
-    paths: Sequence[Path] = (
-        core.polygons_path,
-        core.articles_path,
-        core.polygon_articles_path,
-        core.manifest_path,
-    )
+def _validate_core_artifacts(core: ProcessResult | CorePublicationArtifacts) -> None:
+    if isinstance(core, CorePublicationArtifacts):
+        paths: Sequence[Path] = (
+            core.polygons_path,
+            core.polygon_articles_path,
+            core.manifest_path,
+        )
+    else:
+        paths = (
+            core.polygons_path,
+            core.articles_path,
+            core.polygon_articles_path,
+            core.manifest_path,
+        )
     for path in paths:
         if not path.exists():
             raise FileNotFoundError(f"Core artifact missing before upload: {path}")
@@ -467,7 +477,7 @@ def assemble_region_upload(
     repo_id: str,
     stem: str,
     augmentation: AugmentationResult,
-    core: ProcessResult | None,
+    core: ProcessResult | CorePublicationArtifacts | None,
     world_land_warning: Callable[[str], None] | None,
 ) -> list[PublicationOp]:
     """Assemble one atomic region upload (sync-dir publication).
@@ -638,11 +648,191 @@ def assemble_augmentation_upload(
     ]
 
 
+class PublicationValidationError(ValueError):
+    """Raised when validation of publication artifacts or manifest fails."""
+
+
+@dataclass(frozen=True, slots=True)
+class CorePublicationArtifacts:
+    polygons_path: Path
+    polygon_articles_path: Path
+    wikipedia_documents_path: Path | None
+    manifest_path: Path
+    stem: str
+    manifest_entry: dict[str, Any]
+
+
+def load_existing_core_artifacts(data_root: DataRoot, stem: str) -> CorePublicationArtifacts:
+    polygons_path = data_root.processed_polygons / f"{stem}.parquet"
+    polygon_articles_path = data_root.processed_links / f"{stem}.parquet"
+    manifest_path = data_root.processed_manifests / "processed_pbfs.json"
+
+    # Check existence
+    if not polygons_path.is_file():
+        raise FileNotFoundError(f"Polygons file missing: {polygons_path}")
+    if not polygon_articles_path.is_file():
+        raise FileNotFoundError(f"Polygon articles links file missing: {polygon_articles_path}")
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Processed manifest missing: {manifest_path}")
+
+    # Check manifest entry
+    manifest_data = load_manifest(manifest_path)
+    manifest_key = f"{stem}.osm.pbf"
+    if manifest_key not in manifest_data:
+        raise KeyError(f"Stem {stem} not found in processed manifests")
+    entry = manifest_data[manifest_key]
+
+    # Validate entry details using actionable project-specific errors
+    if entry.get("source_pbf") != manifest_key:
+        raise PublicationValidationError(
+            f"Manifest entry source_pbf mismatch for key '{manifest_key}': "
+            f"expected '{manifest_key}', got '{entry.get('source_pbf')}'"
+        )
+    if entry.get("polygons_path") != f"polygons/{stem}.parquet":
+        raise PublicationValidationError(
+            f"Manifest entry polygons_path mismatch for key '{manifest_key}': "
+            f"expected 'polygons/{stem}.parquet', got '{entry.get('polygons_path')}'"
+        )
+    if entry.get("polygon_articles_path") != f"polygon_articles/{stem}.parquet":
+        raise PublicationValidationError(
+            f"Manifest entry polygon_articles_path mismatch for key '{manifest_key}': "
+            f"expected 'polygon_articles/{stem}.parquet', got '{entry.get('polygon_articles_path')}'"
+        )
+
+    # Validate schemas
+    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
+
+    try:
+        poly_arrow_schema = pq.read_schema(polygons_path)  # type: ignore[no-untyped-call]
+    except Exception as e:
+        raise PublicationValidationError(f"Could not read schema for {polygons_path}: {e}") from e
+    if not poly_arrow_schema.equals(polygon_schema(), check_metadata=True):
+        raise PublicationValidationError(f"Schema mismatch for polygons parquet: {polygons_path}")
+
+    try:
+        links_arrow_schema = pq.read_schema(polygon_articles_path)  # type: ignore[no-untyped-call]
+    except Exception as e:
+        raise PublicationValidationError(
+            f"Could not read schema for {polygon_articles_path}: {e}"
+        ) from e
+    if not links_arrow_schema.equals(polygon_article_schema(), check_metadata=True):
+        raise PublicationValidationError(
+            f"Schema mismatch for polygon links parquet: {polygon_articles_path}"
+        )
+
+    wikipedia_documents_path: Path | None = None
+    wiki_doc_file = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    if wiki_doc_file.is_file():
+        if (
+            entry.get("wikipedia_documents_path")
+            and entry.get("wikipedia_documents_path") != f"wikipedia/documents/{stem}.parquet"
+        ):
+            raise PublicationValidationError(
+                f"Manifest entry wikipedia_documents_path mismatch for key '{manifest_key}': "
+                f"expected 'wikipedia/documents/{stem}.parquet', got '{entry.get('wikipedia_documents_path')}'"
+            )
+
+        from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+            wikipedia_document_schema,
+        )
+
+        try:
+            wiki_doc_arrow_schema = pq.read_schema(wiki_doc_file)  # type: ignore[no-untyped-call]
+        except Exception as e:
+            raise PublicationValidationError(
+                f"Could not read schema for {wiki_doc_file}: {e}"
+            ) from e
+        if not wiki_doc_arrow_schema.equals(wikipedia_document_schema(), check_metadata=True):
+            raise PublicationValidationError(
+                f"Schema mismatch for wikipedia documents parquet: {wiki_doc_file}"
+            )
+        wikipedia_documents_path = wiki_doc_file
+    else:
+        aug_manifest_path = (
+            data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+        )
+        if aug_manifest_path.is_file():
+            try:
+                aug_manifest = json.loads(aug_manifest_path.read_text(encoding="utf-8"))
+                if stem in aug_manifest:
+                    raise PublicationValidationError(
+                        f"Wikipedia documents file missing for augmented region {stem}: {wiki_doc_file}"
+                    )
+            except json.JSONDecodeError as exc:
+                raise PublicationValidationError(
+                    f"Malformed augmentation manifest JSON: {exc}"
+                ) from exc
+
+    return CorePublicationArtifacts(
+        polygons_path=polygons_path,
+        polygon_articles_path=polygon_articles_path,
+        wikipedia_documents_path=wikipedia_documents_path,
+        manifest_path=manifest_path,
+        stem=stem,
+        manifest_entry=entry,
+    )
+
+
+def assemble_metadata_only_upload(
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+    world_land_warning: Callable[[str], None] | None = None,
+) -> list[PublicationOp]:
+    """Assemble repository-level metadata assets when no region is repaired."""
+    snapshots = data_root.cache / "metadata_upload_snapshots"
+    snapshots.mkdir(parents=True, exist_ok=True)
+
+    processed_manifest = data_root.processed_manifests / "processed_pbfs.json"
+    if not processed_manifest.is_file():
+        raise FileNotFoundError("Local processed manifest is missing")
+
+    processed_manifest_snapshot = snapshots / "processed_pbfs.json"
+    atomic_write_text(processed_manifest_snapshot, processed_manifest.read_text(encoding="utf-8"))
+
+    augmentation_manifest = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    augmentation_manifest_snapshot = snapshots / "augmentation_manifest.json"
+    has_aug_manifest = False
+    if augmentation_manifest.is_file():
+        atomic_write_text(
+            augmentation_manifest_snapshot, augmentation_manifest.read_text(encoding="utf-8")
+        )
+        has_aug_manifest = True
+
+    readme_snapshot = snapshots / "README.md"
+    map_snapshot, geo_snapshot, polygon_count_snapshot = refresh_coverage_assets(
+        data_root=data_root,
+        snapshot_stem="metadata",
+        snapshots_dir=snapshots,
+        world_land_warning=world_land_warning,
+    )
+    write_readme_snapshot(data_root, repo_id, readme_snapshot)
+
+    ops = [
+        add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+        add_op(geo_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+        add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+        add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
+        delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
+    ]
+    if has_aug_manifest:
+        ops.extend(_augmentation_migration_ops(augmentation_manifest_snapshot))
+
+    ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
+    return ops
+
+
 __all__ = [
+    "CorePublicationArtifacts",
+    "PublicationValidationError",
     "assemble_augmentation_upload",
     "assemble_core_upload",
+    "assemble_metadata_only_upload",
     "assemble_region_upload",
     "coverage_refresh_required",
+    "load_existing_core_artifacts",
     "refresh_coverage_assets",
     "snapshot_upload_manifests",
     "write_readme_snapshot",

@@ -51,3 +51,10 @@ class HfHub(Protocol):
         *,
         repo_type: str,
     ) -> bool: ...
+
+    def list_repo_files(
+        self,
+        repo_id: str,
+        *,
+        repo_type: str,
+    ) -> list[str]: ...

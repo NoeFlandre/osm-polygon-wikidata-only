@@ -198,6 +198,16 @@ next to the boundary and pinned by focused tests:
 | `hf.publication.refresh_coverage_assets`, `hf.publication.snapshot_upload_manifests` | `ensure_world_land` performs network I/O via `urllib.request.urlretrieve` which raises a broad, unstable set of exception types (`URLError`, `HTTPError`, `ContentTooShortError`, `socket.timeout`, `OSError`). Documented fallback: render without continents + invoke `world_land_warning` (when not `None`). |
 | `hf._geographic.parquet_inputs.read_required_columns` | PyArrow's metadata API raises across several unstable exception types depending on the corruption mode (`OSError`, `ArrowInvalid`, `ArrowKeyError`, `ArrowIOError`). When the metadata read fails, the implementation falls through with an empty `actual` column-name set and lets the subsequent column-pruned `pq.read_table` call determine the outcome: a valid parquet with the requested columns still loads successfully; missing columns are translated into `CoverageMapError`. |
 
+## Remote reconciliation & publication convergence
+
+To handle publication-convergence defects (e.g., local processed stems missing from the remote repository after interrupted runs), the pipeline integrates a remote reconciliation phase:
+
+- **Presence-based reconciliation**: The pipeline compares the set of expected remote canonical parquets for a region against the files actually present on the Hugging Face Hub. Gaps are determined strictly by path presence.
+- **Input scoping**: Reconciliation is strictly scoped to the input PBF stems specified in the command arguments. Stems outside the command's input scope are not reconciled or validated to prevent unrelated local issues from aborting the pipeline.
+- **Restart recovery & resumability**: If a local region is completely processed and augmented but some of its core or augmentation parquets are missing on the remote, the pipeline schedules a publication repair. Missing core files are recovered directly from finalized local parquet files without re-triggering expensive raw PBF extraction, enrichment, or Wikidata lookups.
+- **Single remote inventory read**: The remote file inventory is fetched exactly once at the beginning of the command if `--push` is active, avoiding redundant API calls and rate-limiting.
+- **Metadata refresh**: A repository-level metadata repair (updating the manifest, README, maps, and coverage charts) is enqueued at the end of the run if any repository-level assets are missing on the remote.
+
 ## Compatibility contract
 
 The CLI, Parquet schemas, manifest paths, deterministic ordering, and public
