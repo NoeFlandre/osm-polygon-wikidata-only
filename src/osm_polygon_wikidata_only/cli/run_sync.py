@@ -47,6 +47,7 @@ from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
     REMOTE_WIKIPEDIA_DOCUMENTS_DIR,
@@ -127,6 +128,8 @@ def execute(
     data_root: DataRoot,
     settings: Settings,
     build_upload_files: Callable[..., list[PublicationOp]] | None = None,
+    _remote_inventory: RemoteInventory | None = None,
+    _hub: HfHub | None = None,
 ) -> int:
     """Run the ``sync-dir`` CLI command by wiring collaborators to
     :func:`pipeline.sync_runner.run_sync`.
@@ -161,11 +164,87 @@ def execute(
         session=runtime.session,
     )
 
+    push_enabled = bool(getattr(args, "push", False))
+    remote_inventory = None
+    reconciliation_plan = None
+    stems_with_gaps = set()
+    core_will_be_repaired = False
+    core_repaired = False
+    augmentation_current = {}
+
+    if push_enabled:
+        from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
+
+        # Compute current augmentation state exactly once per input stem
+        augmentation_current = {
+            stem: augmentation_is_current(data_root, stem) for stem in input_stems
+        }
+
+        if _remote_inventory is not None:
+            remote_inventory = _remote_inventory
+        else:
+            remote_inventory = RemoteInventory.fetch(
+                repo_id=settings.repo_id,
+                hub=_hub,
+                token=settings.hf_token,
+            )
+        planner = ReconciliationPlanner(
+            data_root=data_root,
+            inventory=remote_inventory,
+            stems=input_stems,
+            augmentation_current=augmentation_current,
+        )
+        reconciliation_plan = planner.plan()
+        stems_with_gaps = set(reconciliation_plan.stems_to_publish) | set(
+            reconciliation_plan.stems_to_augment
+        )
+
+        core_repaired = any(
+            (stem, "polygons") in reconciliation_plan.missing
+            or (stem, "polygon_articles") in reconciliation_plan.missing
+            for stem in stems_with_gaps
+        )
+
+        # Log remote reconciliation progress
+        missing_core_count = sum(
+            1
+            for stem in input_stems
+            if (stem, "polygons") in reconciliation_plan.missing
+            or (stem, "polygon_articles") in reconciliation_plan.missing
+        )
+        missing_aug_count = sum(
+            1
+            for stem in input_stems
+            if any(
+                (stem, corpus) in reconciliation_plan.missing
+                for corpus in [
+                    "wikipedia/documents",
+                    "wikipedia/sections",
+                    "wikivoyage/documents",
+                    "wikivoyage/sections",
+                    "wikidata/facts",
+                ]
+            )
+        )
+        LOGGER.info(
+            "Remote reconciliation: %d regions missing core artifacts, %d missing augmentation artifacts",
+            missing_core_count,
+            missing_aug_count,
+        )
+
     # 5. Plan sync states
     all_pending_stems = load_pending_publications(data_root)
+    if push_enabled:
+        all_pending_stems = all_pending_stems | stems_with_gaps
+
     entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
     core_stems = {name.removesuffix(".osm.pbf") for name in entries}
-    current_augmentation = {stem for stem in core_stems if augmentation_is_current(data_root, stem)}
+    if push_enabled:
+        current_augmentation = {stem for stem, current in augmentation_current.items() if current}
+    else:
+        current_augmentation = {
+            stem for stem in core_stems if augmentation_is_current(data_root, stem)
+        }
     states = plan_sync_states(
         pbfs,
         core_stems=core_stems,
@@ -174,13 +253,25 @@ def execute(
         pending_stems=all_pending_stems,
     )
 
-    push_enabled = bool(getattr(args, "push", False))
+    if push_enabled and reconciliation_plan is not None:
+        for state in states:
+            if state.action == SyncAction.PROCESS:
+                core_will_be_repaired = True
+            elif state.action in (SyncAction.PUBLISH, SyncAction.AUGMENT):
+                stem = state.stem
+                if (stem, "polygons") in reconciliation_plan.missing or (
+                    stem,
+                    "polygon_articles",
+                ) in reconciliation_plan.missing:
+                    core_will_be_repaired = True
+
     upload_queue = _build_upload_queue(
         push=push_enabled,
         dry_run=getattr(args, "dry_run", False),
         settings=settings,
         data_root=data_root,
         num_threads=getattr(args, "upload_threads", 2),
+        _hub=_hub,
     )
 
     counts = {action: sum(state.action is action for state in states) for action in SyncAction}
@@ -282,6 +373,27 @@ def execute(
         from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
 
         stem = getattr(state, "stem", "")
+        if (
+            core is None
+            and push_enabled
+            and reconciliation_plan is not None
+            and (
+                (stem, "polygons") in reconciliation_plan.missing
+                or (stem, "polygon_articles") in reconciliation_plan.missing
+            )
+        ):
+            LOGGER.info(
+                "Repairing remote region %s from finalized local artifacts (no Wikimedia requests)",
+                stem,
+            )
+            from osm_polygon_wikidata_only.hf.publication import load_existing_core_artifacts
+
+            try:
+                core = load_existing_core_artifacts(data_root, stem)
+            except Exception as e:
+                LOGGER.error("Failed to load local core artifacts for %s: %s", stem, e)
+                raise
+
         return assemble_region_upload(
             data_root=data_root,
             repo_id=settings.repo_id,
@@ -310,6 +422,9 @@ def execute(
 
     from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod
 
+    rc = 0
+    metadata_repaired = False
+    success = False
     try:
         rc = sync_runner_mod.run_sync(
             states,
@@ -319,17 +434,63 @@ def execute(
             build_upload_files=publish_builder,
             commit_message=_commit_message(getattr(args, "commit_message", None)),
             submit_upload=submit_callback,
-            close_uploads=_close_uploads,
+            close_uploads=None,
             load_existing_augmentation=_load_existing,
             on_complete=_prepare_publication,
         )
+        if (
+            rc == 0
+            and push_enabled
+            and reconciliation_plan is not None
+            and reconciliation_plan.repository_refresh
+            and not core_will_be_repaired
+        ):
+            # Enqueue metadata-only repair if needed and core won't be repaired by another upload
+            from osm_polygon_wikidata_only.hf.publication import assemble_metadata_only_upload
+
+            LOGGER.info("Enqueuing metadata-only repair (no region core repair planned)")
+            ops = assemble_metadata_only_upload(
+                data_root=data_root,
+                repo_id=settings.repo_id,
+                world_land_warning=None,
+            )
+            if submit_callback is not None:
+                submit_callback(ops, "Repair remote repository metadata and maps")
+                metadata_repaired = True
+        success = rc == 0
     except Exception as error:
         if upload_queue is not None:
             LOGGER.error("Unified sync aborted: %s", error)
         raise
-    if rc != 0:
-        LOGGER.error("Unified sync completed with failures (rc=%d)", rc)
-    return rc
+    finally:
+        failures = _close_uploads()
+        if failures:
+            rc = 1
+            success = False
+
+    if success and rc == 0 and not failures:
+        if push_enabled:
+            # Determine if README/maps were actually refreshed
+            maps_refreshed = core_repaired or metadata_repaired
+            if maps_refreshed and len(stems_with_gaps) > 0:
+                LOGGER.info(
+                    "Remote reconciliation complete: %d regions repaired; README and maps refreshed",
+                    len(stems_with_gaps),
+                )
+            elif maps_refreshed:
+                LOGGER.info("Remote reconciliation complete: README and maps refreshed")
+            elif len(stems_with_gaps) > 0:
+                LOGGER.info(
+                    "Remote reconciliation complete: %d regions repaired",
+                    len(stems_with_gaps),
+                )
+            else:
+                LOGGER.info("Remote reconciliation complete: converged")
+        return 0
+    else:
+        if rc != 0:
+            LOGGER.error("Unified sync completed with failures (rc=%d)", rc)
+        return rc or 1
 
 
 def _commit_message(
@@ -495,12 +656,13 @@ def _build_upload_queue(
     settings: Settings,
     data_root: DataRoot,
     num_threads: int,
+    _hub: HfHub | None = None,
 ) -> BackgroundUploadQueue | None:
     """Open the documented ``BackgroundUploadQueue`` and resume pending jobs."""
     if not push:
         return None
 
-    hub = StubHfHub() if dry_run else None
+    hub = _hub if _hub is not None else (StubHfHub() if dry_run else None)
 
     def upload_job(ops: list[PublicationOp], message: str) -> None:
         _execute_upload_job(

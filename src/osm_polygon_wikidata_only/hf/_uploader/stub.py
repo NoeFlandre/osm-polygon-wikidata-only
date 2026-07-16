@@ -42,6 +42,17 @@ class StubHfHub:
         del repo_id, repo_type
         return self.remote_files is None or filename in self.remote_files
 
+    def list_repo_files(
+        self,
+        repo_id: str,
+        *,
+        repo_type: str,
+    ) -> list[str]:
+        del repo_id, repo_type
+        if self.remote_files is not None:
+            return sorted(list(self.remote_files))
+        return []
+
     def upload_file(
         self,
         *,
