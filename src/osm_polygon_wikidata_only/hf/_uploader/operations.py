@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,42 @@ def _ensure_repo_exists(hub: HfHub, repo_id: str, *, repo_type: str = "dataset")
         raise _translate_hf_error(error, repo_id=repo_id) from error
 
 
+def _sanitize_server_message(message: str) -> str:
+    """Strip secrets, file-system paths and request-payload fragments.
+
+    The Hugging Face API occasionally echoes back portions of the
+    request body or the local filesystem path that triggered the
+    failure. Operators must never see tokens, hashed secrets, or full
+    user-home paths in the translated error message.
+    """
+    text = (message or "").strip()
+    # Strip common token / secret marker pairs that may appear in
+    # verbose error bodies (e.g. ``token=hf_***``, ``Bearer ...``,
+    # ``Authorization: ...``).
+    patterns = (
+        # ``token=<value>`` / ``access_token=<value>``
+        re.compile(
+            r"(?:token|access_token|secret|password|api_key)\s*[:=]\s*[\S\"']+", re.IGNORECASE
+        ),
+        # ``Bearer <value>`` and ``Authorization: <value>``
+        re.compile(r"Bearer\s+[\w\-.]+", re.IGNORECASE),
+        re.compile(r"Authorization:\s*[^\s,;]+", re.IGNORECASE),
+        # ``request_id=<value>``
+        re.compile(r"request_id\s*[:=]\s*[\S\"']+", re.IGNORECASE),
+        # Full user-home paths on macOS / Linux (matches ``/Users/<name>``
+        # and the rest of the absolute path that follows).
+        re.compile(r"/(?:Users|home|private)/[^\s'\",;)]*"),
+        # Body fragments that wrap JSON in ``body=...``
+        re.compile(r"body\s*[:=]\s*\{[^\n]*\}", re.IGNORECASE),
+    )
+    for pattern in patterns:
+        text = pattern.sub("<redacted>", text)
+    # Collapse repeated redaction markers for readability.
+    while "<redacted> <redacted>" in text:
+        text = text.replace("<redacted> <redacted>", "<redacted>")
+    return text
+
+
 def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
     """Translate Hugging Face HTTP errors into actionable :class:`UploadError`.
 
@@ -110,7 +147,9 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
     password"). The 401 case is almost always an auth issue, not a
     missing repo, but the wrapper's default message hides that. We
     inspect the response body to surface the real cause and tell the
-    user what to do.
+    user what to do. The body is sanitized first so tokens, secrets,
+    request ids, file paths, and JSON request bodies are stripped
+    before being shown to the operator.
     """
     status_code: int | None = None
     server_message: str | None = None
@@ -123,7 +162,7 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
             server_message = None
     if server_message is None:
         server_message = getattr(error, "server_message", None) or str(error)
-    server_message = (server_message or "").strip()
+    server_message = _sanitize_server_message(server_message or "")
     lowered = server_message.lower()
     auth_markers = (
         "invalid username",

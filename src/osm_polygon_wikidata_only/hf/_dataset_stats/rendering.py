@@ -107,20 +107,40 @@ def _render_headline_table(
     the legacy ``Dataset size on disk`` label MUST stay preserved
     byte-for-byte. With augmentation, the last row is renamed to
     ``Core tables size`` and additional augmentation totals follow.
+
+    When augmentation is present the legacy ``Wikipedia articles``
+    and ``Total words`` rows are dropped: the augmentation-aware
+    headline already carries the canonical Wikipedia document count
+    and a precise, project-broken-down word total, so the legacy rows
+    would be redundant or ambiguous.
     """
     rows = [
         ("Polygons", _fmt_int(stats.polygon_count)),
         ("Unique Wikidata entities", _fmt_int(stats.unique_wikidata_count)),
-        ("Wikipedia articles", _fmt_int(stats.article_count)),
-        ("Polygon-article links", _fmt_int(stats.link_count)),
-        ("Languages", _fmt_int(stats.language_count)),
-        ("Geographic regions", _fmt_int(stats.region_count)),
-        ("Total words", _fmt_int(stats.total_words)),
-        (
-            "Core tables size" if augmentation_stats is not None else "Dataset size on disk",
-            _fmt_size(stats.dataset_size_bytes),
-        ),
     ]
+    if augmentation_stats is None:
+        # Legacy-only render: all eight documented rows, unchanged.
+        rows.extend(
+            [
+                ("Wikipedia articles", _fmt_int(stats.article_count)),
+                ("Polygon-article links", _fmt_int(stats.link_count)),
+                ("Languages", _fmt_int(stats.language_count)),
+                ("Geographic regions", _fmt_int(stats.region_count)),
+                ("Total words", _fmt_int(stats.total_words)),
+                ("Dataset size on disk", _fmt_size(stats.dataset_size_bytes)),
+            ]
+        )
+    else:
+        # Augmentation-aware render: drop the redundant/ambiguous
+        # legacy rows, keep the augmentation-broken-down totals.
+        rows.extend(
+            [
+                ("Polygon-article links", _fmt_int(stats.link_count)),
+                ("Languages", _fmt_int(stats.language_count)),
+                ("Geographic regions", _fmt_int(stats.region_count)),
+                ("Core tables size", _fmt_size(stats.dataset_size_bytes)),
+            ]
+        )
     if augmentation_stats is not None:
         aug = augmentation_stats
         rows.extend(
@@ -150,7 +170,7 @@ def _render_headline_table(
                     _fmt_int(aug.fully_augmented_count),
                 ),
                 (
-                    "Document corpus words",
+                    "Wikipedia + Wikivoyage document words",
                     _fmt_int(_document_corpus_words(aug)),
                 ),
                 (
@@ -166,6 +186,16 @@ def _render_headline_table(
     lines = ["| Metric | Value |", "| --- | ---: |"]
     for label, value in rows:
         lines.append(f"| {label} | {value} |")
+    if augmentation_stats is not None:
+        # Concise explanation of the combined document-word total:
+        # it sums full Wikipedia + Wikivoyage documents and excludes
+        # section rows, which duplicate document text.
+        lines.append("")
+        lines.append(
+            "Wikipedia + Wikivoyage document words sums the full Wikipedia "
+            "and Wikivoyage documents and excludes section rows because "
+            "sections duplicate document text."
+        )
     return "\n".join(lines)
 
 
@@ -206,8 +236,8 @@ def _render_language_section(stats: DatasetStats) -> str:
     top_articles = list(stats.articles_per_language.items())[:20]
     top_polygons = dict(stats.polygons_per_language)
 
-    lines = ["Top 20 languages by article count:", ""]
-    lines.append("| Language | Articles | % of total | Polygons |")
+    lines = ["Top 20 languages by Wikipedia document count:", ""]
+    lines.append("| Language | Wikipedia documents | % of total | Polygons |")
     lines.append("| --- | ---: | ---: | ---: |")
     total_articles = max(stats.article_count, 1)
     for lang, count in top_articles:
@@ -220,7 +250,9 @@ def _render_language_section(stats: DatasetStats) -> str:
     for n in (1, 5, 10, 20):
         top_n_sum = sum(c for _, c in list(stats.articles_per_language.items())[:n])
         pct = (top_n_sum / total_articles) * 100.0
-        lines.append(f"- Top {n} language{'s' if n > 1 else ''}: {_fmt_pct(pct)} of all articles")
+        lines.append(
+            f"- Top {n} language{'s' if n > 1 else ''}: {_fmt_pct(pct)} of all Wikipedia documents"
+        )
 
     lines.append("")
     lines.append("**Long-tail:**")
@@ -233,7 +265,7 @@ def _render_language_section(stats: DatasetStats) -> str:
     ):
         lines.append(
             f"- {tail_counts[threshold_key]} language(s) appear in fewer than "
-            f"{threshold_label} article(s)"
+            f"{threshold_label} Wikipedia document(s)"
         )
     lines.append(f"- {tail_counts['polygons_lt5']} language(s) appear in fewer than 5 polygons")
     return "\n".join(lines)

@@ -296,8 +296,9 @@ guidance.
 
 ### Resumable full-dataset command
 
-Run this single command to reconcile the existing augmentation backlog, process
-missing PBFs, immediately augment them, and publish complete regional bundles:
+Run this single command to reconcile the existing augmentation backlog, repair
+remotely missing finalized artifacts without refetching them, process missing
+PBFs, immediately augment them, and publish complete regional bundles:
 
 ```bash
 uv run osm-polygon-wikidata-only sync-dir "$OSM_POLYGON_DATA_ROOT/raw" \
@@ -308,13 +309,25 @@ uv run osm-polygon-wikidata-only sync-dir "$OSM_POLYGON_DATA_ROOT/raw" \
 `process-dir` and `augment-dir` remain available as compatibility commands, but
 do not run them beside `sync-dir`. A data-root lock prevents duplicate unified
 runs. Each completed region is uploaded atomically with fresh manifests and the
-canonical dataset `README.md`.
+canonical dataset `README.md`. Internally the unified sync drains actions in
+this order: AUGMENT backlog first (each call performs Wikimedia sidecar work
+and may enqueue an atomic remote publication on success), then PUBLISH-only
+reconciliation repairs (Wikimedia-free -- each repair reuses the already-loaded
+local augmentation result and only enqueues a Hugging Face upload, with no
+extraction and no Wikidata / Wikipedia / Wikivoyage calls), then new core
+PROCESS work (the runner may prefetch the next PBF concurrently while
+enriching the current region), then COMPLETE / no-op states. Maps and the
+README are only reported "refreshed" after a successful core or metadata
+publication actually refreshed them and the background upload queue has
+drained.
 
 To pause, stop the command with `Ctrl-C`. Run the identical command again to
 resume: completed PBFs remain skipped, while the interrupted PBF is retried
-because it has no completed manifest entry. Stage timings are logged for every
-PBF. Tune large runs only when needed with `--enrichment-batch-size`,
-`--enrichment-site-workers`, and `--upload-threads`.
+because it has no completed manifest entry. The durable pending-publications
+manifest and the upload-queue state files persist across restarts, so a
+failed upload is always retryable on the next invocation. Stage timings are
+logged for every PBF. Tune large runs only when needed with
+`--enrichment-batch-size`, `--enrichment-site-workers`, and `--upload-threads`.
 
 The normal command fetches full text for every valid language-Wikipedia
 sitelink with no per-QID cap. If any expected article remains unresolved after

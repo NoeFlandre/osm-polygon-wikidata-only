@@ -1,4 +1,4 @@
-"""Pure-state sync execution: prefetch, augment-backlog, process, augment, complete.
+"""Pure-state sync execution: augment-backlog, publish-only repairs, process, complete.
 
 This module is a pure state executor. It receives injectable
 collaborators and delegates every collaboration boundary to the
@@ -6,16 +6,24 @@ caller.
 
 The runner owns only:
 
-* Per-state ordering: prefetch the next PROCESS PBF extraction
-  before fully enriching the current one (one-PBF-ahead
-  invariant); execute the AUGMENT backlog before any new core
-  PROCESS; for each PROCESS state, await its extraction,
-  enrich/persist it, then augment it, then continue in plan
-  order.
-* Aggregation: collect PROCESS results in plan order.
-* Exception semantics: processing and augmentation exceptions
-  propagate through the same boundary as before; ``on_complete``
-  is not invoked on a failure path.
+* Per-state ordering: drain the AUGMENT backlog first (each call
+  performs Wikimedia sidecar work and may enqueue an atomic
+  remote publication on success); drain PUBLISH-only
+  reconciliation repairs next (safe, Wikimedia-free uploads of
+  finalized local artifacts that the remote is missing -- the
+  repair uses the already-loaded local augmentation result and
+  enqueues one Hugging Face upload without invoking any
+  Wikidata, Wikipedia, or Wikivoyage call); then walk PROCESS
+  states (prefetch the next PBF extraction before fully
+  enriching the current one -- the one-PBF-ahead invariant).
+  Within each bucket, stems are executed alphabetically in the
+  order produced by the planner.
+* Aggregation: collect PROCESS results in plan order so a
+  subsequent PUBLISH can find a stem's local core artifact
+  when the planner later classifies it for repair.
+* Exception semantics: processing, augmentation and
+  publish-load exceptions propagate through the same boundary
+  as before; ``on_complete`` is not invoked on a failure path.
 
 Nothing in this module imports from ``cli.*``, ``hf.*``,
 ``argparse``, :class:`DataRoot`, or :class:`Settings`. There
@@ -90,20 +98,26 @@ def run_sync(
       the upload queue. ``None`` means no queue is open.
     * ``on_complete(state, result)``: invoked once per successful
       augmentation step (PROCESS or AUGMENT).
+    * ``load_existing_augmentation(state)``: loads the local
+      augmentation result for a PUBLISH-only repair without
+      invoking extraction or Wikimedia. Required only when the
+      plan contains PUBLISH states.
 
     Execution sequence:
 
-    1. Start prefetching the first PROCESS PBF.
-    2. Drain AUGMENT (backlog) states for free while extraction
-       runs in the background.
-    3. For each PROCESS state in plan order: await extraction,
-       immediately prefetch the next PBF, enrich/persist the
-       current region, augment it.
-    4. After each successful augmentation, if both
+    1. Start prefetching the first PROCESS PBF (background thread).
+    2. Drain AUGMENT (backlog) states in alphabetical order.
+    3. Drain PUBLISH-only reconciliation repairs in alphabetical
+       order. Each repair uses ``load_existing_augmentation`` (no
+       extraction, no Wikidata, no Wikipedia, no Wikivoyage
+       call). Publication is enqueued before PROCESSING for the
+       next region begins.
+    4. For each PROCESS state in alphabetical order: await
+       extraction, immediately prefetch the next PBF, enrich/
+       persist the current region, augment it.
+    5. After each successful augmentation, if both
        ``build_upload_files`` and ``submit_upload`` are provided,
        assemble and submit one atomic publication.
-    5. Publish already-migrated regions without repeating remote
-       enrichment.
     """
     if extract_pbf is None or process_extracted_pbf is None or augment_region is None:
         raise RuntimeError(
@@ -138,7 +152,30 @@ def run_sync(
                 commit_message=commit_message,
             )
 
-        # Step 3+4: walk PROCESS states. For each, await extraction,
+        # Step 3: drain PUBLISH-only reconciliation repairs. These
+        # are safe, Wikimedia-free uploads of finalized local
+        # artifacts that the remote is missing. Each repair loads the
+        # existing augmentation result (no extraction, no Wikidata /
+        # Wikipedia / Wikivoyage call) and enqueues one atomic
+        # Hugging Face commit before PROCESS begins.
+        for state in publish_states:
+            if load_existing_augmentation is None:
+                raise RuntimeError(
+                    "run_sync requires load_existing_augmentation collaborator for PUBLISH states"
+                )
+            augmentation = load_existing_augmentation(state)
+            if on_complete is not None:
+                on_complete(state, augmentation)
+            _maybe_submit(
+                state=state,
+                augmentation=augmentation,
+                core=core_results.get(state.stem),
+                submit_upload=submit_upload,
+                build_upload_files=build_upload_files,
+                commit_message=commit_message,
+            )
+
+        # Step 4+5: walk PROCESS states. For each, await extraction,
         # immediately schedule the next extraction (one-PBF-ahead),
         # then enrich/persist, then augment that same region. Failures
         # in extraction or processing propagate; subsequent PROCESS
@@ -166,24 +203,6 @@ def run_sync(
                 state=state,
                 augmentation=augmentation,
                 core=result,
-                submit_upload=submit_upload,
-                build_upload_files=build_upload_files,
-                commit_message=commit_message,
-            )
-
-        # Step 5: drain PUBLISH states.
-        for state in publish_states:
-            if load_existing_augmentation is None:
-                raise RuntimeError(
-                    "run_sync requires load_existing_augmentation collaborator for PUBLISH states"
-                )
-            augmentation = load_existing_augmentation(state)
-            if on_complete is not None:
-                on_complete(state, augmentation)
-            _maybe_submit(
-                state=state,
-                augmentation=augmentation,
-                core=core_results.get(state.stem),
                 submit_upload=submit_upload,
                 build_upload_files=build_upload_files,
                 commit_message=commit_message,
