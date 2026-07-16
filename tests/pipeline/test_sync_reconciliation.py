@@ -51,6 +51,9 @@ def _setup_mock_region(
         pq.write_table(links_table, data_root.processed_links / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 
     manifest_data = {}
+    processed_pbfs_path = data_root.processed_manifests / "processed_pbfs.json"
+    if processed_pbfs_path.exists():
+        manifest_data = json.loads(processed_pbfs_path.read_text(encoding="utf-8"))
     if not invalid_core:
         manifest_data[f"{stem}.osm.pbf"] = {
             "source_pbf": f"{stem}.osm.pbf",
@@ -62,9 +65,7 @@ def _setup_mock_region(
             "article_count": 1,
             "link_count": 1,
         }
-        (data_root.processed_manifests / "processed_pbfs.json").write_text(
-            json.dumps(manifest_data)
-        )
+        processed_pbfs_path.write_text(json.dumps(manifest_data, indent=2))
 
     # wikipedia documents
     wikipedia_documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
@@ -127,7 +128,16 @@ def _setup_mock_region(
             data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
         )
         aug_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        aug_manifest_path.write_text(json.dumps(aug_manifest))
+        # Merge into any existing augmentation manifest so that setting
+        # up multiple regions (e.g. mexico-latest + hungary-latest) does
+        # not clobber earlier entries. A clobbered entry would drop the
+        # stem from the finalized set and wrongly classify it as AUGMENT,
+        # which then triggers a real Wikidata/Wikipedia fetch.
+        if aug_manifest_path.exists():
+            existing = json.loads(aug_manifest_path.read_text(encoding="utf-8"))
+            existing.update(aug_manifest)
+            aug_manifest = existing
+        aug_manifest_path.write_text(json.dumps(aug_manifest, indent=2))
 
 
 @pytest.fixture
@@ -135,6 +145,246 @@ def mock_hf_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "fake-token")
     monkeypatch.setattr(commands, "verify_hf_token", lambda value: "noeflandre")
     monkeypatch.setattr(commands, "verify_repo_authorization", lambda token, repo_id: "noeflandre")
+
+
+class _LoggerSpy:
+    """In-process recorder for ``LOGGER`` info/error calls.
+
+    Each emission is stored with its interpolated message string.
+    Tests can assert on the recorded list without depending on
+    pytest's caplog state, which can be reset by earlier tests
+    that call ``configure_logging``. ``error`` is intercepted in
+    addition to ``info`` so failure-path messages (e.g.
+    ``"Unified sync completed with failures"``) are visible to
+    tests, while ``warning``, ``debug``, and ``critical`` are
+    stubbed defensively to keep the spy stable across any future
+    changes to the cli module.
+    """
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def info(self, message: str, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        self.messages.append(str(message))
+
+    def error(self, message: str, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        self.messages.append(str(message))
+
+    def warning(self, message: str, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+
+    def debug(self, message: str, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+
+    def critical(self, message: str, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+
+
+def _install_logger_spy(monkeypatch: pytest.MonkeyPatch) -> _LoggerSpy:
+    """Replace ``cli.LOGGER`` methods with a deterministic spy.
+
+    ``info`` and ``error`` are swapped for the spy's recording
+    implementations; ``warning``/``debug``/``critical`` are
+    stubbed so any silent fallback paths don't surface as
+    real logger calls during a focused test. Restoration is
+    automatic when the ``monkeypatch`` fixture is torn down.
+    """
+    spy = _LoggerSpy()
+    monkeypatch.setattr(run_sync.LOGGER, "info", spy.info)
+    monkeypatch.setattr(run_sync.LOGGER, "error", spy.error)
+    monkeypatch.setattr(run_sync.LOGGER, "warning", spy.warning)
+    monkeypatch.setattr(run_sync.LOGGER, "debug", spy.debug)
+    monkeypatch.setattr(run_sync.LOGGER, "critical", spy.critical)
+    return spy
+
+
+class _NetworkBoundaryRecorder:
+    """Tracks invocations of the stubbed ``ensure_world_land``.
+
+    Tests assert on ``calls`` to confirm that the production
+    code reached the stubbed boundary (and therefore would have
+    hit a real download in production) and on ``urlretrieve_calls``
+    to confirm that ``urllib.request.urlretrieve`` -- the actual
+    network primitive -- was never invoked.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[Path] = []
+        self.urlretrieve_calls: list[tuple[Any, ...]] = []
+
+
+def _block_network(monkeypatch: pytest.MonkeyPatch) -> _NetworkBoundaryRecorder:
+    """Replace the real network boundary with a deterministic stub.
+
+    The publication module imports ``ensure_world_land`` directly
+    from :mod:`hf.coverage_map` (``from .coverage_map import
+    ensure_world_land``), so the binding actually used at runtime
+    lives on :mod:`hf.publication`. Patching only
+    ``hf.coverage_map.ensure_world_land`` leaves the publication
+    module holding the original function and the boundary is
+    silently bypassed. This helper therefore patches both the
+    canonical definition AND the symbol already imported by
+    :mod:`hf.publication`, ensuring any call from the publication
+    code path is intercepted.
+
+    ``urllib.request.urlretrieve`` is patched to raise as a
+    secondary guard: any future caller that re-introduces a direct
+    download becomes a deterministic test failure rather than a
+    silent HTTP request.
+    """
+    recorder = _NetworkBoundaryRecorder()
+
+    def _fake_ensure_world_land(cache_dir: Path) -> Path:
+        recorder.calls.append(Path(cache_dir))
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target = cache_dir / "world_land.geojson"
+        target.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+        return target
+
+    # Canonical definition: any future caller that imports
+    # ``ensure_world_land`` from :mod:`hf.coverage_map` is covered.
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.coverage_map.ensure_world_land",
+        _fake_ensure_world_land,
+    )
+    # Publication binding: this is the symbol actually called at
+    # runtime because :mod:`hf.publication` does
+    # ``from .coverage_map import ensure_world_land`` at import
+    # time, binding the function into its own namespace.
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
+        _fake_ensure_world_land,
+    )
+
+    def _no_urlretrieve(*args: Any, **kwargs: Any) -> Any:
+        recorder.urlretrieve_calls.append((args, kwargs))
+        raise AssertionError(
+            "Real network call attempted: urllib.request.urlretrieve; "
+            "tests must mock network boundaries."
+        )
+
+    monkeypatch.setattr("urllib.request.urlretrieve", _no_urlretrieve, raising=False)
+    return recorder
+
+
+class _ReconciliationNetworkRecorder:
+    """Records any guarded network-boundary invocation.
+
+    Tests assert ``wikimedia_calls == []`` and ``urlretrieve_calls == []``
+    to prove the production code reached neither the augmentation
+    transport nor the coverage-map download.
+    """
+
+    def __init__(self) -> None:
+        self.wikimedia_calls: list[tuple[Any, ...]] = []
+        self.urlretrieve_calls: list[tuple[Any, ...]] = []
+
+
+def _block_reconciliation_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> _ReconciliationNetworkRecorder:
+    """Fail loudly on the real network boundaries used by the sync flow.
+
+    The augmentation client issues HTTPS fetches through
+    :func:`augmentation.mediawiki.read_wikimedia_json` (re-exported
+    from :mod:`enrichment.wikimedia`). A test that wrongly classifies
+    a finalized region as AUGMENT would call it. The publication
+    coverage-map rendering calls ``urllib.request.urlretrieve`` to
+    download the Natural Earth land GeoJSON.
+
+    Patching the actual augmentation boundary (not the low-level
+    ``urllib.request.urlopen`` it happens to sit on) makes the guard
+    authoritative: the symbol the production code imports is the one
+    intercepted, so a future refactor that swaps the transport cannot
+    silently bypass the guard. Both primitives are replaced with
+    fail-loud stubs and their invocations are recorded.
+
+    This guard is defense-in-depth only: callers MUST still correct
+    their action classification so the network code is never reached
+    in the first place.
+    """
+    recorder = _ReconciliationNetworkRecorder()
+
+    import osm_polygon_wikidata_only.augmentation.mediawiki as mediawiki_mod
+
+    def _no_read_wikimedia_json(*args: Any, **kwargs: Any) -> Any:
+        recorder.wikimedia_calls.append((args, kwargs))
+        raise AssertionError(
+            "Real network call attempted: augmentation.mediawiki.read_wikimedia_json; "
+            "reconciliation tests must classify finalized regions as "
+            "COMPLETE/PUBLISH, not AUGMENT."
+        )
+
+    monkeypatch.setattr(mediawiki_mod, "read_wikimedia_json", _no_read_wikimedia_json)
+
+    # Stub the coverage-map download so the publication path never
+    # reaches ``urllib.request.urlretrieve``. The publication module
+    # imports ``ensure_world_land`` directly from ``hf.coverage_map``,
+    # so both the canonical definition and the symbol already bound
+    # into ``hf.publication`` are replaced. This is the deterministic
+    # substitute that satisfies the "urlretrieve calls are zero"
+    # assertion; the ``urlretrieve`` guard below remains as a
+    # fail-loud backstop if a future caller re-introduces a direct
+    # download.
+    def _fake_ensure_world_land(cache_dir: Path) -> Path:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target = cache_dir / "world_land.geojson"
+        target.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+        return target
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.coverage_map.ensure_world_land",
+        _fake_ensure_world_land,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
+        _fake_ensure_world_land,
+    )
+
+    def _no_urlretrieve(*args: Any, **kwargs: Any) -> Any:
+        recorder.urlretrieve_calls.append((args, kwargs))
+        raise AssertionError(
+            "Real network call attempted: urllib.request.urlretrieve; "
+            "tests must stub the coverage-map network boundary."
+        )
+
+    monkeypatch.setattr("urllib.request.urlretrieve", _no_urlretrieve, raising=False)
+    return recorder
+
+
+def _refresh_augmentation_manifest(data_root: DataRoot, stem: str) -> None:
+    """Recompute and persist the canonical core-hash entry for *stem*.
+
+    Used after a test overwrites the canonical Wikipedia-document (or
+    legacy articles) file so the stored manifest hashes match the
+    on-disk bytes. Without this refresh ``augmentation_is_current``
+    returns False and the region is mis-classified as AUGMENT, which
+    would then issue a real Wikidata/Wikipedia fetch.
+    """
+    from osm_polygon_wikidata_only.augmentation.steps import sha256_file
+
+    polygons_path = data_root.processed_polygons / f"{stem}.parquet"
+    wikipedia_documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    core_hashes = {
+        str(polygons_path): sha256_file(polygons_path),
+        str(wikipedia_documents_path): sha256_file(wikipedia_documents_path),
+    }
+    aug_manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    aug_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = (
+        json.loads(aug_manifest_path.read_text(encoding="utf-8"))
+        if aug_manifest_path.exists()
+        else {}
+    )
+    entry = manifest.get(stem, {})
+    entry["contract_version"] = "text-sidecars-v1"
+    entry["core_hashes"] = core_hashes
+    manifest[stem] = entry
+    aug_manifest_path.write_text(json.dumps(manifest, indent=2))
 
 
 def setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
@@ -324,9 +574,26 @@ def test_reconciliation_limited_to_input_stems(
     # hungary-latest is inconsistent/malformed (invalid_core=True)
     _setup_mock_region(data_root, "hungary-latest", augmented=True, invalid_core=True)
 
+    # Reconciliation tests must never reach the network. The fail-loud
+    # guard turns any accidental AUGMENT classification (which would
+    # trigger a real Wiki fetch) into a test failure.
+    recorder = _block_reconciliation_network(monkeypatch)
+
     # Remote missing everything
     stub = StubHfHub(remote_files=set())
     setup_test_hub(monkeypatch, stub)
+
+    # The finalized mexico-latest region must classify as COMPLETE, not
+    # AUGMENT: both its processed_pbfs entry and its augmentation
+    # manifest entry survive after setting up a second region.
+    from osm_polygon_wikidata_only.augmentation.orchestrator import (
+        augmentation_is_current,
+    )
+
+    assert augmentation_is_current(data_root, "mexico-latest"), (
+        "mexico-latest was not finalized after setting up a second region; "
+        "the augmentation manifest entry was likely clobbered."
+    )
 
     # Input PBF contains ONLY mexico-latest.osm.pbf
     pbf_file = data_root.raw / "mexico-latest.osm.pbf"
@@ -345,6 +612,17 @@ def test_reconciliation_limited_to_input_stems(
     ]
     rc = commands.main(args)
     assert rc == 0
+
+    # The network guard must not have been tripped: no augmentation
+    # transport call and no coverage-map download.
+    assert recorder.wikimedia_calls == [], (
+        f"Augmentation transport was called {len(recorder.wikimedia_calls)} "
+        "time(s); a finalized region was mis-classified as AUGMENT."
+    )
+    assert recorder.urlretrieve_calls == [], (
+        f"urllib.request.urlretrieve was called {len(recorder.urlretrieve_calls)} "
+        "time(s); the coverage-map download was not stubbed."
+    )
 
 
 def test_remote_extras_reported_never_deleted(
@@ -637,7 +915,6 @@ def test_upload_failure_remains_retryable(
     tmp_path: Path,
     mock_hf_auth: None,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -648,6 +925,8 @@ def test_upload_failure_remains_retryable(
     # Remote missing core, trigger publish/repair
     stub = StubHfHub(remote_files=set())
     setup_test_hub(monkeypatch, stub)
+    _block_network(monkeypatch)
+    spy = _install_logger_spy(monkeypatch)
 
     # Force upload_files failure
     def failing_upload(*args: Any, **kwargs: Any) -> Any:
@@ -668,17 +947,12 @@ def test_upload_failure_remains_retryable(
         "--skip-existing",
     ]
 
-    caplog.clear()
-    caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
-
     rc = commands.main(args)
     # Failure should return non-zero
     assert rc != 0
 
     # No success log should be printed
-    assert not any(
-        "Remote reconciliation complete" in record.getMessage() for record in caplog.records
-    )
+    assert not any("Remote reconciliation complete" in message for message in spy.messages)
 
 
 def test_dry_run_causes_no_mutation_or_retirement(
@@ -785,6 +1059,26 @@ def test_existing_paired_legacy_retirement_remains_intact(
     )
     pq.write_table(links_table, data_root.processed_links / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 
+    # The overwrite invalidated the stored augmentation-manifest hashes
+    # (they still point at the pre-overwrite bytes). Refresh the manifest
+    # so the region classifies as finalized (COMPLETE/PUBLISH) rather
+    # than AUGMENT, which would otherwise trigger a real Wiki fetch.
+    _refresh_augmentation_manifest(data_root, stem)
+
+    # Reconciliation tests must never reach the network. The fail-loud
+    # guard turns any accidental AUGMENT classification into a test
+    # failure instead of a silent es.wikipedia.org request.
+    recorder = _block_reconciliation_network(monkeypatch)
+
+    from osm_polygon_wikidata_only.augmentation.orchestrator import (
+        augmentation_is_current,
+    )
+
+    assert augmentation_is_current(data_root, stem), (
+        "mexico-latest was not finalized after overwriting its data files; "
+        "the augmentation manifest hashes were left stale."
+    )
+
     # Stub remote
     stub = StubHfHub(remote_files=set())
     setup_test_hub(monkeypatch, stub)
@@ -806,6 +1100,53 @@ def test_existing_paired_legacy_retirement_remains_intact(
 
     # Verify legacy articles file is retired (deleted locally)
     assert not (data_root.processed_articles / f"{stem}.parquet").exists()
+
+    # The network guard must not have been tripped: no augmentation
+    # transport call and no coverage-map download.
+    assert recorder.wikimedia_calls == [], (
+        f"Augmentation transport was called {len(recorder.wikimedia_calls)} "
+        "time(s); a finalized region was mis-classified as AUGMENT."
+    )
+    assert recorder.urlretrieve_calls == [], (
+        f"urllib.request.urlretrieve was called {len(recorder.urlretrieve_calls)} "
+        "time(s); the coverage-map download was not stubbed."
+    )
+
+
+def test_reconciliation_network_guard_intercepts_augmentation_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reconciliation network guard must intercept the actual
+    augmentation transport symbol -- ``augmentation.mediawiki.
+    read_wikimedia_json`` -- not some unrelated low-level primitive.
+
+    This prevents a future refactor from swapping the transport
+    (e.g. from ``urllib.request.urlopen`` to ``requests``) and
+    silently bypassing a guard that patched the wrong layer. We
+    invoke the production symbol directly and assert the guard both
+    recorded the call and raised, proving the boundary is the one
+    the code actually imports.
+    """
+    import osm_polygon_wikidata_only.augmentation.mediawiki as mediawiki_mod
+
+    recorder = _block_reconciliation_network(monkeypatch)
+
+    # The production code imports ``read_wikimedia_json`` from
+    # ``enrichment.wikimedia`` into the ``augmentation.mediawiki``
+    # namespace. The guard must replace that exact binding so the
+    # call the code makes is the one intercepted (a guard that
+    # patched a different layer would leave this untouched).
+    from osm_polygon_wikidata_only.enrichment.wikimedia import (
+        read_wikimedia_json as upstream_read_wikimedia_json,
+    )
+
+    assert mediawiki_mod.read_wikimedia_json is not upstream_read_wikimedia_json
+
+    with pytest.raises(AssertionError, match="read_wikimedia_json"):
+        mediawiki_mod.read_wikimedia_json("https://es.wikipedia.org/w/api.php")
+
+    assert len(recorder.wikimedia_calls) == 1
+    assert recorder.urlretrieve_calls == []
 
 
 def test_augmentation_is_current_called_exactly_once_per_stem(
@@ -909,7 +1250,6 @@ def test_logging_core_repair(
     tmp_path: Path,
     mock_hf_auth: None,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -919,6 +1259,8 @@ def test_logging_core_repair(
 
     stub = StubHfHub(remote_files=set())
     setup_test_hub(monkeypatch, stub)
+    _block_network(monkeypatch)
+    spy = _install_logger_spy(monkeypatch)
 
     pbf_file = data_root.raw / f"{stem}.osm.pbf"
     pbf_file.touch()
@@ -933,16 +1275,12 @@ def test_logging_core_repair(
         "--skip-existing",
     ]
 
-    caplog.clear()
-    caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
-
     rc = commands.main(args)
     assert rc == 0
 
     assert any(
-        "Remote reconciliation complete: 1 regions repaired; README and maps refreshed"
-        in record.getMessage()
-        for record in caplog.records
+        "Remote reconciliation complete: 1 regions repaired; README and maps refreshed" in message
+        for message in spy.messages
     )
 
 
@@ -950,7 +1288,6 @@ def test_logging_sidecar_only_repair(
     tmp_path: Path,
     mock_hf_auth: None,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -975,6 +1312,8 @@ def test_logging_sidecar_only_repair(
     }
     stub = StubHfHub(remote_files=stub_files)
     setup_test_hub(monkeypatch, stub)
+    _block_network(monkeypatch)
+    spy = _install_logger_spy(monkeypatch)
 
     pbf_file = data_root.raw / f"{stem}.osm.pbf"
     pbf_file.touch()
@@ -989,25 +1328,20 @@ def test_logging_sidecar_only_repair(
         "--skip-existing",
     ]
 
-    caplog.clear()
-    caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
-
     rc = commands.main(args)
     assert rc == 0
 
     # Assert that maps are NOT reported as refreshed
     assert any(
-        "Remote reconciliation complete: 1 regions repaired" in record.getMessage()
-        for record in caplog.records
+        "Remote reconciliation complete: 1 regions repaired" in message for message in spy.messages
     )
-    assert not any("README and maps refreshed" in record.getMessage() for record in caplog.records)
+    assert not any("README and maps refreshed" in message for message in spy.messages)
 
 
 def test_logging_metadata_only_repair(
     tmp_path: Path,
     mock_hf_auth: None,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -1029,6 +1363,8 @@ def test_logging_metadata_only_repair(
     }
     stub = StubHfHub(remote_files=stub_files)
     setup_test_hub(monkeypatch, stub)
+    _block_network(monkeypatch)
+    spy = _install_logger_spy(monkeypatch)
 
     pbf_file = data_root.raw / f"{stem}.osm.pbf"
     pbf_file.touch()
@@ -1043,24 +1379,20 @@ def test_logging_metadata_only_repair(
         "--skip-existing",
     ]
 
-    caplog.clear()
-    caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
-
     rc = commands.main(args)
     assert rc == 0
 
     assert any(
-        "Remote reconciliation complete: README and maps refreshed" in record.getMessage()
-        for record in caplog.records
+        "Remote reconciliation complete: README and maps refreshed" in message
+        for message in spy.messages
     )
-    assert not any("regions repaired" in record.getMessage() for record in caplog.records)
+    assert not any("regions repaired" in message for message in spy.messages)
 
 
 def test_logging_upload_failure(
     tmp_path: Path,
     mock_hf_auth: None,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -1070,6 +1402,8 @@ def test_logging_upload_failure(
 
     stub = StubHfHub(remote_files=set())
     setup_test_hub(monkeypatch, stub)
+    _block_network(monkeypatch)
+    spy = _install_logger_spy(monkeypatch)
 
     # Fail the upload queue
     def failing_upload(*args: Any, **kwargs: Any) -> Any:
@@ -1090,18 +1424,129 @@ def test_logging_upload_failure(
         "--skip-existing",
     ]
 
-    caplog.clear()
-    caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
-
     rc = commands.main(args)
     assert rc != 0
 
     # Verify aborted logging exists, and success logging is absent
     assert any(
-        "Unified sync aborted:" in record.getMessage()
-        or "Unified sync completed with failures" in record.getMessage()
-        for record in caplog.records
+        "Unified sync aborted:" in message or "Unified sync completed with failures" in message
+        for message in spy.messages
     )
-    assert not any(
-        "Remote reconciliation complete" in record.getMessage() for record in caplog.records
+    assert not any("Remote reconciliation complete" in message for message in spy.messages)
+
+
+# ---------------------------------------------------------------------------
+# Direct unit test for the summary helper -- independent of caplog state
+# ---------------------------------------------------------------------------
+
+
+def test_log_remote_reconciliation_summary_unit() -> None:
+    """The summary helper accepts an injected log callable.
+
+    Verifies the four documented branches without any caplog
+    interaction, so the assertions are deterministic regardless
+    of module-level logger configuration.
+    """
+    spy = _LoggerSpy()
+
+    # Core + metadata refresh with repaired regions
+    run_sync._log_remote_reconciliation_summary(
+        stems_with_gaps={"mexico-latest"},
+        core_repaired=True,
+        metadata_repaired=False,
+        log=spy.info,
+    )
+    # Maps refreshed but no repaired regions
+    run_sync._log_remote_reconciliation_summary(
+        stems_with_gaps=set(),
+        core_repaired=True,
+        metadata_repaired=False,
+        log=spy.info,
+    )
+    # Repaired regions but maps NOT refreshed
+    run_sync._log_remote_reconciliation_summary(
+        stems_with_gaps={"andorra-latest", "mexico-latest"},
+        core_repaired=False,
+        metadata_repaired=False,
+        log=spy.info,
+    )
+    # Converged
+    run_sync._log_remote_reconciliation_summary(
+        stems_with_gaps=set(),
+        core_repaired=False,
+        metadata_repaired=False,
+        log=spy.info,
+    )
+
+    assert spy.messages[0] == (
+        "Remote reconciliation complete: 1 regions repaired; README and maps refreshed"
+    )
+    assert spy.messages[1] == ("Remote reconciliation complete: README and maps refreshed")
+    assert spy.messages[2] == "Remote reconciliation complete: 2 regions repaired"
+    assert spy.messages[3] == "Remote reconciliation complete: converged"
+
+
+def test_no_real_network_during_logging_core_repair(
+    tmp_path: Path,
+    mock_hf_auth: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``test_logging_core_repair`` path must make zero real
+    network calls.
+
+    ``ensure_world_land`` (the symbol actually called by the
+    publication module) is patched to a deterministic stub, and
+    ``urllib.request.urlretrieve`` is patched to raise so any
+    unstubbed network path becomes a deterministic test failure
+    rather than a silent download. The assertions verify both
+    sides of that contract:
+
+    * the stubbed boundary was invoked (proving the test
+      exercises the production code path that would have made
+      a real HTTP request), and
+    * ``urlretrieve`` was never invoked (proving the stub
+      actually replaced the network primitive instead of relying
+      on production code to swallow an ``AssertionError`` raised
+      from a different module binding).
+    """
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    stem = "mexico-latest"
+    _setup_mock_region(data_root, stem, augmented=True)
+
+    stub = StubHfHub(remote_files=set())
+    setup_test_hub(monkeypatch, stub)
+    recorder = _block_network(monkeypatch)
+    _install_logger_spy(monkeypatch)
+
+    pbf_file = data_root.raw / f"{stem}.osm.pbf"
+    pbf_file.touch()
+
+    args = [
+        "sync-dir",
+        str(data_root.raw),
+        "--data-root",
+        str(tmp_path),
+        "--push",
+        "--dry-run",
+        "--skip-existing",
+    ]
+    rc = commands.main(args)
+    assert rc == 0
+
+    # The publication code path reached the stubbed boundary at
+    # least once -- this is the call that, in production, would
+    # have invoked ``urllib.request.urlretrieve`` to download the
+    # Natural Earth land GeoJSON.
+    assert recorder.calls, (
+        "Stubbed ensure_world_land was never invoked; "
+        "publication code path did not exercise the network boundary."
+    )
+    # The urlretrieve guard was never tripped -- the stub actually
+    # replaced the network primitive for the duration of the test.
+    assert recorder.urlretrieve_calls == [], (
+        "urllib.request.urlretrieve was invoked "
+        f"{len(recorder.urlretrieve_calls)} time(s); the stub did not "
+        "fully replace the network boundary."
     )

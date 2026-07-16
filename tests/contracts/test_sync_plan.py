@@ -1,8 +1,9 @@
 """Freeze the unified sync plan behaviour.
 
 The plan is the input to ``pipeline.sync_runner.run_sync_plan`` and
-its ordering invariant (augmentation backlog first, then core
-missing, then complete) is a behavioural contract.
+its ordering invariant (augmentation backlog first, then
+publish-only reconciliation repairs, then core missing, then
+complete) is a behavioural contract.
 """
 
 from __future__ import annotations

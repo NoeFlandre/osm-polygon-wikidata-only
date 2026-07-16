@@ -29,7 +29,31 @@ def plan_sync_states(
     force: bool = False,
     pending_stems: set[str] | None = None,
 ) -> list[RegionSyncState]:
-    """Classify PBFs and order missing augmentation before new core work."""
+    """Classify PBFs and produce a deterministic action plan.
+
+    Action priority (lowest value runs first):
+
+    0. AUGMENT - existing augmentation backlog (in-place fix-up of a
+       region whose core is finalized but whose augmentation is stale
+       or missing). AUGMENT performs Wikimedia sidecar work and, on
+       success, enqueues an atomic remote publication for the region.
+    1. PUBLISH - safe, Wikimedia-free publish-only reconciliation
+       repairs (a finalized local artifact that the remote is
+       missing). PUBLISH runs BEFORE PROCESS so a remotely missing
+       finalized artifact is not blocked behind expensive new-core
+       PBF extraction. The repair uses the already-loaded local
+       augmentation result and only enqueues a Hugging Face upload;
+       it does not invoke any Wikidata, Wikipedia, or Wikivoyage
+       call.
+    2. PROCESS - new core processing (extraction + enrichment +
+       augmentation) for regions whose local core is missing. The
+       runner may prefetch the next PBF concurrently while
+       enriching the current region.
+    3. COMPLETE - regions already converged (no action required).
+
+    Within each priority bucket, states are sorted alphabetically by
+    stem for deterministic execution.
+    """
     pending = pending_stems or set()
     states: list[RegionSyncState] = []
     for pbf in pbfs:
@@ -45,8 +69,8 @@ def plan_sync_states(
         states.append(RegionSyncState(stem, pbf, action))
     priority = {
         SyncAction.AUGMENT: 0,
-        SyncAction.PROCESS: 1,
-        SyncAction.PUBLISH: 2,
+        SyncAction.PUBLISH: 1,
+        SyncAction.PROCESS: 2,
         SyncAction.COMPLETE: 3,
     }
     return sorted(states, key=lambda state: (priority[state.action], state.stem))

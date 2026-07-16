@@ -15,12 +15,16 @@ These tests pin the exact behavior of the extracted
   from ``pipeline.sync_runner`` unchanged.
 * The runner restores the documented execution sequence:
 
-    1. Start prefetching the first PROCESS PBF.
-    2. Execute every AUGMENT (backlog) state.
-    3. For each PROCESS state, await its extraction, immediately
+    1. Start prefetching the first PROCESS PBF (background thread).
+    2. Drain every AUGMENT (backlog) state in alphabetical order.
+    3. Drain every PUBLISH (publish-only reconciliation) state in
+       alphabetical order. Each repair uses ``load_existing_augmentation``
+       so no extraction, Wikidata, Wikipedia, Wikivoyage, or
+       augmentation call runs.
+    4. For each PROCESS state, await its extraction, immediately
        prefetch the next PBF, enrich/persist the current region,
        then augment it, then continue.
-    4. After each successful augmentation, if BOTH
+    5. After each successful augmentation, if BOTH
        ``build_upload_files`` AND ``submit_upload`` are provided,
        build the upload file list and submit one atomic commit.
 

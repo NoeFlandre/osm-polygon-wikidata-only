@@ -92,9 +92,12 @@ details behind facades):
 - `osm_polygon_wikidata_only.pipeline.sync_runner` and
   `osm_polygon_wikidata_only.pipeline.sync_orchestrator` — framework-free
   orchestration for the unified sync workflow. `sync_runner` performs
-  the actual workflow execution (prefetch, augment-backlog, process,
-  augment, complete) with injectable collaborators; it is not a pure
-  state machine.
+  the actual workflow execution (AUGMENT backlog, PUBLISH-only
+  reconciliation repairs, PROCESS, COMPLETE) with injectable
+  collaborators; it is not a pure state machine.
+- `osm_polygon_wikidata_only.pipeline.local_validation` — bounded
+  startup progress reporter for the local augmentation-state
+  validation phase that gates the unified sync.
 - `osm_polygon_wikidata_only.hf._uploader` (also listed above): the
   dependency graph is acyclic -- errors → protocol → stub / token →
   authorization / operations.
@@ -207,6 +210,52 @@ To handle publication-convergence defects (e.g., local processed stems missing f
 - **Restart recovery & resumability**: If a local region is completely processed and augmented but some of its core or augmentation parquets are missing on the remote, the pipeline schedules a publication repair. Missing core files are recovered directly from finalized local parquet files without re-triggering expensive raw PBF extraction, enrichment, or Wikidata lookups.
 - **Single remote inventory read**: The remote file inventory is fetched exactly once at the beginning of the command if `--push` is active, avoiding redundant API calls and rate-limiting.
 - **Metadata refresh**: A repository-level metadata repair (updating the manifest, README, maps, and coverage charts) is enqueued at the end of the run if any repository-level assets are missing on the remote.
+
+## Unified sync action priority
+
+The unified sync (`sync-dir`) runs every region through one of four
+mutually exclusive action buckets. Within each bucket, stems are
+processed alphabetically; the planner produces a deterministic plan
+that the runner drains in this exact order:
+
+1. **AUGMENT backlog** -- the existing augmentation backlog. Regions
+   whose core is finalized but whose augmentation is stale or
+   missing are repaired first; each AUGMENT call performs
+   Wikimedia sidecar work and, on success, enqueues an atomic
+   remote publication for that region.
+2. **PUBLISH** -- safe, Wikimedia-free publish-only reconciliation
+   repairs. Regions whose local core and augmentation artifacts
+   are already finalized but missing from the remote are uploaded
+   using `load_existing_augmentation` -- no extraction, no
+   Wikidata lookup, no Wikipedia parse, no Wikivoyage fetch. The
+   repair only enqueues a Hugging Face upload.
+3. **PROCESS** -- new core processing. Regions whose local core
+   artifacts are missing run PBF extraction, enrichment, and
+   augmentation. The first PROCESS extraction is prefetched in
+   a background thread so PUBLISH-only repairs above can overlap,
+   and the runner may prefetch subsequent PBF extractions
+   concurrently while enriching the current region (the
+   one-PBF-ahead invariant).
+4. **COMPLETE** -- no action required; convergence.
+
+Maps / README "refreshed" claims in the final log line are
+authoritative only when a successful core or metadata-only
+publication actually refreshed them; success is reported only
+after the background upload queue has drained successfully.
+Upload failures remain retryable on the next invocation because
+the durable pending-publications manifest and the upload-queue
+state files survive the failure.
+
+### Startup visibility
+
+The local augmentation-state validation phase iterates over every
+input stem and may take several minutes for large datasets. The
+`pipeline.local_validation.LocalValidationProgress` coordinator
+emits a single begin log line, bounded periodic progress lines
+(suppressed for inputs smaller than 25 stems), and a single
+completion log line with the total elapsed time. Each stem is
+visited exactly once. The clock is injectable for deterministic
+tests.
 
 ## Compatibility contract
 

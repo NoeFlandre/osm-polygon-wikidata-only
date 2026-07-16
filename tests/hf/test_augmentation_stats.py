@@ -29,6 +29,7 @@ from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     ProjectTextStats,
     WikidataFactStats,
 )
+from osm_polygon_wikidata_only.hf._dataset_stats.rendering import _fmt_int
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     DatasetStats,
     render_stats_section,
@@ -1142,8 +1143,15 @@ def test_render_stats_section_legacy_three_sections_byte_identical() -> None:
     aug_label_row = "| Core tables size |"
     legacy_offset = no_aug.index(legacy_label_row) + len(legacy_label_row)
     aug_offset = with_aug.index(aug_label_row) + len(aug_label_row)
-    # Everything BEFORE the headline's last row is byte-identical.
-    assert with_aug[: with_aug.index(aug_label_row)] == no_aug[: no_aug.index(legacy_label_row)]
+    # The legacy render keeps the redundant "Wikipedia articles" and
+    # "Total words" rows; the augmentation render drops them. Both
+    # share the same leading rows (Polygons, Unique Wikidata entities)
+    # and the same language-distribution section content; only the
+    # headline's middle rows diverge by design.
+    assert "| Wikipedia articles |" in no_aug
+    assert "| Wikipedia articles |" not in with_aug
+    assert "| Total words |" in no_aug
+    assert "| Total words |" not in with_aug
     # The numeric tail (" 4.0 KB |") is identical in both versions.
     legacy_suffix = no_aug[legacy_offset : legacy_offset + len(" 4.0 KB |")]
     aug_suffix = with_aug[aug_offset : aug_offset + len(" 4.0 KB |")]
@@ -1369,11 +1377,166 @@ def test_render_stats_section_headline_includes_augmentation_totals() -> None:
         "Wikivoyage sections",
         "Wikidata facts",
         "Fully augmented regions",
-        "Document corpus words",
+        "Wikipedia + Wikivoyage document words",
         "Augmentation tables size",
         "Total Parquet size",
     ):
         assert label in md, f"headline missing {label!r}"
+
+
+# --- automated dataset-card wording contract (red → green → refactor) --
+
+
+def test_render_stats_headline_drops_redundant_wikipedia_articles_row() -> None:
+    """When augmentation stats are present the legacy ``Wikipedia
+    articles`` headline row is dropped because it counts the same
+    canonical Wikipedia document rows as ``Wikipedia documents`` and
+    is therefore redundant.
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    assert "| Wikipedia articles |" not in md
+
+
+def test_render_stats_headline_drops_ambiguous_total_words_row() -> None:
+    """When augmentation stats are present the legacy ``Total words``
+    headline row is dropped: it is ambiguous once the augmentation
+    word totals (Wikipedia + Wikivoyage documents) are shown.
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    assert "| Total words |" not in md
+
+
+def test_render_stats_headline_renames_document_corpus_words() -> None:
+    """The combined word total is renamed to the explicit
+    ``Wikipedia + Wikivoyage document words`` label.
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    assert "| Document corpus words |" not in md
+    assert "| Wikipedia + Wikivoyage document words |" in md
+    wiki = aug.wikipedia_documents.total_words
+    voy = aug.wikivoyage_documents.total_words
+    assert f"| Wikipedia + Wikivoyage document words | {_fmt_int(wiki + voy)} |" in md, (
+        f"combined word value wrong; got snippet:\n{md[:600]!r}"
+    )
+
+
+def test_render_stats_headline_section_words_excluded_from_corpus_total() -> None:
+    """The combined document-word total must equal Wikipedia document
+    words plus Wikivoyage document words, and must NOT include either
+    project's section words (sections duplicate document text).
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    wiki = aug.wikipedia_documents.total_words
+    voy = aug.wikivoyage_documents.total_words
+    sec = aug.wikipedia_sections.total_words + aug.wikivoyage_sections.total_words
+    combined = wiki + voy
+    assert sec > 0, "fixture must include non-zero section words to prove exclusion"
+    assert combined != wiki + voy + sec
+    assert f"| Wikipedia + Wikivoyage document words | {_fmt_int(combined)} |" in md
+
+
+def test_render_stats_headline_includes_exclusion_sentence() -> None:
+    """A one-line explanation immediately below the headline table
+    states that the total sums full Wikipedia and Wikivoyage documents
+    and excludes section rows because sections duplicate document text.
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    snippet = "sums the full Wikipedia and Wikivoyage documents and excludes section rows"
+    assert snippet in md, f"explanatory sentence missing; snippet:\n{md[:600]!r}"
+
+
+def test_render_stats_headline_counts_from_supplied_snapshot() -> None:
+    """Every displayed count in the augmentation-aware headline comes
+    from the supplied/computed snapshot, not from hardcoded values.
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    # Wikipedia documents count from the snapshot
+    assert f"| Wikipedia documents | {_fmt_int(aug.wikipedia_documents.rows)} |" in md
+    # Wikivoyage documents count from the snapshot
+    assert f"| Wikivoyage documents | {_fmt_int(aug.wikivoyage_documents.rows)} |" in md
+    # Fully augmented regions from the snapshot
+    assert f"| Fully augmented regions | {_fmt_int(aug.fully_augmented_count)} |" in md
+
+
+def test_render_stats_headline_deterministic() -> None:
+    """Rendering the same stats + augmentation snapshot twice yields
+    byte-identical output (no timestamp, UUID, or clock dependence).
+    """
+    stats = _empty_dataset_stats()
+    aug = _sample_augmentation_stats()
+    first = render_stats_section(stats, augmentation_stats=aug)
+    second = render_stats_section(stats, augmentation_stats=aug)
+    assert first == second
+
+
+def test_render_stats_language_section_uses_wikipedia_documents_terminology() -> None:
+    """The public-facing language-distribution terminology describes
+    the canonical rows as "Wikipedia documents" rather than "articles".
+
+    This only applies to the augmentation-aware render, which is the
+    surface that surfaces canonical Wikipedia document counts.
+    """
+    stats = DatasetStats(
+        polygon_count=2,
+        unique_wikidata_count=1,
+        article_count=3,
+        link_count=3,
+        language_count=2,
+        region_count=1,
+        total_words=200,
+        total_tokens_estimate=50,
+        dataset_size_bytes=4096,
+        polygons_with_wikipedia=2,
+        polygons_with_text=2,
+        polygons_with_english=2,
+        polygons_with_no_english_other_lang=0,
+        polygons_with_2plus_langs=2,
+        polygons_with_5plus_langs=0,
+        polygons_with_10plus_langs=0,
+        articles_per_language={"en": 2, "fr": 1},
+        polygons_per_language={"en": 2, "fr": 1},
+    )
+    aug = _sample_augmentation_stats()
+    md = render_stats_section(stats, augmentation_stats=aug)
+    # The explanatory notion "of all articles" is replaced.
+    assert "of all articles" not in md
+    assert "of all Wikipedia documents" in md
+
+
+def _sample_augmentation_stats() -> AugmentationStats:
+    """Deterministic augmentation snapshot for wording-contract tests.
+
+    Word totals are intentionally non-zero for both document sets and
+    both section sets so the exclusion assertions are meaningful.
+    """
+    return AugmentationStats(
+        core_region_count=1,
+        fully_augmented_count=1,
+        partial_augmented_count=0,
+        not_augmented_count=0,
+        orphan_sidecar_stems=[],
+        wikipedia_documents=ProjectTextStats(rows=433201, total_words=164952567),
+        wikipedia_sections=ProjectTextStats(rows=2318909, total_words=230802671),
+        wikivoyage_documents=ProjectTextStats(rows=3876, total_words=4896213),
+        wikivoyage_sections=ProjectTextStats(rows=79889, total_words=1234567),
+        wikidata_facts=WikidataFactStats(rows=1018033),
+        core_parquet_bytes=3140525690,
+        augmentation_parquet_bytes=3009776614,
+        total_parquet_bytes=6150302304,
+        unreadable_file_count=0,
+    )
 
 
 # --- cache contract ----------------------------------------------------
@@ -1695,15 +1858,21 @@ def test_render_stats_section_legacy_headline_label_unchanged() -> None:
     assert "| Dataset size on disk | 4.0 KB |" in md, (
         f"legacy headline last row drifted; snippet: {md[:500]!r}"
     )
-    # The legacy-only render must not include the renamed label
-    # anywhere; the augmentation-aware version renames it to
-    # ``Core tables size`` and adds new rows.
+    # The legacy-only render must not include the augmentation
+    # headline row "Wikipedia documents | <n> |" (a value-bearing
+    # table row). The language-distribution section legitimately
+    # uses the "Wikipedia documents" column header, so we anchor on
+    # the headline table's value row shape.
     assert "| Core tables size |" not in md
-    # And the augmentation-only augmentations rows are not present.
-    assert "Wikipedia documents" not in md
+    import re as _re
+
+    headline_document_row = _re.compile(r"\| Wikipedia documents \| \d")
+    assert not headline_document_row.search(md)
     assert "Total sidecar words" not in md
-    # The new headline label.
-    assert "Document corpus words" not in md
+    # The new headline label (augmentation-aware only).
+    assert "| Wikipedia + Wikivoyage document words |" not in md
+    # The public-facing language section uses canonical terminology.
+    assert "| Language | Wikipedia documents | % of total | Polygons |" in md
 
 
 # --- Atomic cache writes ----------------------------------------------
@@ -2101,9 +2270,10 @@ def test_subdir_present_requires_at_least_one_readable_parquet(tmp_path: Path) -
 
 
 def test_headline_document_corpus_words_excludes_sections(tmp_path: Path) -> None:
-    """The headline ``Document corpus words`` must aggregate document-only
-    word totals (Wikipedia + Wikivoyage documents), not sections.
-    Section word totals stay in their individual sections.
+    """The headline ``Wikipedia + Wikivoyage document words`` must
+    aggregate document-only word totals (Wikipedia + Wikivoyage
+    documents), not sections. Section word totals stay in their
+    individual sections.
     """
     stats = _empty_dataset_stats()
     aug = AugmentationStats(
@@ -2125,9 +2295,11 @@ def test_headline_document_corpus_words_excludes_sections(tmp_path: Path) -> Non
     md = render_stats_section(stats, augmentation_stats=aug)
     head_block = md.split("## Augmentation coverage", 1)[0]
     row = next(
-        line for line in head_block.splitlines() if line.startswith("| Document corpus words ")
+        line
+        for line in head_block.splitlines()
+        if line.startswith("| Wikipedia + Wikivoyage document words ")
     )
-    assert "168,900,000" in row, f"Document corpus words must exclude sections, got {row!r}"
+    assert "168,900,000" in row, f"document corpus words must exclude sections, got {row!r}"
 
 
 # --- Module surface cleanup -------------------------------------------

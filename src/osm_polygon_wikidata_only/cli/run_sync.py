@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -56,6 +57,7 @@ from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
+from osm_polygon_wikidata_only.pipeline.local_validation import LocalValidationProgress
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
     add_pending_publications,
@@ -175,10 +177,9 @@ def execute(
     if push_enabled:
         from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
 
-        # Compute current augmentation state exactly once per input stem
-        augmentation_current = {
-            stem: augmentation_is_current(data_root, stem) for stem in input_stems
-        }
+        # Compute current augmentation state exactly once per input
+        # stem, with bounded startup progress visibility.
+        augmentation_current = _validate_local_augmentation_state(data_root, sorted(input_stems))
 
         if _remote_inventory is not None:
             remote_inventory = _remote_inventory
@@ -242,9 +243,8 @@ def execute(
     if push_enabled:
         current_augmentation = {stem for stem, current in augmentation_current.items() if current}
     else:
-        current_augmentation = {
-            stem for stem in core_stems if augmentation_is_current(data_root, stem)
-        }
+        local_current = _validate_local_augmentation_state(data_root, sorted(core_stems))
+        current_augmentation = {stem for stem, current in local_current.items() if current}
     states = plan_sync_states(
         pbfs,
         core_stems=core_stems,
@@ -276,11 +276,11 @@ def execute(
 
     counts = {action: sum(state.action is action for state in states) for action in SyncAction}
     LOGGER.info(
-        "Unified sync plan: %d augmentation backlog, %d core missing, %d complete, %d publish",
+        "Unified sync plan: %d augmentation backlog, %d publish, %d core missing, %d complete",
         counts[SyncAction.AUGMENT],
+        counts[SyncAction.PUBLISH],
         counts[SyncAction.PROCESS],
         counts[SyncAction.COMPLETE],
-        counts[SyncAction.PUBLISH],
     )
 
     # Capture settings + clients once so the closures below don't
@@ -470,27 +470,51 @@ def execute(
 
     if success and rc == 0 and not failures:
         if push_enabled:
-            # Determine if README/maps were actually refreshed
-            maps_refreshed = core_repaired or metadata_repaired
-            if maps_refreshed and len(stems_with_gaps) > 0:
-                LOGGER.info(
-                    "Remote reconciliation complete: %d regions repaired; README and maps refreshed",
-                    len(stems_with_gaps),
-                )
-            elif maps_refreshed:
-                LOGGER.info("Remote reconciliation complete: README and maps refreshed")
-            elif len(stems_with_gaps) > 0:
-                LOGGER.info(
-                    "Remote reconciliation complete: %d regions repaired",
-                    len(stems_with_gaps),
-                )
-            else:
-                LOGGER.info("Remote reconciliation complete: converged")
+            _log_remote_reconciliation_summary(
+                stems_with_gaps=stems_with_gaps,
+                core_repaired=core_repaired,
+                metadata_repaired=metadata_repaired,
+                log=LOGGER.info,
+            )
         return 0
     else:
         if rc != 0:
             LOGGER.error("Unified sync completed with failures (rc=%d)", rc)
         return rc or 1
+
+
+def _log_remote_reconciliation_summary(
+    *,
+    stems_with_gaps: set[str],
+    core_repaired: bool,
+    metadata_repaired: bool,
+    log: Callable[[str], None] = LOGGER.info,
+) -> None:
+    """Emit the final remote-reconciliation summary line.
+
+    The summary is derived strictly from signals produced by the
+    upload pipeline -- it must never claim maps or README were
+    refreshed unless a core or metadata-only publication actually
+    refreshed them. Claims are made only after the background
+    upload queue has drained successfully.
+
+    The ``log`` parameter is the ``info``-level callable that
+    receives the rendered message. Tests pass a recorded logger
+    spy to observe emissions without depending on caplog state
+    or module-level logger configuration.
+    """
+    maps_refreshed = core_repaired or metadata_repaired
+    if maps_refreshed and len(stems_with_gaps) > 0:
+        log(
+            f"Remote reconciliation complete: {len(stems_with_gaps)} "
+            "regions repaired; README and maps refreshed"
+        )
+    elif maps_refreshed:
+        log("Remote reconciliation complete: README and maps refreshed")
+    elif len(stems_with_gaps) > 0:
+        log(f"Remote reconciliation complete: {len(stems_with_gaps)} regions repaired")
+    else:
+        log("Remote reconciliation complete: converged")
 
 
 def _commit_message(
@@ -507,6 +531,29 @@ def _commit_message(
         return f"Sync complete region {state.stem}"
 
     return _factory_default
+
+
+def _validate_local_augmentation_state(
+    data_root: DataRoot,
+    stems: list[str],
+) -> dict[str, bool]:
+    """Validate the local augmentation state for every stem exactly once.
+
+    Wraps :class:`LocalValidationProgress` so the operator gets a
+    bounded, periodic startup progress signal even when this phase
+    takes several minutes. Each stem is visited exactly once and
+    the resulting mapping is returned for downstream planning.
+    """
+    progress = LocalValidationProgress(
+        validator=lambda stem: augmentation_is_current(data_root, stem),
+        stems=list(stems),
+        log=LOGGER.info,
+        clock=time.monotonic,
+        progress_interval_s=30.0,
+        quiet_threshold=25,
+        phase_label="regions",
+    )
+    return progress.run()
 
 
 def _post_upload_publication_cleanup(

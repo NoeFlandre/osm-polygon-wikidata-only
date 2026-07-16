@@ -34,8 +34,9 @@ def load_land_basemap(cache_dir: Path) -> list[Any] | None:
 
     Returns the parsed ``features`` list, or ``None`` if the cache is
     missing. We intentionally do not download anything here; rendering
-    without landmasses is acceptable and the surrounding module is
-    documented as network-free.
+    without landmasses is acceptable and the surrounding module performs
+    no HTTP requests of its own (it relies on ``coverage_map.ensure_world_land``
+    to manage the cache when a landmass overlay is requested).
     """
     candidate = cache_dir / "ne_110m_land.geojson"
     if not candidate.exists() or candidate.stat().st_size == 0:
