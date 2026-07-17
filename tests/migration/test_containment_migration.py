@@ -58,12 +58,15 @@ def test_exact_polygon_containment_is_safe_and_sidecar_delta_is_explicit(tmp_pat
     assert facts.missing_from_parent == 1
 
 
-def test_missing_parent_polygon_blocks_staging(tmp_path: Path) -> None:
+def test_newer_child_polygon_is_losslessly_added_to_parent(tmp_path: Path) -> None:
     processed = tmp_path / "processed"
     _seed(processed, child_polygon_token=2)
     audit = audit_rule(processed, ContainmentRule(PARENT, (CHILD,)))
-    assert not audit.safe_to_stage
-    assert audit.blockers == ("child-latest: polygons missing 1 identity from parent",)
+    assert audit.safe_to_stage
+    staged = stage_rule(processed, tmp_path / "cache", audit)
+    table = pq.read_table(staged.artifact("polygons"))
+    assert table.num_rows == 2
+    assert set(table.column("osm_id").to_pylist()) == {1, 2}
 
 
 def test_duplicate_identity_blocks_staging(tmp_path: Path) -> None:
@@ -167,7 +170,8 @@ def test_stage_is_logically_idempotent(tmp_path: Path) -> None:
 
 def test_unsafe_audit_cannot_be_staged(tmp_path: Path) -> None:
     processed = tmp_path / "processed"
-    _seed(processed, child_polygon_token=2)
+    _seed(processed)
+    (processed / "wikipedia" / "sections" / f"{CHILD}.parquet").unlink()
     audit = audit_rule(processed, ContainmentRule(PARENT, (CHILD,)))
     try:
         stage_rule(processed, tmp_path / "cache", audit)

@@ -133,8 +133,6 @@ def audit_rule(processed_dir: Path, rule: ContainmentRule) -> RuleAudit:
                 blockers.append(
                     f"{child}: {contract.subdir} child has {child_duplicates} duplicate identities"
                 )
-            if contract.subdir == "polygons" and missing:
-                blockers.append(f"{child}: polygons missing {len(missing)} identity from parent")
         children.append(ChildAudit(child, tuple(table_audits)))
     return RuleAudit(parent, tuple(children), tuple(sorted(blockers)))
 
@@ -176,17 +174,33 @@ def _remap_link(
 
 
 def _canonical_polygon_row(
-    parent: dict[str, Any], child: dict[str, Any], *, parent_stem: str
+    parent: dict[str, Any] | None, child: dict[str, Any], *, parent_stem: str
 ) -> dict[str, Any]:
     """Keep the newest OSM snapshot while retaining canonical parent provenance."""
-    newest = child if child.get("extracted_at", "") > parent.get("extracted_at", "") else parent
+    newest = (
+        child
+        if parent is None or child.get("extracted_at", "") > parent.get("extracted_at", "")
+        else parent
+    )
     canonical = dict(newest)
     if "polygon_id" in canonical:
-        canonical["polygon_id"] = parent["polygon_id"]
+        canonical["polygon_id"] = (
+            parent["polygon_id"]
+            if parent is not None
+            else f"{parent_stem}:{child['osm_type']}:{child['osm_id']}"
+        )
     if "region" in canonical:
-        canonical["region"] = parent.get("region", parent_stem.removesuffix("-latest"))
+        canonical["region"] = (
+            parent.get("region", parent_stem.removesuffix("-latest"))
+            if parent is not None
+            else parent_stem.removesuffix("-latest")
+        )
     if "source_pbf" in canonical:
-        canonical["source_pbf"] = parent.get("source_pbf", f"{parent_stem}.osm.pbf")
+        canonical["source_pbf"] = (
+            parent.get("source_pbf", f"{parent_stem}.osm.pbf")
+            if parent is not None
+            else f"{parent_stem}.osm.pbf"
+        )
     return canonical
 
 
@@ -207,10 +221,16 @@ def stage_rule(processed_dir: Path, cache_dir: Path, audit: RuleAudit) -> Staged
         child_path = processed_dir / "polygons" / f"{child}.parquet"
         for child_row in pq.read_table(child_path).to_pylist():  # type: ignore[no-untyped-call]
             key = (child_row["osm_type"], child_row["osm_id"])
-            position = polygon_positions[key]
-            polygon_rows[position] = _canonical_polygon_row(
-                polygon_rows[position], child_row, parent_stem=parent_stem
-            )
+            position = polygon_positions.get(key)
+            if position is None:
+                polygon_positions[key] = len(polygon_rows)
+                polygon_rows.append(
+                    _canonical_polygon_row(None, child_row, parent_stem=parent_stem)
+                )
+            else:
+                polygon_rows[position] = _canonical_polygon_row(
+                    polygon_rows[position], child_row, parent_stem=parent_stem
+                )
     parent_polygons = {(row["osm_type"], row["osm_id"]): row for row in polygon_rows}
     artifacts: list[tuple[str, Path]] = []
     for contract in TABLE_CONTRACTS:
