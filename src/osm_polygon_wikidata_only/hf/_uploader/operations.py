@@ -274,6 +274,25 @@ def upload_files(
                 f"Refusing to delete legacy {legacy_path!r} without also uploading its "
                 f"canonical replacement {canonical_path!r} in the same commit"
             )
+    canonical_region_prefixes = (
+        "polygons/",
+        "polygon_articles/",
+        "wikipedia/documents/",
+        "wikipedia/sections/",
+        "wikivoyage/documents/",
+        "wikivoyage/sections/",
+        "wikidata/facts/",
+    )
+    canonical_deletes = {
+        path
+        for path in delete_paths
+        if path.startswith(canonical_region_prefixes) and path.endswith(".parquet")
+    }
+    if canonical_deletes and "manifests/containment_retirements.json" not in add_paths:
+        raise UploadError(
+            "Refusing to delete canonical region artifacts without uploading "
+            "manifests/containment_retirements.json in the same commit"
+        )
     if not operations_obj:
         raise UploadError("Cannot create an empty upload commit")
     remote_paths = [op.path_in_repo for op in operations_obj]

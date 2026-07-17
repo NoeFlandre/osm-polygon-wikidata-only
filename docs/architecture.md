@@ -213,6 +213,16 @@ To handle publication-convergence defects (e.g., local processed stems missing f
 
 ## Unified sync action priority
 
+Before action planning, containment migration audits the small checked-in set
+of known whole-file Geofabrik overlaps. Polygon identity containment is a hard
+precondition. Missing non-core rows are unioned into staged parent tables;
+original parent and child artifacts are copied to
+`quarantine/containment-v1/` before active children are retired. Publication
+uploads parent replacements, refreshed manifests, README and maps, plus child
+deletions as one Hugging Face commit. The durable
+`manifests/containment_retirements.json` prevents retired raw PBFs from
+re-entering later `sync-dir` plans.
+
 The unified sync (`sync-dir`) runs every region through one of four
 mutually exclusive action buckets. Within each bucket, stems are
 processed alphabetically; the planner produces a deterministic plan
