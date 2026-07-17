@@ -140,6 +140,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
     LEGACY_REMOTE_COVERAGE_MAP_FILE,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
+    REMOTE_CONTAINMENT_RETIREMENT_FILE,
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
@@ -147,6 +148,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
     REMOTE_WIKIPEDIA_DOCUMENTS_DIR,
+    canonical_region_paths,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.manifest import load_manifest
@@ -824,10 +826,50 @@ def assemble_metadata_only_upload(
     return ops
 
 
+def assemble_containment_retirement_upload(
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+    parent_children: dict[str, tuple[str, ...]],
+    world_land_warning: Callable[[str], None] | None = None,
+) -> list[PublicationOp]:
+    """Assemble one atomic parent replacement + contained-child retirement."""
+    if not parent_children:
+        raise PublicationValidationError("Containment retirement requires at least one parent")
+    operations: list[PublicationOp] = []
+    for parent in sorted(parent_children):
+        for local_relative, remote in canonical_region_paths(parent).items():
+            local = data_root.processed / local_relative
+            if not local.is_file():
+                raise FileNotFoundError(f"Canonical containment parent artifact missing: {local}")
+            operations.append(add_op(local, path_in_repo=remote))
+        for child in sorted(parent_children[parent]):
+            for remote in canonical_region_paths(child).values():
+                operations.append(delete_op(remote))
+
+    retirement_manifest = data_root.processed / "manifests" / "containment_retirements.json"
+    if not retirement_manifest.is_file():
+        raise FileNotFoundError("Local containment retirement manifest is missing")
+
+    metadata_ops = assemble_metadata_only_upload(
+        data_root=data_root,
+        repo_id=repo_id,
+        world_land_warning=world_land_warning,
+    )
+    readme = metadata_ops[-1]
+    if readme.path_in_repo != "README.md":
+        raise PublicationValidationError("Metadata publication must end with README.md")
+    operations.extend(metadata_ops[:-1])
+    operations.append(add_op(retirement_manifest, path_in_repo=REMOTE_CONTAINMENT_RETIREMENT_FILE))
+    operations.append(readme)
+    return operations
+
+
 __all__ = [
     "CorePublicationArtifacts",
     "PublicationValidationError",
     "assemble_augmentation_upload",
+    "assemble_containment_retirement_upload",
     "assemble_core_upload",
     "assemble_metadata_only_upload",
     "assemble_region_upload",

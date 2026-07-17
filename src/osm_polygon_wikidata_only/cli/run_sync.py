@@ -152,7 +152,33 @@ def execute(
     once. The unified-sync path silently swallows the legacy
     world-land exception (the ``warning_callback`` is ``None``).
     """
-    pbfs = collect_pbfs([args.input])
+    push_enabled = bool(getattr(args, "push", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+    from osm_polygon_wikidata_only.pipeline.containment_migration import (
+        load_retired_children,
+        load_retired_parent_children,
+        prepare_safe_rules,
+    )
+
+    if push_enabled:
+        prepared_rules, blocked_rules = prepare_safe_rules(data_root.path, dry_run=dry_run)
+        if prepared_rules:
+            LOGGER.info(
+                "Prepared %d lossless contained-region retirement rule(s)", len(prepared_rules)
+            )
+        for blocked in blocked_rules:
+            LOGGER.warning(
+                "Containment retirement blocked for %s: %s",
+                blocked.parent,
+                "; ".join(blocked.blockers),
+            )
+
+    retired_children = load_retired_children(data_root.processed)
+    pbfs = [
+        pbf
+        for pbf in collect_pbfs([args.input])
+        if pbf.name.removesuffix(".osm.pbf") not in retired_children
+    ]
     input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
 
     _run_pre_publication_migration(data_root, input_stems)
@@ -166,13 +192,13 @@ def execute(
         session=runtime.session,
     )
 
-    push_enabled = bool(getattr(args, "push", False))
     remote_inventory = None
     reconciliation_plan = None
     stems_with_gaps = set()
     core_will_be_repaired = False
     core_repaired = False
     augmentation_current = {}
+    containment_publications: dict[str, tuple[str, ...]] = {}
 
     if push_enabled:
         from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
@@ -189,6 +215,23 @@ def execute(
                 hub=_hub,
                 token=settings.hf_token,
             )
+        retired_groups = load_retired_parent_children(data_root.processed)
+        from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
+
+        containment_publications = {
+            parent: tuple(
+                child
+                for child in children
+                if any(
+                    remote_inventory.contains(path)
+                    for path in canonical_region_paths(child).values()
+                )
+            )
+            for parent, children in retired_groups.items()
+        }
+        containment_publications = {
+            parent: children for parent, children in containment_publications.items() if children
+        }
         planner = ReconciliationPlanner(
             data_root=data_root,
             inventory=remote_inventory,
@@ -273,6 +316,29 @@ def execute(
         num_threads=getattr(args, "upload_threads", 2),
         _hub=_hub,
     )
+
+    containment_enqueued = False
+    if push_enabled and containment_publications:
+        from osm_polygon_wikidata_only.hf.publication import (
+            assemble_containment_retirement_upload,
+        )
+
+        containment_ops = assemble_containment_retirement_upload(
+            data_root=data_root,
+            repo_id=settings.repo_id,
+            parent_children=containment_publications,
+            world_land_warning=None,
+        )
+        if upload_queue is not None:
+            upload_queue.submit(
+                containment_ops,
+                "Retire losslessly contained regional dataset shards",
+            )
+            containment_enqueued = True
+            LOGGER.info(
+                "Enqueued containment retirement for %d child region(s)",
+                sum(len(children) for children in containment_publications.values()),
+            )
 
     counts = {action: sum(state.action is action for state in states) for action in SyncAction}
     LOGGER.info(
@@ -444,6 +510,7 @@ def execute(
             and reconciliation_plan is not None
             and reconciliation_plan.repository_refresh
             and not core_will_be_repaired
+            and not containment_enqueued
         ):
             # Enqueue metadata-only repair if needed and core won't be repaired by another upload
             from osm_polygon_wikidata_only.hf.publication import assemble_metadata_only_upload

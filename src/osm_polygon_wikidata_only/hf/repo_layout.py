@@ -33,6 +33,7 @@ REMOTE_MANIFEST_FILE = "manifests/processed_pbfs.json"
 # core manifest under ``manifests/`` so the dataset has ONE
 # ``manifests/`` directory and no obsolete ``augmentation/`` tree.
 REMOTE_AUGMENTATION_MANIFEST_FILE = "manifests/augmentation_manifest.json"
+REMOTE_CONTAINMENT_RETIREMENT_FILE = "manifests/containment_retirements.json"
 
 # Legacy remote augmentation manifest path. Named explicitly so the
 # first publication after this change can DELETE it in the SAME
@@ -88,6 +89,7 @@ __all__ = [
     "LEGACY_REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_ARTICLES_DIR",
     "REMOTE_AUGMENTATION_MANIFEST_FILE",
+    "REMOTE_CONTAINMENT_RETIREMENT_FILE",
     "REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
     "REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",

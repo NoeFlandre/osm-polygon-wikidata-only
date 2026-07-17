@@ -321,6 +321,13 @@ README are only reported "refreshed" after a successful core or metadata
 publication actually refreshed them and the background upload queue has
 drained.
 
+Known whole-file Geofabrik containment overlaps are retired losslessly during
+`sync-dir --push`: retained parents receive missing sidecar rows, contained
+child artifacts are removed remotely in one atomic commit, and local originals
+are preserved under `quarantine/containment-v1/`. A child PBF is ignored only
+after the durable retirement manifest records local preparation; a missing
+parent polygon blocks retirement rather than discarding data.
+
 To pause, stop the command with `Ctrl-C`. Run the identical command again to
 resume: completed PBFs remain skipped, while the interrupted PBF is retried
 because it has no completed manifest entry. The durable pending-publications
