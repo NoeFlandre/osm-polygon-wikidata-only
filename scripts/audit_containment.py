@@ -7,8 +7,14 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from osm_polygon_wikidata_only.pipeline.containment_migration import audit_rule
-from osm_polygon_wikidata_only.pipeline.containment_policy import CONTAINMENT_RULES
+from osm_polygon_wikidata_only.pipeline.containment_migration import (
+    audit_rule,
+    load_retired_children,
+)
+from osm_polygon_wikidata_only.pipeline.containment_policy import (
+    CONTAINMENT_RULES,
+    ContainmentRule,
+)
 
 
 def main() -> int:
@@ -16,8 +22,17 @@ def main() -> int:
     parser.add_argument("data_root", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    reports = [audit_rule(args.data_root / "processed", rule) for rule in CONTAINMENT_RULES]
+    processed = args.data_root / "processed"
+    retired = load_retired_children(processed)
+    pending_rules = [
+        ContainmentRule(
+            rule.parent, tuple(child for child in rule.children if child not in retired)
+        )
+        for rule in CONTAINMENT_RULES
+    ]
+    reports = [audit_rule(processed, rule) for rule in pending_rules if rule.children]
     payload = {
+        "retired_children": sorted(retired),
         "safe_parents": [report.parent for report in reports if report.safe_to_stage],
         "blocked_parents": [report.parent for report in reports if not report.safe_to_stage],
         "reports": [asdict(report) | {"safe_to_stage": report.safe_to_stage} for report in reports],
