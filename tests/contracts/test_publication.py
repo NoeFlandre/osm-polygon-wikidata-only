@@ -68,6 +68,19 @@ STEM = "monaco-latest"
 REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 
 
+@pytest.fixture(autouse=True)
+def _stub_combined_text_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep publication contracts isolated from real Parquet rendering."""
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
+        lambda _root, dest, **_kw: dest.touch() or dest,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
+        lambda _cache: None,
+    )
+
+
 def _stub_process_result(tmp_path: Path) -> tuple[ProcessResult, DataRoot]:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -137,6 +150,10 @@ def _stub_generators(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
+        lambda _root, dest, **_kw: dest.touch() or dest,
+    )
+    monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.load_centroids_from_parquet",
         lambda _dir: ([], []),
     )
@@ -191,7 +208,7 @@ def test_assemblers_have_no_commit_message_parameter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_augmentation_upload_returns_seven_entries(tmp_path: Path) -> None:
+def test_assemble_augmentation_upload_returns_combined_map(tmp_path: Path) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
@@ -207,7 +224,7 @@ def test_assemble_augmentation_upload_returns_seven_entries(tmp_path: Path) -> N
     # is the migration ``delete`` of the legacy augmentation path.
     add_ops = [op for op in ops if op.action == "add"]
     delete_ops = [op for op in ops if op.action == "delete"]
-    assert len(add_ops) == 7
+    assert len(add_ops) == 8
     assert len(delete_ops) == 2
     assert add_ops[5].local_path == aug.manifest_path
     assert add_ops[5].path_in_repo == "manifests/augmentation_manifest.json"
@@ -224,9 +241,10 @@ def test_assemble_augmentation_upload_returns_seven_entries(tmp_path: Path) -> N
         "wikidata/facts/monaco-latest.parquet",
         "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
+        "assets/geographic_text_presence.png",
         "README.md",
     ]
-    assert len(ops) == 9
+    assert len(ops) == 10
 
 
 def test_assemble_augmentation_upload_writes_readme_at_end(
@@ -252,10 +270,10 @@ def test_assemble_augmentation_upload_writes_readme_at_end(
     assert readme.parent == data_root.cache / "augmentation_upload_snapshots"
 
 
-def test_assemble_augmentation_upload_never_calls_visualization(
+def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Augmentation-only publication must NOT regenerate coverage assets."""
+    """Augmentation-only publication refreshes only its Wikivoyage-sensitive map."""
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
@@ -288,13 +306,17 @@ def test_assemble_augmentation_upload_never_calls_visualization(
         "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
         trap("coverage"),
     )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
+        trap("presence"),
+    )
 
     assemble_augmentation_upload(
         data_root=data_root,
         repo_id=REPO_ID,
         augmentation=aug,
     )
-    assert calls == [], f"visualization called during augmentation-only upload: {calls}"
+    assert calls == ["presence"]
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +324,7 @@ def test_assemble_augmentation_upload_never_calls_visualization(
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_region_upload_without_core_returns_seven_augmentation_entries(
+def test_assemble_region_upload_without_core_refreshes_combined_map(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     data_root = DataRoot(tmp_path)
@@ -332,11 +354,12 @@ def test_assemble_region_upload_without_core_returns_seven_augmentation_entries(
         "wikidata/facts/monaco-latest.parquet",
         "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
+        "assets/geographic_text_presence.png",
         "README.md",
     ]
 
 
-def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
+def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The core artifacts must be the FIRST entries of the unified upload list."""
@@ -357,11 +380,12 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
     assert remotes[0] == "polygons/monaco-latest.parquet"
     assert remotes[1] == "polygon_articles/monaco-latest.parquet"
     assert remotes[2] == "manifests/processed_pbfs.json"
-    assert remotes[3] == "assets/geographic_wikipedia_text_coverage.png"
-    assert remotes[4] == "assets/geographic_polygon_count.png"
-    assert remotes[5] == "assets/coverage_map.png"
-    assert remotes[6] == "coverage_map.png"
-    assert remotes[7:] == [
+    assert remotes[3] == "assets/geographic_text_presence.png"
+    assert remotes[4] == "assets/geographic_wikipedia_text_coverage.png"
+    assert remotes[5] == "assets/geographic_polygon_count.png"
+    assert remotes[6] == "assets/coverage_map.png"
+    assert remotes[7] == "coverage_map.png"
+    assert remotes[8:] == [
         "wikipedia/documents/monaco-latest.parquet",
         "articles/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
@@ -372,7 +396,7 @@ def test_assemble_region_upload_with_core_prepends_seven_core_artifacts(
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
-    assert len(ops) == 16
+    assert len(ops) == 17
 
 
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
@@ -455,10 +479,10 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_core_upload_returns_eight_entries(
+def test_assemble_core_upload_returns_eleven_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Legacy core publication order: 8 entries."""
+    """Legacy core publication order includes all four map assets."""
     core, data_root = _stub_process_result(tmp_path)
     _stub_generators(monkeypatch)
 
@@ -475,13 +499,14 @@ def test_assemble_core_upload_returns_eight_entries(
         "articles/monaco-latest.parquet",
         "polygon_articles/monaco-latest.parquet",
         "manifests/processed_pbfs.json",
+        "assets/geographic_text_presence.png",
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
         "README.md",
         "assets/coverage_map.png",
         "coverage_map.png",
     ]
-    assert len(ops) == 10
+    assert len(ops) == 11
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -811,7 +836,7 @@ def test_legacy_core_command_submits_exactly_once(
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 10
+    assert len(ops) == 11
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -871,8 +896,8 @@ def test_augmentation_command_submits_exactly_once(
     _submit(ops, "aug msg")
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
-    # 5 sidecars + canonical augmentation add + legacy augmentation delete + README = 8 ops
-    assert len(uploads[0][0]) == 9
+    # Sidecars + manifest migration + combined map + README.
+    assert len(uploads[0][0]) == 10
 
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
@@ -987,12 +1012,11 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
         "Sync complete region monaco-latest",
         "Sync complete region andorra-latest",
     }
-    # PROCESS state (with core): 16 ops (7 core + 7 augmentation
+    # PROCESS state (with core): 17 ops (8 core + 7 augmentation
     # + 2 migration ``delete`` ops).
-    assert len(by_message["Sync complete region monaco-latest"]) == 16
-    # AUGMENT state (no core): 8 ops (5 sidecars + canonical
-    # augmentation ``add`` + legacy augmentation ``delete`` + README).
-    assert len(by_message["Sync complete region andorra-latest"]) == 9
+    assert len(by_message["Sync complete region monaco-latest"]) == 17
+    # AUGMENT state (no core): sidecars, manifest migration, combined map, README.
+    assert len(by_message["Sync complete region andorra-latest"]) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -1023,7 +1047,7 @@ def test_snapshot_upload_manifests_writes_processed_manifest_snapshot(
     assert not readme.exists()
 
 
-def test_refresh_coverage_assets_writes_three_pngs(
+def test_refresh_coverage_assets_writes_four_pngs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     core, data_root = _stub_process_result(tmp_path)
@@ -1034,6 +1058,10 @@ def test_refresh_coverage_assets_writes_three_pngs(
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
+        lambda _root, dest, **_kw: dest.touch() or dest,
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.load_centroids_from_parquet",
@@ -1048,13 +1076,14 @@ def test_refresh_coverage_assets_writes_three_pngs(
         lambda _lons, _lats, dest, **_kw: dest.touch() or dest,
     )
     snapshots_dir = data_root.cache / "test_refresh"
-    map_path, geo_path, count_path = refresh_coverage_assets(
+    map_path, presence_path, geo_path, count_path = refresh_coverage_assets(
         data_root=data_root,
         snapshot_stem=core.polygons_path.stem,
         snapshots_dir=snapshots_dir,
         world_land_warning=lambda msg: None,
     )
     assert map_path.exists()
+    assert presence_path.exists()
     assert geo_path.exists()
     assert count_path.exists()
 
@@ -1255,6 +1284,7 @@ def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
         "wikivoyage/documents/monaco-latest.parquet",
         "wikivoyage/sections/monaco-latest.parquet",
         "wikidata/facts/monaco-latest.parquet",
+        "assets/geographic_text_presence.png",
         "README.md",
         REMOTE_AUGMENTATION_MANIFEST_FILE,
     }
@@ -1352,9 +1382,9 @@ def test_publication_plan_is_deterministic_and_unique(
         == 1
     )
     assert sum(op.path_in_repo == "coverage_map.png" for op in deletions) == 1
-    # 7 core + 7 augmentation additions (5 sidecars + README + canonical manifest)
-    # + 2 legacy deletions = 16 total ops.
-    assert len(ops) == 16, f"unexpected plan length: {len(ops)} {ops}"
+    # 8 core + 7 augmentation additions (5 sidecars + README + canonical manifest)
+    # + 2 legacy deletions = 17 total ops.
+    assert len(ops) == 17, f"unexpected plan length: {len(ops)} {ops}"
 
 
 # ---------------------------------------------------------------------------

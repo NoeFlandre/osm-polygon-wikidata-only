@@ -239,7 +239,6 @@ def test_render_stats_section_includes_all_new_sections() -> None:
     # Required new sections (in order).
     required_in_order = (
         "## Dataset snapshot",
-        "## Augmentation coverage",
         "## Storage accounting",
         "## Wikipedia text corpus",
         "## Wikivoyage text corpus",
@@ -251,6 +250,7 @@ def test_render_stats_section_includes_all_new_sections() -> None:
         assert index > last_index, f"{header} appears out of order"
         last_index = index
     # "Storage accounting" must use the new labels.
-    assert "Core tables size" in md
-    assert "Augmentation tables size" in md
+    assert "Polygon and link tables size" in md
+    assert "Wikipedia, Wikivoyage, and Wikidata tables size" in md
+    assert "augmentation" not in md.lower()
     assert "Total Parquet size" in md

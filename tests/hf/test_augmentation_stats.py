@@ -1074,12 +1074,13 @@ def test_render_stats_section_with_augmentation_adds_new_sections() -> None:
         unreadable_file_count=0,
     )
     md = render_stats_section(stats, augmentation_stats=aug)
-    assert "## Augmentation coverage" in md
+    assert "## Augmentation coverage" not in md
+    assert "## Storage accounting" in md
     assert "## Wikipedia text corpus" in md
     assert "## Wikivoyage text corpus" in md
     assert "## Wikidata facts" in md
     assert (
-        md.index("## Augmentation coverage")
+        md.index("## Storage accounting")
         < md.index("## Wikipedia text corpus")
         < md.index("## Wikivoyage text corpus")
         < md.index("## Wikidata facts")
@@ -1140,7 +1141,7 @@ def test_render_stats_section_legacy_three_sections_byte_identical() -> None:
     # |". The augmentation-aware render renames the label to "Core
     # tables size". The numeric suffix ("| 4.0 KB |") is unchanged.
     legacy_label_row = "| Dataset size on disk |"
-    aug_label_row = "| Core tables size |"
+    aug_label_row = "| Polygon and link tables size |"
     legacy_offset = no_aug.index(legacy_label_row) + len(legacy_label_row)
     aug_offset = with_aug.index(aug_label_row) + len(aug_label_row)
     # The legacy render keeps the redundant "Wikipedia articles" and
@@ -1181,11 +1182,11 @@ def test_render_stats_section_storage_bytes_labels() -> None:
         unreadable_file_count=0,
     )
     md = render_stats_section(stats, augmentation_stats=aug)
-    assert "Augmentation tables size" in md
+    assert "Wikipedia, Wikivoyage, and Wikidata tables size" in md
     assert "Total Parquet size" in md
-    # The ``Core tables size`` label is internal to the storage block
+    # The public polygon/link size label is used in the storage block
     # table (not the headline row). It must appear there.
-    assert "Core tables size |" in md
+    assert "Polygon and link tables size |" in md
 
 
 def test_render_stats_section_legacy_storage_bytes_label() -> None:
@@ -1376,9 +1377,7 @@ def test_render_stats_section_headline_includes_augmentation_totals() -> None:
         "Wikivoyage documents",
         "Wikivoyage sections",
         "Wikidata facts",
-        "Fully augmented regions",
         "Wikipedia + Wikivoyage document words",
-        "Augmentation tables size",
         "Total Parquet size",
     ):
         assert label in md, f"headline missing {label!r}"
@@ -1466,8 +1465,8 @@ def test_render_stats_headline_counts_from_supplied_snapshot() -> None:
     assert f"| Wikipedia documents | {_fmt_int(aug.wikipedia_documents.rows)} |" in md
     # Wikivoyage documents count from the snapshot
     assert f"| Wikivoyage documents | {_fmt_int(aug.wikivoyage_documents.rows)} |" in md
-    # Fully augmented regions from the snapshot
-    assert f"| Fully augmented regions | {_fmt_int(aug.fully_augmented_count)} |" in md
+    assert "Fully augmented regions" not in md
+    assert "Augmentation tables size" not in md
 
 
 def test_render_stats_headline_deterministic() -> None:
@@ -2293,7 +2292,7 @@ def test_headline_document_corpus_words_excludes_sections(tmp_path: Path) -> Non
         unreadable_file_count=0,
     )
     md = render_stats_section(stats, augmentation_stats=aug)
-    head_block = md.split("## Augmentation coverage", 1)[0]
+    head_block = md.split("## Storage accounting", 1)[0]
     row = next(
         line
         for line in head_block.splitlines()

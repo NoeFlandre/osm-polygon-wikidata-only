@@ -47,23 +47,28 @@ dataset_info:
 
 # NoeFlandre/osm-polygon-wikidata-only
 
-OSM polygons tagged with a `wikidata=*` reference, enriched with Wikidata descriptions and Wikipedia article text for every valid language-Wikipedia sitelink, with full text and no per-QID article cap. Core and text tables are published as:
+OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and Wikivoyage text across all available languages. The published tables are:
 
 - `polygons/<stem>.parquet` — one row per polygon
-- `wikipedia/documents/<stem>.parquet` — one lossless row per unique Wikipedia article
-- `polygon_articles/<stem>.parquet` — many-to-many link table
-
-Additional derived text and fact tables are:
-
+- `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article
+- `polygon_articles/<stem>.parquet` — polygon-to-Wikipedia many-to-many links
 - `wikipedia/sections/<stem>.parquet`
 - `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`
 - `wikidata/facts/<stem>.parquet`
 
-Generated on 2026-07-15.
+Generated on 2026-07-19.
 
 Maintained by **Noé Flandre**.
 
 ## Coverage
+
+### Polygons with Wikipedia or Wikivoyage text
+
+![Polygons with Wikipedia or Wikivoyage text](assets/geographic_text_presence.png)
+
+Each point is a dataset polygon with at least one non-empty Wikipedia document or a non-empty Wikivoyage document sharing its Wikidata entity. A polygon is shown once even when several documents qualify.
+
+### All dataset polygons
 
 ![Coverage Map](assets/coverage_map.png)
 
@@ -258,6 +263,8 @@ Both maps below aggregate dataset polygons into H3 cells at the same resolution.
 - **OpenStreetMap** polygons: (c) OpenStreetMap contributors, licensed under [ODbL 1.0](https://opendatacommons.org/licenses/odbl/).
 - **Wikidata** entity data: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 - **Wikipedia** article text: licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) by the respective Wikipedia editors; attributed inline per article.
+- **Wikivoyage** text: licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) by the respective Wikivoyage editors; attributed inline per document.
+- **Natural Earth** Admin-0 geography: public-domain 1:110m reference data used only to assign centroid-based continent statistics and draw context maps.
 
 ## How to load
 

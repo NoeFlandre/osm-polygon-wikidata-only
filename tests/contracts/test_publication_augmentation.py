@@ -18,6 +18,9 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
     AugmentationResult,
 )
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    build_wikipedia_document_table,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import article_schema
 from osm_polygon_wikidata_only.hf.publication import (
@@ -41,6 +44,8 @@ _POLYGON_TABLE = pa.table(
         "has_english_wikipedia": [True],
         "wikipedia_language_count": [1],
         "wikipedia_languages": ['["en"]'],
+        "lon": [7.42],
+        "lat": [43.73],
     }
 )
 _ARTICLE_ROW = {
@@ -68,18 +73,7 @@ _LINK_TABLE = pa.table(
         "language": ["en"],
     }
 )
-_DOC_TABLE = pa.table(
-    {
-        "document_id": ["Q235:wikipedia:en:1:1"],
-        "wikidata": ["Q235"],
-        "project": ["wikipedia"],
-        "language": ["en"],
-        "full_text": ["Wikipedia body text."],
-        "article_length_chars": [20],
-        "article_length_words": [3],
-        "article_length_tokens_estimate": [5],
-    }
-)
+_DOC_TABLE = build_wikipedia_document_table(_ARTICLE_TABLE)
 _SECTIONS_TABLE = pa.table(
     {
         "section_id": ["sec-1"],
@@ -233,8 +227,10 @@ def test_write_readme_snapshot_includes_core_and_augmentation_stats(
     # Core stats sections remain.
     assert "## Dataset snapshot" in md
     assert "## Wikipedia coverage funnel" in md
+    assert "## Geographic distribution by continent" in md
     # Augmentation sections are present because sidecars exist.
-    assert "## Augmentation coverage" in md
+    assert "## Augmentation coverage" not in md
+    assert "## Storage accounting" in md
     assert "## Wikipedia text corpus" in md
     assert "## Wikivoyage text corpus" in md
     assert "## Wikidata facts" in md
@@ -410,7 +406,7 @@ def test_readme_remains_last_in_core_upload(
         world_land_warning=lambda msg: None,
     )
     # The README follows the canonical document retirement and coverage assets.
-    assert files[7].path_in_repo == "README.md"
+    assert files[8].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_region_upload(
@@ -474,20 +470,27 @@ def test_write_readme_snapshot_writes_to_destination_atomic(
         "osm_polygon_wikidata_only.hf.publication.atomic_write_text",
         fake_atomic,
     )
+    render_kwargs = {}
+
+    def fake_render_dataset_card(**kwargs):  # type: ignore[no-untyped-def]
+        render_kwargs.update(kwargs)
+        return "BODY"
+
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.render_dataset_card",
-        lambda **kwargs: "BODY",
+        fake_render_dataset_card,
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.render_stats_section",
         lambda *args, **kwargs: "STATS",
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication.load_manifest",
-        lambda path: {},
     )
     destination = tmp_path / "out.md"
     write_readme_snapshot(data_root, REPO_ID, destination)
     assert len(captured) == 1
     assert captured[0][0] == destination
     assert captured[0][1] == "BODY"
+    assert render_kwargs["stats"] == {
+        "polygon_count": 1,
+        "article_count": 1,
+        "unique_wikidata_count": 1,
+    }

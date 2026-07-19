@@ -12,11 +12,12 @@ and coverage map) to migrate the remote layout.
     2. articles
     3. polygon_articles
     4. processed manifest
-    5. geographic text coverage
-    6. geographic polygon count
-    7. README
-    8. canonical coverage map (add)
-    9. legacy coverage map (delete)
+    5. combined Wikipedia/Wikivoyage text presence
+    6. geographic Wikipedia text coverage
+    7. geographic polygon count
+    8. README
+    9. canonical all-polygons coverage map (add)
+    10. legacy coverage map (delete)
 
 * Unified sync with changed core
   (called by ``cli.run_sync._build_region_publication``):
@@ -24,18 +25,19 @@ and coverage map) to migrate the remote layout.
     2. articles
     3. polygon_articles
     4. processed manifest
-    5. geographic text coverage
-    6. geographic polygon count
-    7. canonical coverage map (add)
-    8. legacy coverage map (delete)
-    9. wikipedia documents
-    10. wikipedia sections
-    11. wikivoyage documents
-    12. wikivoyage sections
-    13. wikidata facts
-    14. canonical augmentation manifest (add)
-    15. legacy augmentation manifest (delete)
-    16. README
+    5. combined Wikipedia/Wikivoyage text presence
+    6. geographic Wikipedia text coverage
+    7. geographic polygon count
+    8. canonical all-polygons coverage map (add)
+    9. legacy coverage map (delete)
+    10. wikipedia documents
+    11. wikipedia sections
+    12. wikivoyage documents
+    13. wikivoyage sections
+    14. wikidata facts
+    15. canonical augmentation manifest (add)
+    16. legacy augmentation manifest (delete)
+    17. README
 
 * Augmentation-only publication (legacy
   ``cli.commands._augmentation_upload_files`` behavior):
@@ -46,7 +48,8 @@ and coverage map) to migrate the remote layout.
     5. wikidata facts
     6. canonical augmentation manifest (add)
     7. legacy augmentation manifest (delete)
-    8. README
+    8. combined Wikipedia/Wikivoyage coverage map
+    9. README
 
 Canonical remote layout
 ------------------------
@@ -119,7 +122,12 @@ from osm_polygon_wikidata_only.hf._uploader.plan import (
     add_op,
     delete_op,
 )
+from osm_polygon_wikidata_only.hf.continent_stats import (
+    compute_continent_stats,
+    render_continent_stats,
+)
 from osm_polygon_wikidata_only.hf.coverage_map import (
+    ensure_world_countries,
     ensure_world_land,
     generate_coverage_map,
     load_centroids_from_parquet,
@@ -135,6 +143,9 @@ from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     generate_geographic_text_coverage as _generate_geographic_text_coverage,
 )
+from osm_polygon_wikidata_only.hf.geographic_text_presence import (
+    generate_geographic_text_presence as _generate_geographic_text_presence,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
@@ -144,6 +155,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
@@ -239,31 +251,29 @@ def write_readme_snapshot(
 
     The README is recomputed by:
 
-    1. Aggregating the processed-PBFs manifest counts for the headline
-       row.
-    2. Computing the core :class:`DatasetStats` snapshot via
+    1. Computing the core :class:`DatasetStats` snapshot from the
+       finalized Parquet tables via
        :func:`compute_dataset_stats`.
-    3. Computing the augmentation :class:`AugmentationStats` snapshot
+    2. Computing the augmentation :class:`AugmentationStats` snapshot
        via :func:`compute_augmentation_stats`. The per-file summary
        cache lives under ``data_root.cache``, so a warm refresh
        performs zero Parquet table reads.
-    4. Passing both snapshots to :func:`render_stats_section` so the
-       rendered card always includes the documented sections -- the
-       legacy three sections plus the augmentation coverage,
-       Wikipedia and Wikivoyage corpora, Wikidata facts, and storage
-       accounting.
+    3. Computing public continent statistics from polygon centroids and
+       the bundled Natural Earth Admin-0 reference.
+    4. Rendering the public snapshot, Wikipedia and Wikivoyage corpora,
+       Wikidata facts, storage accounting, and continent distribution.
 
     The README must be written AFTER every other snapshot so a
     partial core upload never reaches the Hub. The destination is
     written atomically via
     :func:`osm_polygon_wikidata_only.io.atomic.atomic_write_text`.
     """
-    entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
-    aggregate = {
-        key: sum(int(entry.get(key, 0)) for entry in entries.values())
-        for key in ("polygon_count", "article_count", "unique_wikidata_count")
-    }
     core_stats = compute_dataset_stats(data_root.processed)
+    aggregate = {
+        "polygon_count": core_stats.polygon_count,
+        "article_count": core_stats.article_count,
+        "unique_wikidata_count": core_stats.unique_wikidata_count,
+    }
     augmentation_stats = compute_augmentation_stats(
         data_root.processed,
         cache_index_dir=data_root.cache,
@@ -272,6 +282,11 @@ def write_readme_snapshot(
         core_stats,
         augmentation_stats=augmentation_stats,
     )
+    if any(data_root.processed_polygons.glob("*.parquet")):
+        countries_path = ensure_world_countries(data_root.cache)
+        stats_section += "\n" + render_continent_stats(
+            compute_continent_stats(data_root.processed, countries_path)
+        )
     atomic_write_text(
         destination,
         render_dataset_card(
@@ -295,8 +310,8 @@ def refresh_coverage_assets(
     snapshot_stem: str,
     snapshots_dir: Path,
     world_land_warning: Callable[[str], None] | None,
-) -> tuple[Path, Path, Path]:
-    """Render the three legacy core coverage PNGs into ``snapshots_dir``.
+) -> tuple[Path, Path, Path, Path]:
+    """Render the four public coverage PNGs into ``snapshots_dir``.
 
     ``world_land_warning`` controls the world-land fallback policy.
     Pass a logging-like callable (e.g. ``LOGGER.warning``) to record
@@ -304,7 +319,7 @@ def refresh_coverage_assets(
     the exception silently. The publication module never invents a
     logger identity of its own.
 
-    Returns ``(map_snapshot, geo_text_snapshot, polygon_count_snapshot)``.
+    Returns the all-polygons, combined-text, Wikipedia-rate, and density snapshots.
     """
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     map_snapshot = snapshots_dir / f"{snapshot_stem}-coverage_map.png"
@@ -323,11 +338,17 @@ def refresh_coverage_assets(
             world_land_warning("Could not fetch world land data; map will omit continents")
         land_path = None
     generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
+    text_presence_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_presence.png"
+    _generate_geographic_text_presence(
+        data_root.processed,
+        text_presence_snapshot,
+        land_geojson_path=land_path,
+    )
     geo_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_coverage.png"
     _generate_geographic_text_coverage_snapshot(data_root, geo_snapshot)
     polygon_count_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_polygon_count.png"
     _generate_geographic_polygon_count_snapshot(data_root, polygon_count_snapshot)
-    return map_snapshot, geo_snapshot, polygon_count_snapshot
+    return map_snapshot, text_presence_snapshot, geo_snapshot, polygon_count_snapshot
 
 
 def _generate_geographic_text_coverage_snapshot(
@@ -441,11 +462,13 @@ def assemble_core_upload(
     """
     _validate_core_artifacts(core)
     snapshot, card_snapshot = snapshot_upload_manifests(data_root=data_root, core=core)
-    map_snapshot, geo_snapshot, polygon_count_snapshot = refresh_coverage_assets(
-        data_root=data_root,
-        snapshot_stem=core.polygons_path.stem,
-        snapshots_dir=data_root.cache / "upload_manifest_snapshots",
-        world_land_warning=world_land_warning,
+    map_snapshot, text_presence_snapshot, geo_snapshot, polygon_count_snapshot = (
+        refresh_coverage_assets(
+            data_root=data_root,
+            snapshot_stem=core.polygons_path.stem,
+            snapshots_dir=data_root.cache / "upload_manifest_snapshots",
+            world_land_warning=world_land_warning,
+        )
     )
     write_readme_snapshot(data_root, repo_id, card_snapshot)
     canonical_document = _snapshot_canonical_document(
@@ -465,6 +488,7 @@ def assemble_core_upload(
             path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
         ),
         add_op(snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+        add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
         add_op(geo_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
         add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(card_snapshot, path_in_repo="README.md"),
@@ -485,10 +509,9 @@ def assemble_region_upload(
     """Assemble one atomic region upload (sync-dir publication).
 
     File ordering follows the documented contract. When ``core`` is
-    provided, the eight core operations are prepended to the eight
-    augmentation operations. When ``core`` is ``None``, only the
-    augmentation block is produced. Coverage assets are refreshed
-    only when ``core`` is not ``None``.
+    provided, the core operations are prepended to the augmentation
+    operations. When ``core`` is ``None``, the augmentation block also
+    refreshes the Wikivoyage-sensitive combined text-presence map.
 
     The augmentation block ALWAYS emits the canonical
     ``add`` op + the legacy ``delete`` op. The first publication
@@ -533,6 +556,12 @@ def assemble_region_upload(
                 world_land_warning("Could not fetch world land data; map will omit continents")
             land_path = None
         generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
+        geographic_text_presence_snapshot = snapshots / "geographic_text_presence.png"
+        _generate_geographic_text_presence(
+            data_root.processed,
+            geographic_text_presence_snapshot,
+            land_geojson_path=land_path,
+        )
         geographic_text_snapshot = snapshots / "geographic_text_coverage.png"
         _generate_geographic_text_coverage_snapshot(data_root, geographic_text_snapshot)
         geographic_polygon_count_snapshot = snapshots / "geographic_polygon_count.png"
@@ -548,6 +577,10 @@ def assemble_region_upload(
                     path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
                 ),
                 add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+                add_op(
+                    geographic_text_presence_snapshot,
+                    path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
+                ),
                 add_op(geographic_text_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
                 add_op(
                     geographic_polygon_count_snapshot,
@@ -556,6 +589,25 @@ def assemble_region_upload(
                 add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
                 delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
             ]
+        )
+
+    augmentation_only_map_ops: list[PublicationOp] = []
+    if core is None:
+        text_presence_snapshot = snapshots / "geographic_text_presence.png"
+        try:
+            land_path = ensure_world_land(data_root.cache)
+        except Exception:
+            LOGGER.warning(
+                "Could not fetch world land data; combined text map will omit continents"
+            )
+            land_path = None
+        _generate_geographic_text_presence(
+            data_root.processed,
+            text_presence_snapshot,
+            land_geojson_path=land_path,
+        )
+        augmentation_only_map_ops.append(
+            add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE)
         )
 
     ops.extend(
@@ -581,6 +633,7 @@ def assemble_region_upload(
                 path_in_repo=f"wikidata/facts/{stem}.parquet",
             ),
             *_augmentation_migration_ops(augmentation_manifest_snapshot),
+            *augmentation_only_map_ops,
             add_op(readme_snapshot, path_in_repo="README.md"),
         ]
     )
@@ -605,9 +658,12 @@ def assemble_augmentation_upload(
     5. wikidata facts
     6. canonical augmentation manifest (add)
     7. legacy augmentation manifest (delete)
-    8. README
+    8. combined Wikipedia/Wikivoyage coverage map
+    9. README
 
-    No coverage assets are regenerated. No new stem-augmentation
+    The combined text-presence map is regenerated because Wikivoyage
+    documents change its numerator. The other coverage assets depend
+    only on core tables and are reused. No new stem-augmentation
     manifest snapshot is created for this contract: the legacy
     augmentation command uploads the original
     ``augmentation_result.manifest_path`` directly. The README
@@ -619,6 +675,19 @@ def assemble_augmentation_upload(
     snapshots = data_root.cache / "augmentation_upload_snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
     readme_snapshot = snapshots / f"{augmentation.wikipedia_documents_path.stem}-README.md"
+    text_presence_snapshot = (
+        snapshots / f"{augmentation.wikipedia_documents_path.stem}-geographic_text_presence.png"
+    )
+    try:
+        land_path = ensure_world_land(data_root.cache)
+    except Exception:
+        LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
+        land_path = None
+    _generate_geographic_text_presence(
+        data_root.processed,
+        text_presence_snapshot,
+        land_geojson_path=land_path,
+    )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
     return [
         *_legacy_article_retirement_ops(
@@ -646,6 +715,7 @@ def assemble_augmentation_upload(
             path_in_repo=str(augmentation.wikidata_facts_path.relative_to(data_root.processed)),
         ),
         *_augmentation_migration_ops(augmentation.manifest_path),
+        add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
         add_op(readme_snapshot, path_in_repo="README.md"),
     ]
 
@@ -804,16 +874,19 @@ def assemble_metadata_only_upload(
         has_aug_manifest = True
 
     readme_snapshot = snapshots / "README.md"
-    map_snapshot, geo_snapshot, polygon_count_snapshot = refresh_coverage_assets(
-        data_root=data_root,
-        snapshot_stem="metadata",
-        snapshots_dir=snapshots,
-        world_land_warning=world_land_warning,
+    map_snapshot, text_presence_snapshot, geo_snapshot, polygon_count_snapshot = (
+        refresh_coverage_assets(
+            data_root=data_root,
+            snapshot_stem="metadata",
+            snapshots_dir=snapshots,
+            world_land_warning=world_land_warning,
+        )
     )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
 
     ops = [
         add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+        add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
         add_op(geo_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
         add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),

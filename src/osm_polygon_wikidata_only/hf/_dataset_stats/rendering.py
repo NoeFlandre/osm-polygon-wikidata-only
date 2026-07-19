@@ -41,8 +41,6 @@ def render_stats_section(
     parts.append("\n## Language distribution\n")
     parts.append(_render_language_section(stats))
     if augmentation_stats is not None:
-        parts.append("\n## Augmentation coverage\n")
-        parts.append(_render_augmentation_coverage_table(augmentation_stats))
         parts.append("\n## Storage accounting\n")
         parts.append(_render_storage_size_rows(augmentation_stats))
         parts.append("\n## Wikipedia text corpus\n")
@@ -138,7 +136,7 @@ def _render_headline_table(
                 ("Polygon-article links", _fmt_int(stats.link_count)),
                 ("Languages", _fmt_int(stats.language_count)),
                 ("Geographic regions", _fmt_int(stats.region_count)),
-                ("Core tables size", _fmt_size(stats.dataset_size_bytes)),
+                ("Polygon and link tables size", _fmt_size(stats.dataset_size_bytes)),
             ]
         )
     if augmentation_stats is not None:
@@ -166,16 +164,8 @@ def _render_headline_table(
                     _fmt_int(aug.wikidata_facts.rows),
                 ),
                 (
-                    "Fully augmented regions",
-                    _fmt_int(aug.fully_augmented_count),
-                ),
-                (
                     "Wikipedia + Wikivoyage document words",
                     _fmt_int(_document_corpus_words(aug)),
-                ),
-                (
-                    "Augmentation tables size",
-                    _fmt_size(aug.augmentation_parquet_bytes),
                 ),
                 (
                     "Total Parquet size",
@@ -367,6 +357,11 @@ def _render_project_section(title: str, project: ProjectTextStats, *, kind: str)
     lines.append(f"| Words | {_fmt_int(project.total_words)} |")
     lines.append(f"| Estimated tokens | {_fmt_int(project.total_tokens_estimate)} |")
     lines.append(f"| Regions / files represented | {_fmt_int(project.region_count)} |")
+    lines.append("")
+    lines.append(
+        "Estimated tokens use a transparent approximation: `characters // 4` "
+        "per non-empty text row, with a minimum of one token per non-empty row."
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -441,9 +436,10 @@ def _render_storage_size_rows(stats: AugmentationStats) -> str:
         "",
         "| Metric | Bytes | Human-readable |",
         "| --- | ---: | --- |",
-        f"| Core tables size | {_fmt_int(stats.core_parquet_bytes)} | "
+        f"| Polygon and link tables size | {_fmt_int(stats.core_parquet_bytes)} | "
         f"{_fmt_size(stats.core_parquet_bytes)} |",
-        f"| Augmentation tables size | {_fmt_int(stats.augmentation_parquet_bytes)} | "
+        f"| Wikipedia, Wikivoyage, and Wikidata tables size | "
+        f"{_fmt_int(stats.augmentation_parquet_bytes)} | "
         f"{_fmt_size(stats.augmentation_parquet_bytes)} |",
         f"| Total Parquet size | {_fmt_int(stats.total_parquet_bytes)} | "
         f"{_fmt_size(stats.total_parquet_bytes)} |",

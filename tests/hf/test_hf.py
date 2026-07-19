@@ -497,8 +497,9 @@ def test_render_dataset_card_identifies_multilingual_scope_and_maintainer() -> N
         link_descriptions={},
     )
     assert "Noé Flandre" in markdown
-    assert "every valid language-Wikipedia sitelink" in markdown
-    assert "no per-QID article cap" in markdown
+    assert "across all available languages" in markdown
+    assert "no per-QID article cap" not in markdown
+    assert "Wikipedia and Wikivoyage text" in markdown
     assert "  - multilingual" in markdown
 
 

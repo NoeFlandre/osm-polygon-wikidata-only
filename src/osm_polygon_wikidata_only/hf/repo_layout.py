@@ -52,6 +52,9 @@ REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE = "assets/geographic_wikipedia_text_coverag
 # The geographic polygon-density PNG embedded in the dataset README.
 REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE = "assets/geographic_polygon_count.png"
 
+# Every polygon with non-empty Wikipedia or Wikivoyage document text.
+REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE = "assets/geographic_text_presence.png"
+
 
 def remote_parquet_path(subdir: str, stem: str) -> str:
     """Build the deterministic remote path for a per-PBF parquet file."""
@@ -93,6 +96,7 @@ __all__ = [
     "REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
     "REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",
+    "REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE",
     "REMOTE_LINKS_DIR",
     "REMOTE_MANIFESTS_DIR",
     "REMOTE_MANIFEST_FILE",

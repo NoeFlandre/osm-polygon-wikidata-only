@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,11 @@ WORLD_LAND_URL = (
     "geojson/ne_110m_land.geojson"
 )
 WORLD_LAND_FILENAME = "ne_110m_land.geojson"
+WORLD_COUNTRIES_URL = (
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
+    "geojson/ne_110m_admin_0_countries.geojson"
+)
+WORLD_COUNTRIES_FILENAME = "ne_110m_admin_0_countries.geojson"
 
 _OCEAN_COLOR = "#cfe2f3"
 _LAND_COLOR = "#e8e0d0"
@@ -83,6 +89,28 @@ def ensure_world_land(cache_dir: Path) -> Path:
     return cache_path
 
 
+def ensure_world_countries(cache_dir: Path) -> Path:
+    """Copy the bundled Natural Earth countries into the runtime cache.
+
+    Bundling the small 110m reference makes dataset-card generation
+    deterministic and offline; it also prevents a metadata-only
+    publication from unexpectedly depending on GitHub availability.
+    """
+    cache_path = cache_dir / WORLD_COUNTRIES_FILENAME
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        return cache_path
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    bundled = Path(__file__).with_name(WORLD_COUNTRIES_FILENAME)
+    if not bundled.is_file():
+        raise FileNotFoundError(
+            f"Bundled Natural Earth country reference is missing: {bundled}. "
+            "Reinstall the package before publishing the dataset card."
+        )
+    shutil.copyfile(bundled, cache_path)
+    LOGGER.info("Cached world country GeoJSON (%d bytes)", cache_path.stat().st_size)
+    return cache_path
+
+
 def generate_coverage_map(
     lons: list[float],
     lats: list[float],
@@ -129,8 +157,9 @@ def generate_coverage_map(
             zorder=3,
         )
 
+    polygon_label = "polygon" if len(lons) == 1 else "polygons"
     ax.set_title(
-        f"{title} - {len(lons):,} polygon(s) plotted",
+        f"{title} - {len(lons):,} {polygon_label} plotted",
         fontsize=11,
         color="#333333",
         pad=10,

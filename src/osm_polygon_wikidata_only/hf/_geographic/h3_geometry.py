@@ -63,29 +63,75 @@ def assign_h3_cell(lat: float, lon: float, *, resolution: int = DEFAULT_H3_RESOL
 
 
 def split_antimeridian(points: Sequence[tuple[float, float]]) -> list[list[tuple[float, float]]]:
-    """Split a polygon ring at longitudinal jumps larger than 180 degrees."""
-    if len(points) < 4:
-        return [list(points)]
-    from itertools import pairwise
+    """Clip an antimeridian-crossing polygon into closed local rings.
 
+    Merely splitting at a longitude jump leaves open fragments. A plotting
+    library then closes those fragments with a world-spanning segment. We
+    instead unwrap the polygon, clip it against each 360-degree world slab,
+    and shift the resulting closed polygons back into ``[-180, 180]``.
+    """
+    if len(points) < 3:
+        return [list(points)]
+    if all(abs(points[index][0] - points[index - 1][0]) <= 180.0 for index in range(len(points))):
+        return [list(points)]
+
+    unwrapped = [points[0]]
+    for lon, lat in points[1:]:
+        previous_lon = unwrapped[-1][0]
+        while lon - previous_lon > 180.0:
+            lon -= 360.0
+        while lon - previous_lon < -180.0:
+            lon += 360.0
+        unwrapped.append((lon, lat))
+
+    min_slab = math.floor((min(lon for lon, _ in unwrapped) + 180.0) / 360.0)
+    max_slab = math.floor((max(lon for lon, _ in unwrapped) + 180.0) / 360.0)
     rings: list[list[tuple[float, float]]] = []
-    current: list[tuple[float, float]] = [points[0]]
-    for prev, curr in pairwise(points):
-        if abs(curr[0] - prev[0]) > 180.0:
-            rings.append(current)
-            current = [curr]
-        else:
-            current.append(curr)
-    if len(current) >= 3:
-        rings.append(current)
-    elif current:
-        # Carry a degenerate tail onto the previous ring so we never
-        # produce zero-area patches.
-        if rings:
-            rings[-1].extend(current)
-        else:
-            rings.append(current)
+    for slab in range(min_slab, max_slab + 1):
+        left = -180.0 + 360.0 * slab
+        right = 180.0 + 360.0 * slab
+        clipped = _clip_longitude(
+            _clip_longitude(unwrapped, left, keep_greater=True), right, keep_greater=False
+        )
+        if len(clipped) >= 3:
+            rings.append([(lon - 360.0 * slab, lat) for lon, lat in clipped])
     return rings
+
+
+def _clip_longitude(
+    points: Sequence[tuple[float, float]],
+    boundary: float,
+    *,
+    keep_greater: bool,
+) -> list[tuple[float, float]]:
+    """Clip ``points`` against one vertical longitude boundary."""
+    if not points:
+        return []
+
+    def inside(point: tuple[float, float]) -> bool:
+        return point[0] >= boundary if keep_greater else point[0] <= boundary
+
+    def intersection(start: tuple[float, float], end: tuple[float, float]) -> tuple[float, float]:
+        delta = end[0] - start[0]
+        if delta == 0.0:
+            return (boundary, start[1])
+        ratio = (boundary - start[0]) / delta
+        return (boundary, start[1] + ratio * (end[1] - start[1]))
+
+    output: list[tuple[float, float]] = []
+    previous = points[-1]
+    previous_inside = inside(previous)
+    for current in points:
+        current_inside = inside(current)
+        if current_inside:
+            if not previous_inside:
+                output.append(intersection(previous, current))
+            output.append(current)
+        elif previous_inside:
+            output.append(intersection(previous, current))
+        previous = current
+        previous_inside = current_inside
+    return output
 
 
 def cell_rings(cell: CoverageCell | PolygonCountCell) -> list[list[tuple[float, float]]]:

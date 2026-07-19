@@ -40,6 +40,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
 )
 
 
@@ -98,19 +99,23 @@ def render_dataset_card(
     body = (
         f"# {repo_id}\n\n"
         "OSM polygons tagged with a `wikidata=*` reference, "
-        "enriched with Wikidata descriptions and Wikipedia article "
-        "text for every valid language-Wikipedia sitelink, with full text "
-        "and no per-QID article cap. Core and text tables are published as:\n\n"
+        "enriched with Wikipedia and Wikivoyage text across all available languages. "
+        "The published tables are:\n\n"
         "- `polygons/<stem>.parquet` — one row per polygon\n"
-        "- `wikipedia/documents/<stem>.parquet` — one lossless row per unique Wikipedia article\n"
-        "- `polygon_articles/<stem>.parquet` — many-to-many link table\n\n"
-        "Additional derived text and fact tables are:\n\n"
+        "- `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article\n"
+        "- `polygon_articles/<stem>.parquet` — polygon-to-Wikipedia many-to-many links\n"
         "- `wikipedia/sections/<stem>.parquet`\n"
         "- `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`\n"
         "- `wikidata/facts/<stem>.parquet`\n\n"
         f"Generated on {today}.\n\n"
         f"Maintained by **{maintainer}**.\n\n"
         "## Coverage\n\n"
+        "### Polygons with Wikipedia or Wikivoyage text\n\n"
+        f"![Polygons with Wikipedia or Wikivoyage text]({REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE})\n\n"
+        "Each point is a dataset polygon with at least one non-empty Wikipedia document "
+        "or a non-empty Wikivoyage document sharing its Wikidata entity. A polygon is "
+        "shown once even when several documents qualify.\n\n"
+        "### All dataset polygons\n\n"
         f"![Coverage Map]({REMOTE_COVERAGE_MAP_FILE})\n\n"
         "## Geographic coverage\n\n"
         "Both maps below aggregate dataset polygons into H3 cells at the "
@@ -137,7 +142,12 @@ def render_dataset_card(
         "- **Wikidata** entity data: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).\n"
         "- **Wikipedia** article text: licensed under "
         "[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) "
-        "by the respective Wikipedia editors; attributed inline per article.\n\n"
+        "by the respective Wikipedia editors; attributed inline per article.\n"
+        "- **Wikivoyage** text: licensed under "
+        "[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) "
+        "by the respective Wikivoyage editors; attributed inline per document.\n"
+        "- **Natural Earth** Admin-0 geography: public-domain 1:110m reference data "
+        "used only to assign centroid-based continent statistics and draw context maps.\n\n"
         "## How to load\n\n"
         "```python\n"
         "from datasets import load_dataset\n"
