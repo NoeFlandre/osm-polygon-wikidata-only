@@ -121,6 +121,8 @@ def generate_coverage_map(
     figsize: tuple[float, float] = (16, 8),
     dpi: int = 100,
     point_size: float = _POINT_SIZE,
+    point_color: str = _POINT_COLOR,
+    point_edge: str = _POINT_EDGE,
 ) -> Path:
     """Render the coverage map PNG with one scatter point per polygon.
 
@@ -150,8 +152,8 @@ def generate_coverage_map(
             lons,
             lats,
             s=point_size,
-            c=_POINT_COLOR,
-            edgecolors=_POINT_EDGE,
+            c=point_color,
+            edgecolors=point_edge,
             linewidths=0.1,
             alpha=_POINT_ALPHA,
             zorder=3,

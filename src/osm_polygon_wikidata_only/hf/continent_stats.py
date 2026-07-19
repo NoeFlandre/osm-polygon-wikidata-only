@@ -57,8 +57,11 @@ def render_continent_stats(rows: Sequence[tuple[str, int, int, int, int, int]]) 
     lines = [
         "## Geographic distribution by continent",
         "",
-        "Polygon centroids are assigned to Natural Earth countries and continents. "
-        "Document counts are distinct within each continent; polygons are counted once.",
+        "This table is recomputed from the finalized Parquet tables before each dataset-card "
+        "publication. Each polygon's WGS84 centroid is spatially matched to the bundled "
+        "Natural Earth 1:110m Admin-0 country boundaries, then assigned the country's "
+        "continent. Because this is a coarse global reference, offshore points and centroids "
+        "outside its country polygons remain `Unassigned` rather than being guessed.",
         "",
         "| Continent | Polygons | Wikipedia documents | Wikivoyage documents | "
         "Polygons with Wikipedia text | Polygons with Wikipedia or Wikivoyage text | Text coverage |",
@@ -70,6 +73,29 @@ def render_continent_stats(rows: Sequence[tuple[str, int, int, int, int, int]]) 
             f"| {continent} | {polygons:,} | {wikipedia_docs:,} | {voyage_docs:,} | "
             f"{wiki_polygons:,} | {combined:,} | {rate:.1%} |"
         )
+    lines.extend(
+        [
+            "",
+            "**Metric definitions:**",
+            "",
+            "- `Polygons`: dataset polygons whose centroid is assigned to the continent. "
+            "Every polygon appears in exactly one continent row, including `Unassigned`.",
+            "- `Wikipedia documents`: distinct non-empty Wikipedia documents connected to "
+            "those polygons through `polygon_articles`. A document is counted once within a "
+            "continent, but may appear in more than one continent when linked polygons span "
+            "more than one continent.",
+            "- `Wikivoyage documents`: distinct non-empty Wikivoyage documents whose Wikidata "
+            "entity is shared by a polygon in the continent. The same cross-continent counting "
+            "rule applies.",
+            "- `Polygons with Wikipedia text`: polygons linked to at least one non-empty "
+            "Wikipedia document.",
+            "- `Polygons with Wikipedia or Wikivoyage text`: polygons satisfying the Wikipedia "
+            "condition or sharing a Wikidata entity with at least one non-empty Wikivoyage "
+            "document. Each polygon is counted once.",
+            "- `Text coverage`: `combined text-covered polygons / all dataset polygons` in the "
+            "continent row.",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
