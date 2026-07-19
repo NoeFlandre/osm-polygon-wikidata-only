@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
+from osm_polygon_wikidata_only.hf import geographic_text_presence as text_presence_module
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import split_antimeridian
 from osm_polygon_wikidata_only.hf.continent_stats import (
     assign_continents,
@@ -95,6 +98,35 @@ def test_combined_text_presence_counts_each_polygon_once(tmp_path: Path) -> None
     assert output.read_bytes().startswith(b"\x89PNG")
 
 
+def test_combined_text_map_uses_blue_points_without_changing_default_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = tmp_path / "processed"
+    _write(
+        processed / "polygons" / "x.parquet",
+        [{"polygon_id": "p1", "wikidata": "Q1", "lon": 2.0, "lat": 48.0}],
+    )
+    _write(
+        processed / "wikipedia" / "documents" / "x.parquet",
+        [{"article_id": "a1", "wikidata": "Q1", "full_text": "text"}],
+    )
+    _write(
+        processed / "polygon_articles" / "x.parquet",
+        [{"polygon_id": "p1", "article_id": "a1"}],
+    )
+    captured: dict[str, Any] = {}
+
+    def capture_map(*args: Any, **kwargs: Any) -> Path:
+        captured.update(kwargs)
+        return args[2]
+
+    monkeypatch.setattr(text_presence_module, "generate_coverage_map", capture_map)
+    generate_geographic_text_presence(processed, tmp_path / "combined.png")
+
+    assert captured["point_color"] == "#2563EB"
+    assert captured["point_edge"] == "#1E40AF"
+
+
 def test_continent_assignment_and_public_rendering() -> None:
     features = [
         {
@@ -124,6 +156,19 @@ def test_continent_assignment_and_public_rendering() -> None:
     assert "## Geographic distribution by continent" in rendered
     assert "| Africa | 4 | 2 | 3 | 2 | 3 | 75.0% |" in rendered
     assert "augmentation" not in rendered.lower()
+    assert "WGS84 centroid" in rendered
+    assert "Natural Earth 1:110m Admin-0" in rendered
+    assert "`Polygons`" in rendered
+    assert "`Wikipedia documents`" in rendered
+    assert "`Wikivoyage documents`" in rendered
+    assert "`Polygons with Wikipedia text`" in rendered
+    assert "`Polygons with Wikipedia or Wikivoyage text`" in rendered
+    assert "`Text coverage`" in rendered
+    assert "combined text-covered polygons / all dataset polygons" in rendered
+    assert "one continent" in rendered
+    assert "more than one continent" in rendered
+    assert "`Unassigned`" in rendered
+    assert "finalized Parquet tables" in rendered
 
 
 def test_dataset_card_uses_public_language_and_combined_map_first() -> None:

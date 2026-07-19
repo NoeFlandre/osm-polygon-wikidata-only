@@ -123,6 +123,8 @@ def generate_geographic_text_presence(
         output_path,
         land_geojson_path=land_geojson_path,
         title="Polygons with Wikipedia or Wikivoyage text",
+        point_color="#2563EB",
+        point_edge="#1E40AF",
     )
     rate = len(points) / snapshot.polygon_count if snapshot.polygon_count else 0.0
     caption = (
