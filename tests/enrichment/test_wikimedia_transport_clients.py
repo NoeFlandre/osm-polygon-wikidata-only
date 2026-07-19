@@ -20,6 +20,7 @@ previously inlined the read+gzip+JSON+throttle mechanics:
 from __future__ import annotations
 
 import logging
+import socket
 import urllib.error
 from email.message import Message
 from typing import Any
@@ -145,6 +146,46 @@ def test_augmentation_cache_miss_runs_full_pipeline() -> None:
     parsed = client.get_json("https://www.wikidata.org/w/api.php?ids=Q1", key="k")
 
     assert parsed == {"entities": {"Q1": {"id": "Q1", "labels": {}}}}
+    assert len(session.reads) == 1
+
+
+def test_augmentation_recovers_after_more_than_eight_dns_failures() -> None:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+    )
+
+    dns_errors = [
+        urllib.error.URLError(socket.gaierror(8, "name lookup failed")) for _ in range(10)
+    ]
+    settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
+    session = _StubSession([*dns_errors, (b'{"parse":{"text":"ok"}}', "identity")])
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client._settings = settings
+    client._scheduler = _RecordingScheduler()
+    client._session = session
+    client._cache = _NoHitCache()
+
+    assert client.get_json("https://en.wikipedia.org/w/api.php", key="dns") == {
+        "parse": {"text": "ok"}
+    }
+    assert len(session.reads) == 11
+
+
+def test_augmentation_unbounded_retry_rejects_permanent_http_error() -> None:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+    )
+
+    settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
+    session = _StubSession([_http_error(404), (b'{"parse":{"text":"wrong"}}', "identity")])
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client._settings = settings
+    client._scheduler = _RecordingScheduler()
+    client._session = session
+    client._cache = _NoHitCache()
+
+    with pytest.raises(urllib.error.HTTPError, match="HTTP Error 404"):
+        client.get_json("https://en.wikipedia.org/w/api.php", key="permanent")
     assert len(session.reads) == 1
 
 
@@ -357,6 +398,27 @@ def test_wikipedia_does_not_emit_augmentation_warning(
     assert scheduler.throttle_calls == [("en.wikipedia.org", 7.0)]
 
 
+def test_wikipedia_unbounded_retry_rejects_permanent_http_error() -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
+        HttpWikipediaClient,
+    )
+
+    settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
+    session = _StubSession(
+        [
+            _http_error(404),
+            (b'{"query":{"pages":{"-1":{"title":"Monaco","missing":""}}}}', "identity"),
+        ]
+    )
+    client = HttpWikipediaClient.__new__(HttpWikipediaClient)
+    client._settings = settings
+    client._scheduler = _RecordingScheduler()
+    client._session = session
+
+    assert client.fetch_article("en", "enwiki", "Monaco").status == "article_not_found"
+    assert len(session.reads) == 1
+
+
 def test_wikidata_does_not_emit_augmentation_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -388,6 +450,23 @@ def test_wikidata_does_not_emit_augmentation_warning(
     ]
     assert augmentation_records == []
     assert scheduler.throttle_calls == [("www.wikidata.org", 3.0)]
+
+
+def test_wikidata_unbounded_retry_rejects_permanent_http_error() -> None:
+    from osm_polygon_wikidata_only.enrichment.wikidata_client import (
+        HttpWikidataClient,
+    )
+
+    settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
+    session = _StubSession([_http_error(404), (b'{"entities":{"Q1":{"id":"Q1"}}}', "identity")])
+    client = HttpWikidataClient.__new__(HttpWikidataClient)
+    client._settings = settings
+    client._scheduler = _RecordingScheduler()
+    client._session = session
+    client._endpoint = "https://www.wikidata.org/w/api.php"
+
+    assert client.get_entity("Q1") is None
+    assert len(session.reads) == 1
 
 
 # ---------------------------------------------------------------------------

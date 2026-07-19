@@ -31,7 +31,11 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
     SYSTEMIC_MINIMUM_HOSTS,
     AdaptiveRequestScheduler,
 )
-from osm_polygon_wikidata_only.utils.retry import with_retries
+from osm_polygon_wikidata_only.utils.retry import (
+    is_transient_network_error,
+    transient_retry_log_callback,
+    with_retries,
+)
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 from .models import Document, document_id
@@ -121,6 +125,8 @@ class AugmentationWikimediaClient:
                 attempts=self._settings.request_max_retries,
                 base_delay=self._settings.request_base_delay_s,
                 retry_on=(urllib.error.URLError, TimeoutError, OSError),
+                should_retry=is_transient_network_error,
+                on_retry=transient_retry_log_callback(f"Wikimedia host {host}", logger=LOGGER),
             )
         except urllib.error.HTTPError as error:
             if error.code in (429, 503):

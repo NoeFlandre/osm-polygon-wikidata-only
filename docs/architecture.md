@@ -140,6 +140,15 @@ telemetry-reported via `WikimediaAuthSnapshot`, which counts
 (hosts whose login is currently in flight), so a host that might
 still verify is never mislabelled as anonymous.
 
+Production requests retry classified transient failures without a fixed
+attempt ceiling: temporary DNS/connectivity failures, timeouts, connection
+resets, `429`, and retryable `5xx` responses wait with capped exponential
+backoff until service returns or the user interrupts the process. Sparse
+warnings confirm that the pipeline remains active. Permanent HTTP errors,
+invalid payloads, authentication/configuration failures, and other
+non-network exceptions still fail immediately; tests may configure a finite
+attempt count for deterministic failure cases.
+
 Long enrichment is observable without request-level noise. A thread-safe tracker
 records completed and total QIDs, completed and total Wikipedia sites, and
 articles attempted. The processor reads an immutable snapshot in a two-minute
