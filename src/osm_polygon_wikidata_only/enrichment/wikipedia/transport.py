@@ -15,6 +15,7 @@ Out of scope (intentionally retained by other modules):
 
 from __future__ import annotations
 
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,7 +36,11 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
     default_scheduler,
 )
-from osm_polygon_wikidata_only.utils.retry import with_retries
+from osm_polygon_wikidata_only.utils.retry import (
+    is_transient_network_error,
+    transient_retry_log_callback,
+    with_retries,
+)
 
 from .models import FetchResult, WikipediaClient
 from .parsing import (
@@ -47,6 +52,8 @@ from .parsing import (
     query_with_extract,
     revision_id_from_query,
 )
+
+LOGGER = logging.getLogger("osm_polygon_wikidata_only.enrichment.wikipedia_client")
 
 
 class InMemoryWikipediaClient(WikipediaClient):
@@ -105,6 +112,8 @@ class HttpWikipediaClient(WikipediaClient):
                 attempts=self._settings.request_max_retries,
                 base_delay=self._settings.request_base_delay_s,
                 retry_on=(urllib.error.URLError, TimeoutError, OSError),
+                should_retry=is_transient_network_error,
+                on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
             )
         except urllib.error.HTTPError as e:
             if e.code == 404:
@@ -135,6 +144,8 @@ class HttpWikipediaClient(WikipediaClient):
                 attempts=self._settings.request_max_retries,
                 base_delay=self._settings.request_base_delay_s,
                 retry_on=(urllib.error.URLError, TimeoutError, OSError),
+                should_retry=is_transient_network_error,
+                on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
             )
         except urllib.error.HTTPError as error:
             status = "rate_limited" if error.code in (429, 503) else "http_error"
@@ -197,6 +208,8 @@ class HttpWikipediaClient(WikipediaClient):
                 attempts=self._settings.request_max_retries,
                 base_delay=self._settings.request_base_delay_s,
                 retry_on=(urllib.error.URLError, TimeoutError, OSError),
+                should_retry=is_transient_network_error,
+                on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
             )
             return _parse_wikipedia_batch_response(
                 language, site, requested, data, fetch_full_text=fetch_full_text

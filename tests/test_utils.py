@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
+import urllib.error
 
 import pytest
 
+from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
-from osm_polygon_wikidata_only.utils.retry import with_retries
+from osm_polygon_wikidata_only.utils.retry import (
+    is_transient_network_error,
+    transient_retry_log_callback,
+    with_retries,
+)
 from osm_polygon_wikidata_only.utils.time import parse_iso_to_z, utc_now_iso
 
 
@@ -20,6 +27,140 @@ def test_dumps_is_deterministic() -> None:
     assert a == json.dumps(
         {"a": 1, "b": 2}, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+
+
+def test_production_network_retry_budget_is_unbounded() -> None:
+    assert Settings().request_max_retries is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        urllib.error.URLError(socket.gaierror(8, "name lookup failed")),
+        TimeoutError("timed out"),
+        ConnectionResetError("connection reset"),
+        urllib.error.HTTPError("https://example.test", 429, "limited", {}, None),
+        urllib.error.HTTPError("https://example.test", 503, "unavailable", {}, None),
+    ],
+)
+def test_transient_network_error_classifies_retryable_failures(error: BaseException) -> None:
+    assert is_transient_network_error(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        urllib.error.HTTPError("https://example.test", 404, "missing", {}, None),
+        ValueError("malformed payload"),
+        RuntimeError("programming error"),
+    ],
+)
+def test_transient_network_error_rejects_permanent_failures(error: BaseException) -> None:
+    assert not is_transient_network_error(error)
+
+
+def test_unbounded_retries_recover_after_more_than_finite_budget() -> None:
+    calls = 0
+
+    def operation() -> str:
+        nonlocal calls
+        calls += 1
+        if calls <= 10:
+            raise urllib.error.URLError(socket.gaierror(8, "name lookup failed"))
+        return "ok"
+
+    assert (
+        with_retries(
+            operation,
+            attempts=None,
+            base_delay=0,
+            retry_on=(urllib.error.URLError,),
+            should_retry=is_transient_network_error,
+        )
+        == "ok"
+    )
+    assert calls == 11
+
+
+def test_unbounded_retries_do_not_overflow_during_very_long_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.random.uniform", lambda *_: 0.0)
+
+    def operation() -> str:
+        nonlocal calls
+        calls += 1
+        if calls <= 1_100:
+            raise TimeoutError("still offline")
+        return "recovered"
+
+    assert (
+        with_retries(
+            operation,
+            attempts=None,
+            base_delay=2.0,
+            max_delay=8.0,
+            retry_on=(TimeoutError,),
+            should_retry=is_transient_network_error,
+        )
+        == "recovered"
+    )
+    assert calls == 1_101
+
+
+def test_unbounded_retries_fail_fast_for_non_retryable_error() -> None:
+    calls = 0
+    error = urllib.error.HTTPError("https://example.test", 404, "missing", {}, None)
+
+    def operation() -> str:
+        nonlocal calls
+        calls += 1
+        raise error
+
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        with_retries(
+            operation,
+            attempts=None,
+            base_delay=0,
+            retry_on=(urllib.error.URLError,),
+            should_retry=is_transient_network_error,
+        )
+    assert raised.value is error
+    assert calls == 1
+
+
+def test_unbounded_retries_do_not_swallow_keyboard_interrupt() -> None:
+    def operation() -> str:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        with_retries(
+            operation,
+            attempts=None,
+            base_delay=0,
+            retry_on=(Exception,),
+            should_retry=is_transient_network_error,
+        )
+
+
+def test_transient_retry_warning_is_sparse_and_does_not_include_error_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    callback = transient_retry_log_callback("Wikimedia request")
+    secret_error = urllib.error.URLError("token=must-not-leak")
+
+    with caplog.at_level("WARNING"):
+        callback(1, secret_error, 2.0)
+        callback(2, secret_error, 4.0)
+        callback(30, secret_error, 8.0)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 2
+    assert "attempt 1" in messages[0]
+    assert "attempt 30" in messages[1]
+    assert all("token=must-not-leak" not in message for message in messages)
 
 
 def test_dumps_preserves_unicode() -> None:

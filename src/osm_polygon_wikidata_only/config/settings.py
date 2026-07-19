@@ -59,7 +59,10 @@ class Settings:
 
     # Network behavior.
     request_timeout_s: float = 30.0
-    request_max_retries: int = 8
+    # ``None`` keeps retrying classified transient network failures until
+    # connectivity returns or the user interrupts the process. Tests and
+    # specialized callers may set a finite positive attempt count.
+    request_max_retries: int | None = None
     request_base_delay_s: float = 2.0
 
     # Polite Wikimedia throttling.

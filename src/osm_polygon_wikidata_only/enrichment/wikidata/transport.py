@@ -43,7 +43,11 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
     default_scheduler,
 )
-from osm_polygon_wikidata_only.utils.retry import with_retries
+from osm_polygon_wikidata_only.utils.retry import (
+    is_transient_network_error,
+    transient_retry_log_callback,
+    with_retries,
+)
 
 from .models import WikidataClient, WikidataEntity
 from .parsing import is_valid_qid, parse_wikidata_entity
@@ -110,6 +114,8 @@ class HttpWikidataClient(WikidataClient):
                 attempts=self._settings.request_max_retries,
                 base_delay=self._settings.request_base_delay_s,
                 retry_on=(urllib.error.URLError, TimeoutError, OSError),
+                should_retry=is_transient_network_error,
+                on_retry=transient_retry_log_callback("Wikidata", logger=LOGGER),
             )
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             LOGGER.warning("Wikidata batch request failed for %d QIDs: %s", len(valid), e)
