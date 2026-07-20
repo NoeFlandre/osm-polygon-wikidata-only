@@ -105,6 +105,23 @@ def upsert_entry(
     return entry
 
 
+def update_entry(path: Path, *, source_pbf: str, **fields: Any) -> dict[str, Any]:
+    """Update named fields on the entry for ``source_pbf`` and
+    re-save the manifest.
+
+    If the entry does not exist this raises :class:`KeyError`. The
+    returned dict is the updated entry.
+    """
+    entries = load_manifest(path)
+    if source_pbf not in entries:
+        raise KeyError(f"Manifest has no entry for {source_pbf!r}")
+    updated = dict(entries[source_pbf])
+    updated.update(fields)
+    entries[source_pbf] = updated
+    save_manifest(path, entries)
+    return updated
+
+
 def iter_entries(entries: dict[str, dict[str, Any]]) -> Iterable[tuple[str, dict[str, Any]]]:
     """Iterate manifest entries in deterministic order."""
     for key in sorted(entries):

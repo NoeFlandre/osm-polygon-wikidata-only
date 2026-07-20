@@ -25,9 +25,15 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.integrity import (
+    INTEGRITY_CONTRACT_VERSION,
+    WikivoyageIntegrityResult,
+    enforce_wikivoyage_integrity,
+)
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
     fact_schema,
@@ -66,6 +72,7 @@ class AugmentationResult:
     wikidata_facts_path: Path
     manifest_path: Path
     counts: dict[str, int]
+    wikivoyage_integrity: WikivoyageIntegrityResult | None = None
 
 
 def sidecar_paths(data_root: DataRoot, stem: str) -> tuple[Path, Path, Path, Path, Path]:
@@ -130,6 +137,11 @@ def augment_region(
     if core_inputs.core_hashes != {str(path): sha256_file(path) for path in core_inputs.core_paths}:
         raise RuntimeError("Core artifacts changed during augmentation")
 
+    # Deterministic join-integrity enforcement: reject every wikivoyage
+    # document whose wikidata is absent from the shard's polygons and
+    # cascade to its sections. Path A only -- never rewrite QIDs.
+    wikivoyage_integrity = enforce_wikivoyage_integrity(data_root, stem)
+
     counts = {
         "wikipedia_documents": len(wikipedia_documents),
         "wikipedia_sections": len(sections_by_project["wikipedia"]),
@@ -137,6 +149,23 @@ def augment_region(
         "wikivoyage_sections": len(sections_by_project["wikivoyage"]),
         "wikidata_facts": len(facts),
     }
+
+    rejections_payload: dict[str, Any] | None = None
+    if wikivoyage_integrity.rejected_document_count > 0:
+        rejections_payload = {
+            "contract_version": INTEGRITY_CONTRACT_VERSION,
+            "shard": wikivoyage_integrity.shard,
+            "original_document_count": wikivoyage_integrity.original_document_count,
+            "retained_document_count": wikivoyage_integrity.retained_document_count,
+            "rejected_document_count": wikivoyage_integrity.rejected_document_count,
+            "original_section_count": wikivoyage_integrity.original_section_count,
+            "retained_section_count": wikivoyage_integrity.retained_section_count,
+            "cascaded_section_count": wikivoyage_integrity.cascaded_section_count,
+            "rewritten_documents": wikivoyage_integrity.rewritten_documents,
+            "rewritten_sections": wikivoyage_integrity.rewritten_sections,
+            "rejections": [r.to_dict() for r in wikivoyage_integrity.rejections],
+        }
+
     manifest_path = update_augmentation_manifest(
         data_root,
         stem=stem,
@@ -144,9 +173,17 @@ def augment_region(
         core_hashes=core_inputs.core_hashes,
         counts=counts,
         completed_at=utc_now_iso(),
+        rejections=rejections_payload,
     )
     return AugmentationResult(
-        paths[0], paths[1], paths[2], paths[3], paths[4], manifest_path, counts
+        paths[0],
+        paths[1],
+        paths[2],
+        paths[3],
+        paths[4],
+        manifest_path,
+        counts,
+        wikivoyage_integrity=wikivoyage_integrity,
     )
 
 

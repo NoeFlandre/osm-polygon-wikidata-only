@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 osm-polygon-wikidata-only = "osm_polygon_wikidata_only.cli.app:run"
+osm-polygon-wikidata-only-enforce-integrity = "osm_polygon_wikidata_only.cli.enforce_integrity:run"
 
 [project.urls]
 Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"

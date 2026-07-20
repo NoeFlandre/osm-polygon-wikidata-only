@@ -1127,7 +1127,7 @@ def test_persistence_phase_logs_use_processor_logger(
         content_hash="",
     )
     link = PolygonArticleLink(
-        polygon_id="way/1",
+        polygon_id="x-latest:way:1",
         article_id="a1",
         wikidata="Q1",
         language="en",
