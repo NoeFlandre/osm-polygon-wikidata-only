@@ -101,7 +101,8 @@ def _ensure_recovery_audit_unblocked(audit: RecoveryAuditResult) -> None:
     ]
     if blocked:
         raise RuntimeError(
-            "Wikidata integrity audit blocked; no processing was started: " + "; ".join(blocked)
+            "Wikidata integrity audit blocked this region; its files were not changed: "
+            + "; ".join(blocked)
         )
 
 
@@ -335,27 +336,14 @@ def execute(
         local_current = _validate_local_augmentation_state(data_root, sorted(core_stems))
         current_augmentation = {stem for stem, current in local_current.items() if current}
 
-    recovery_audit = audit_wikidata_integrity(
-        data_root,
+    recovery_stems = set(
         _recovery_audit_stems(
             input_stems=input_stems,
             core_stems=core_stems,
             current_augmentation=current_augmentation,
             force=settings.force or not settings.skip_existing,
-        ),
-        runtime.wikidata,
-        batch_size=settings.enrichment_batch_size,
-        languages=settings.languages,
-        max_articles_per_qid=settings.max_articles_per_qid,
-        log=LOGGER.info,
+        )
     )
-    _ensure_recovery_audit_unblocked(recovery_audit)
-    recovery_regions = {region.stem: region for region in recovery_audit.regions}
-    recovery_stems = {
-        result.stem
-        for result in recovery_audit.regions
-        if result.affected_qids and not result.blocked_reason
-    }
     states = plan_sync_states(
         pbfs,
         core_stems=core_stems,
@@ -367,8 +355,6 @@ def execute(
     recovered_stems: set[str] = set()
 
     if push_enabled and reconciliation_plan is not None:
-        if recovery_stems:
-            core_will_be_repaired = True
         for state in states:
             if state.action == SyncAction.PROCESS:
                 core_will_be_repaired = True
@@ -414,7 +400,7 @@ def execute(
 
     counts = {action: sum(state.action is action for state in states) for action in SyncAction}
     LOGGER.info(
-        "Unified sync plan: %d recovery, %d augmentation backlog, %d publish, %d core missing, %d complete",
+        "Unified sync plan: %d recovery audit, %d augmentation backlog, %d publish, %d core missing, %d complete",
         counts[SyncAction.RECOVERY],
         counts[SyncAction.AUGMENT],
         counts[SyncAction.PUBLISH],
@@ -504,9 +490,21 @@ def execute(
         return load_existing_augmentation_result(data_root, state.stem)
 
     def _recover(state: RegionSyncState) -> Any:
-        plan = recovery_regions.get(state.stem)
-        if plan is None or not plan.affected_qids or plan.blocked_reason:
-            return load_existing_augmentation_result(data_root, state.stem)
+        audit = audit_wikidata_integrity(
+            data_root,
+            [state.stem],
+            runtime.wikidata,
+            batch_size=settings.enrichment_batch_size,
+            languages=settings.languages,
+            max_articles_per_qid=settings.max_articles_per_qid,
+            log=LOGGER.info,
+        )
+        _ensure_recovery_audit_unblocked(audit)
+        plan = audit.region(state.stem)
+        if not plan.affected_qids:
+            if push_enabled and state.stem in all_pending_stems:
+                return load_existing_augmentation_result(data_root, state.stem)
+            return None
         repair_wikidata_region(
             data_root,
             plan,
@@ -621,6 +619,7 @@ def execute(
             recover_region=_recover,
             on_complete=_prepare_publication,
         )
+        core_will_be_repaired = core_will_be_repaired or bool(recovered_stems)
         if (
             rc == 0
             and push_enabled

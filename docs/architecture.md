@@ -242,16 +242,20 @@ mutually exclusive action buckets. Within each bucket, stems are
 processed alphabetically; the planner produces a deterministic plan
 that the runner drains in this exact order:
 
-1. **RECOVERY** -- finalized, current regions whose exhaustive QID-level
-   integrity audit finds polygons missing their expected Wikipedia
-   relationships. The audit uses column-pruned reads of polygons, links, and
+1. **RECOVERY** -- finalized, current regions eligible for an exhaustive
+   QID-level integrity audit. The runner audits one region at a time; a healthy
+   region stores or reuses its content-addressed receipt and advances without
+   publication, while a damaged region is repaired and published before the
+   next region begins. There is no global all-QID validation barrier. The audit
+   uses column-pruned reads of polygons, links, and
    canonical Wikipedia documents, validates only missing relationships against
    authoritative Wikidata state, and reuses content-addressed receipts for
    unchanged healthy inputs. Affected QIDs are refetched; repaired core,
    documents, sections, facts, and both manifests are replaced as one durable
    journaled transaction before an atomic regional publication. Transport or
    validation failures write neither a terminal receipt nor partial outputs;
-   blocked finalized shards abort the command before extraction begins.
+   a blocked finalized shard is left unchanged and aborts the command before
+   extraction begins; already completed regional repairs remain durable.
    The audit emits bounded checkpoints for its local scan and authoritative
    validation phases. Wikidata HTTP-200 API errors are inspected before entity
    parsing: transient codes such as `maxlag`, `readonly`, and `ratelimited`
