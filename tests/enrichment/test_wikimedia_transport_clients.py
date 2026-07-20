@@ -23,6 +23,7 @@ import logging
 import socket
 import urllib.error
 from email.message import Message
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -147,6 +148,66 @@ def test_augmentation_cache_miss_runs_full_pipeline() -> None:
 
     assert parsed == {"entities": {"Q1": {"id": "Q1", "labels": {}}}}
     assert len(session.reads) == 1
+
+
+def test_augmentation_evicts_cached_api_error_and_refetches(
+    tmp_path: Path,
+) -> None:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+    )
+    from osm_polygon_wikidata_only.io.cache import JsonFileCache
+
+    cache = JsonFileCache(tmp_path / "cache")
+    cache.set(
+        "entities",
+        {"error": {"code": "maxlag", "info": "Waiting for replication lag"}},
+        status="ok",
+    )
+    session = _StubSession([(b'{"entities":{"Q1":{"id":"Q1","claims":{}}}}', "identity")])
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client._settings = _make_settings()
+    client._scheduler = _RecordingScheduler()
+    client._session = session
+    client._cache = cache
+
+    result = client.get_json("https://www.wikidata.org/w/api.php?ids=Q1", key="entities")
+
+    assert result == {"entities": {"Q1": {"id": "Q1", "claims": {}}}}
+    assert len(session.reads) == 1
+    stored = cache.get("entities")
+    assert stored is not None
+    assert stored.parsed_result == result
+
+
+def test_augmentation_retries_live_transient_api_error_without_caching_it(
+    tmp_path: Path,
+) -> None:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+    )
+    from osm_polygon_wikidata_only.io.cache import JsonFileCache
+
+    cache = JsonFileCache(tmp_path / "cache")
+    session = _StubSession(
+        [
+            (b'{"error":{"code":"maxlag","info":"try later"}}', "identity"),
+            (b'{"entities":{"Q1":{"id":"Q1","claims":{}}}}', "identity"),
+        ]
+    )
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client._settings = _make_settings(request_max_retries=2)
+    client._scheduler = _RecordingScheduler()
+    client._session = session
+    client._cache = cache
+
+    result = client.get_json("https://www.wikidata.org/w/api.php?ids=Q1", key="entities")
+
+    assert result == {"entities": {"Q1": {"id": "Q1", "claims": {}}}}
+    assert len(session.reads) == 2
+    stored = cache.get("entities")
+    assert stored is not None
+    assert "error" not in stored.parsed_result
 
 
 def test_augmentation_recovers_after_more_than_eight_dns_failures() -> None:
