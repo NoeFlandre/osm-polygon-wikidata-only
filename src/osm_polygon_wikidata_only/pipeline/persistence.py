@@ -34,6 +34,11 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only import __version__
+from osm_polygon_wikidata_only.augmentation.integrity import (
+    INTEGRITY_CONTRACT_VERSION,
+    PolygonArticlesIntegrityResult,
+    enforce_polygon_articles_integrity,
+)
 from osm_polygon_wikidata_only.config.paths import (
     PROCESSED_ARTICLES,
     PROCESSED_LINKS,
@@ -43,6 +48,7 @@ from osm_polygon_wikidata_only.config.paths import (
 from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
 from osm_polygon_wikidata_only.io.manifest import (
     manifest_path,
+    update_entry,
     upsert_entry,
 )
 from osm_polygon_wikidata_only.io.parquet import (
@@ -74,6 +80,7 @@ class PersistenceOutcome:
     manifest_entry: dict[str, Any]
     write_parquet_duration_s: float
     manifest_duration_s: float
+    integrity_result: PolygonArticlesIntegrityResult | None = None
 
 
 def _local_path(processed_dir: Path, subdir: str, stem: str) -> Path:
@@ -164,6 +171,35 @@ def run_persistence_phase(
         len(links),
     )
 
+    # Deterministic join-integrity enforcement: reject any
+    # polygon_articles row whose wikidata does not match the canonical
+    # polygon wikidata (Path A only -- never rewrite QIDs). The
+    # rejection summary travels with the manifest entry so the audit
+    # metadata is reproducible.
+    integrity_result: PolygonArticlesIntegrityResult | None = None
+    if links_path.is_file() and polygons_path.is_file():
+        integrity_result = enforce_polygon_articles_integrity(data_root, stem)
+        if integrity_result.rejected_row_count > 0:
+            entry = update_entry(
+                mpath,
+                source_pbf=source_pbf,
+                integrity={
+                    "contract_version": INTEGRITY_CONTRACT_VERSION,
+                    "shard": integrity_result.shard,
+                    "original_row_count": integrity_result.original_row_count,
+                    "retained_row_count": integrity_result.retained_row_count,
+                    "rejected_row_count": integrity_result.rejected_row_count,
+                    "rewritten": integrity_result.rewritten,
+                    "rejections": [r.to_dict() for r in integrity_result.rejections],
+                },
+            )
+            PROCESSOR_LOGGER.warning(
+                "Integrity pass dropped %d polygon_articles row(s) for shard %r "
+                "with mismatched wikidata; canonical polygons unchanged.",
+                integrity_result.rejected_row_count,
+                stem,
+            )
+
     return PersistenceOutcome(
         polygons_path=polygons_path,
         articles_path=articles_path,
@@ -172,6 +208,7 @@ def run_persistence_phase(
         manifest_entry=entry,
         write_parquet_duration_s=write_duration,
         manifest_duration_s=manifest_duration,
+        integrity_result=integrity_result,
     )
 
 

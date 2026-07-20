@@ -57,6 +57,7 @@ def render_dataset_card(
     primary_lang: str = "en",
     maintainer: str = "Noé Flandre",
     stats_section: str | None = None,
+    rejections_section: str | None = None,
 ) -> str:
     """Render the dataset card markdown.
 
@@ -66,6 +67,13 @@ def render_dataset_card(
     ``stats_section`` is an optional pre-rendered markdown block of
     factual dataset statistics (snapshot, funnel, language distribution).
     When provided, it is included verbatim after the coverage map.
+
+    ``rejections_section`` is an optional pre-rendered markdown block
+    summarising the deterministic join-integrity pass (Path A: rejected
+    polygon_articles rows whose wikidata does not match the canonical
+    polygons table, and rejected wikivoyage documents whose wikidata is
+    absent from polygons). The block travels with the card so the
+    audit metadata is reproducible from the published artifact.
 
     The YAML front matter declares the canonical dataset tables.
 
@@ -95,6 +103,7 @@ def render_dataset_card(
     )
 
     stats_block = stats_section if stats_section is not None else ""
+    rejections_block = rejections_section if rejections_section is not None else ""
 
     body = (
         f"# {repo_id}\n\n"
@@ -156,6 +165,14 @@ def render_dataset_card(
         "})\n"
         "```\n"
     )
+
+    if rejections_block:
+        insertion_marker = f"{stats_block}\n" if stats_block else ""
+        body = body.replace(
+            insertion_marker + f"{schema_section}\n",
+            insertion_marker + f"{rejections_block}\n" + f"{schema_section}\n",
+            1,
+        )
 
     return rc_lines + "\n" + body
 
@@ -269,6 +286,41 @@ def _render_combined_table(heading: str, cols: list[str], descriptions: Mapping[
         lines.append(f"| `{c}` | {descriptions.get(c, '')} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def render_rejections_section(audit: Mapping[str, Any]) -> str:
+    """Render the deterministic join-integrity audit as a markdown block.
+
+    The audit is the JSON payload produced by
+    :func:`osm_polygon_wikidata_only.augmentation.integrity.enforce_all_regions`.
+    Path A only: rows whose wikidata does not match the canonical
+    polygon wikidata are rejected (not rewritten); wikivoyage documents
+    whose wikidata is absent from polygons are rejected with cascading
+    sections.
+
+    The block is empty when no rejection was recorded, so the card
+    is stable across reruns on a clean dataset.
+    """
+    totals = audit.get("totals", {}) if isinstance(audit, Mapping) else {}
+    polygon_rejected = int(totals.get("polygon_articles_rejected", 0) or 0)
+    voyage_rejected = int(totals.get("wikivoyage_documents_rejected", 0) or 0)
+    voyage_cascaded = int(totals.get("wikivoyage_sections_cascaded", 0) or 0)
+    contract_version = str(audit.get("contract_version", "join-integrity-v1"))
+    shards = sorted(totals.get("shards_with_rejections", []) or [])
+
+    parts = [
+        "## Join-integrity audit\n",
+        f"Path A (reject-only, never rewrite QIDs). Contract version `{contract_version}`.\n",
+        "| Channel | Rejected |",
+        "| --- | --- |",
+        f"| `polygon_articles` rows with mismatched wikidata | {polygon_rejected} |",
+        f"| `wikivoyage/documents` with wikidata absent from polygons | {voyage_rejected} |",
+        f"| `wikivoyage/sections` cascaded from rejected documents | {voyage_cascaded} |",
+        "",
+    ]
+    if shards:
+        parts.append("Affected shards: " + ", ".join(f"`{shard}`" for shard in shards) + ".\n")
+    return "\n".join(parts)
 
 
 __all__ = ["render_dataset_card"]

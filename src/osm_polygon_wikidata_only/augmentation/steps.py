@@ -479,6 +479,7 @@ def update_augmentation_manifest(
     core_hashes: dict[str, str],
     counts: dict[str, int],
     completed_at: str,
+    rejections: dict[str, Any] | None = None,
 ) -> Path:
     """Atomic merge of ``stem``'s entry into the augmentation manifest
     while keeping every other region intact. Returns the manifest
@@ -487,13 +488,16 @@ def update_augmentation_manifest(
         data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     )
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-    manifest[stem] = {
+    entry: dict[str, Any] = {
         "contract_version": CONTRACT_VERSION,
         "core_hashes": core_hashes,
         "paths": [str(path.relative_to(data_root.processed)) for path in paths],
         "counts": counts,
         "completed_at": completed_at,
     }
+    if rejections is not None:
+        entry["rejections"] = rejections
+    manifest[stem] = entry
     atomic_write_text(manifest_path, dumps(manifest) + "\n")
     return manifest_path
 

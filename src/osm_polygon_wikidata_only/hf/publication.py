@@ -101,6 +101,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.integrity import INTEGRITY_CONTRACT_VERSION
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     build_wikipedia_document_table,
@@ -132,7 +133,7 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     generate_coverage_map,
     load_centroids_from_parquet,
 )
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
+from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card, render_rejections_section
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     compute_dataset_stats,
     render_stats_section,
@@ -287,6 +288,18 @@ def write_readme_snapshot(
         stats_section += "\n" + render_continent_stats(
             compute_continent_stats(data_root.processed, countries_path)
         )
+    rejections_section: str | None = None
+    audit_path = data_root.processed / "integrity" / "integrity_audit.json"
+    if audit_path.is_file():
+        try:
+            audit_payload = json.loads(audit_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            audit_payload = None
+        if isinstance(audit_payload, dict):
+            audit_contract = str(audit_payload.get("contract_version", INTEGRITY_CONTRACT_VERSION))
+            rejections_section = render_rejections_section(
+                {**audit_payload, "contract_version": audit_contract}
+            )
     atomic_write_text(
         destination,
         render_dataset_card(
@@ -300,6 +313,7 @@ def write_readme_snapshot(
             link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
             maintainer="Noé Flandre",
             stats_section=stats_section,
+            rejections_section=rejections_section,
         ),
     )
 
