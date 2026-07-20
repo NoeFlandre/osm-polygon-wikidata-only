@@ -22,7 +22,11 @@ class WikidataEntity:
 
 
 class WikidataClient(ABC):
-    """Stable single-entity client contract used by the pipeline."""
+    """Stable single-entity client contract used by the pipeline.
+
+    ``None`` means Wikidata authoritatively marked the requested entity
+    missing. Transport and protocol failures must propagate.
+    """
 
     @abstractmethod
     def get_entity(self, qid: str) -> WikidataEntity | None: ...

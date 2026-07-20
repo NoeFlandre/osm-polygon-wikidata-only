@@ -66,6 +66,7 @@ def run_sync(
     close_uploads: Callable[[], list[str]] | None = None,
     on_complete: Callable[[RegionSyncState, Any], None] | None = None,
     load_existing_augmentation: Callable[[RegionSyncState], Any] | None = None,
+    recover_region: Callable[[RegionSyncState], Any] | None = None,
 ) -> int:
     """Execute the unified sync plan as a pure state executor.
 
@@ -102,20 +103,31 @@ def run_sync(
       augmentation result for a PUBLISH-only repair without
       invoking extraction or Wikimedia. Required only when the
       plan contains PUBLISH states.
+    * ``recover_region(state)``: perform exhaustive Wikidata
+      integrity recovery for the given finalized region without
+      invoking PBF extraction or Wikimedia sidecar work. Required
+      only when the plan contains RECOVERY states. On success the
+      collaboration publishes the region's atomic upload before
+      continuing.
 
     Execution sequence:
 
-    1. Start prefetching the first PROCESS PBF (background thread).
-    2. Drain AUGMENT (backlog) states in alphabetical order.
-    3. Drain PUBLISH-only reconciliation repairs in alphabetical
+    1. Drain RECOVERY states in alphabetical order. Each state
+       performs exhaustive QID-level audit + transactional repair
+       without PBF extraction. It may call Wikidata and Wikipedia
+       only for affected QIDs, then enqueues an atomic publication
+       containing the repaired core and sidecar artifacts.
+    2. Start prefetching the first PROCESS PBF (background thread).
+    3. Drain AUGMENT (backlog) states in alphabetical order.
+    4. Drain PUBLISH-only reconciliation repairs in alphabetical
        order. Each repair uses ``load_existing_augmentation`` (no
        extraction, no Wikidata, no Wikipedia, no Wikivoyage
        call). Publication is enqueued before PROCESSING for the
        next region begins.
-    4. For each PROCESS state in alphabetical order: await
+    5. For each PROCESS state in alphabetical order: await
        extraction, immediately prefetch the next PBF, enrich/
        persist the current region, augment it.
-    5. After each successful augmentation, if both
+    6. After each successful augmentation, if both
        ``build_upload_files`` and ``submit_upload`` are provided,
        assemble and submit one atomic publication.
     """
@@ -127,17 +139,45 @@ def run_sync(
     process_states = [state for state in states if state.action is SyncAction.PROCESS]
     augment_states = [state for state in states if state.action is SyncAction.AUGMENT]
     publish_states = [state for state in states if state.action is SyncAction.PUBLISH]
+    recovery_states = [state for state in states if state.action is SyncAction.RECOVERY]
 
     extraction_executor = ThreadPoolExecutor(max_workers=1)
     core_results: dict[str, Any] = {}
     failures: list[str] = []
     try:
-        # Step 1: start prefetching the first PROCESS PBF.
+        # Recovery must finish before extraction begins: recovery may
+        # replace finalized core tables that publication snapshots consume.
         extraction_future: Future[Any] | None = None
+
+        # Step 1: drain RECOVERY states. These perform exhaustive
+        # QID-level audit + transactional repair without invoking
+        # PBF extraction. On success
+        # the recovery collaborator publishes an atomic upload for
+        # the region before normal AUGMENT / PUBLISH / PROCESS work
+        # begins.
+        for state in recovery_states:
+            if recover_region is None:
+                raise RuntimeError(
+                    "run_sync requires recover_region collaborator for RECOVERY states"
+                )
+            recovery_result = recover_region(state)
+            if on_complete is not None:
+                on_complete(state, recovery_result)
+            _maybe_submit(
+                state=state,
+                augmentation=recovery_result,
+                core=core_results.get(state.stem),
+                submit_upload=submit_upload,
+                build_upload_files=build_upload_files,
+                commit_message=commit_message,
+            )
+
+        # Step 2: once recovery has converged, restore the established
+        # one-PBF-ahead overlap with AUGMENT/PUBLISH work.
         if process_states:
             extraction_future = extraction_executor.submit(extract_pbf, process_states[0].pbf_path)
 
-        # Step 2: drain AUGMENT (backlog) states. Any exception
+        # Step 3: drain AUGMENT (backlog) states. Any exception
         # propagates after the executor is shut down in finally.
         for state in augment_states:
             augmentation = augment_region(state)

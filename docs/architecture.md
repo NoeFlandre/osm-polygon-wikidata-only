@@ -237,30 +237,42 @@ deletions as one Hugging Face commit. The durable
 `manifests/containment_retirements.json` prevents retired raw PBFs from
 re-entering later `sync-dir` plans.
 
-The unified sync (`sync-dir`) runs every region through one of four
+The unified sync (`sync-dir`) runs every region through one of five
 mutually exclusive action buckets. Within each bucket, stems are
 processed alphabetically; the planner produces a deterministic plan
 that the runner drains in this exact order:
 
-1. **AUGMENT backlog** -- the existing augmentation backlog. Regions
+1. **RECOVERY** -- finalized, current regions whose exhaustive QID-level
+   integrity audit finds polygons missing their expected Wikipedia
+   relationships. The audit uses column-pruned reads of polygons, links, and
+   canonical Wikipedia documents, validates only missing relationships against
+   authoritative Wikidata state, and reuses content-addressed receipts for
+   unchanged healthy inputs. Affected QIDs are refetched; repaired core,
+   documents, sections, facts, and both manifests are replaced as one durable
+   journaled transaction before an atomic regional publication. Transport or
+   validation failures write neither a terminal receipt nor partial outputs;
+   blocked finalized shards abort the command before extraction begins.
+2. **AUGMENT backlog** -- the existing augmentation backlog. Regions
    whose core is finalized but whose augmentation is stale or
    missing are repaired first; each AUGMENT call performs
    Wikimedia sidecar work and, on success, enqueues an atomic
    remote publication for that region.
-2. **PUBLISH** -- safe, Wikimedia-free publish-only reconciliation
+   A newly completed augmentation is audited in the same invocation, so a
+   previously incomplete region cannot be left behind by the recovery phase.
+3. **PUBLISH** -- safe, Wikimedia-free publish-only reconciliation
    repairs. Regions whose local core and augmentation artifacts
    are already finalized but missing from the remote are uploaded
    using `load_existing_augmentation` -- no extraction, no
    Wikidata lookup, no Wikipedia parse, no Wikivoyage fetch. The
    repair only enqueues a Hugging Face upload.
-3. **PROCESS** -- new core processing. Regions whose local core
+4. **PROCESS** -- new core processing. Regions whose local core
    artifacts are missing run PBF extraction, enrichment, and
    augmentation. The first PROCESS extraction is prefetched in
    a background thread so PUBLISH-only repairs above can overlap,
    and the runner may prefetch subsequent PBF extractions
    concurrently while enriching the current region (the
    one-PBF-ahead invariant).
-4. **COMPLETE** -- no action required; convergence.
+5. **COMPLETE** -- no action required; convergence.
 
 Maps / README "refreshed" claims in the final log line are
 authoritative only when a successful core or metadata-only

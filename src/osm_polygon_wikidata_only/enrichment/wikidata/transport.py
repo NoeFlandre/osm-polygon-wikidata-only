@@ -4,8 +4,9 @@ Responsibility:
     Build the ``wbgetentities`` Action API URL, perform the
     read+gzip+JSON+throttle call against the shared
     :func:`read_wikimedia_json` helper, batch multiple QIDs into one
-    request, and surface failures as ``None`` (mapped to ``WikidataError``
-    when callers raise).
+    request, and fail closed on transport or protocol errors. ``None``
+    is returned only for an entity explicitly marked ``missing`` by a
+    structurally valid Wikidata response.
 
 Logger-name preservation:
     The warning emitted on a failed batch request is logged under the
@@ -27,7 +28,7 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
@@ -108,19 +109,29 @@ class HttpWikidataClient(WikidataClient):
         if not valid:
             return [None for _ in requested]
         url = self._build_url("|".join(valid))
-        try:
-            data = with_retries(
-                lambda: self._http_get(url),
-                attempts=self._settings.request_max_retries,
-                base_delay=self._settings.request_base_delay_s,
-                retry_on=(urllib.error.URLError, TimeoutError, OSError),
-                should_retry=is_transient_network_error,
-                on_retry=transient_retry_log_callback("Wikidata", logger=LOGGER),
+        data = with_retries(
+            lambda: self._http_get(url),
+            attempts=self._settings.request_max_retries,
+            base_delay=self._settings.request_base_delay_s,
+            retry_on=(urllib.error.URLError, TimeoutError, OSError),
+            should_retry=is_transient_network_error,
+            on_retry=transient_retry_log_callback("Wikidata", logger=LOGGER),
+        )
+        entities = data.get("entities")
+        if not isinstance(entities, Mapping):
+            raise WikidataError("Wikidata response field 'entities' must be an object")
+        parsed: dict[str, WikidataEntity | None] = {}
+        for qid in valid:
+            if qid not in entities:
+                raise WikidataError(f"Wikidata response omitted requested entity {qid}")
+            raw = entities[qid]
+            if not isinstance(raw, Mapping):
+                raise WikidataError(f"Wikidata response entity {qid} must be an object")
+            parsed[qid] = (
+                None
+                if "missing" in raw
+                else parse_wikidata_entity(qid, {"entities": {qid: dict(raw)}})
             )
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            LOGGER.warning("Wikidata batch request failed for %d QIDs: %s", len(valid), e)
-            return [None for _ in requested]
-        parsed = {qid: parse_wikidata_entity(qid, data) for qid in valid}
         return [parsed.get(qid) for qid in requested]
 
     def _build_url(self, qid: str) -> str:

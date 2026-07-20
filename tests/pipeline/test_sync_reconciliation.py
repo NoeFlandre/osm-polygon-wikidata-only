@@ -39,14 +39,22 @@ def _setup_mock_region(
     data_root.processed_manifests.mkdir(parents=True, exist_ok=True)
 
     poly_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "lat": 1.0, "lon": 2.0}], schema=polygon_schema()
+        [{"polygon_id": "1", "wikidata": "Q1", "lat": 1.0, "lon": 2.0}],
+        schema=polygon_schema(),
     )
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     pq.write_table(poly_table, polygons_path)  # type: ignore[no-untyped-call]
 
     if not invalid_core:
         links_table = pa.Table.from_pylist(
-            [{"polygon_id": "1", "article_id": "Q1:es:1234:5678"}], schema=polygon_article_schema()
+            [
+                {
+                    "polygon_id": "1",
+                    "article_id": "Q1:es:1234:5678",
+                    "wikidata": "Q1",
+                }
+            ],
+            schema=polygon_article_schema(),
         )
         pq.write_table(links_table, data_root.processed_links / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 
@@ -138,6 +146,23 @@ def _setup_mock_region(
             existing.update(aug_manifest)
             aug_manifest = existing
         aug_manifest_path.write_text(json.dumps(aug_manifest, indent=2))
+
+
+def test_recovered_region_publication_loads_repaired_core(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    _setup_mock_region(data_root, "recovered-latest", augmented=True)
+
+    core = run_sync._load_existing_core_for_publication(
+        data_root,
+        "recovered-latest",
+        None,
+        required=True,
+    )
+
+    assert core is not None
+    assert core.polygons_path == data_root.processed_polygons / "recovered-latest.parquet"
+    assert core.polygon_articles_path == (data_root.processed_links / "recovered-latest.parquet")
 
 
 @pytest.fixture
@@ -1055,7 +1080,14 @@ def test_existing_paired_legacy_retirement_remains_intact(
 
     # Write links table with matching article_id so assert_references_resolve passes
     links_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "article_id": "Q1:es:1234:5678"}], schema=polygon_article_schema()
+        [
+            {
+                "polygon_id": "1",
+                "article_id": "Q1:es:1234:5678",
+                "wikidata": "Q1",
+            }
+        ],
+        schema=polygon_article_schema(),
     )
     pq.write_table(links_table, data_root.processed_links / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 

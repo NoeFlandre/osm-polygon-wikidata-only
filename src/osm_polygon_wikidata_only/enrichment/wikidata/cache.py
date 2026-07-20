@@ -30,9 +30,11 @@ from .transport import HttpWikidataClient
 class CachedWikidataClient(WikidataClient):
     """Wrap another client and serve responses from a local cache.
 
-    Successful results are stored with the configured TTL; failed
-    results are cached with a shorter ``failed_ttl_s`` so reruns do
-    not hammer the API.
+    Successful results are stored with the configured TTL. Only an
+    authoritative Wikidata ``missing`` result is stored as
+    ``status="not_found"`` with the shorter ``failed_ttl_s``. Legacy
+    ambiguous error records are cache misses and transport failures are
+    never cached.
     """
 
     def __init__(
@@ -45,6 +47,11 @@ class CachedWikidataClient(WikidataClient):
         self._inner = inner
         self._cache = cache
         self._failed_ttl_s = failed_ttl_s
+        self._last_batch_cache_hits = 0
+
+    @property
+    def last_batch_cache_hits(self) -> int:
+        return self._last_batch_cache_hits
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
         return self.get_entities([qid])[0]
@@ -54,6 +61,7 @@ class CachedWikidataClient(WikidataClient):
         requested = list(qids)
         resolved: dict[str, WikidataEntity | None] = {}
         misses: list[str] = []
+        cache_hits = 0
         for qid in dict.fromkeys(requested):
             if not is_valid_qid(qid):
                 resolved[qid] = None
@@ -64,11 +72,18 @@ class CachedWikidataClient(WikidataClient):
                 misses.append(qid)
             elif hit.status == "ok" and isinstance(hit.parsed_result, dict):
                 resolved[qid] = _entity_from_dict(hit.parsed_result)
-            else:
+                cache_hits += 1
+            elif hit.status == "not_found":
                 resolved[qid] = None
+                cache_hits += 1
+            else:
+                misses.append(qid)
 
+        self._last_batch_cache_hits = cache_hits
         batch_get = getattr(self._inner, "get_entities", None)
-        if callable(batch_get):
+        if not misses:
+            fetched: list[WikidataEntity | None] = []
+        elif callable(batch_get):
             fetched = batch_get(misses)
         else:
             fetched = [self._inner.get_entity(qid) for qid in misses]
@@ -78,9 +93,9 @@ class CachedWikidataClient(WikidataClient):
                 self._cache.set(
                     key,
                     payload=None,
-                    status="error",
+                    status="not_found",
                     ttl_s=self._failed_ttl_s,
-                    response_metadata={"reason": "wikidata_not_found"},
+                    response_metadata={"reason": "wikidata_entity_missing"},
                 )
             else:
                 self._cache.set(
