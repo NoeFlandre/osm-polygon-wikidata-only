@@ -310,7 +310,10 @@ uv run osm-polygon-wikidata-only sync-dir "$OSM_POLYGON_DATA_ROOT/raw" \
 do not run them beside `sync-dir`. A data-root lock prevents duplicate unified
 runs. Each completed region is uploaded atomically with fresh manifests and the
 canonical dataset `README.md`. Internally the unified sync drains actions in
-this order: AUGMENT backlog first (each call performs Wikimedia sidecar work
+this order: RECOVERY first for finalized shards whose exhaustive local
+integrity audit finds polygons missing authoritative Wikidata/Wikipedia
+relationships (only affected QIDs are refetched and repaired transactionally),
+then AUGMENT backlog (each call performs Wikimedia sidecar work
 and may enqueue an atomic remote publication on success), then PUBLISH-only
 reconciliation repairs (Wikimedia-free -- each repair reuses the already-loaded
 local augmentation result and only enqueues a Hugging Face upload, with no
@@ -320,6 +323,14 @@ enriching the current region), then COMPLETE / no-op states. Maps and the
 README are only reported "refreshed" after a successful core or metadata
 publication actually refreshed them and the background upload queue has
 drained.
+
+The recovery audit is resumable and content-addressed. Healthy finalized
+regions are reused without upstream calls while changed inputs are checked
+again; a malformed or unreadable finalized shard fails closed instead of being
+silently skipped. Regions with incomplete sidecars are augmented first and
+audited immediately afterward in the same invocation. A repaired region is
+published atomically with its polygons, polygon-to-article links, canonical
+Wikipedia documents/sections, Wikidata facts, manifests, maps, and dataset card.
 
 Known whole-file Geofabrik containment overlaps are retired losslessly during
 `sync-dir --push`: retained parents receive missing sidecar rows, contained

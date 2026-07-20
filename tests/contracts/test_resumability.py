@@ -108,6 +108,7 @@ def test_orchestrator_skips_processed_pbfs_when_skip_existing(tmp_path: Path) ->
     FIXTURE_PROCESSED = Path(__file__).resolve().parent.parent / "fixtures" / "processed"
     fixture_polygons = FIXTURE_PROCESSED / "polygons" / "monaco-latest.parquet"
     fixture_articles = FIXTURE_PROCESSED / "articles" / "monaco-latest.parquet"
+    fixture_links = FIXTURE_PROCESSED / "polygon_articles" / "monaco-latest.parquet"
 
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -132,8 +133,10 @@ def test_orchestrator_skips_processed_pbfs_when_skip_existing(tmp_path: Path) ->
     # hashes must match for ``augmentation_is_current`` to return True).
     articles = data_root.processed_articles / "monaco-latest.parquet"
     polygons = data_root.processed_polygons / "monaco-latest.parquet"
+    links = data_root.processed_links / "monaco-latest.parquet"
     articles.write_bytes(fixture_articles.read_bytes())
     polygons.write_bytes(fixture_polygons.read_bytes())
+    links.write_bytes(fixture_links.read_bytes())
 
     # The published fixture polygon article has columns the augment
     # manifest's hash lookup only needs file contents, but the

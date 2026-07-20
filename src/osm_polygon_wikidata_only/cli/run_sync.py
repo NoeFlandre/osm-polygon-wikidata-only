@@ -70,8 +70,54 @@ from osm_polygon_wikidata_only.pipeline.sync_planner import (
     SyncAction,
     plan_sync_states,
 )
+from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
+    RecoveryAuditResult,
+    audit_wikidata_integrity,
+    repair_wikidata_region,
+)
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
+
+
+def _recovery_audit_stems(
+    *,
+    input_stems: set[str],
+    core_stems: set[str],
+    current_augmentation: set[str],
+    force: bool,
+) -> list[str]:
+    """Return finalized shards eligible for surgical recovery auditing."""
+    if force:
+        return []
+    return sorted(input_stems & core_stems & current_augmentation)
+
+
+def _ensure_recovery_audit_unblocked(audit: RecoveryAuditResult) -> None:
+    """Abort rather than silently leaving any scoped malformed shard behind."""
+    blocked = [
+        f"{region.stem}: {region.blocked_reason}"
+        for region in audit.regions
+        if region.blocked_reason
+    ]
+    if blocked:
+        raise RuntimeError(
+            "Wikidata integrity audit blocked; no processing was started: " + "; ".join(blocked)
+        )
+
+
+def _load_existing_core_for_publication(
+    data_root: DataRoot,
+    stem: str,
+    core: object | None,
+    *,
+    required: bool,
+) -> object | None:
+    """Load finalized core artifacts when a repair changed or must republish them."""
+    if core is not None or not required:
+        return core
+    from osm_polygon_wikidata_only.hf.publication import load_existing_core_artifacts
+
+    return load_existing_core_artifacts(data_root, stem)
 
 
 def _run_pre_publication_migration(
@@ -288,15 +334,41 @@ def execute(
     else:
         local_current = _validate_local_augmentation_state(data_root, sorted(core_stems))
         current_augmentation = {stem for stem, current in local_current.items() if current}
+
+    recovery_audit = audit_wikidata_integrity(
+        data_root,
+        _recovery_audit_stems(
+            input_stems=input_stems,
+            core_stems=core_stems,
+            current_augmentation=current_augmentation,
+            force=settings.force or not settings.skip_existing,
+        ),
+        runtime.wikidata,
+        batch_size=settings.enrichment_batch_size,
+        languages=settings.languages,
+        max_articles_per_qid=settings.max_articles_per_qid,
+        log=LOGGER.info,
+    )
+    _ensure_recovery_audit_unblocked(recovery_audit)
+    recovery_regions = {region.stem: region for region in recovery_audit.regions}
+    recovery_stems = {
+        result.stem
+        for result in recovery_audit.regions
+        if result.affected_qids and not result.blocked_reason
+    }
     states = plan_sync_states(
         pbfs,
         core_stems=core_stems,
         augmentation_stems=current_augmentation,
         force=settings.force or not settings.skip_existing,
         pending_stems=all_pending_stems,
+        recovery_stems=recovery_stems,
     )
+    recovered_stems: set[str] = set()
 
     if push_enabled and reconciliation_plan is not None:
+        if recovery_stems:
+            core_will_be_repaired = True
         for state in states:
             if state.action == SyncAction.PROCESS:
                 core_will_be_repaired = True
@@ -342,7 +414,8 @@ def execute(
 
     counts = {action: sum(state.action is action for state in states) for action in SyncAction}
     LOGGER.info(
-        "Unified sync plan: %d augmentation backlog, %d publish, %d core missing, %d complete",
+        "Unified sync plan: %d recovery, %d augmentation backlog, %d publish, %d core missing, %d complete",
+        counts[SyncAction.RECOVERY],
         counts[SyncAction.AUGMENT],
         counts[SyncAction.PUBLISH],
         counts[SyncAction.PROCESS],
@@ -398,6 +471,28 @@ def execute(
                 augmentation_client,
                 progress=progress,
             )
+            audit = audit_wikidata_integrity(
+                data_root,
+                [state.stem],
+                runtime.wikidata,
+                batch_size=settings.enrichment_batch_size,
+                languages=settings.languages,
+                max_articles_per_qid=settings.max_articles_per_qid,
+                log=LOGGER.info,
+            )
+            _ensure_recovery_audit_unblocked(audit)
+            region = audit.region(state.stem)
+            if region.affected_qids:
+                repair_wikidata_region(
+                    data_root,
+                    region,
+                    wikidata_client=runtime.wikidata,
+                    wikipedia_client=runtime.wikipedia,
+                    augmentation_client=augmentation_client,
+                    settings=settings,
+                )
+                recovered_stems.add(state.stem)
+                augmentation_result = load_existing_augmentation_result(data_root, state.stem)
         LOGGER.info(
             "Unified sync completed %s: %s",
             state.stem,
@@ -406,6 +501,21 @@ def execute(
         return augmentation_result
 
     def _load_existing(state: RegionSyncState) -> Any:
+        return load_existing_augmentation_result(data_root, state.stem)
+
+    def _recover(state: RegionSyncState) -> Any:
+        plan = recovery_regions.get(state.stem)
+        if plan is None or not plan.affected_qids or plan.blocked_reason:
+            return load_existing_augmentation_result(data_root, state.stem)
+        repair_wikidata_region(
+            data_root,
+            plan,
+            wikidata_client=runtime.wikidata,
+            wikipedia_client=runtime.wikipedia,
+            augmentation_client=augmentation_client,
+            settings=settings,
+        )
+        recovered_stems.add(state.stem)
         return load_existing_augmentation_result(data_root, state.stem)
 
     def _prepare_publication(state: RegionSyncState, result: Any) -> None:
@@ -439,26 +549,32 @@ def execute(
         from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
 
         stem = getattr(state, "stem", "")
-        if (
-            core is None
-            and push_enabled
+        needs_existing_core = stem in recovered_stems or (
+            push_enabled
             and reconciliation_plan is not None
             and (
                 (stem, "polygons") in reconciliation_plan.missing
                 or (stem, "polygon_articles") in reconciliation_plan.missing
             )
-        ):
+        )
+        if core is None and needs_existing_core:
             LOGGER.info(
                 "Repairing remote region %s from finalized local artifacts (no Wikimedia requests)",
                 stem,
             )
-            from osm_polygon_wikidata_only.hf.publication import load_existing_core_artifacts
-
             try:
-                core = load_existing_core_artifacts(data_root, stem)
+                core = _load_existing_core_for_publication(
+                    data_root,
+                    stem,
+                    core,
+                    required=True,
+                )
             except Exception as e:
                 LOGGER.error("Failed to load local core artifacts for %s: %s", stem, e)
                 raise
+
+        if stem in recovered_stems and core is None:
+            raise RuntimeError(f"Recovered region {stem!r} has no core publication artifacts")
 
         return assemble_region_upload(
             data_root=data_root,
@@ -502,6 +618,7 @@ def execute(
             submit_upload=submit_callback,
             close_uploads=None,
             load_existing_augmentation=_load_existing,
+            recover_region=_recover,
             on_complete=_prepare_publication,
         )
         if (
@@ -537,6 +654,7 @@ def execute(
 
     if success and rc == 0 and not failures:
         if push_enabled:
+            core_repaired = core_repaired or bool(recovered_stems)
             _log_remote_reconciliation_summary(
                 stems_with_gaps=stems_with_gaps,
                 core_repaired=core_repaired,

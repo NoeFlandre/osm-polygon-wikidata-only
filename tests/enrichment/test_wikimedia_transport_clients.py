@@ -419,18 +419,28 @@ def test_wikipedia_unbounded_retry_rejects_permanent_http_error() -> None:
     assert len(session.reads) == 1
 
 
-def test_wikidata_does_not_emit_augmentation_warning(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Wikidata client must only notify the scheduler, no warning logs."""
+def test_wikidata_propagates_throttle_failure(caplog: pytest.LogCaptureFixture) -> None:
+    """Wikidata transport failures must propagate (no swallowing to None).
+
+    The transport must NOT log an augmentation-style WARNING and must
+    NOT convert the HTTPError into a ``None`` result. Only an
+    authoritative Wikidata ``missing`` entity may yield ``None``;
+    throttle or protocol failures raise so that the cache layer can
+    distinguish a transport outage from an authoritative absence.
+    """
 
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         HttpWikidataClient,
     )
 
-    settings = _make_settings()
+    settings = _make_settings(request_max_retries=1, request_base_delay_s=0.0)
     scheduler = _RecordingScheduler()
-    session = _StubSession(responses=[_http_error(503, retry_after="3")])
+    session = _StubSession(
+        responses=[
+            _http_error(503, retry_after="3"),
+            _http_error(503, retry_after="3"),
+        ],
+    )
 
     client = HttpWikidataClient.__new__(HttpWikidataClient)
     client._settings = settings
@@ -442,9 +452,9 @@ def test_wikidata_does_not_emit_augmentation_warning(
         logging.WARNING,
         logger="osm_polygon_wikidata_only.enrichment.wikidata_client",
     ):
-        result = client.get_entity("Q1")
+        with pytest.raises(urllib.error.HTTPError, match="HTTP Error 503"):
+            client.get_entity("Q1")
 
-    assert result is None
     augmentation_records = [
         record for record in caplog.records if "Wikimedia throttled" in record.getMessage()
     ]
@@ -465,7 +475,8 @@ def test_wikidata_unbounded_retry_rejects_permanent_http_error() -> None:
     client._session = session
     client._endpoint = "https://www.wikidata.org/w/api.php"
 
-    assert client.get_entity("Q1") is None
+    with pytest.raises(urllib.error.HTTPError, match="HTTP Error 404"):
+        client.get_entity("Q1")
     assert len(session.reads) == 1
 
 

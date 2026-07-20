@@ -15,16 +15,17 @@ These tests pin the exact behavior of the extracted
   from ``pipeline.sync_runner`` unchanged.
 * The runner restores the documented execution sequence:
 
-    1. Start prefetching the first PROCESS PBF (background thread).
-    2. Drain every AUGMENT (backlog) state in alphabetical order.
-    3. Drain every PUBLISH (publish-only reconciliation) state in
+    1. Drain every RECOVERY state before extraction begins.
+    2. Start prefetching the first PROCESS PBF (background thread).
+    3. Drain every AUGMENT (backlog) state in alphabetical order.
+    4. Drain every PUBLISH (publish-only reconciliation) state in
        alphabetical order. Each repair uses ``load_existing_augmentation``
        so no extraction, Wikidata, Wikipedia, Wikivoyage, or
        augmentation call runs.
-    4. For each PROCESS state, await its extraction, immediately
+    5. For each PROCESS state, await its extraction, immediately
        prefetch the next PBF, enrich/persist the current region,
        then augment it, then continue.
-    5. After each successful augmentation, if BOTH
+    6. After each successful augmentation, if BOTH
        ``build_upload_files`` AND ``submit_upload`` are provided,
        build the upload file list and submit one atomic commit.
 
@@ -47,6 +48,7 @@ import importlib
 import inspect
 import logging
 import threading
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,30 @@ import pytest
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod
+from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
+    RecoveryAuditResult,
+    RegionAuditResult,
+)
+
+
+def _empty_recovery_audit(*args: object, **kwargs: object) -> RecoveryAuditResult:
+    del kwargs
+    stems = args[1] if len(args) > 1 else ()
+    assert isinstance(stems, Iterable)
+    regions = tuple(
+        RegionAuditResult(
+            stem=str(stem),
+            fingerprints=(),
+            classifications=(),
+            polygon_ids_by_qid=(),
+            affected_polygon_ids_by_qid=(),
+            affected_qids=(),
+            affected_polygon_count=0,
+        )
+        for stem in stems
+    )
+    return RecoveryAuditResult(regions, (), 0, 0)
+
 
 # ---------------------------------------------------------------------------
 # Helpers: synthetic states and tiny collaborators
@@ -614,6 +640,11 @@ def test_cli_shell_forwards_runtime_cache_to_process_extracted_pbf(
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
 
     root = _data_root(tmp_path)
+    monkeypatch.setattr(
+        cli_run_sync_mod,
+        "audit_wikidata_integrity",
+        _empty_recovery_audit,
+    )
     (tmp_path / "real.osm.pbf").write_bytes(b"")
 
     class _StubReader:
@@ -701,6 +732,11 @@ def test_cli_shell_forwards_none_runtime_cache_when_disabled(
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
 
     root = _data_root(tmp_path)
+    monkeypatch.setattr(
+        cli_run_sync_mod,
+        "audit_wikidata_integrity",
+        _empty_recovery_audit,
+    )
     (tmp_path / "real.osm.pbf").write_bytes(b"")
 
     class _StubReader:
@@ -793,6 +829,11 @@ def test_cli_shell_real_process_state_executes_without_type_error(
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
 
     root = _data_root(tmp_path)
+    monkeypatch.setattr(
+        cli_run_sync_mod,
+        "audit_wikidata_integrity",
+        _empty_recovery_audit,
+    )
     (tmp_path / "real.osm.pbf").write_bytes(b"")
 
     class _StubReader:

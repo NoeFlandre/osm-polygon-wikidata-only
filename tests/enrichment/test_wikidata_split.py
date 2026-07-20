@@ -5,16 +5,13 @@ These tests pin behaviour that the split of
 cache,models,parsing}`` must preserve. They lock down:
 
 * identity preservation for the documented facade surface;
-* round-trip serialization for successful entities and failed
-  responses (cache stores ``None`` payload + ``error`` status +
-  ``wikidata_not_found`` response_metadata);
-* cache-hit short-circuit (no inner fetch for already-resolved QIDs);
-* TTL selection (``failed_ttl_s`` for failures, default for success);
+* round-trip serialization for successful entities and authoritative
+  missing responses (cache stores ``None`` payload + ``not_found`` status);
+* cache-hit short-circuit for valid positive and authoritative negative entries;
+* TTL selection (``failed_ttl_s`` for authoritative absence, default for success);
 * cache-key normalization (``wikidata/{qid}.json``);
-* corrupt / malformed cached payload behaviour (non-dict parsed_result
-  is treated as a miss);
-* legacy logger name emission for the warning that fires on a failed
-  batch request;
+* corrupt, malformed, and legacy ambiguous cached payloads are treated as misses;
+* transport failures propagate without cache writes;
 * :class:`HttpWikidataClient` constructor signature + defaults;
 * :class:`CachedWikidataClient` constructor signature + defaults;
 * batch ordering: ``get_entities`` must preserve caller order and
@@ -24,7 +21,6 @@ cache,models,parsing}`` must preserve. They lock down:
 
 from __future__ import annotations
 
-import logging
 import urllib.error
 from email.message import Message
 from typing import Any
@@ -238,11 +234,11 @@ def test_cached_wikidata_serializes_entity_for_success() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cache round-trip: failed entity (wikidata_not_found) serialization
+# Cache round-trip: authoritative missing entity serialization
 # ---------------------------------------------------------------------------
 
 
-def test_cached_wikidata_serializes_failure_with_failed_ttl() -> None:
+def test_cached_wikidata_serializes_authoritative_missing_with_failed_ttl() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         CachedWikidataClient,
         InMemoryWikidataClient,
@@ -267,9 +263,9 @@ def test_cached_wikidata_serializes_failure_with_failed_ttl() -> None:
     key, payload, kwargs = stored[0]
     assert key == "wikidata/Q1.json"
     assert payload is None
-    assert kwargs["status"] == "error"
+    assert kwargs["status"] == "not_found"
     assert kwargs["ttl_s"] == 99
-    assert kwargs["response_metadata"] == {"reason": "wikidata_not_found"}
+    assert kwargs["response_metadata"] == {"reason": "wikidata_entity_missing"}
 
 
 # ---------------------------------------------------------------------------
@@ -332,23 +328,18 @@ def test_cached_wikidata_hit_skips_inner_fetch() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cached_wikidata_corrupt_payload_is_treated_as_resolved_none() -> None:
-    """A cache entry with ``status='ok'`` but a non-dict ``parsed_result``
-    is treated as a known ``None`` resolution (no inner fetch). This
-    is the legacy behaviour the refactor must preserve: the implementation
-    does NOT fall back to the inner client in this case, only when the
-    cache miss path (``hit is None``) is taken.
-    """
+def test_cached_wikidata_corrupt_payload_is_treated_as_a_miss() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         CachedWikidataClient,
+        WikidataEntity,
     )
 
     inner_calls: list[str] = []
 
     class _Inner:
-        def get_entity(self, qid):
+        def get_entity(self, qid: str) -> WikidataEntity:
             inner_calls.append(qid)
-            raise AssertionError("inner must not be called")
+            return WikidataEntity(qid=qid)
 
     cache = type(
         "C",
@@ -361,24 +352,22 @@ def test_cached_wikidata_corrupt_payload_is_treated_as_resolved_none() -> None:
 
     client = CachedWikidataClient(_Inner(), cache)  # type: ignore[arg-type]
     result = client.get_entity("Q1")
-    assert result is None
-    assert inner_calls == []
+    assert result == WikidataEntity(qid="Q1")
+    assert inner_calls == ["Q1"]
 
 
-def test_cached_wikidata_missing_cache_hit_does_not_call_inner() -> None:
-    """A cache hit with ``status='error'`` means ``wikidata_not_found`` was
-    cached; the inner client must not be called again on a re-run.
-    """
+def test_cached_wikidata_legacy_error_hit_is_treated_as_a_miss() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         CachedWikidataClient,
+        WikidataEntity,
     )
 
     inner_calls: list[str] = []
 
     class _Inner:
-        def get_entity(self, qid):
+        def get_entity(self, qid: str) -> WikidataEntity:
             inner_calls.append(qid)
-            raise AssertionError("inner must not be called")
+            return WikidataEntity(qid=qid)
 
     cache = type(
         "C",
@@ -391,8 +380,8 @@ def test_cached_wikidata_missing_cache_hit_does_not_call_inner() -> None:
 
     client = CachedWikidataClient(_Inner(), cache)  # type: ignore[arg-type]
     result = client.get_entity("Q1")
-    assert result is None
-    assert inner_calls == []
+    assert result == WikidataEntity(qid="Q1")
+    assert inner_calls == ["Q1"]
 
 
 # ---------------------------------------------------------------------------
@@ -455,18 +444,7 @@ def test_cached_wikidata_invalid_qid_returns_none_without_fetch() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_http_wikidata_warning_on_batch_failure(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A failed batch request must emit a WARNING under the legacy
-    ``wikidata_client`` logger with the existing message shape.
-
-    The logger name must match the pre-split module path exactly so
-    that downstream consumers filtering on
-    ``osm_polygon_wikidata_only.enrichment.wikidata_client`` keep
-    working after the implementation moved to
-    ``enrichment.wikidata.transport``.
-    """
+def test_http_wikidata_batch_failure_propagates() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         HttpWikidataClient,
     )
@@ -478,24 +456,13 @@ def test_http_wikidata_warning_on_batch_failure(
     client._session = session
     client._endpoint = "https://www.wikidata.org/w/api.php"
 
-    with caplog.at_level(
-        logging.WARNING,
-        logger="osm_polygon_wikidata_only.enrichment.wikidata_client",
-    ):
-        result = client.get_entities(["Q1"])
+    with pytest.raises(urllib.error.HTTPError, match="HTTP Error 503"):
+        client.get_entities(["Q1"])
 
-    assert result == [None]
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].name == "osm_polygon_wikidata_only.enrichment.wikidata_client"
-    assert "Wikidata batch request failed for 1 QIDs" in warnings[0].getMessage()
     assert scheduler.throttle_calls == [("www.wikidata.org", 3.0)]
 
 
-def test_http_wikidata_503_returns_none_via_cache(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A 503 surfaces as ``None`` (the failure is cached for ``failed_ttl_s``)."""
+def test_http_wikidata_503_via_cache_propagates_without_cache_write() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         CachedWikidataClient,
         HttpWikidataClient,
@@ -519,19 +486,10 @@ def test_http_wikidata_503_returns_none_via_cache(
 
     cached = CachedWikidataClient(client, _MissCache(), failed_ttl_s=11)
 
-    with caplog.at_level(
-        logging.WARNING,
-        logger="osm_polygon_wikidata_only.enrichment.wikidata_client",
-    ):
-        result = cached.get_entity("Q1")
+    with pytest.raises(urllib.error.HTTPError, match="HTTP Error 503"):
+        cached.get_entity("Q1")
 
-    assert result is None
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].name == "osm_polygon_wikidata_only.enrichment.wikidata_client"
-    assert len(stored) == 1
-    assert stored[0][2]["ttl_s"] == 11
-    assert stored[0][2]["status"] == "error"
+    assert stored == []
 
 
 # ---------------------------------------------------------------------------

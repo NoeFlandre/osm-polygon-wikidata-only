@@ -48,12 +48,14 @@ def _setup_mock_region(data_root: DataRoot, stem: str, *, augmented: bool = True
     data_root.processed_manifests.mkdir(parents=True, exist_ok=True)
 
     poly_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "lat": 1.0, "lon": 2.0}], schema=polygon_schema()
+        [{"polygon_id": "1", "wikidata": "Q1", "lat": 1.0, "lon": 2.0}],
+        schema=polygon_schema(),
     )
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     pq.write_table(poly_table, polygons_path)  # type: ignore[no-untyped-call]
     links_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "article_id": "a1"}], schema=polygon_article_schema()
+        [{"polygon_id": "1", "article_id": "a1", "wikidata": "Q1"}],
+        schema=polygon_article_schema(),
     )
     pq.write_table(links_table, data_root.processed_links / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 
