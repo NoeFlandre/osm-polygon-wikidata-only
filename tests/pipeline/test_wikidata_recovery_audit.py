@@ -345,15 +345,12 @@ def test_receipt_reuse_requires_matching_hashes_and_contract(tmp_path: Path) -> 
     assert contract_changed.batch_calls == [["Q1", "Q2"]]
 
 
-def test_audit_does_not_read_or_hash_sections_and_facts(
+def test_audit_reads_only_join_tables_and_facts_not_large_sections(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     data_root = _data_root(tmp_path)
     _write_region(data_root, "bounded", ["Q1"], linked_qids={"Q1"})
-    forbidden = {
-        data_root.processed / "wikipedia" / "sections" / "bounded.parquet",
-        data_root.processed / "wikidata" / "facts" / "bounded.parquet",
-    }
+    forbidden = {data_root.processed / "wikipedia" / "sections" / "bounded.parquet"}
     original_read_table = pq.read_table
     original_sha256 = audit_mod.sha256_file
 

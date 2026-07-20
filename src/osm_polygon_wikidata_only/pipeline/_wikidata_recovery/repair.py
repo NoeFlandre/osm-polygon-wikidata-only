@@ -95,7 +95,7 @@ def repair_wikidata_region(
     """Repair only the affected QID relationships in one finalized shard."""
     if region.blocked_reason:
         raise RecoveryRepairError(region.blocked_reason)
-    if not region.affected_qids:
+    if not region.requires_repair:
         return RecoveryRepairResult(region.stem, False, (), 0, ())
 
     transaction_root = data_root.cache / "wikidata_recovery" / "transactions"
@@ -107,7 +107,11 @@ def repair_wikidata_region(
     documents = _read_table(paths["documents"], wikipedia_document_schema())
     sections = _read_table(paths["sections"], section_schema())
     facts = _read_table(paths["facts"], fact_schema())
-    _validate_existing_rows(polygons, links, documents, sections, facts)
+    orphan_fact_ids = set(region.orphan_fact_ids)
+    retained_facts = [row for row in facts if str(row["fact_id"]) not in orphan_fact_ids]
+    if len(facts) - len(retained_facts) != len(orphan_fact_ids):
+        raise RecoveryRepairError("Recovery plan contains stale or duplicate orphan fact IDs")
+    _validate_existing_rows(polygons, links, documents, sections, retained_facts)
 
     affected_qids = tuple(sorted(region.affected_qids))
     entities = _resolve_entities(wikidata_client, affected_qids)
@@ -155,19 +159,26 @@ def repair_wikidata_region(
         primary_key="section_id",
         label="section_id",
     )
-    raw_entities = augmentation_client.entities(list(affected_qids), props="sitelinks|claims")
-    missing_raw = sorted(set(affected_qids) - set(raw_entities))
-    if missing_raw:
-        raise RecoveryRepairError(f"Augmentation Wikidata response omitted QIDs: {missing_raw}")
-    new_facts = [
-        fact.to_dict()
-        for fact in build_wikidata_facts(
-            augmentation_client,
-            entities={qid: raw_entities[qid] for qid in affected_qids},
-            progress=AugmentationProgress(),
-        )
-    ]
-    merged_facts, _ = _merge_rows(facts, new_facts, primary_key="fact_id", label="fact_id")
+    new_facts: list[dict[str, Any]] = []
+    if affected_qids:
+        raw_entities = augmentation_client.entities(list(affected_qids), props="sitelinks|claims")
+        missing_raw = sorted(set(affected_qids) - set(raw_entities))
+        if missing_raw:
+            raise RecoveryRepairError(f"Augmentation Wikidata response omitted QIDs: {missing_raw}")
+        new_facts = [
+            fact.to_dict()
+            for fact in build_wikidata_facts(
+                augmentation_client,
+                entities={qid: raw_entities[qid] for qid in affected_qids},
+                progress=AugmentationProgress(),
+            )
+        ]
+    merged_facts, _ = _merge_rows(
+        retained_facts,
+        new_facts,
+        primary_key="fact_id",
+        label="fact_id",
+    )
 
     merged_documents.sort(key=lambda row: str(row["document_id"]))
     merged_sections.sort(key=lambda row: (str(row["document_id"]), int(row["section_index"])))
@@ -186,7 +197,7 @@ def repair_wikidata_region(
         merged_documents,
         sections,
         merged_sections,
-        facts,
+        retained_facts,
         merged_facts,
         affected_qids=set(affected_qids),
     )

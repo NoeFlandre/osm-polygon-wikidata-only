@@ -10,6 +10,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.schema import fact_schema
 from osm_polygon_wikidata_only.augmentation.steps import sha256_file
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -34,7 +35,7 @@ from .models import (
 )
 
 LOGGER = logging.getLogger(__name__)
-RECOVERY_CONTRACT_VERSION = "wikidata-enrichment-integrity-v1"
+RECOVERY_CONTRACT_VERSION = "wikidata-enrichment-integrity-v2"
 _INDEX_RELATIVE_PATH = Path("wikidata_recovery/index.json")
 
 
@@ -44,6 +45,7 @@ class _RegionScan:
     fingerprints: tuple[tuple[str, str], ...]
     polygon_ids_by_qid: tuple[tuple[str, tuple[str, ...]], ...]
     missing_polygon_ids_by_qid: tuple[tuple[str, tuple[str, ...]], ...]
+    orphan_fact_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
 
 
@@ -82,7 +84,7 @@ def audit_wikidata_integrity(
             else:
                 scans[stem] = _scan_region(data_root, stem, fingerprints)
         except (OSError, ValueError, TypeError, KeyError) as error:
-            scans[stem] = _RegionScan(stem, (), (), (), str(error))
+            scans[stem] = _RegionScan(stem, (), (), (), (), str(error))
         if _progress_checkpoint(region_index, len(scoped_stems), every=25):
             emit(
                 "Wikidata integrity audit local scan "
@@ -141,7 +143,7 @@ def audit_wikidata_integrity(
         scan = scans[stem]
         result = _classify_region(scan, entities, eligible_sitelinks)
         region_results.append(result)
-        if not result.blocked_reason and not result.affected_qids:
+        if not result.blocked_reason and not result.requires_repair:
             receipt = _receipt_from_result(result)
             if receipts.get(stem) != receipt:
                 receipts[stem] = receipt
@@ -151,17 +153,19 @@ def audit_wikidata_integrity(
         _save_receipts(index_path, receipts)
 
     qid_results = _global_qid_results(region_results, eligible_sitelinks)
-    affected_regions = sum(bool(region.affected_qids) for region in region_results)
+    affected_regions = sum(region.requires_repair for region in region_results)
     affected_qids = sum(
         result.state is RecoveryClassification.REPAIR_REQUIRED for result in qid_results
     )
     affected_polygons = sum(region.affected_polygon_count for region in region_results)
+    orphan_facts = sum(len(region.orphan_fact_ids) for region in region_results)
     emit(
         "Wikidata integrity audit complete: "
         f"regions scanned {len(region_results)}/{len(scoped_stems)}; "
         f"QIDs examined {len(qid_results)}; authoritative cache hits {cache_hits}; "
         f"QIDs requiring upstream validation {len(validation_qids)}; "
         f"affected QIDs {affected_qids}; affected polygons {affected_polygons}; "
+        f"orphan facts {orphan_facts}; "
         f"affected regions {affected_regions}; {time.monotonic() - started_at:.0f}s elapsed"
     )
     return RecoveryAuditResult(
@@ -179,6 +183,11 @@ def _region_paths(data_root: DataRoot, stem: str) -> tuple[tuple[str, Path, bool
         (
             "wikipedia_documents",
             data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet",
+            True,
+        ),
+        (
+            "wikidata_facts",
+            data_root.processed / "wikidata" / "facts" / f"{stem}.parquet",
             True,
         ),
     )
@@ -205,6 +214,7 @@ def _scan_region(
     _require_schema(paths["polygons"], polygon_schema())
     _require_schema(paths["polygon_articles"], polygon_article_schema())
     _require_schema(paths["wikipedia_documents"], wikipedia_document_schema())
+    _require_schema(paths["wikidata_facts"], fact_schema())
 
     polygon_rows = _read_rows(paths["polygons"], ["polygon_id", "wikidata"])
     link_rows = _read_rows(
@@ -215,6 +225,7 @@ def _scan_region(
         paths["wikipedia_documents"],
         ["article_id", "document_id", "wikidata"],
     )
+    fact_rows = _read_rows(paths["wikidata_facts"], ["fact_id", "wikidata"])
 
     polygons: dict[str, tuple[str, ...]] = {}
     polygon_ids_by_qid: dict[str, list[str]] = {}
@@ -285,7 +296,24 @@ def _scan_region(
         for qid, polygon_ids in normalized_polygon_ids
         if any((polygon_id, qid) not in linked_polygon_qids for polygon_id in polygon_ids)
     )
-    return _RegionScan(stem, fingerprints, normalized_polygon_ids, missing)
+    valid_polygon_qids = set(polygon_ids_by_qid)
+    orphan_fact_ids: list[str] = []
+    seen_fact_ids: set[str] = set()
+    for row in fact_rows:
+        fact_id = _required_string(row, "fact_id", "wikidata facts")
+        qid = _required_string(row, "wikidata", "wikidata facts")
+        if fact_id in seen_fact_ids:
+            raise _ScanError(f"wikidata facts contains duplicate fact_id {fact_id!r}")
+        seen_fact_ids.add(fact_id)
+        if qid not in valid_polygon_qids:
+            orphan_fact_ids.append(fact_id)
+    return _RegionScan(
+        stem,
+        fingerprints,
+        normalized_polygon_ids,
+        missing,
+        tuple(sorted(orphan_fact_ids)),
+    )
 
 
 def _require_schema(path: Path, expected: pa.Schema) -> None:
@@ -373,6 +401,7 @@ def _classify_region(
             affected_polygon_ids_by_qid=(),
             affected_qids=(),
             affected_polygon_count=0,
+            orphan_fact_ids=scan.orphan_fact_ids,
             blocked_reason=scan.blocked_reason,
         )
     missing = dict(scan.missing_polygon_ids_by_qid)
@@ -399,6 +428,7 @@ def _classify_region(
         affected_polygon_count=len(
             {polygon_id for _, polygon_ids in affected for polygon_id in polygon_ids}
         ),
+        orphan_fact_ids=scan.orphan_fact_ids,
     )
 
 
@@ -491,6 +521,7 @@ def _reuse_receipt(
         affected_polygon_ids_by_qid=(),
         affected_qids=(),
         affected_polygon_count=0,
+        orphan_fact_ids=(),
         reused=True,
     )
 
@@ -526,6 +557,7 @@ def record_region_recovery_receipt(
         affected_polygon_ids_by_qid=(),
         affected_qids=(),
         affected_polygon_count=0,
+        orphan_fact_ids=scan.orphan_fact_ids,
     )
     index_path = data_root.cache / _INDEX_RELATIVE_PATH
     receipts, contract_matches = _load_receipts(index_path)

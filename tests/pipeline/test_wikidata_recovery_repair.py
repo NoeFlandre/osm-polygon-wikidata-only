@@ -356,6 +356,39 @@ def test_repair_preserves_multi_qid_osm_tag_and_links_each_entity(tmp_path: Path
     assert {link["wikidata"] for link in links} == set(qids)
 
 
+def test_repair_removes_only_orphan_fact_rows(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "orphan-fact"
+    _write_region(data_root, stem, ["Q1"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    facts_path = data_root.processed / "wikidata" / "facts" / f"{stem}.parquet"
+    facts = pq.read_table(facts_path).to_pylist()  # type: ignore[no-untyped-call]
+    orphan = dict(facts[0])
+    orphan.update({"fact_id": "orphan-fact", "wikidata": "Q21847764"})
+    pq.write_table(pa.Table.from_pylist([*facts, orphan], schema=fact_schema()), facts_path)
+    plan = audit_wikidata_integrity(
+        data_root,
+        [stem],
+        _RecordingWikidataClient({}),
+    ).region(stem)
+
+    augmentation_client = _AugmentationClient(set())
+    result = repair_wikidata_region(
+        data_root,
+        plan,
+        wikidata_client=_RecordingWikidataClient({}),
+        wikipedia_client=InMemoryWikipediaClient({}),
+        augmentation_client=augmentation_client,
+        settings=_settings(),
+    )
+
+    repaired = pq.read_table(facts_path).to_pylist()  # type: ignore[no-untyped-call]
+    assert plan.orphan_fact_ids == ("orphan-fact",)
+    assert result.changed is True
+    assert repaired == facts
+    assert augmentation_client.entity_calls == []
+
+
 def test_duplicate_document_identity_is_rejected_before_commit(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     stem = "duplicates"
