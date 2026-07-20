@@ -322,6 +322,40 @@ def test_repair_links_every_polygon_sharing_affected_qid(tmp_path: Path) -> None
     assert len({row["article_id"] for row in q2_links}) == 1
 
 
+def test_repair_preserves_multi_qid_osm_tag_and_links_each_entity(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "multiple"
+    raw_tag = "Q8254481;Q6033432"
+    qids = ("Q6033432", "Q8254481")
+    _write_region(data_root, stem, [raw_tag])
+    _finish_region(data_root, stem, healthy_qid=qids[0])
+    entities = {qid: _entity(qid) for qid in qids}
+    plan = audit_wikidata_integrity(
+        data_root,
+        [stem],
+        _RecordingWikidataClient(entities),
+    ).region(stem)
+
+    result = repair_wikidata_region(
+        data_root,
+        plan,
+        wikidata_client=_RecordingWikidataClient(entities),
+        wikipedia_client=InMemoryWikipediaClient(
+            {("enwiki", f"Title {qid}"): FetchResult("ok", _wikipedia_article(qid)) for qid in qids}
+        ),
+        augmentation_client=_AugmentationClient(set(qids)),
+        settings=_settings(),
+    )
+
+    polygon = pq.read_table(data_root.processed_polygons / f"{stem}.parquet").to_pylist()[0]  # type: ignore[no-untyped-call]
+    links = pq.read_table(data_root.processed_links / f"{stem}.parquet").to_pylist()  # type: ignore[no-untyped-call]
+    assert result.changed is True
+    assert result.affected_polygon_count == 1
+    assert polygon["wikidata"] == raw_tag
+    assert polygon["wikipedia_article_count"] == 2
+    assert {link["wikidata"] for link in links} == set(qids)
+
+
 def test_duplicate_document_identity_is_rejected_before_commit(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     stem = "duplicates"

@@ -37,6 +37,21 @@ def is_valid_qid(qid: str) -> bool:
     return bool(_QID_PATTERN.fullmatch(qid))
 
 
+def qids_from_osm_tag(value: str) -> tuple[str, ...]:
+    """Return the distinct QIDs in one OSM ``wikidata=*`` value.
+
+    OSM uses semicolons for the uncommon case where a tag contains
+    multiple values. Preserve their source order while trimming the
+    whitespace permitted around separators. An empty or malformed
+    component makes the complete value invalid rather than silently
+    dropping source data.
+    """
+    components = tuple(component.strip() for component in value.split(";"))
+    if not components or any(not is_valid_qid(component) for component in components):
+        return ()
+    return tuple(dict.fromkeys(components))
+
+
 def parse_wikidata_entity(qid: str, data: dict[str, Any]) -> WikidataEntity | None:
     """Parse one entity from a ``wbgetentities`` response."""
     entities = data.get("entities") or {}
@@ -82,4 +97,4 @@ def _is_language_wiki(site: str) -> bool:
     )
 
 
-__all__ = ["is_valid_qid", "language_from_site", "parse_wikidata_entity"]
+__all__ = ["is_valid_qid", "language_from_site", "parse_wikidata_entity", "qids_from_osm_tag"]

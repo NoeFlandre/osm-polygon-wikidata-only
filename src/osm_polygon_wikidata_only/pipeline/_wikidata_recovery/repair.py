@@ -45,7 +45,10 @@ from osm_polygon_wikidata_only.enrichment.wikidata.models import (
     WikidataClient,
     WikidataEntity,
 )
-from osm_polygon_wikidata_only.enrichment.wikidata.parsing import language_from_site
+from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
+    language_from_site,
+    qids_from_osm_tag,
+)
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.manifest import load_manifest
@@ -391,29 +394,29 @@ def _merge_links(
     for values in documents_by_qid.values():
         values.sort(key=lambda row: str(row["document_id"]))
     for polygon in polygons:
-        qid = str(polygon["wikidata"])
-        if qid not in affected_qids:
-            continue
-        for document in documents_by_qid.get(qid, []):
-            identity = (str(polygon["polygon_id"]), str(document["article_id"]))
-            if identity in existing_identities:
+        for qid in qids_from_osm_tag(str(polygon["wikidata"])):
+            if qid not in affected_qids:
                 continue
-            merged.append(
-                {
-                    "polygon_id": polygon["polygon_id"],
-                    "article_id": document["article_id"],
-                    "wikidata": qid,
-                    "language": document["language"],
-                    "source_pbf": polygon["source_pbf"],
-                    "region": polygon["region"],
-                    "osm_type": polygon["osm_type"],
-                    "osm_id": polygon["osm_id"],
-                    "page_id": document["page_id"],
-                    "revision_id": document["revision_id"],
-                    "is_best_language": False,
-                }
-            )
-            existing_identities.add(identity)
+            for document in documents_by_qid.get(qid, []):
+                identity = (str(polygon["polygon_id"]), str(document["article_id"]))
+                if identity in existing_identities:
+                    continue
+                merged.append(
+                    {
+                        "polygon_id": polygon["polygon_id"],
+                        "article_id": document["article_id"],
+                        "wikidata": qid,
+                        "language": document["language"],
+                        "source_pbf": polygon["source_pbf"],
+                        "region": polygon["region"],
+                        "osm_type": polygon["osm_type"],
+                        "osm_id": polygon["osm_id"],
+                        "page_id": document["page_id"],
+                        "revision_id": document["revision_id"],
+                        "is_best_language": False,
+                    }
+                )
+                existing_identities.add(identity)
     return merged
 
 
@@ -432,7 +435,7 @@ def _recompute_affected_polygon_fields(
     best_by_polygon: dict[str, str] = {}
     for original in polygons:
         row = dict(original)
-        if str(row["wikidata"]) in affected_qids:
+        if set(qids_from_osm_tag(str(row["wikidata"]))) & affected_qids:
             polygon_links = links_by_polygon.get(str(row["polygon_id"]), [])
             article_ids = sorted({str(link["article_id"]) for link in polygon_links})
             languages = sorted({str(link["language"]) for link in polygon_links})
@@ -531,7 +534,15 @@ def _validate_existing_rows(
     sections: list[dict[str, Any]],
     facts: list[dict[str, Any]],
 ) -> None:
-    polygon_qids = _unique_mapping(polygons, "polygon_id", "wikidata", "polygon_id")
+    polygon_tags = _unique_mapping(polygons, "polygon_id", "wikidata", "polygon_id")
+    polygon_qids = {
+        polygon_id: qids_from_osm_tag(raw_tag) for polygon_id, raw_tag in polygon_tags.items()
+    }
+    invalid = next(
+        (raw_tag for raw_tag in polygon_tags.values() if not qids_from_osm_tag(raw_tag)), None
+    )
+    if invalid is not None:
+        raise RecoveryRepairError(f"polygon contains invalid Wikidata identifier {invalid!r}")
     documents_by_article = _unique_rows(documents, "article_id", "article_id")
     _unique_rows(documents, "document_id", "document_id")
     document_ids = {str(row["document_id"]) for row in documents}
@@ -551,14 +562,14 @@ def _validate_existing_rows(
         if document is None:
             raise RecoveryRepairError(f"link references missing document {article_identifier!r}")
         qid = str(link["wikidata"])
-        if polygon_qids[polygon_id] != qid or str(document["wikidata"]) != qid:
+        if qid not in polygon_qids[polygon_id] or str(document["wikidata"]) != qid:
             raise RecoveryRepairError(f"link QID mismatch for {identity!r}")
     for section in sections:
         if str(section["document_id"]) not in document_ids:
             raise RecoveryRepairError(
                 f"section references missing document {section['document_id']!r}"
             )
-    valid_qids = set(polygon_qids.values())
+    valid_qids = {qid for qids in polygon_qids.values() for qid in qids}
     for fact in facts:
         if str(fact["wikidata"]) not in valid_qids:
             raise RecoveryRepairError(f"fact references absent QID {fact['wikidata']!r}")
@@ -608,7 +619,7 @@ def _validate_preservation(
     updated_polygon_map = {str(row["polygon_id"]): row for row in updated_polygons}
     for row in original_polygons:
         if (
-            str(row["wikidata"]) not in affected_qids
+            not (set(qids_from_osm_tag(str(row["wikidata"]))) & affected_qids)
             and updated_polygon_map[str(row["polygon_id"])] != row
         ):
             raise RecoveryRepairError(f"healthy polygon changed: {row['polygon_id']}")
@@ -638,7 +649,7 @@ def _terminal_classifications(
     region: RegionAuditResult,
     links: list[dict[str, Any]],
 ) -> dict[str, RecoveryClassification]:
-    linked_polygon_ids = {str(link["polygon_id"]) for link in links}
+    linked_polygon_qids = {(str(link["polygon_id"]), str(link["wikidata"])) for link in links}
     polygons_by_qid = dict(region.polygon_ids_by_qid)
     terminal: dict[str, RecoveryClassification] = {}
     for qid, state in region.classifications:
@@ -647,7 +658,7 @@ def _terminal_classifications(
             continue
         terminal[qid] = (
             RecoveryClassification.CURRENT
-            if all(polygon_id in linked_polygon_ids for polygon_id in polygons_by_qid[qid])
+            if all((polygon_id, qid) in linked_polygon_qids for polygon_id in polygons_by_qid[qid])
             else RecoveryClassification.AUTHORITATIVE_NO_ARTICLE
         )
     return terminal
@@ -676,7 +687,9 @@ def _stage_manifests(
     entry.update(
         {
             "polygon_count": len(polygons),
-            "unique_wikidata_count": len({str(row["wikidata"]) for row in polygons}),
+            "unique_wikidata_count": len(
+                {qid for row in polygons for qid in qids_from_osm_tag(str(row["wikidata"]))}
+            ),
             "article_count": len(documents),
             "language_count": len(languages),
             "languages": languages,
