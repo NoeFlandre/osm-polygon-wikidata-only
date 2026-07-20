@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -171,6 +173,38 @@ def test_anonymous_session_performs_no_login() -> None:
     assert json.loads(body) == {"query": {"ok": True}}
     assert len(openers) == 1
     assert len(openers[0].requests) == 1
+
+
+def test_session_closes_http_error_response() -> None:
+    """The opener-owned error response must not leak its descriptor."""
+    body = io.BytesIO()
+    error = urllib.error.HTTPError(
+        "https://en.wikipedia.org/w/api.php",
+        429,
+        "Too Many Requests",
+        Message(),
+        body,
+    )
+
+    class ThrottledOpener:
+        def open(self, request: urllib.request.Request, *, timeout: float) -> FakeResponse:
+            del request, timeout
+            raise error
+
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        opener_factory=ThrottledOpener,
+    )
+
+    with pytest.raises(urllib.error.HTTPError, match="Too Many Requests"):
+        session.read(
+            urllib.request.Request("https://en.wikipedia.org/w/api.php"),
+            **_SESSION_PACE,
+        )
+
+    assert body.closed is True
 
 
 def test_authenticated_session_logs_in_then_reuses_host_session() -> None:

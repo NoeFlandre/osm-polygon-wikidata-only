@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -336,8 +337,15 @@ class WikimediaSession:
 
     def _read(self, opener: _Opener, request: urllib.request.Request) -> tuple[bytes, str]:
         def operation() -> tuple[bytes, str]:
-            with opener.open(request, timeout=self._timeout_s) as response:
-                return response.read(), response.headers.get("Content-Encoding", "")
+            try:
+                with opener.open(request, timeout=self._timeout_s) as response:
+                    return response.read(), response.headers.get("Content-Encoding", "")
+            except urllib.error.HTTPError as error:
+                # HTTPError is also the response object. Since ``open`` raised,
+                # the context manager above was never entered and cannot close
+                # its socket/file descriptor for us.
+                error.close()
+                raise
 
         result = self._scheduler.run(operation)
         self._scheduler.report_success()
