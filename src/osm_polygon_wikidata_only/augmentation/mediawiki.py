@@ -41,6 +41,29 @@ from osm_polygon_wikidata_only.utils.time import utc_now_iso
 from .models import Document, document_id
 
 LOGGER = logging.getLogger(__name__)
+_TRANSIENT_API_ERROR_CODES = frozenset({"maxlag", "ratelimited", "readonly", "readonlytext"})
+
+
+class MediaWikiApiError(RuntimeError):
+    """A structured error returned by a Wikimedia API."""
+
+
+class _TransientMediaWikiApiError(MediaWikiApiError):
+    """A retryable structured Wikimedia API error."""
+
+
+def _raise_for_api_error(data: dict[str, Any]) -> None:
+    error = data.get("error")
+    if not isinstance(error, Mapping):
+        return
+    code = str(error.get("code") or "unknown")
+    info = str(error.get("info") or "No error details supplied")
+    exception = (
+        _TransientMediaWikiApiError
+        if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_")
+        else MediaWikiApiError
+    )
+    raise exception(f"Wikimedia API error {code}: {info}")
 
 
 class AugmentationWikimediaClient:
@@ -82,7 +105,12 @@ class AugmentationWikimediaClient:
         # invocation: even a malformed cached URL must not be re-parsed.
         hit = self._cache.get(key)
         if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
-            return hit.parsed_result
+            try:
+                _raise_for_api_error(hit.parsed_result)
+            except MediaWikiApiError:
+                self._cache.delete(key)
+            else:
+                return hit.parsed_result
         parsed_url = urllib.parse.urlparse(url)
         if parsed_url.scheme != "https":
             raise ValueError(f"Only HTTPS Wikimedia URLs are allowed: {url}")
@@ -107,7 +135,7 @@ class AugmentationWikimediaClient:
 
         def read() -> dict[str, Any]:
             try:
-                return read_wikimedia_json(
+                parsed = read_wikimedia_json(
                     request,
                     self._session,
                     host=host,
@@ -116,6 +144,8 @@ class AugmentationWikimediaClient:
                     throttle_callback=on_throttled,
                     default_throttle_s=self._settings.rate_limit_retry_after_default_s,
                 )
+                _raise_for_api_error(parsed)
+                return parsed
             except _NonObjectJsonError:
                 raise ValueError(f"Expected JSON object from {url}") from None
 
@@ -124,8 +154,16 @@ class AugmentationWikimediaClient:
                 read,
                 attempts=self._settings.request_max_retries,
                 base_delay=self._settings.request_base_delay_s,
-                retry_on=(urllib.error.URLError, TimeoutError, OSError),
-                should_retry=is_transient_network_error,
+                retry_on=(
+                    urllib.error.URLError,
+                    TimeoutError,
+                    OSError,
+                    _TransientMediaWikiApiError,
+                ),
+                should_retry=lambda error: (
+                    isinstance(error, _TransientMediaWikiApiError)
+                    or is_transient_network_error(error)
+                ),
                 on_retry=transient_retry_log_callback(f"Wikimedia host {host}", logger=LOGGER),
             )
         except urllib.error.HTTPError as error:

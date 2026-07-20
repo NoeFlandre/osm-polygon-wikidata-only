@@ -267,7 +267,9 @@ that the runner drains in this exact order:
    validation phases. Wikidata HTTP-200 API errors are inspected before entity
    parsing: transient codes such as `maxlag`, `readonly`, and `ratelimited`
    remain inside the existing retry loop, while permanent or structurally
-   malformed responses fail closed with their API code and message.
+   malformed responses fail closed with their API code and message. The same
+   validation happens before augmentation responses enter the shared cache;
+   legacy cached API-error payloads are evicted and fetched again automatically.
 2. **AUGMENT backlog** -- the existing augmentation backlog. Regions
    whose core is finalized but whose augmentation is stale or
    missing are repaired first; each AUGMENT call performs

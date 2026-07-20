@@ -153,6 +153,11 @@ class JsonFileCache:
             parsed_result=payload,
         )
 
+    def delete(self, key: str) -> None:
+        """Remove one cache entry if present."""
+        with contextlib.suppress(FileNotFoundError):
+            self._path_for(key).unlink()
+
     def clear(self) -> None:
         """Remove all cached entries."""
         for p in self.root.glob("*.json"):
