@@ -233,3 +233,28 @@ def test_unbounded_transient_retry_still_reaches_success() -> None:
 
     assert result == WikidataEntity(qid="Q1")
     assert session.read_count == 4
+
+
+def test_transient_mediawiki_api_error_retries_then_succeeds() -> None:
+    maxlag = b'{"error":{"code":"maxlag","info":"Waiting for replicas","lag":7}}'
+    success = b'{"entities":{"Q1":{"id":"Q1","sitelinks":{}}}}'
+    client, session = _client(
+        [(maxlag, "identity"), (success, "identity")],
+        request_max_retries=2,
+    )
+
+    assert client.get_entity("Q1") == WikidataEntity(qid="Q1")
+    assert session.read_count == 2
+
+
+def test_permanent_mediawiki_api_error_fails_once_with_actionable_details() -> None:
+    bad_request = b'{"error":{"code":"badvalue","info":"Invalid ids parameter"}}'
+    client, session = _client(
+        [(bad_request, "identity")],
+        request_max_retries=None,
+    )
+
+    with pytest.raises(WikidataError, match=r"badvalue.*Invalid ids parameter"):
+        client.get_entity("Q1")
+
+    assert session.read_count == 1

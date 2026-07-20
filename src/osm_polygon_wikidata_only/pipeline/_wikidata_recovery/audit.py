@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,12 +66,14 @@ def audit_wikidata_integrity(
         raise ValueError("batch_size must be >= 1")
     emit = log or LOGGER.info
     scoped_stems = tuple(sorted(set(stems)))
+    started_at = time.monotonic()
+    emit(f"Wikidata integrity audit started: {len(scoped_stems)} finalized regions")
     index_path = data_root.cache / _INDEX_RELATIVE_PATH
     receipts, contract_matches = _load_receipts(index_path)
     reused_results: dict[str, RegionAuditResult] = {}
     scans: dict[str, _RegionScan] = {}
 
-    for stem in scoped_stems:
+    for region_index, stem in enumerate(scoped_stems, start=1):
         try:
             fingerprints = _region_fingerprints(data_root, stem)
             reused = _reuse_receipt(stem, fingerprints, receipts.get(stem))
@@ -80,6 +83,12 @@ def audit_wikidata_integrity(
                 scans[stem] = _scan_region(data_root, stem, fingerprints)
         except (OSError, ValueError, TypeError, KeyError) as error:
             scans[stem] = _RegionScan(stem, (), (), (), str(error))
+        if _progress_checkpoint(region_index, len(scoped_stems), every=25):
+            emit(
+                "Wikidata integrity audit local scan "
+                f"{region_index}/{len(scoped_stems)} regions; "
+                f"{time.monotonic() - started_at:.0f}s elapsed"
+            )
 
     validation_qids = sorted(
         {
@@ -90,7 +99,29 @@ def audit_wikidata_integrity(
             if polygon_ids
         }
     )
-    entities, cache_hits = _resolve_entities(client, validation_qids, batch_size=batch_size)
+    emit(
+        "Wikidata integrity audit local scan complete: "
+        f"{len(scoped_stems)} regions; {len(validation_qids)} QIDs require upstream validation; "
+        f"{time.monotonic() - started_at:.0f}s elapsed"
+    )
+
+    def report_validation(completed: int, total: int) -> None:
+        if completed <= batch_size or _progress_checkpoint(
+            completed,
+            total,
+            every=max(batch_size * 10, 1),
+        ):
+            emit(
+                "Wikidata integrity audit upstream validation "
+                f"{completed}/{total} QIDs; {time.monotonic() - started_at:.0f}s elapsed"
+            )
+
+    entities, cache_hits = _resolve_entities(
+        client,
+        validation_qids,
+        batch_size=batch_size,
+        progress=report_validation,
+    )
     eligible_sitelinks = {
         qid: _eligible_sitelinks(
             entity,
@@ -126,12 +157,12 @@ def audit_wikidata_integrity(
     )
     affected_polygons = sum(region.affected_polygon_count for region in region_results)
     emit(
-        "Wikidata integrity audit: "
+        "Wikidata integrity audit complete: "
         f"regions scanned {len(region_results)}/{len(scoped_stems)}; "
         f"QIDs examined {len(qid_results)}; authoritative cache hits {cache_hits}; "
         f"QIDs requiring upstream validation {len(validation_qids)}; "
         f"affected QIDs {affected_qids}; affected polygons {affected_polygons}; "
-        f"affected regions {affected_regions}"
+        f"affected regions {affected_regions}; {time.monotonic() - started_at:.0f}s elapsed"
     )
     return RecoveryAuditResult(
         regions=tuple(region_results),
@@ -274,6 +305,7 @@ def _resolve_entities(
     qids: list[str],
     *,
     batch_size: int,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict[str, WikidataEntity | None], int]:
     resolved: dict[str, WikidataEntity | None] = {}
     cache_hits = 0
@@ -287,10 +319,18 @@ def _resolve_entities(
             hits = getattr(client, "last_batch_cache_hits", 0)
             if isinstance(hits, int):
                 cache_hits += hits
+            if progress is not None:
+                progress(min(start + len(chunk), len(qids)), len(qids))
     else:
-        for qid in qids:
+        for index, qid in enumerate(qids, start=1):
             resolved[qid] = client.get_entity(qid)
+            if progress is not None:
+                progress(index, len(qids))
     return resolved, cache_hits
+
+
+def _progress_checkpoint(completed: int, total: int, *, every: int) -> bool:
+    return total > 0 and (completed == 1 or completed == total or completed % every == 0)
 
 
 def _eligible_sitelinks(

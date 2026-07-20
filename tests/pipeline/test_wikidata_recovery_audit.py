@@ -378,3 +378,26 @@ def test_audit_output_and_index_are_deterministic(tmp_path: Path) -> None:
     assert tuple(entry.qid for entry in result.qids) == ("Q1", "Q2", "Q3")
     assert result == second
     assert first_index == second_index
+
+
+def test_audit_emits_bounded_stage_progress(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    _write_region(data_root, "alpha", ["Q1"])
+    _write_region(data_root, "beta", ["Q2"])
+    messages: list[str] = []
+
+    audit_wikidata_integrity(
+        data_root,
+        ["beta", "alpha"],
+        _RecordingWikidataClient({"Q1": _entity("Q1"), "Q2": _entity("Q2")}),
+        batch_size=1,
+        log=messages.append,
+    )
+
+    assert messages[0] == "Wikidata integrity audit started: 2 finalized regions"
+    assert any("local scan 1/2 regions" in message for message in messages)
+    assert any("local scan 2/2 regions" in message for message in messages)
+    assert any("upstream validation 1/2 QIDs" in message for message in messages)
+    assert any("upstream validation 2/2 QIDs" in message for message in messages)
+    assert messages[-1].startswith("Wikidata integrity audit complete:")
+    assert "elapsed" in messages[-1]
