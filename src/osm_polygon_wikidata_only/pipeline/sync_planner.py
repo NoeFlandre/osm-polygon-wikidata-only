@@ -35,12 +35,13 @@ def plan_sync_states(
 
     Action priority (lowest value runs first):
 
-    0. RECOVERY - exhaustive Wikidata integrity recovery: the
-       region is finalized locally but the audit classifies one
-       or more QIDs as ``REPAIR_REQUIRED``. Recovery fetches
-       only the affected QIDs, preserves every healthy row,
-       commits via a durable journal, then enqueues an atomic
-       publication for the region. No PBF extraction runs.
+    0. RECOVERY - incremental Wikidata integrity audit/recovery:
+       the region is finalized locally and eligible for a bounded
+       one-region audit. Healthy regions write/reuse a receipt and
+       require no publication. Affected regions fetch only the
+       damaged QIDs, preserve every healthy row, commit via a
+       durable journal, then enqueue an atomic publication. No PBF
+       extraction runs.
     1. AUGMENT - existing augmentation backlog (in-place fix-up of a
        region whose core is finalized but whose augmentation is stale
        or missing). AUGMENT performs Wikimedia sidecar work and, on

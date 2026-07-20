@@ -252,3 +252,24 @@ def test_recovery_reuses_existing_publication_when_no_qid_changes(tmp_path: Path
     )
     assert rc == 0
     assert recover_calls == []
+
+
+def test_healthy_recovery_candidate_skips_completion_and_publication(tmp_path: Path) -> None:
+    state = _state("healthy", SyncAction.RECOVERY, tmp_path)
+    completions: list[str] = []
+    submissions: list[str] = []
+
+    rc = run_sync(
+        [state],
+        extract_pbf=lambda _path: object(),
+        process_extracted_pbf=lambda _extracted: object(),
+        augment_region=lambda _state: object(),
+        recover_region=lambda _state: None,
+        build_upload_files=lambda *_args: ["unexpected"],
+        submit_upload=lambda _ops, message: submissions.append(message),
+        on_complete=lambda completed, _result: completions.append(completed.stem),
+    )
+
+    assert rc == 0
+    assert completions == []
+    assert submissions == []

@@ -103,20 +103,20 @@ def run_sync(
       augmentation result for a PUBLISH-only repair without
       invoking extraction or Wikimedia. Required only when the
       plan contains PUBLISH states.
-    * ``recover_region(state)``: perform exhaustive Wikidata
-      integrity recovery for the given finalized region without
-      invoking PBF extraction or Wikimedia sidecar work. Required
-      only when the plan contains RECOVERY states. On success the
-      collaboration publishes the region's atomic upload before
-      continuing.
+    * ``recover_region(state)``: audit one finalized region and,
+      when necessary, perform surgical Wikidata integrity recovery
+      without invoking PBF extraction or unrelated sidecar work.
+      Required only when the plan contains RECOVERY states. A
+      ``None`` result means the region is healthy and needs no
+      publication; a repair result is published before continuing.
 
     Execution sequence:
 
-    1. Drain RECOVERY states in alphabetical order. Each state
-       performs exhaustive QID-level audit + transactional repair
-       without PBF extraction. It may call Wikidata and Wikipedia
-       only for affected QIDs, then enqueues an atomic publication
-       containing the repaired core and sidecar artifacts.
+    1. Drain RECOVERY states in alphabetical order, one region at a
+       time. Each state performs its QID-level audit without PBF
+       extraction. Healthy regions store a resumable receipt and
+       continue; affected regions are repaired transactionally and
+       published immediately before the next region is audited.
     2. Start prefetching the first PROCESS PBF (background thread).
     3. Drain AUGMENT (backlog) states in alphabetical order.
     4. Drain PUBLISH-only reconciliation repairs in alphabetical
@@ -149,18 +149,18 @@ def run_sync(
         # replace finalized core tables that publication snapshots consume.
         extraction_future: Future[Any] | None = None
 
-        # Step 1: drain RECOVERY states. These perform exhaustive
-        # QID-level audit + transactional repair without invoking
-        # PBF extraction. On success
-        # the recovery collaborator publishes an atomic upload for
-        # the region before normal AUGMENT / PUBLISH / PROCESS work
-        # begins.
+        # Step 1: audit RECOVERY states one region at a time. Healthy
+        # candidates return None. A repaired region is published
+        # before the next candidate is audited. PBF extraction starts
+        # only after this resumable recovery queue is drained.
         for state in recovery_states:
             if recover_region is None:
                 raise RuntimeError(
                     "run_sync requires recover_region collaborator for RECOVERY states"
                 )
             recovery_result = recover_region(state)
+            if recovery_result is None:
+                continue
             if on_complete is not None:
                 on_complete(state, recovery_result)
             _maybe_submit(
