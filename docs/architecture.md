@@ -252,6 +252,11 @@ that the runner drains in this exact order:
    journaled transaction before an atomic regional publication. Transport or
    validation failures write neither a terminal receipt nor partial outputs;
    blocked finalized shards abort the command before extraction begins.
+   The audit emits bounded checkpoints for its local scan and authoritative
+   validation phases. Wikidata HTTP-200 API errors are inspected before entity
+   parsing: transient codes such as `maxlag`, `readonly`, and `ratelimited`
+   remain inside the existing retry loop, while permanent or structurally
+   malformed responses fail closed with their API code and message.
 2. **AUGMENT backlog** -- the existing augmentation backlog. Regions
    whose core is finalized but whose augmentation is stale or
    missing are repaired first; each AUGMENT call performs

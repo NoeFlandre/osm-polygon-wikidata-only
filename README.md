@@ -331,6 +331,9 @@ silently skipped. Regions with incomplete sidecars are augmented first and
 audited immediately afterward in the same invocation. A repaired region is
 published atomically with its polygons, polygon-to-article links, canonical
 Wikipedia documents/sections, Wikidata facts, manifests, maps, and dataset card.
+The command reports bounded local-scan and upstream-validation checkpoints with
+elapsed time; transient Wikimedia API states such as `maxlag` remain retryable
+and never become cached missing entities.
 
 Known whole-file Geofabrik containment overlaps are retired losslessly during
 `sync-dir --push`: retained parents receive missing sidecar rows, contained

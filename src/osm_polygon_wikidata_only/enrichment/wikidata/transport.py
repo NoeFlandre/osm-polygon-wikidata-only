@@ -67,6 +67,24 @@ class WikidataError(RuntimeError):
     """Raised when the Wikidata client cannot return a result."""
 
 
+class _TransientWikidataApiError(WikidataError):
+    """Retryable MediaWiki API error returned inside an HTTP-200 response."""
+
+
+_TRANSIENT_API_ERROR_CODES = frozenset(
+    {
+        "maxlag",
+        "ratelimited",
+        "readonly",
+        "readonlytext",
+    }
+)
+
+
+def _is_retryable_wikidata_error(error: BaseException) -> bool:
+    return isinstance(error, _TransientWikidataApiError) or is_transient_network_error(error)
+
+
 class InMemoryWikidataClient(WikidataClient):
     """Test double backed by a hand-built :class:`dict`."""
 
@@ -110,11 +128,11 @@ class HttpWikidataClient(WikidataClient):
             return [None for _ in requested]
         url = self._build_url("|".join(valid))
         data = with_retries(
-            lambda: self._http_get(url),
+            lambda: self._request_batch(url),
             attempts=self._settings.request_max_retries,
             base_delay=self._settings.request_base_delay_s,
-            retry_on=(urllib.error.URLError, TimeoutError, OSError),
-            should_retry=is_transient_network_error,
+            retry_on=(urllib.error.URLError, TimeoutError, OSError, _TransientWikidataApiError),
+            should_retry=_is_retryable_wikidata_error,
             on_retry=transient_retry_log_callback("Wikidata", logger=LOGGER),
         )
         entities = data.get("entities")
@@ -133,6 +151,18 @@ class HttpWikidataClient(WikidataClient):
                 else parse_wikidata_entity(qid, {"entities": {qid: dict(raw)}})
             )
         return [parsed.get(qid) for qid in requested]
+
+    def _request_batch(self, url: str) -> dict[str, Any]:
+        data = self._http_get(url)
+        error = data.get("error")
+        if not isinstance(error, Mapping):
+            return data
+        code = str(error.get("code") or "unknown")
+        info = str(error.get("info") or "No error details supplied")
+        message = f"Wikidata API error {code}: {info}"
+        if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_"):
+            raise _TransientWikidataApiError(message)
+        raise WikidataError(message)
 
     def _build_url(self, qid: str) -> str:
         params = {
