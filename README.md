@@ -333,6 +333,9 @@ sidecars are augmented first and audited immediately afterward in the same
 invocation. A repaired region is published atomically with its polygons,
 polygon-to-article links, canonical
 Wikipedia documents/sections, Wikidata facts, manifests, maps, and dataset card.
+Legacy Wikidata fact rows whose subject is no longer present in the region's
+polygons are removed by that same transaction; all still-joinable facts are
+preserved.
 The command reports bounded local-scan and upstream-validation checkpoints with
 elapsed time; transient Wikimedia API states such as `maxlag` remain retryable
 and never become cached missing entities.

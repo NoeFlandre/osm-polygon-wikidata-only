@@ -501,7 +501,7 @@ def execute(
         )
         _ensure_recovery_audit_unblocked(audit)
         plan = audit.region(state.stem)
-        if not plan.affected_qids:
+        if not plan.requires_repair:
             if push_enabled and state.stem in all_pending_stems:
                 return load_existing_augmentation_result(data_root, state.stem)
             return None
