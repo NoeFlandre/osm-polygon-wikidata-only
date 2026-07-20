@@ -330,9 +330,9 @@ audited. Stopping the command therefore preserves completed regional work,
 while changed inputs are checked again. A malformed or unreadable finalized
 shard fails closed instead of being silently skipped. Regions with incomplete
 sidecars are augmented first and audited immediately afterward in the same
-invocation. A repaired region is published atomically with its polygons,
-polygon-to-article links, canonical
-Wikipedia documents/sections, Wikidata facts, manifests, maps, and dataset card.
+invocation. A repaired region is published atomically with its regional
+artifacts, manifests, and dataset card. Coverage maps are regenerated only
+when the repair changed one of their polygon, link, or document inputs.
 Legacy Wikidata fact rows whose subject is no longer present in the region's
 polygons are removed by that same transaction; all still-joinable facts are
 preserved.

@@ -519,6 +519,7 @@ def assemble_region_upload(
     augmentation: AugmentationResult,
     core: ProcessResult | CorePublicationArtifacts | None,
     world_land_warning: Callable[[str], None] | None,
+    refresh_maps: bool = True,
 ) -> list[PublicationOp]:
     """Assemble one atomic region upload (sync-dir publication).
 
@@ -526,6 +527,9 @@ def assemble_region_upload(
     provided, the core operations are prepended to the augmentation
     operations. When ``core`` is ``None``, the augmentation block also
     refreshes the Wikivoyage-sensitive combined text-presence map.
+    ``refresh_maps=False`` is reserved for recovery transactions whose
+    changed artifacts cannot affect any map input; the regional data,
+    manifests, and README are still assembled normally.
 
     The augmentation block ALWAYS emits the canonical
     ``add`` op + the legacy ``delete`` op. The first publication
@@ -556,30 +560,6 @@ def assemble_region_upload(
             processed_manifest_snapshot,
             (data_root.processed_manifests / "processed_pbfs.json").read_text(),
         )
-        map_snapshot = snapshots / "coverage_map.png"
-        lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-        try:
-            land_path = ensure_world_land(data_root.cache)
-        # ``except Exception`` retained: same rationale as the legacy
-        # core path -- ``ensure_world_land`` does network I/O via
-        # ``urllib.request.urlretrieve`` which raises a broad,
-        # unstable set of exception types. The sync path passes
-        # ``world_land_warning=None`` (silent fallback).
-        except Exception:
-            if world_land_warning is not None:
-                world_land_warning("Could not fetch world land data; map will omit continents")
-            land_path = None
-        generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
-        geographic_text_presence_snapshot = snapshots / "geographic_text_presence.png"
-        _generate_geographic_text_presence(
-            data_root.processed,
-            geographic_text_presence_snapshot,
-            land_geojson_path=land_path,
-        )
-        geographic_text_snapshot = snapshots / "geographic_text_coverage.png"
-        _generate_geographic_text_coverage_snapshot(data_root, geographic_text_snapshot)
-        geographic_polygon_count_snapshot = snapshots / "geographic_polygon_count.png"
-        _generate_geographic_polygon_count_snapshot(data_root, geographic_polygon_count_snapshot)
         ops.extend(
             [
                 add_op(
@@ -591,22 +571,56 @@ def assemble_region_upload(
                     path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
                 ),
                 add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
-                add_op(
-                    geographic_text_presence_snapshot,
-                    path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
-                ),
-                add_op(geographic_text_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-                add_op(
-                    geographic_polygon_count_snapshot,
-                    path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
-                ),
-                add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
-                delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
             ]
         )
+        if refresh_maps:
+            map_snapshot = snapshots / "coverage_map.png"
+            lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
+            try:
+                land_path = ensure_world_land(data_root.cache)
+            # ``except Exception`` retained: same rationale as the legacy
+            # core path -- ``ensure_world_land`` does network I/O via
+            # ``urllib.request.urlretrieve`` which raises a broad,
+            # unstable set of exception types. The sync path passes
+            # ``world_land_warning=None`` (silent fallback).
+            except Exception:
+                if world_land_warning is not None:
+                    world_land_warning("Could not fetch world land data; map will omit continents")
+                land_path = None
+            generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
+            geographic_text_presence_snapshot = snapshots / "geographic_text_presence.png"
+            _generate_geographic_text_presence(
+                data_root.processed,
+                geographic_text_presence_snapshot,
+                land_geojson_path=land_path,
+            )
+            geographic_text_snapshot = snapshots / "geographic_text_coverage.png"
+            _generate_geographic_text_coverage_snapshot(data_root, geographic_text_snapshot)
+            geographic_polygon_count_snapshot = snapshots / "geographic_polygon_count.png"
+            _generate_geographic_polygon_count_snapshot(
+                data_root, geographic_polygon_count_snapshot
+            )
+            ops.extend(
+                [
+                    add_op(
+                        geographic_text_presence_snapshot,
+                        path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
+                    ),
+                    add_op(
+                        geographic_text_snapshot,
+                        path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+                    ),
+                    add_op(
+                        geographic_polygon_count_snapshot,
+                        path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
+                    ),
+                    add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
+                    delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
+                ]
+            )
 
     augmentation_only_map_ops: list[PublicationOp] = []
-    if core is None:
+    if core is None and refresh_maps:
         text_presence_snapshot = snapshots / "geographic_text_presence.png"
         try:
             land_path = ensure_world_land(data_root.cache)

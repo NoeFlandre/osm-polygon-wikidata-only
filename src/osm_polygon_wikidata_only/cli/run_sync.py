@@ -353,6 +353,7 @@ def execute(
         recovery_stems=recovery_stems,
     )
     recovered_stems: set[str] = set()
+    recovery_map_refresh_stems: set[str] = set()
 
     if push_enabled and reconciliation_plan is not None:
         for state in states:
@@ -468,8 +469,8 @@ def execute(
             )
             _ensure_recovery_audit_unblocked(audit)
             region = audit.region(state.stem)
-            if region.affected_qids:
-                repair_wikidata_region(
+            if region.requires_repair:
+                repair_result = repair_wikidata_region(
                     data_root,
                     region,
                     wikidata_client=runtime.wikidata,
@@ -477,8 +478,11 @@ def execute(
                     augmentation_client=augmentation_client,
                     settings=settings,
                 )
-                recovered_stems.add(state.stem)
-                augmentation_result = load_existing_augmentation_result(data_root, state.stem)
+                if repair_result.changed:
+                    recovered_stems.add(state.stem)
+                    if repair_result.map_inputs_changed:
+                        recovery_map_refresh_stems.add(state.stem)
+                    augmentation_result = load_existing_augmentation_result(data_root, state.stem)
         LOGGER.info(
             "Unified sync completed %s: %s",
             state.stem,
@@ -505,7 +509,7 @@ def execute(
             if push_enabled and state.stem in all_pending_stems:
                 return load_existing_augmentation_result(data_root, state.stem)
             return None
-        repair_wikidata_region(
+        repair_result = repair_wikidata_region(
             data_root,
             plan,
             wikidata_client=runtime.wikidata,
@@ -513,7 +517,13 @@ def execute(
             augmentation_client=augmentation_client,
             settings=settings,
         )
+        if not repair_result.changed:
+            if push_enabled and state.stem in all_pending_stems:
+                return load_existing_augmentation_result(data_root, state.stem)
+            return None
         recovered_stems.add(state.stem)
+        if repair_result.map_inputs_changed:
+            recovery_map_refresh_stems.add(state.stem)
         return load_existing_augmentation_result(data_root, state.stem)
 
     def _prepare_publication(state: RegionSyncState, result: Any) -> None:
@@ -581,6 +591,10 @@ def execute(
             augmentation=augmentation,  # type: ignore[arg-type]
             core=core,  # type: ignore[arg-type]
             world_land_warning=None,
+            refresh_maps=(
+                getattr(state, "action", None) is not SyncAction.RECOVERY
+                or stem in recovery_map_refresh_stems
+            ),
         )
 
     def _close_uploads() -> list[str]:

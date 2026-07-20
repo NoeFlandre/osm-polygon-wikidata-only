@@ -255,7 +255,11 @@ that the runner drains in this exact order:
    documents, sections, facts, and both manifests are replaced as one durable
    journaled transaction before an atomic regional publication. Orphan fact
    rows whose subject QID is absent from every regional polygon are pruned in
-   that transaction without refetching or changing joinable facts. Transport or
+   that transaction without refetching or changing joinable facts. Such a
+   facts-only repair refreshes manifests, statistics, and the README but reuses
+   all maps; map rendering runs only when polygon, link, or document inputs
+   changed. A no-op repair produces neither a publication nor regenerated
+   artifacts. Transport or
    validation failures write neither a terminal receipt nor partial outputs;
    a blocked finalized shard is left unchanged and aborts the command before
    extraction begins; already completed regional repairs remain durable.
