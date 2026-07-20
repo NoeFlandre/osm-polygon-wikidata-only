@@ -20,8 +20,8 @@ from osm_polygon_wikidata_only.enrichment.wikidata.models import (
     WikidataEntity,
 )
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
-    is_valid_qid,
     language_from_site,
+    qids_from_osm_tag,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps, loads
@@ -216,17 +216,19 @@ def _scan_region(
         ["article_id", "document_id", "wikidata"],
     )
 
-    polygons: dict[str, str] = {}
+    polygons: dict[str, tuple[str, ...]] = {}
     polygon_ids_by_qid: dict[str, list[str]] = {}
     for row in polygon_rows:
         polygon_id = _required_string(row, "polygon_id", "polygons")
-        qid = _required_string(row, "wikidata", "polygons")
-        if not is_valid_qid(qid):
-            raise _ScanError(f"polygons contains invalid Wikidata identifier {qid!r}")
+        raw_qid = _required_string(row, "wikidata", "polygons")
+        qids = qids_from_osm_tag(raw_qid)
+        if not qids:
+            raise _ScanError(f"polygons contains invalid Wikidata identifier {raw_qid!r}")
         if polygon_id in polygons:
             raise _ScanError(f"polygons contains duplicate polygon_id {polygon_id!r}")
-        polygons[polygon_id] = qid
-        polygon_ids_by_qid.setdefault(qid, []).append(polygon_id)
+        polygons[polygon_id] = qids
+        for qid in qids:
+            polygon_ids_by_qid.setdefault(qid, []).append(polygon_id)
 
     documents_by_article: dict[str, dict[str, Any]] = {}
     document_ids: set[str] = set()
@@ -243,7 +245,7 @@ def _scan_region(
         documents_by_article[article_id] = row
         document_ids.add(document_id)
 
-    linked_polygon_ids: set[str] = set()
+    linked_polygon_qids: set[tuple[str, str]] = set()
     link_ids: set[tuple[str, str]] = set()
     for row in link_rows:
         polygon_id = _required_string(row, "polygon_id", "polygon_articles")
@@ -253,19 +255,20 @@ def _scan_region(
         if identity in link_ids:
             raise _ScanError(f"polygon_articles contains duplicate identity {identity!r}")
         link_ids.add(identity)
-        polygon_qid = polygons.get(polygon_id)
-        if polygon_qid is None:
+        polygon_qids = polygons.get(polygon_id)
+        if polygon_qids is None:
             raise _ScanError(f"polygon_articles references absent polygon_id {polygon_id!r}")
-        if polygon_qid != qid:
+        if qid not in polygon_qids:
             raise _ScanError(
-                f"polygon_articles QID {qid!r} disagrees with polygon {polygon_id!r} QID {polygon_qid!r}"
+                f"polygon_articles QID {qid!r} disagrees with polygon {polygon_id!r} "
+                f"QIDs {polygon_qids!r}"
             )
         document = documents_by_article.get(article_id)
         if document is None:
             raise _ScanError(f"polygon_articles references absent article_id {article_id!r}")
         if str(document.get("wikidata") or "") != qid:
             raise _ScanError(f"article {article_id!r} disagrees with link QID {qid!r}")
-        linked_polygon_ids.add(polygon_id)
+        linked_polygon_qids.add((polygon_id, qid))
 
     normalized_polygon_ids = tuple(
         (qid, tuple(sorted(polygon_ids))) for qid, polygon_ids in sorted(polygon_ids_by_qid.items())
@@ -273,10 +276,14 @@ def _scan_region(
     missing = tuple(
         (
             qid,
-            tuple(polygon_id for polygon_id in polygon_ids if polygon_id not in linked_polygon_ids),
+            tuple(
+                polygon_id
+                for polygon_id in polygon_ids
+                if (polygon_id, qid) not in linked_polygon_qids
+            ),
         )
         for qid, polygon_ids in normalized_polygon_ids
-        if any(polygon_id not in linked_polygon_ids for polygon_id in polygon_ids)
+        if any((polygon_id, qid) not in linked_polygon_qids for polygon_id in polygon_ids)
     )
     return _RegionScan(stem, fingerprints, normalized_polygon_ids, missing)
 
@@ -389,7 +396,9 @@ def _classify_region(
         polygon_ids_by_qid=scan.polygon_ids_by_qid,
         affected_polygon_ids_by_qid=tuple(affected),
         affected_qids=tuple(qid for qid, _ in affected),
-        affected_polygon_count=sum(len(polygon_ids) for _, polygon_ids in affected),
+        affected_polygon_count=len(
+            {polygon_id for _, polygon_ids in affected for polygon_id in polygon_ids}
+        ),
     )
 
 

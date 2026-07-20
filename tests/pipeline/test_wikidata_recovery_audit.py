@@ -191,6 +191,25 @@ def test_one_lost_qid_in_majority_covered_region_is_detected(tmp_path: Path) -> 
     assert client.batch_calls == [["Q3"]]
 
 
+def test_semicolon_separated_osm_wikidata_tag_audits_each_qid(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    _write_region(data_root, "multiple", ["Q8254481;Q6033432"])
+    client = _RecordingWikidataClient(
+        {
+            "Q8254481": _entity("Q8254481"),
+            "Q6033432": _entity("Q6033432"),
+        }
+    )
+
+    result = audit_wikidata_integrity(data_root, ["multiple"], client)
+
+    region = result.region("multiple")
+    assert region.blocked_reason == ""
+    assert region.affected_qids == ("Q6033432", "Q8254481")
+    assert region.affected_polygon_count == 1
+    assert client.batch_calls == [["Q6033432", "Q8254481"]]
+
+
 @pytest.mark.parametrize(
     ("entity", "expected"),
     [
