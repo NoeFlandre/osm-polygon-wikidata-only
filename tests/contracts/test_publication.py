@@ -399,6 +399,39 @@ def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
     assert len(ops) == 17
 
 
+def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core, data_root = _stub_process_result(tmp_path)
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.load_centroids_from_parquet",
+        lambda *_args, **_kwargs: pytest.fail("coverage rendering must be skipped"),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *a, **kw: None,
+    )
+
+    ops = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=core,
+        world_land_warning=None,
+        refresh_maps=False,
+    )
+
+    remotes = [op.path_in_repo for op in ops]
+    assert remotes[:3] == [
+        "polygons/monaco-latest.parquet",
+        "polygon_articles/monaco-latest.parquet",
+        "manifests/processed_pbfs.json",
+    ]
+    assert not any(path.startswith("assets/") for path in remotes)
+
+
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -80,6 +80,7 @@ class RecoveryRepairResult:
     affected_qids: tuple[str, ...]
     affected_polygon_count: int
     repaired_paths: tuple[Path, ...]
+    map_inputs_changed: bool = False
 
 
 def repair_wikidata_region(
@@ -96,7 +97,7 @@ def repair_wikidata_region(
     if region.blocked_reason:
         raise RecoveryRepairError(region.blocked_reason)
     if not region.requires_repair:
-        return RecoveryRepairResult(region.stem, False, (), 0, ())
+        return RecoveryRepairResult(region.stem, False, (), 0, (), False)
 
     transaction_root = data_root.cache / "wikidata_recovery" / "transactions"
     recover_interrupted_transactions(transaction_root)
@@ -213,9 +214,24 @@ def repair_wikidata_region(
             (facts, merged_facts),
         )
     )
+    map_inputs_changed = any(
+        before != after
+        for before, after in (
+            (polygons, updated_polygons),
+            (links, updated_links),
+            (documents, merged_documents),
+        )
+    )
     if not changed:
         record_region_recovery_receipt(data_root, stem, terminal_classifications)
-        return RecoveryRepairResult(stem, False, affected_qids, len(affected_polygon_ids), ())
+        return RecoveryRepairResult(
+            stem,
+            False,
+            affected_qids,
+            len(affected_polygon_ids),
+            (),
+            False,
+        )
 
     directory = transaction_directory(transaction_root, stem)
     directory.mkdir(parents=True, exist_ok=False)
@@ -279,6 +295,7 @@ def repair_wikidata_region(
         affected_qids,
         len(affected_polygon_ids),
         repaired_paths,
+        map_inputs_changed,
     )
 
 

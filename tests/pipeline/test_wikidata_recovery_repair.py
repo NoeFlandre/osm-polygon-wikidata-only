@@ -291,6 +291,7 @@ def test_repair_changes_only_affected_qid_and_preserves_existing_rows(tmp_path: 
     healthy_after = next(row for row in after["polygons"] if row["wikidata"] == "Q1")
     affected = next(row for row in after["polygons"] if row["wikidata"] == "Q2")
     assert result.changed is True
+    assert result.map_inputs_changed is True
     assert healthy_after == healthy_before
     assert affected["has_wikipedia"] is True
     assert affected["wikipedia_languages"] == '["en"]'
@@ -350,6 +351,7 @@ def test_repair_preserves_multi_qid_osm_tag_and_links_each_entity(tmp_path: Path
     polygon = pq.read_table(data_root.processed_polygons / f"{stem}.parquet").to_pylist()[0]  # type: ignore[no-untyped-call]
     links = pq.read_table(data_root.processed_links / f"{stem}.parquet").to_pylist()  # type: ignore[no-untyped-call]
     assert result.changed is True
+    assert result.map_inputs_changed is True
     assert result.affected_polygon_count == 1
     assert polygon["wikidata"] == raw_tag
     assert polygon["wikipedia_article_count"] == 2
@@ -385,6 +387,7 @@ def test_repair_removes_only_orphan_fact_rows(tmp_path: Path) -> None:
     repaired = pq.read_table(facts_path).to_pylist()  # type: ignore[no-untyped-call]
     assert plan.orphan_fact_ids == ("orphan-fact",)
     assert result.changed is True
+    assert result.map_inputs_changed is False
     assert repaired == facts
     assert augmentation_client.entity_calls == []
 
