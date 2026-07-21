@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,9 @@ from .transaction import (
 
 class RecoveryRepairError(RuntimeError):
     pass
+
+
+RECOVERY_NETWORK_WORKERS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,13 +462,14 @@ def _fetch_missing_documents(
     existing = {
         (str(row["wikidata"]), str(row["site"]), str(row["title"])) for row in existing_documents
     }
-    new_documents: list[dict[str, Any]] = []
     total_sites = sum(len(_eligible_sitelinks(entities[qid], settings)) for qid in affected_qids)
     if progress is not None:
         progress.set_stage("Wikipedia documents", total=total_sites)
-    for qid in affected_qids:
+
+    def fetch_qid(qid: str) -> list[dict[str, Any]]:
         entity = entities[qid]
         summary = LinkSummary(qid=qid, entity=entity)
+        qid_documents: list[dict[str, Any]] = []
         for site, title in _eligible_sitelinks(entity, settings):
             if (qid, site, title) in existing:
                 if progress is not None:
@@ -497,10 +502,18 @@ def _fetch_missing_documents(
             )
             article = article_row(identifier, qid, result.article, summary)
             document = wikipedia_document_from_article_row(article.__dict__)
-            new_documents.append(document.to_dict())
+            qid_documents.append(document.to_dict())
             if progress is not None:
                 progress.advance(documents=1)
-    return new_documents
+        return qid_documents
+
+    if not affected_qids:
+        return []
+    with ThreadPoolExecutor(
+        max_workers=min(RECOVERY_NETWORK_WORKERS, len(affected_qids))
+    ) as executor:
+        per_qid = executor.map(fetch_qid, affected_qids)
+        return [document for documents in per_qid for document in documents]
 
 
 def _merge_links(
@@ -605,12 +618,11 @@ def _sections_for_new_documents(
     augmentation_client: AugmentationClient,
     progress: RecoveryProgress | None = None,
 ) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+    selected = [row for row in documents if str(row["document_id"]) in new_document_ids]
     if progress is not None:
-        progress.set_stage("Wikipedia sections", total=len(new_document_ids))
-    for document_row in documents:
-        if str(document_row["document_id"]) not in new_document_ids:
-            continue
+        progress.set_stage("Wikipedia sections", total=len(selected))
+
+    def parse_document(document_row: dict[str, Any]) -> list[dict[str, Any]]:
         article = {column: document_row[column] for column in ARTICLE_COLUMNS}
         document = document_from_article_row(article)
         html = augmentation_client.parse_html(
@@ -619,10 +631,15 @@ def _sections_for_new_documents(
             document.revision_id,
         )
         parsed = [section.to_dict() for section in parse_sections(document, html)]
-        rows.extend(parsed)
         if progress is not None:
             progress.advance(sections=len(parsed))
-    return rows
+        return parsed
+
+    if not selected:
+        return []
+    with ThreadPoolExecutor(max_workers=min(RECOVERY_NETWORK_WORKERS, len(selected))) as executor:
+        per_document = executor.map(parse_document, selected)
+        return [section for sections in per_document for section in sections]
 
 
 def _merge_rows(

@@ -258,7 +258,10 @@ that the runner drains in this exact order:
    fingerprints, section content, affected QIDs, and relevant settings, so a
    checkpoint cannot be reused after its inputs change. Restarting repeats at
    most the active group; completed groups are reused without refetching or
-   reparsing. A 60-second heartbeat reports the active group and stage,
+   reparsing. Within each group, up to eight QIDs fetch Wikipedia documents
+   concurrently and up to eight documents fetch section HTML concurrently;
+   both use the existing shared scheduler and their results are flattened in
+   deterministic input order. A 60-second heartbeat reports the active group and stage,
    documents, sections, facts, elapsed time, and estimated remaining time.
    After all groups are durable, repaired core,
    documents, sections, facts, and both manifests are replaced as one durable

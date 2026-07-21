@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.io.manifest import save_manifest
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair as repair_module
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryRepairError,
     audit_wikidata_integrity,
@@ -592,3 +594,55 @@ def test_recovery_resumes_after_last_durable_qid_batch(tmp_path: Path) -> None:
     assert any("reused durable checkpoint" in message for message in messages)
     assert any("checkpoint saved" in message for message in messages)
     assert not (data_root.cache / "wikidata_recovery" / "checkpoints" / stem).exists()
+
+
+def test_recovery_fetches_different_qids_concurrently_and_keeps_order() -> None:
+    barrier = threading.Barrier(2, timeout=1)
+
+    class ConcurrentWikipedia(InMemoryWikipediaClient):
+        def __init__(self) -> None:
+            super().__init__({})
+
+        def fetch_article(self, language: str, site: str, title: str, **kwargs: Any):
+            barrier.wait()
+            qid = title.removeprefix("Title ")
+            return FetchResult("ok", _wikipedia_article(qid, int(qid[1:])))
+
+    rows = repair_module._fetch_missing_documents(
+        ("Q1", "Q2"),
+        entities={"Q1": _entity("Q1"), "Q2": _entity("Q2")},
+        existing_documents=[],
+        wikipedia_client=ConcurrentWikipedia(),
+        settings=_settings(),
+    )
+
+    assert [row["wikidata"] for row in rows] == ["Q1", "Q2"]
+
+
+def test_recovery_parses_different_documents_concurrently_and_keeps_order() -> None:
+    documents = repair_module._fetch_missing_documents(
+        ("Q1", "Q2"),
+        entities={"Q1": _entity("Q1"), "Q2": _entity("Q2")},
+        existing_documents=[],
+        wikipedia_client=InMemoryWikipediaClient(
+            {
+                ("enwiki", "Title Q1"): FetchResult("ok", _wikipedia_article("Q1", 1)),
+                ("enwiki", "Title Q2"): FetchResult("ok", _wikipedia_article("Q2", 2)),
+            }
+        ),
+        settings=_settings(),
+    )
+    barrier = threading.Barrier(2, timeout=1)
+
+    class ConcurrentAugmentation(_AugmentationClient):
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            barrier.wait()
+            return f"<p>Revision {revision_id}</p>"
+
+    rows = repair_module._sections_for_new_documents(
+        documents,
+        {str(row["document_id"]) for row in documents},
+        augmentation_client=ConcurrentAugmentation({"Q1", "Q2"}),
+    )
+
+    assert [row["wikidata"] for row in rows] == ["Q1", "Q2"]
