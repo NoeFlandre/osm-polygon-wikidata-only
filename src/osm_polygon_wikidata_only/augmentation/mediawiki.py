@@ -198,12 +198,23 @@ class AugmentationWikimediaClient:
                 key=f"entities/{props.replace('|', '-')}/{'-'.join(chunk)}.json",
             )
             raw_entities = data.get("entities", [])
-            entity_values = (
-                raw_entities.values() if isinstance(raw_entities, dict) else raw_entities
-            )
-            for entity in entity_values:
-                if isinstance(entity, dict) and entity.get("id"):
-                    out[str(entity["id"])] = entity
+            if isinstance(raw_entities, dict):
+                for response_qid, entity in raw_entities.items():
+                    if not isinstance(entity, dict) or not entity.get("id"):
+                        continue
+                    # Redirected entities retain the requested QID as the
+                    # response-map key but expose the destination as ``id``.
+                    # Joins in this dataset are keyed by the original OSM QID,
+                    # so preserve that requested identity while keeping the
+                    # redirect metadata and destination claims intact.
+                    requested_qid = str(response_qid)
+                    normalized = dict(entity)
+                    normalized["id"] = requested_qid
+                    out[requested_qid] = normalized
+            else:
+                for entity in raw_entities:
+                    if isinstance(entity, dict) and entity.get("id"):
+                        out[str(entity["id"])] = entity
         return out
 
     def parse_html(self, project: str, language: str, revision_id: int) -> str:

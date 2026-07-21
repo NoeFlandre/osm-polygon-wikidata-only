@@ -11,6 +11,7 @@ from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
 from osm_polygon_wikidata_only.augmentation.models import (
@@ -107,6 +108,37 @@ def test_augmentation_transport_retries_after_wikimedia_429(tmp_path) -> None:
 
     assert result == {"parse": {"text": "ok"}}
     assert session.calls == 2
+
+
+def test_augmentation_entities_preserve_requested_qid_for_redirects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AugmentationWikimediaClient(Settings(), JsonFileCache(tmp_path), environ={})
+    monkeypatch.setattr(
+        client,
+        "get_json",
+        lambda _url, *, key: {
+            "entities": {
+                "Q111150206": {
+                    "id": "Q7733117",
+                    "redirects": {"from": "Q111150206", "to": "Q7733117"},
+                    "claims": {"P31": []},
+                },
+                "Q114302480": {
+                    "id": "Q114302495",
+                    "redirects": {"from": "Q114302480", "to": "Q114302495"},
+                    "claims": {},
+                },
+            }
+        },
+    )
+
+    entities = client.entities(["Q111150206", "Q114302480"], props="sitelinks|claims")
+
+    assert set(entities) == {"Q111150206", "Q114302480"}
+    assert entities["Q111150206"]["id"] == "Q111150206"
+    assert entities["Q111150206"]["redirects"]["to"] == "Q7733117"
 
 
 def test_existing_article_becomes_wikipedia_document_without_data_loss() -> None:
