@@ -525,3 +525,70 @@ def test_second_audit_after_repair_is_a_no_op(tmp_path: Path) -> None:
     assert second.region(stem).affected_qids == ()
     assert second.region(stem).reused is True
     assert {path: sha256_file(path) for path in paths} == hashes
+
+
+def test_recovery_resumes_after_last_durable_qid_batch(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "resumable"
+    qids = tuple(f"Q{index}" for index in range(1, 28))
+    affected = qids[1:]
+    ordered_affected = tuple(sorted(affected))
+    _write_region(data_root, stem, list(qids), linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    entities = {qid: _entity(qid) for qid in affected}
+    plan = audit_wikidata_integrity(
+        data_root,
+        [stem],
+        _RecordingWikidataClient(entities),
+    ).region(stem)
+    first_results = {
+        ("enwiki", f"Title {qid}"): FetchResult("ok", _wikipedia_article(qid, index=int(qid[1:])))
+        for qid in ordered_affected[:-1]
+    }
+    first_results[("enwiki", f"Title {ordered_affected[-1]}")] = FetchResult(
+        "http_error", None, "injected second-batch failure"
+    )
+
+    with pytest.raises(RecoveryRepairError, match="injected second-batch failure"):
+        repair_wikidata_region(
+            data_root,
+            plan,
+            wikidata_client=_RecordingWikidataClient(entities),
+            wikipedia_client=InMemoryWikipediaClient(first_results),
+            augmentation_client=_AugmentationClient(set(affected)),
+            settings=_settings(),
+        )
+
+    class RecordingWikipedia(InMemoryWikipediaClient):
+        def __init__(self) -> None:
+            super().__init__(
+                {
+                    ("enwiki", f"Title {qid}"): FetchResult(
+                        "ok", _wikipedia_article(qid, index=int(qid[1:]))
+                    )
+                    for qid in affected
+                }
+            )
+            self.titles: list[str] = []
+
+        def fetch_article(self, language: str, site: str, title: str, **kwargs: Any):
+            self.titles.append(title)
+            return super().fetch_article(language, site, title, **kwargs)
+
+    wikipedia = RecordingWikipedia()
+    messages: list[str] = []
+    result = repair_wikidata_region(
+        data_root,
+        plan,
+        wikidata_client=_RecordingWikidataClient(entities),
+        wikipedia_client=wikipedia,
+        augmentation_client=_AugmentationClient(set(affected)),
+        settings=_settings(),
+        log=messages.append,
+    )
+
+    assert result.changed is True
+    assert wikipedia.titles == [f"Title {ordered_affected[-1]}"]
+    assert any("reused durable checkpoint" in message for message in messages)
+    assert any("checkpoint saved" in message for message in messages)
+    assert not (data_root.cache / "wikidata_recovery" / "checkpoints" / stem).exists()

@@ -477,6 +477,7 @@ def execute(
                     wikipedia_client=runtime.wikipedia,
                     augmentation_client=augmentation_client,
                     settings=settings,
+                    log=LOGGER.info,
                 )
                 if repair_result.changed:
                     recovered_stems.add(state.stem)
@@ -516,6 +517,7 @@ def execute(
             wikipedia_client=runtime.wikipedia,
             augmentation_client=augmentation_client,
             settings=settings,
+            log=LOGGER.info,
         )
         if not repair_result.changed:
             if push_enabled and state.stem in all_pending_stems:

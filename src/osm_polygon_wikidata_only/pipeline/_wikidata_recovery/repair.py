@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,7 +62,14 @@ from .audit import (
     audit_wikidata_integrity,
     record_region_recovery_receipt,
 )
+from .checkpoints import (
+    RECOVERY_QID_BATCH_SIZE,
+    RecoveryBatchArtifacts,
+    RecoveryCheckpointStore,
+    recovery_plan_key,
+)
 from .models import RecoveryClassification, RegionAuditResult
+from .progress import RecoveryHeartbeat, RecoveryProgress
 from .transaction import (
     commit_replacements,
     recover_interrupted_transactions,
@@ -92,6 +100,7 @@ def repair_wikidata_region(
     augmentation_client: AugmentationClient,
     settings: Settings,
     before_commit: Callable[[], None] | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> RecoveryRepairResult:
     """Repair only the affected QID relationships in one finalized shard."""
     if region.blocked_reason:
@@ -115,15 +124,62 @@ def repair_wikidata_region(
     _validate_existing_rows(polygons, links, documents, sections, retained_facts)
 
     affected_qids = tuple(sorted(region.affected_qids))
-    entities = _resolve_entities(wikidata_client, affected_qids)
-    new_documents = _fetch_missing_documents(
-        affected_qids,
-        entities=entities,
-        existing_documents=documents,
-        wikipedia_client=wikipedia_client,
-        settings=settings,
+    batch_total = math.ceil(len(affected_qids) / RECOVERY_QID_BATCH_SIZE)
+    checkpoint_store = RecoveryCheckpointStore(
+        data_root.cache / "wikidata_recovery" / "checkpoints",
+        stem,
+        recovery_plan_key(
+            fingerprints=region.fingerprints,
+            affected_qids=affected_qids,
+            sections_hash=sha256_file(paths["sections"]),
+            settings_identity=(
+                tuple(settings.languages) if settings.languages is not None else None,
+                settings.max_articles_per_qid,
+                settings.fetch_full_text,
+            ),
+        ),
     )
-    merged_documents, new_document_ids = _merge_rows(
+    progress = RecoveryProgress(stem, batch_total)
+    emit = log or (lambda _message: None)
+    batch_documents: list[dict[str, Any]] = []
+    batch_sections: list[dict[str, Any]] = []
+    batch_facts: list[dict[str, Any]] = []
+    with RecoveryHeartbeat(progress, emit):
+        for batch_index, start in enumerate(
+            range(0, len(affected_qids), RECOVERY_QID_BATCH_SIZE),
+            start=1,
+        ):
+            batch_qids = affected_qids[start : start + RECOVERY_QID_BATCH_SIZE]
+            progress.start_batch(batch_index, batch_qids)
+            artifacts = checkpoint_store.load(batch_index - 1, batch_qids)
+            if artifacts is not None:
+                emit(
+                    f"Wikidata recovery {stem}: batch {batch_index}/{batch_total} "
+                    f"reused durable checkpoint ({len(batch_qids)} QIDs)"
+                )
+            else:
+                artifacts = _build_batch_artifacts(
+                    batch_qids,
+                    existing_documents=[*documents, *batch_documents],
+                    wikidata_client=wikidata_client,
+                    wikipedia_client=wikipedia_client,
+                    augmentation_client=augmentation_client,
+                    settings=settings,
+                    progress=progress,
+                )
+                checkpoint_store.save(batch_index - 1, artifacts)
+                progress.checkpoint_saved(
+                    documents=len(artifacts.documents),
+                    sections=len(artifacts.sections),
+                    facts=len(artifacts.facts),
+                )
+                emit(progress.message())
+            batch_documents.extend(artifacts.documents)
+            batch_sections.extend(artifacts.sections)
+            batch_facts.extend(artifacts.facts)
+
+    new_documents = batch_documents
+    merged_documents, _ = _merge_rows(
         documents,
         new_documents,
         primary_key="document_id",
@@ -149,31 +205,14 @@ def repair_wikidata_region(
         affected_qids=set(affected_qids),
     )
 
-    new_sections = _sections_for_new_documents(
-        merged_documents,
-        new_document_ids,
-        augmentation_client=augmentation_client,
-    )
+    new_sections = batch_sections
     merged_sections, _ = _merge_rows(
         sections,
         new_sections,
         primary_key="section_id",
         label="section_id",
     )
-    new_facts: list[dict[str, Any]] = []
-    if affected_qids:
-        raw_entities = augmentation_client.entities(list(affected_qids), props="sitelinks|claims")
-        missing_raw = sorted(set(affected_qids) - set(raw_entities))
-        if missing_raw:
-            raise RecoveryRepairError(f"Augmentation Wikidata response omitted QIDs: {missing_raw}")
-        new_facts = [
-            fact.to_dict()
-            for fact in build_wikidata_facts(
-                augmentation_client,
-                entities={qid: raw_entities[qid] for qid in affected_qids},
-                progress=AugmentationProgress(),
-            )
-        ]
+    new_facts = batch_facts
     merged_facts, _ = _merge_rows(
         retained_facts,
         new_facts,
@@ -224,6 +263,7 @@ def repair_wikidata_region(
     )
     if not changed:
         record_region_recovery_receipt(data_root, stem, terminal_classifications)
+        checkpoint_store.clear()
         return RecoveryRepairResult(
             stem,
             False,
@@ -288,6 +328,7 @@ def repair_wikidata_region(
     )
     if post_audit.region(stem).affected_qids:
         raise RecoveryRepairError(f"Recovery did not converge for region {stem!r}")
+    checkpoint_store.clear()
     repaired_paths = tuple(target for target, _ in replacements)
     return RecoveryRepairResult(
         stem,
@@ -296,6 +337,56 @@ def repair_wikidata_region(
         len(affected_polygon_ids),
         repaired_paths,
         map_inputs_changed,
+    )
+
+
+def _build_batch_artifacts(
+    qids: tuple[str, ...],
+    *,
+    existing_documents: list[dict[str, Any]],
+    wikidata_client: WikidataClient,
+    wikipedia_client: WikipediaClient,
+    augmentation_client: AugmentationClient,
+    settings: Settings,
+    progress: RecoveryProgress,
+) -> RecoveryBatchArtifacts:
+    progress.set_stage("Wikidata entities", total=len(qids))
+    entities = _resolve_entities(wikidata_client, qids)
+    progress.advance(len(qids))
+    documents = _fetch_missing_documents(
+        qids,
+        entities=entities,
+        existing_documents=existing_documents,
+        wikipedia_client=wikipedia_client,
+        settings=settings,
+        progress=progress,
+    )
+    document_ids = {str(row["document_id"]) for row in documents}
+    sections = _sections_for_new_documents(
+        documents,
+        document_ids,
+        augmentation_client=augmentation_client,
+        progress=progress,
+    )
+    progress.set_stage("Wikidata facts", total=len(qids))
+    raw_entities = augmentation_client.entities(list(qids), props="sitelinks|claims")
+    missing_raw = sorted(set(qids) - set(raw_entities))
+    if missing_raw:
+        raise RecoveryRepairError(f"Augmentation Wikidata response omitted QIDs: {missing_raw}")
+    facts = [
+        fact.to_dict()
+        for fact in build_wikidata_facts(
+            augmentation_client,
+            entities={qid: raw_entities[qid] for qid in qids},
+            progress=AugmentationProgress(),
+        )
+    ]
+    progress.advance(len(qids), facts=len(facts))
+    return RecoveryBatchArtifacts(
+        qids=qids,
+        documents=tuple(documents),
+        sections=tuple(sections),
+        facts=tuple(facts),
     )
 
 
@@ -362,16 +453,22 @@ def _fetch_missing_documents(
     existing_documents: list[dict[str, Any]],
     wikipedia_client: WikipediaClient,
     settings: Settings,
+    progress: RecoveryProgress | None = None,
 ) -> list[dict[str, Any]]:
     existing = {
         (str(row["wikidata"]), str(row["site"]), str(row["title"])) for row in existing_documents
     }
     new_documents: list[dict[str, Any]] = []
+    total_sites = sum(len(_eligible_sitelinks(entities[qid], settings)) for qid in affected_qids)
+    if progress is not None:
+        progress.set_stage("Wikipedia documents", total=total_sites)
     for qid in affected_qids:
         entity = entities[qid]
         summary = LinkSummary(qid=qid, entity=entity)
         for site, title in _eligible_sitelinks(entity, settings):
             if (qid, site, title) in existing:
+                if progress is not None:
+                    progress.advance()
                 continue
             language = language_from_site(site)
             result = wikipedia_client.fetch_article(
@@ -391,6 +488,8 @@ def _fetch_missing_documents(
                     f"{qid}:{site} ({result.status}): {result.error}"
                 )
             if result.article is None or result.status == "article_not_found":
+                if progress is not None:
+                    progress.advance()
                 continue
             summary.articles.append(result.article)
             identifier = article_id(
@@ -399,6 +498,8 @@ def _fetch_missing_documents(
             article = article_row(identifier, qid, result.article, summary)
             document = wikipedia_document_from_article_row(article.__dict__)
             new_documents.append(document.to_dict())
+            if progress is not None:
+                progress.advance(documents=1)
     return new_documents
 
 
@@ -502,8 +603,11 @@ def _sections_for_new_documents(
     new_document_ids: set[str],
     *,
     augmentation_client: AugmentationClient,
+    progress: RecoveryProgress | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    if progress is not None:
+        progress.set_stage("Wikipedia sections", total=len(new_document_ids))
     for document_row in documents:
         if str(document_row["document_id"]) not in new_document_ids:
             continue
@@ -514,7 +618,10 @@ def _sections_for_new_documents(
             document.language,
             document.revision_id,
         )
-        rows.extend(section.to_dict() for section in parse_sections(document, html))
+        parsed = [section.to_dict() for section in parse_sections(document, html)]
+        rows.extend(parsed)
+        if progress is not None:
+            progress.advance(sections=len(parsed))
     return rows
 
 
