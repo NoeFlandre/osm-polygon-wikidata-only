@@ -251,9 +251,20 @@ that the runner drains in this exact order:
    canonical Wikipedia documents, plus the small identity columns of Wikidata
    facts. It validates only missing relationships against
    authoritative Wikidata state, and reuses content-addressed receipts for
-   unchanged healthy inputs. Affected QIDs are refetched; repaired core,
+   unchanged healthy inputs. Affected QIDs are refetched in deterministic
+   groups of 25. Each completed group is stored under
+   `cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/` as schema-validated
+   Parquet before the next group begins. The plan hash covers regional input
+   fingerprints, section content, affected QIDs, and relevant settings, so a
+   checkpoint cannot be reused after its inputs change. Restarting repeats at
+   most the active group; completed groups are reused without refetching or
+   reparsing. A 60-second heartbeat reports the active group and stage,
+   documents, sections, facts, elapsed time, and estimated remaining time.
+   After all groups are durable, repaired core,
    documents, sections, facts, and both manifests are replaced as one durable
-   journaled transaction before an atomic regional publication. Orphan fact
+   journaled transaction before an atomic regional publication. Checkpoints
+   are removed only after the post-repair audit converges; Hugging Face never
+   receives a partial group. Orphan fact
    rows whose subject QID is absent from every regional polygon are pruned in
    that transaction without refetching or changing joinable facts. Such a
    facts-only repair refreshes manifests, statistics, and the README but reuses
