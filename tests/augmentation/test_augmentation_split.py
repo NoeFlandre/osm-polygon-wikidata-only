@@ -26,9 +26,11 @@ workers, and neither helper is responsible for selecting worker counts.
 from __future__ import annotations
 
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -385,6 +387,60 @@ def test_fetch_document_sections_partitions_by_project_and_sorts(tmp_path: Path)
         assert keys == sorted(keys)
     assert len(sections["wikipedia"]) == 2
     assert len(sections["wikivoyage"]) == 2
+
+
+def test_fetch_document_sections_parses_completed_html_without_waiting_for_tail() -> None:
+    """A slow final fetch must not retain and block already-fetched HTML."""
+    from osm_polygon_wikidata_only.augmentation.steps import fetch_document_sections
+
+    client = FakeAugmentationClient()
+    progress = AugmentationProgress()
+    first = document_from_article_row(article_row())
+    second_row = article_row()
+    second_row.update(article_id="Q2:en:11:21", wikidata="Q2", page_id=11, revision_id=21)
+    second = document_from_article_row(second_row)
+    release_tail = threading.Event()
+    first_parsed = threading.Event()
+    original_parse_html = client.parse_html
+
+    def fetch_html(project: str, language: str, revision_id: int) -> str:
+        if revision_id == second.revision_id:
+            assert release_tail.wait(timeout=2), "test did not release tail fetch"
+        return original_parse_html(project, language, revision_id)
+
+    def record_parse(document: Document, _html: str) -> list[object]:
+        if document.document_id == first.document_id:
+            first_parsed.set()
+        return []
+
+    client.parse_html = fetch_html  # type: ignore[method-assign]
+    result: list[dict[str, list[object]]] = []
+
+    def execute() -> None:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            with mock.patch(
+                "osm_polygon_wikidata_only.augmentation.steps.parse_sections",
+                side_effect=record_parse,
+            ):
+                result.append(
+                    fetch_document_sections(
+                        client,
+                        documents=[first, second],
+                        progress=progress,
+                        executor=executor,
+                    )
+                )
+
+    thread = threading.Thread(target=execute)
+    thread.start()
+    try:
+        assert first_parsed.wait(timeout=1), "completed HTML was retained behind tail fetch"
+    finally:
+        release_tail.set()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------

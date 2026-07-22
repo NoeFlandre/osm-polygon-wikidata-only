@@ -317,10 +317,11 @@ The command reports bounded local-scan and upstream-validation checkpoints with
 elapsed time; transient Wikimedia API states such as `maxlag` remain retryable
 and never become cached missing entities.
 
-Affected relationships are repaired in deterministic groups of 25 QIDs. Each
-completed group is stored below
+Affected relationships are repaired in deterministic groups of 25 QIDs. Up to
+three independent groups run concurrently under the same shared global and
+per-host Wikimedia scheduler. Each completed group is stored immediately below
 `cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/`, so an interruption
-repeats at most the active group. The final regional Parquet files and manifests
+repeats only unfinished groups. The final regional Parquet files and manifests
 are still replaced atomically only after every group has completed.
 
 Known whole-file Geofabrik containment overlaps are retired safely during
