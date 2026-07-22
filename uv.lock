@@ -1186,6 +1186,7 @@ source = { editable = "." }
 dependencies = [
     { name = "datasets" },
     { name = "h3" },
+    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "matplotlib" },
     { name = "osmium" },
@@ -1206,6 +1207,7 @@ dev = [
 requires-dist = [
     { name = "datasets", specifier = ">=3.0" },
     { name = "h3", specifier = ">=4.0" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", specifier = ">=0.24" },
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "osmium", specifier = ">=3.7" },

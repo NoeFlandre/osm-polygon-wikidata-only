@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import http.cookiejar
 import json
 import logging
 import os
@@ -15,6 +14,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol, cast
 
+from osm_polygon_wikidata_only.enrichment.wikimedia_http import PooledWikimediaTransport
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
 LOGGER = logging.getLogger(__name__)
@@ -119,12 +119,6 @@ class _HostSession:
     auth_skipped: bool = False  # True iff the bot password was rejected here
 
 
-def _cookie_opener() -> _Opener:
-    cookie_jar = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
-    return cast(_Opener, opener)
-
-
 class WikimediaSession:
     """Cookie-preserving transport with optional lazy login per API host."""
 
@@ -135,13 +129,18 @@ class WikimediaSession:
         timeout_s: float,
         user_agent: str,
         credentials: WikimediaCredentials | None = None,
-        opener_factory: Callable[[], _Opener] = _cookie_opener,
+        opener_factory: Callable[[], _Opener] | None = None,
     ) -> None:
         self._scheduler = scheduler
         self._timeout_s = timeout_s
         self._user_agent = user_agent
         self._credentials = credentials
         self._opener_factory = opener_factory
+        self._pooled_transport: PooledWikimediaTransport | None = None
+        if opener_factory is None:
+            self._pooled_transport = PooledWikimediaTransport(
+                max_connections=getattr(scheduler, "max_in_flight", 8)
+            )
         self._hosts: dict[str, _HostSession] = {}
         self._hosts_lock = threading.Lock()
         self._fallback_warning_lock = threading.Lock()
@@ -183,9 +182,23 @@ class WikimediaSession:
         with self._hosts_lock:
             state = self._hosts.get(hostname)
             if state is None:
-                state = _HostSession(opener=self._opener_factory(), lock=threading.Lock())
+                opener: _Opener
+                pooled_transport = self._pooled_transport
+                if pooled_transport is None:
+                    factory = self._opener_factory
+                    if factory is None:  # pragma: no cover - constructor invariant
+                        raise RuntimeError("Wikimedia opener factory is unavailable")
+                    opener = factory()
+                else:
+                    opener = cast(_Opener, pooled_transport.opener())
+                state = _HostSession(opener=opener, lock=threading.Lock())
                 self._hosts[hostname] = state
             return state
+
+    def close(self) -> None:
+        """Release persistent HTTP connections owned by this session."""
+        if self._pooled_transport is not None:
+            self._pooled_transport.close()
 
     def _ensure_authenticated(self, state: _HostSession, scheme: str, netloc: str) -> None:
         if state.authenticated or state.auth_skipped:
