@@ -314,8 +314,9 @@ Legacy Wikidata fact rows whose subject is no longer present in the region's
 polygons are removed by that same transaction; all still-joinable facts are
 preserved.
 The command reports bounded local-scan and upstream-validation checkpoints with
-elapsed time; transient Wikimedia API states such as `maxlag` remain retryable
-and never become cached missing entities.
+elapsed time. Up to three independent validation chunks overlap under the same
+shared request scheduler, while transient Wikimedia API states such as `maxlag`
+remain retryable and never become cached missing entities.
 
 Affected relationships are repaired in deterministic groups of 25 QIDs. Up to
 three independent groups run concurrently under the same shared global and

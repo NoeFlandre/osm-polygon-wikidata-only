@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ from .models import (
 LOGGER = logging.getLogger(__name__)
 RECOVERY_CONTRACT_VERSION = "wikidata-enrichment-integrity-v2"
 _INDEX_RELATIVE_PATH = Path("wikidata_recovery/index.json")
+_UPSTREAM_BATCH_WINDOW = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,17 +347,41 @@ def _resolve_entities(
     resolved: dict[str, WikidataEntity | None] = {}
     cache_hits = 0
     if isinstance(client, BatchWikidataClient):
-        for start in range(0, len(qids), batch_size):
-            chunk = qids[start : start + batch_size]
+        chunks = [qids[start : start + batch_size] for start in range(0, len(qids), batch_size)]
+        if not chunks:
+            return resolved, cache_hits
+
+        def resolve_chunk(
+            index: int,
+            chunk: list[str],
+        ) -> tuple[int, list[str], list[WikidataEntity | None], int]:
             results = client.get_entities(chunk)
             if len(results) != len(chunk):
                 raise RuntimeError("Wikidata batch client returned the wrong result count")
-            resolved.update(zip(chunk, results, strict=True))
             hits = getattr(client, "last_batch_cache_hits", 0)
-            if isinstance(hits, int):
-                cache_hits += hits
-            if progress is not None:
-                progress(min(start + len(chunk), len(qids)), len(qids))
+            return index, chunk, results, hits if isinstance(hits, int) else 0
+
+        completed: dict[int, tuple[list[str], list[WikidataEntity | None], int]] = {}
+        completed_qids = 0
+        with ThreadPoolExecutor(max_workers=min(_UPSTREAM_BATCH_WINDOW, len(chunks))) as executor:
+            futures = [
+                executor.submit(resolve_chunk, index, chunk) for index, chunk in enumerate(chunks)
+            ]
+            try:
+                for future in as_completed(futures):
+                    index, chunk, results, hits = future.result()
+                    completed[index] = (chunk, results, hits)
+                    completed_qids += len(chunk)
+                    if progress is not None:
+                        progress(completed_qids, len(qids))
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+        for index in range(len(chunks)):
+            chunk, results, hits = completed[index]
+            resolved.update(zip(chunk, results, strict=True))
+            cache_hits += hits
     else:
         for index, qid in enumerate(qids, start=1):
             resolved[qid] = client.get_entity(qid)
