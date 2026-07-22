@@ -53,6 +53,7 @@ from osm_polygon_wikidata_only.io.manifest import load_manifest
 from osm_polygon_wikidata_only.pipeline.completeness import NON_FATAL_FETCH_STATUSES
 from osm_polygon_wikidata_only.pipeline.row_construction import article_row
 from osm_polygon_wikidata_only.utils.json import dumps
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 
 from .audit import (
     RECOVERY_CONTRACT_VERSION,
@@ -94,6 +95,7 @@ def repair_wikidata_region(
     settings: Settings,
     before_commit: Callable[[], None] | None = None,
     log: Callable[[str], None] | None = None,
+    scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None = None,
 ) -> RecoveryRepairResult:
     """Repair only the affected QID relationships in one finalized shard."""
     if region.blocked_reason:
@@ -132,7 +134,11 @@ def repair_wikidata_region(
             ),
         ),
     )
-    progress = RecoveryProgress(stem, batch_total)
+    progress = RecoveryProgress(
+        stem,
+        batch_total,
+        scheduler_snapshot=scheduler_snapshot,
+    )
     emit = log or (lambda _message: None)
     batch_documents: list[dict[str, Any]] = []
     batch_sections: list[dict[str, Any]] = []

@@ -21,6 +21,7 @@ dependencies = [
     "datasets>=3.0",
     "h3>=4.0",
     "huggingface-hub>=0.24",
+    "httpx>=0.27",
     "matplotlib>=3.8",
     "osmium>=3.7",
     "pyarrow>=16",

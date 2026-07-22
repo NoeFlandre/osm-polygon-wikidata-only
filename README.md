@@ -239,7 +239,7 @@ export WIKIMEDIA_REQUESTS_PER_MINUTE=600
 Usually, omit this override and let the adaptive scheduler work. Wikimedia
 determines the actual tier from the account's standing: authentication alone
 does not guarantee a particular limit. The pipeline keeps at most eight requests
-in flight for authenticated runs, preserves a separate authenticated cookie session for every API host,
+in flight for authenticated runs, keeps cookies domain-scoped in one bounded persistent connection pool,
 and automatically reduces its rate when Wikimedia returns HTTP 429 with
 `Retry-After`.
 

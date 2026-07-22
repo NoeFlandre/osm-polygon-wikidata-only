@@ -139,7 +139,10 @@ truth for Wikimedia request pacing. The scheduler is hierarchical:
 `WikimediaSession` is the single transport boundary. It owns the
 per-host authentication state (login handshake performed lazily per
 host, with the bot password verified against the host's API endpoint)
-and exposes the per-host pacing decision: hosts that have *verified*
+and uses one process-wide HTTP/1.1 connection pool bounded by the same
+global concurrency limit. Cookies remain domain-scoped while live
+connections are reused across requests to avoid repeated TCP/TLS setup.
+The session also exposes the per-host pacing decision: hosts that have *verified*
 authentication are paced at the authenticated minimum interval;
 hosts contacted anonymously or whose bot password was rejected are
 paced at the per-kind anonymous interval. Authentication state is
@@ -270,7 +273,8 @@ that the runner drains in this exact order:
    concurrently and up to eight documents fetch section HTML concurrently;
    both use the existing shared scheduler and their results are flattened in
    deterministic input order. A 60-second heartbeat reports the active group and stage,
-   documents, sections, facts, elapsed time, and estimated remaining time.
+   documents, sections, facts, elapsed time, estimated remaining time,
+   request-rate utilization, in-flight requests, rolling throttles, and cooling hosts.
    After all groups are durable, repaired core,
    documents, sections, facts, and both manifests are replaced as one durable
    journaled transaction before an atomic regional publication. Checkpoints

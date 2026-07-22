@@ -8,6 +8,8 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Literal
 
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
+
 
 class RecoveryProgress:
     def __init__(
@@ -16,10 +18,12 @@ class RecoveryProgress:
         batch_total: int,
         *,
         clock: Callable[[], float] = time.monotonic,
+        scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None = None,
     ) -> None:
         self._stem = stem
         self._batch_total = batch_total
         self._clock = clock
+        self._scheduler_snapshot = scheduler_snapshot
         self._started_at = clock()
         self._lock = threading.Lock()
         self._batch = 0
@@ -73,11 +77,21 @@ class RecoveryProgress:
             if self._batch > 1 and elapsed > 0:
                 remaining = max(0, self._batch_total - self._batch)
                 eta = f"{round(elapsed / (self._batch - 1) * remaining)}s"
-            return (
+            message = (
                 f"Wikidata recovery progress {self._stem}: batch {self._batch}/{self._batch_total}; "
                 f"{self._stage} {self._completed}/{self._total}; documents {self._documents}; "
                 f"sections {self._sections}; facts {self._facts}; {elapsed}s elapsed; ETA {eta}"
             )
+        if self._scheduler_snapshot is None:
+            return message
+        scheduler = self._scheduler_snapshot()
+        return (
+            f"{message}; requests {scheduler.requests_last_minute}/"
+            f"{scheduler.maximum_requests_per_minute:.0f} rpm "
+            f"({scheduler.utilization_percent:.0f}%); "
+            f"in-flight {scheduler.in_flight}/{scheduler.max_in_flight}; "
+            f"429s {scheduler.throttle_events}; cooling hosts {scheduler.cooling_down_hosts}"
+        )
 
 
 class RecoveryHeartbeat:
