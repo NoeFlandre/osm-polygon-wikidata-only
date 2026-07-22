@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -178,6 +179,47 @@ def test_full_failure_region_is_detected_without_thresholds(tmp_path: Path) -> N
     assert region.affected_qids == tuple(sorted(qids))
     assert region.affected_polygon_count == 50
     assert client.batch_calls == [sorted(qids)]
+
+
+def test_upstream_validation_does_not_wait_for_one_slow_chunk() -> None:
+    all_started = threading.Event()
+    release_slow = threading.Event()
+    lock = threading.Lock()
+    started: list[str] = []
+
+    class SlowFirstClient(WikidataClient):
+        def get_entity(self, qid: str) -> WikidataEntity | None:
+            raise AssertionError("batch API expected")
+
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            qid = next(iter(qids))
+            with lock:
+                started.append(qid)
+                if len(started) == 3:
+                    all_started.set()
+            if qid == "Q1":
+                assert release_slow.wait(timeout=2), "test did not release slow chunk"
+            return [_entity(qid)]
+
+    result: list[tuple[dict[str, WikidataEntity | None], int]] = []
+    thread = threading.Thread(
+        target=lambda: result.append(
+            audit_mod._resolve_entities(
+                SlowFirstClient(),
+                ["Q1", "Q2", "Q3"],
+                batch_size=1,
+            )
+        )
+    )
+    thread.start()
+    try:
+        assert all_started.wait(timeout=1), "slow first chunk blocked later validation chunks"
+    finally:
+        release_slow.set()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert set(result[0][0]) == {"Q1", "Q2", "Q3"}
 
 
 def test_one_lost_qid_in_majority_covered_region_is_detected(tmp_path: Path) -> None:

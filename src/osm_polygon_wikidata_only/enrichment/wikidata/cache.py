@@ -17,6 +17,7 @@ Out of scope (intentionally retained elsewhere):
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable
 from typing import Any
 
@@ -47,11 +48,11 @@ class CachedWikidataClient(WikidataClient):
         self._inner = inner
         self._cache = cache
         self._failed_ttl_s = failed_ttl_s
-        self._last_batch_cache_hits = 0
+        self._telemetry = threading.local()
 
     @property
     def last_batch_cache_hits(self) -> int:
-        return self._last_batch_cache_hits
+        return int(getattr(self._telemetry, "last_batch_cache_hits", 0))
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
         return self.get_entities([qid])[0]
@@ -79,7 +80,7 @@ class CachedWikidataClient(WikidataClient):
             else:
                 misses.append(qid)
 
-        self._last_batch_cache_hits = cache_hits
+        self._telemetry.last_batch_cache_hits = cache_hits
         batch_get = getattr(self._inner, "get_entities", None)
         if not misses:
             fetched: list[WikidataEntity | None] = []

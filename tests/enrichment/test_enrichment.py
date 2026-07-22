@@ -285,6 +285,39 @@ def test_cached_wikidata_client_batches_only_cache_misses(
     assert calls == [["Q2"]]
 
 
+def test_cached_wikidata_cache_hit_telemetry_is_isolated_per_thread(tmp_path: Path) -> None:
+    inner = InMemoryWikidataClient(
+        {
+            "Q1": WikidataEntity(qid="Q1"),
+            "Q2": WikidataEntity(qid="Q2"),
+        }
+    )
+    client = CachedWikidataClient(inner, JsonFileCache(tmp_path))
+    client.get_entity("Q1")
+    barrier = threading.Barrier(2)
+    first_ready = threading.Event()
+    observed: dict[str, int] = {}
+
+    def resolve(name: str, qid: str) -> None:
+        client.get_entities([qid])
+        if name == "cached":
+            first_ready.set()
+        barrier.wait(timeout=2)
+        observed[name] = client.last_batch_cache_hits
+
+    cached = threading.Thread(target=resolve, args=("cached", "Q1"))
+    cached.start()
+    assert first_ready.wait(timeout=1)
+    uncached = threading.Thread(target=resolve, args=("uncached", "Q2"))
+    uncached.start()
+    cached.join(timeout=2)
+    uncached.join(timeout=2)
+
+    assert not cached.is_alive()
+    assert not uncached.is_alive()
+    assert observed == {"cached": 1, "uncached": 0}
+
+
 # --- text_cleaning ------------------------------------------------------
 
 

@@ -292,7 +292,9 @@ that the runner drains in this exact order:
    a blocked finalized shard is left unchanged and aborts the command before
    extraction begins; already completed regional repairs remain durable.
    The audit emits bounded checkpoints for its local scan and authoritative
-   validation phases. Wikidata HTTP-200 API errors are inspected before entity
+   validation phases. Up to three independent validation chunks overlap under
+   the same shared scheduler, so one lagged entity cannot idle unrelated work.
+   Wikidata HTTP-200 API errors are inspected before entity
    parsing: transient codes such as `maxlag`, `readonly`, and `ratelimited`
    remain inside the existing retry loop, while permanent or structurally
    malformed responses fail closed with their API code and message. The same
