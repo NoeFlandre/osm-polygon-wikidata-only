@@ -10,6 +10,7 @@ import urllib.error
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.utils import retry as retry_mod
 from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.retry import (
@@ -86,7 +87,7 @@ def test_unbounded_retries_do_not_overflow_during_very_long_outage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
-    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry._wait_for_retry", lambda _: None)
     monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.random.uniform", lambda *_: 0.0)
 
     def operation() -> str:
@@ -143,6 +144,37 @@ def test_unbounded_retries_do_not_swallow_keyboard_interrupt() -> None:
             retry_on=(Exception,),
             should_retry=is_transient_network_error,
         )
+
+
+def test_retry_backoff_can_be_cancelled_cooperatively() -> None:
+    retry_started = threading.Event()
+    failures: list[BaseException] = []
+
+    def execute() -> None:
+        try:
+            with_retries(
+                lambda: (_ for _ in ()).throw(OSError("offline")),
+                attempts=None,
+                base_delay=60,
+                retry_on=(OSError,),
+                on_retry=lambda *_args: retry_started.set(),
+            )
+        except BaseException as error:
+            failures.append(error)
+
+    retry_mod._reset_retry_cancellation()
+    thread = threading.Thread(target=execute)
+    thread.start()
+    try:
+        assert retry_started.wait(timeout=1)
+        retry_mod._cancel_pending_retries()
+        thread.join(timeout=1)
+    finally:
+        retry_mod._reset_retry_cancellation()
+
+    assert not thread.is_alive(), "retry sleep ignored cooperative cancellation"
+    assert len(failures) == 1
+    assert type(failures[0]).__name__ == "_RetryCancelled"
 
 
 def test_transient_retry_warning_is_sparse_and_does_not_include_error_text(
@@ -432,7 +464,7 @@ def test_report_host_throttled_prunes_events_outside_window() -> None:
 
 
 def test_retry_returns_after_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry._wait_for_retry", lambda _: None)
     attempts = 0
 
     def operation() -> str:
@@ -447,7 +479,7 @@ def test_retry_returns_after_transient_failures(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_retry_raises_last_error_after_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry.time.sleep", lambda _: None)
+    monkeypatch.setattr("osm_polygon_wikidata_only.utils.retry._wait_for_retry", lambda _: None)
 
     with pytest.raises(OSError, match="offline"):
         with_retries(

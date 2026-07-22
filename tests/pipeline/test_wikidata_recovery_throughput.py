@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import threading
+import time
 
+import pytest
+
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair as repair_mod
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.checkpoints import (
     RecoveryBatchArtifacts,
 )
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.repair import (
     _execute_recovery_batches,
 )
+from osm_polygon_wikidata_only.utils import retry as retry_mod
 
 
 class _MemoryCheckpointStore:
@@ -173,3 +178,35 @@ def test_completed_batch_is_durable_while_slow_sibling_is_still_running() -> Non
         thread.join(timeout=2)
 
     assert not thread.is_alive()
+
+
+def test_interrupted_recovery_cancels_worker_retry_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry_started = threading.Event()
+
+    def build(batch_qids: tuple[str, ...], _progress: object) -> RecoveryBatchArtifacts:
+        return retry_mod.with_retries(
+            lambda: (_ for _ in ()).throw(OSError("offline")),
+            attempts=2,
+            base_delay=2,
+            retry_on=(OSError,),
+            on_retry=lambda *_args: retry_started.set(),
+        )
+
+    def interrupt(_futures: object) -> list[object]:
+        assert retry_started.wait(timeout=1)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(repair_mod, "as_completed", interrupt)
+    started_at = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        _execute_recovery_batches(
+            stem="region-latest",
+            affected_qids=tuple(f"Q{index}" for index in range(1, 51)),
+            checkpoint_store=_MemoryCheckpointStore(),  # type: ignore[arg-type]
+            build_batch=build,  # type: ignore[arg-type]
+            emit=lambda _message: None,
+        )
+
+    assert time.monotonic() - started_at < 1
