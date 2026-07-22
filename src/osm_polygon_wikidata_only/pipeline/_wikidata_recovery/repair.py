@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +82,7 @@ from .transaction import (
 )
 
 RECOVERY_NETWORK_WORKERS = 8
+RECOVERY_BATCH_WINDOW = 3
 
 
 def repair_wikidata_region(
@@ -119,7 +119,6 @@ def repair_wikidata_region(
     _validate_existing_rows(polygons, links, documents, sections, retained_facts)
 
     affected_qids = tuple(sorted(region.affected_qids))
-    batch_total = math.ceil(len(affected_qids) / RECOVERY_QID_BATCH_SIZE)
     checkpoint_store = RecoveryCheckpointStore(
         data_root.cache / "wikidata_recovery" / "checkpoints",
         stem,
@@ -134,48 +133,33 @@ def repair_wikidata_region(
             ),
         ),
     )
-    progress = RecoveryProgress(
-        stem,
-        batch_total,
+    emit = log or (lambda _message: None)
+
+    def build_batch(
+        batch_qids: tuple[str, ...],
+        progress: RecoveryProgress,
+    ) -> RecoveryBatchArtifacts:
+        return _build_batch_artifacts(
+            batch_qids,
+            existing_documents=documents,
+            wikidata_client=wikidata_client,
+            wikipedia_client=wikipedia_client,
+            augmentation_client=augmentation_client,
+            settings=settings,
+            progress=progress,
+        )
+
+    completed_batches = _execute_recovery_batches(
+        stem=stem,
+        affected_qids=affected_qids,
+        checkpoint_store=checkpoint_store,
+        build_batch=build_batch,
+        emit=emit,
         scheduler_snapshot=scheduler_snapshot,
     )
-    emit = log or (lambda _message: None)
-    batch_documents: list[dict[str, Any]] = []
-    batch_sections: list[dict[str, Any]] = []
-    batch_facts: list[dict[str, Any]] = []
-    with RecoveryHeartbeat(progress, emit):
-        for batch_index, start in enumerate(
-            range(0, len(affected_qids), RECOVERY_QID_BATCH_SIZE),
-            start=1,
-        ):
-            batch_qids = affected_qids[start : start + RECOVERY_QID_BATCH_SIZE]
-            progress.start_batch(batch_index, batch_qids)
-            artifacts = checkpoint_store.load(batch_index - 1, batch_qids)
-            if artifacts is not None:
-                emit(
-                    f"Wikidata recovery {stem}: batch {batch_index}/{batch_total} "
-                    f"reused durable checkpoint ({len(batch_qids)} QIDs)"
-                )
-            else:
-                artifacts = _build_batch_artifacts(
-                    batch_qids,
-                    existing_documents=[*documents, *batch_documents],
-                    wikidata_client=wikidata_client,
-                    wikipedia_client=wikipedia_client,
-                    augmentation_client=augmentation_client,
-                    settings=settings,
-                    progress=progress,
-                )
-                checkpoint_store.save(batch_index - 1, artifacts)
-                progress.checkpoint_saved(
-                    documents=len(artifacts.documents),
-                    sections=len(artifacts.sections),
-                    facts=len(artifacts.facts),
-                )
-                emit(progress.message())
-            batch_documents.extend(artifacts.documents)
-            batch_sections.extend(artifacts.sections)
-            batch_facts.extend(artifacts.facts)
+    batch_documents = [row for batch in completed_batches for row in batch.documents]
+    batch_sections = [row for batch in completed_batches for row in batch.sections]
+    batch_facts = [row for batch in completed_batches for row in batch.facts]
 
     new_documents = batch_documents
     merged_documents, _ = _merge_rows(
@@ -337,6 +321,75 @@ def repair_wikidata_region(
         repaired_paths,
         map_inputs_changed,
     )
+
+
+def _execute_recovery_batches(
+    *,
+    stem: str,
+    affected_qids: tuple[str, ...],
+    checkpoint_store: RecoveryCheckpointStore,
+    build_batch: Callable[[tuple[str, ...], RecoveryProgress], RecoveryBatchArtifacts],
+    emit: Callable[[str], None],
+    scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None = None,
+    batch_window: int = RECOVERY_BATCH_WINDOW,
+) -> list[RecoveryBatchArtifacts]:
+    """Build independent recovery batches concurrently and return input order."""
+    if batch_window < 1:
+        raise ValueError("batch_window must be at least 1")
+    batches = [
+        affected_qids[start : start + RECOVERY_QID_BATCH_SIZE]
+        for start in range(0, len(affected_qids), RECOVERY_QID_BATCH_SIZE)
+    ]
+    batch_total = len(batches)
+    completed: dict[int, RecoveryBatchArtifacts] = {}
+    missing: list[tuple[int, tuple[str, ...]]] = []
+    for index, batch_qids in enumerate(batches):
+        artifacts = checkpoint_store.load(index, batch_qids)
+        if artifacts is None:
+            missing.append((index, batch_qids))
+            continue
+        completed[index] = artifacts
+        emit(
+            f"Wikidata recovery {stem}: batch {index + 1}/{batch_total} "
+            f"reused durable checkpoint ({len(batch_qids)} QIDs)"
+        )
+
+    def build_and_checkpoint(
+        index: int,
+        batch_qids: tuple[str, ...],
+    ) -> tuple[int, RecoveryBatchArtifacts]:
+        progress = RecoveryProgress(
+            stem,
+            batch_total,
+            scheduler_snapshot=scheduler_snapshot,
+        )
+        progress.start_batch(index + 1, batch_qids)
+        with RecoveryHeartbeat(progress, emit):
+            artifacts = build_batch(batch_qids, progress)
+        checkpoint_store.save(index, artifacts)
+        progress.checkpoint_saved(
+            documents=len(artifacts.documents),
+            sections=len(artifacts.sections),
+            facts=len(artifacts.facts),
+        )
+        emit(progress.message())
+        return index, artifacts
+
+    if missing:
+        with ThreadPoolExecutor(max_workers=min(batch_window, len(missing))) as executor:
+            futures = [
+                executor.submit(build_and_checkpoint, index, batch_qids)
+                for index, batch_qids in missing
+            ]
+            try:
+                for future in as_completed(futures):
+                    index, artifacts = future.result()
+                    completed[index] = artifacts
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+    return [completed[index] for index in range(batch_total)]
 
 
 def _build_batch_artifacts(

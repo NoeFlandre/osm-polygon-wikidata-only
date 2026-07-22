@@ -44,7 +44,7 @@ import hashlib
 import json
 import os
 import tempfile
-from concurrent.futures import Executor
+from concurrent.futures import Executor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -350,9 +350,11 @@ def fetch_document_sections(
         finally:
             progress.advance()
 
-    html_pages = list(executor.map(fetch_html, documents))
     sections_by_project: dict[str, list[Section]] = {"wikipedia": [], "wikivoyage": []}
-    for document, html in zip(documents, html_pages, strict=True):
+    pending = {executor.submit(fetch_html, document): document for document in documents}
+    for future in as_completed(pending):
+        document = pending[future]
+        html = future.result()
         sections_by_project[document.project].extend(parse_sections(document, html))
     for rows in sections_by_project.values():
         rows.sort(key=lambda row: (row.document_id, row.section_index))

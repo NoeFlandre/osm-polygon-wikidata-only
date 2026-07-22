@@ -263,16 +263,18 @@ that the runner drains in this exact order:
    facts. It validates only missing relationships against
    authoritative Wikidata state, and reuses content-addressed receipts for
    unchanged healthy inputs. Affected QIDs are refetched in deterministic
-   groups of 25. Each completed group is stored under
+   groups of 25. Up to three independent groups run concurrently, while the
+   shared scheduler remains the sole authority for global and per-host request
+   limits. Each completed group is stored immediately under
    `cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/` as schema-validated
-   Parquet before the next group begins. The plan hash covers regional input
+   Parquet without waiting for slower groups. The plan hash covers regional input
    fingerprints, section content, affected QIDs, and relevant settings, so a
-   checkpoint cannot be reused after its inputs change. Restarting repeats at
-   most the active group; completed groups are reused without refetching or
+   checkpoint cannot be reused after its inputs change. Restarting repeats only
+   unfinished groups; completed groups are reused without refetching or
    reparsing. Within each group, up to eight QIDs fetch Wikipedia documents
    concurrently and up to eight documents fetch section HTML concurrently;
    both use the existing shared scheduler and their results are flattened in
-   deterministic input order. A 60-second heartbeat reports the active group and stage,
+   deterministic input order. A 60-second heartbeat reports each active group and stage,
    documents, sections, facts, elapsed time, estimated remaining time,
    request-rate utilization, in-flight requests, rolling throttles, and cooling hosts.
    After all groups are durable, repaired core,
