@@ -1,12 +1,12 @@
 [project]
 name = "osm-polygon-wikidata-only"
 version = "0.1.0"
-description = "Extract OSM polygons with wikidata tags into a Hugging Face dataset."
+description = "OSM polygons with Wikidata facts and multilingual Wikipedia and Wikivoyage text."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Noé Flandre" }]
 license = { file = "LICENSE" }
-keywords = ["openstreetmap", "wikidata", "wikipedia", "geospatial", "parquet"]
+keywords = ["openstreetmap", "wikidata", "wikipedia", "wikivoyage", "geospatial", "parquet"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

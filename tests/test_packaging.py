@@ -14,6 +14,9 @@ def test_project_metadata_is_public_ready() -> None:
     assert metadata["urls"]["Source"].endswith("NoeFlandre/osm-polygon-wikidata-only")
     assert "Programming Language :: Python :: 3.12" in metadata["classifiers"]
     assert metadata["scripts"]["osm-polygon-wikidata-only"].endswith(":run")
+    description = metadata["description"].lower()
+    assert all(source in description for source in ("osm", "wikidata", "wikipedia", "wikivoyage"))
+    assert "wikivoyage" in metadata["keywords"]
 
 
 def test_package_declares_inline_typing_support() -> None:

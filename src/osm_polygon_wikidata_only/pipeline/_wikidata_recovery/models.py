@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 
 class RecoveryClassification(StrEnum):
@@ -61,9 +62,27 @@ class RecoveryAuditResult:
         raise KeyError(qid)
 
 
+class RecoveryRepairError(RuntimeError):
+    """Raised when a recovery cannot preserve its integrity contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryRepairResult:
+    """Outcome of repairing one finalized region."""
+
+    stem: str
+    changed: bool
+    affected_qids: tuple[str, ...]
+    affected_polygon_count: int
+    repaired_paths: tuple[Path, ...]
+    map_inputs_changed: bool = False
+
+
 __all__ = [
     "QidAuditResult",
     "RecoveryAuditResult",
     "RecoveryClassification",
+    "RecoveryRepairError",
+    "RecoveryRepairResult",
     "RegionAuditResult",
 ]

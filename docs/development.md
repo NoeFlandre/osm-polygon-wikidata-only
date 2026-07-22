@@ -34,8 +34,8 @@ export WIKIMEDIA_REQUESTS_PER_MINUTE=600
 ```
 
 Never use live credentials in tests. Pass an explicit environment mapping and
-an injected fake opener/session, as `tests/test_wikimedia_auth.py` and
-`tests/test_dependencies.py` do. Tests must assert that exception messages and
+an injected fake opener/session, as `tests/enrichment/test_wikimedia_auth.py` and
+`tests/cli/test_dependencies.py` do. Tests must assert that exception messages and
 representations do not contain passwords. Do not add network-dependent login
 tests to the automated suite.
 
@@ -54,6 +54,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
 uv build
+git diff --check
 ```
 
 Strict typing applies to `src/`. Decoded third-party JSON may begin as `Any`,

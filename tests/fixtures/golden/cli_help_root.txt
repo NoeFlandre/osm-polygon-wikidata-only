@@ -1,7 +1,7 @@
 usage: PROG [-h]
  {process-pbf,process-dir,sync-dir,augment-region,augment-dir} ...
 
-Build a Hugging Face dataset of OSM polygons linked to Wikidata + Wikipedia.
+Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage.
 
 positional arguments:
  {process-pbf,process-dir,sync-dir,augment-region,augment-dir}

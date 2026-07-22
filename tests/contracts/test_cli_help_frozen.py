@@ -119,4 +119,7 @@ def test_root_help_lists_every_subcommand(help_outputs: dict[str, str]) -> None:
 
 def test_root_help_includes_top_level_description(help_outputs: dict[str, str]) -> None:
     text = help_outputs["root"]
-    assert "Build a Hugging Face dataset of OSM polygons linked to Wikidata + Wikipedia." in text
+    assert (
+        "Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage."
+        in text
+    )

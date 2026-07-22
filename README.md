@@ -31,11 +31,11 @@ Documentation: [architecture](docs/architecture.md) ·
    attribution).
 5. Publishes the canonical region tables on the Hugging Face Hub:
    * `polygons/<stem>.parquet` — one row per polygon.
-   * `wikipedia/documents/<stem>.parquet` — one lossless row per unique Wikipedia article.
+   * `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article revision.
    * `polygon_articles/<stem>.parquet` — many-to-many polygon↔article links.
    * `manifests/processed_pbfs.json` — aggregate stats per source PBF.
-6. Can augment completed regions without reprocessing their PBFs, adding:
-   * `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`.
+6. Adds derived text and fact tables without reprocessing completed PBFs:
+   * `wikipedia/sections/<stem>.parquet`.
    * `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`.
    * `wikidata/facts/<stem>.parquet`.
 
@@ -50,43 +50,19 @@ HF caches, request caches) lives on an external drive.
 .
 ├── src/osm_polygon_wikidata_only/
 │   ├── __init__.py
-│   ├── cli/             # CLI entry point and argument parsing
-│   │   ├── app.py
-│   │   └── commands.py
-│   ├── config/          # Paths (DataRoot) and runtime Settings
-│   │   ├── paths.py
-│   │   └── settings.py
-│   ├── domain/          # Pure domain types and helpers
-│   │   ├── analysis.py  # area_bucket, osm_primary_tag, bbox
-│   │   ├── geometry.py  # PolygonGeometry, area, centroid
-│   │   ├── ids.py       # polygon_id, article_id, content_hash
-│   │   ├── models.py    # Polygon, Article, PolygonArticleLink, ManifestStats
-│   │   └── schema.py    # Column lists, descriptions, pyarrow schemas
-│   ├── enrichment/      # Wikidata + Wikipedia clients + linker
-│   │   ├── article_linker.py
-│   │   ├── text_cleaning.py
-│   │   ├── wikidata_client.py
-│   │   └── wikipedia_client.py
-│   ├── hf/              # Hugging Face Hub integration
-│   │   ├── dataset_card.py
-│   │   ├── repo_layout.py
-│   │   └── uploader.py
-│   ├── io/              # PBF reader, parquet, manifest, file cache
-│   │   ├── cache.py
-│   │   ├── manifest.py
-│   │   ├── parquet.py
-│   │   └── pbf_reader.py
-│   ├── pipeline/        # Extract → enrich → write → manifest
-│   │   ├── extractor.py
-│   │   ├── orchestrator.py
-│   │   ├── processor.py
-│   │   └── stats.py
-│   └── utils/           # JSON, time, logging, retry helpers
-│       ├── json.py
-│       ├── logging.py
-│       ├── retry.py
-│       └── time.py
-├── tests/               # pytest suite (114+ unit + 1 end-to-end smoke)
+│   ├── augmentation/    # Wikipedia/Wikivoyage sections and Wikidata facts
+│   ├── cli/             # Argument parsing and command adapters
+│   ├── config/          # DataRoot paths and runtime Settings
+│   ├── domain/          # Pure models, schemas, geometry, and identifiers
+│   ├── enrichment/wikidata/ # Wikidata models, parsing, cache, and transport
+│   ├── enrichment/wikipedia/ # Wikipedia models, parsing, cache, and transport
+│   ├── hf/_dataset_stats/ # Dataset-card statistics internals
+│   ├── hf/_geographic/    # Deterministic H3 visualizations
+│   ├── hf/_uploader/      # Hub authorization and upload operations
+│   ├── io/              # PBF, Parquet, manifests, cache, and atomic I/O
+│   ├── pipeline/_wikidata_recovery/ # Audited, resumable repair internals
+│   └── utils/           # JSON, logging, retries, time, and scheduling
+├── tests/               # Unit, integration, contract, and golden tests
 ├── pyproject.toml       # Build, dev deps, ruff/mypy/pytest config
 └── README.md
 ```
@@ -146,7 +122,7 @@ Default sub-directories under the data root:
 | `raw/` | Geofabrik `.osm.pbf` files (input) |
 | `processed/polygons/` | Written `polygons/<stem>.parquet` files |
 | `processed/articles/` | Local legacy staging files, retained only until their verified canonical publication succeeds |
-| `processed/wikipedia/documents/` | Canonical lossless Wikipedia documents |
+| `processed/wikipedia/documents/` | Canonical Wikipedia documents |
 | `processed/polygon_articles/` | Written `polygon_articles/<stem>.parquet` files |
 | `processed/manifests/` | `processed_pbfs.json` aggregate manifest |
 | `logs/` | Reserved for pipeline logs |
@@ -253,8 +229,8 @@ the password, add it to a checked-in `.env` file, paste it into an issue, or use
 the main Wikimedia account password. The process retains it only in memory.
 
 With both variables present, the unified pipeline uses the authenticated
-1,200-request-per-minute budget with one shared scheduler and at most three
-requests in flight. To choose a different authenticated ceiling:
+1,200-request-per-minute budget with one shared scheduler and at most eight requests in flight
+(anonymous runs default to three). To choose a different authenticated ceiling:
 
 ```bash
 export WIKIMEDIA_REQUESTS_PER_MINUTE=600
@@ -262,8 +238,8 @@ export WIKIMEDIA_REQUESTS_PER_MINUTE=600
 
 Usually, omit this override and let the adaptive scheduler work. Wikimedia
 determines the actual tier from the account's standing: authentication alone
-does not guarantee a particular limit. The pipeline keeps at most three requests
-in flight, preserves a separate authenticated cookie session for every API host,
+does not guarantee a particular limit. The pipeline keeps at most eight requests
+in flight for authenticated runs, preserves a separate authenticated cookie session for every API host,
 and automatically reduces its rate when Wikimedia returns HTTP 429 with
 `Retry-After`.
 
@@ -282,7 +258,8 @@ Troubleshooting:
   reset or recreate the Bot Password, and export the new values. Changing the
   main account password can require resetting Bot Passwords.
 - If HTTP 429 responses continue, leave the automatic cooldown in control or
-  lower `WIKIMEDIA_REQUESTS_PER_MINUTE`; do not increase concurrency above three.
+  lower `WIKIMEDIA_REQUESTS_PER_MINUTE`; do not override the concurrency limit
+  without measuring the result.
 - To revoke access, return to
   [Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords)
   and revoke the named Bot Password. Then remove the variables with
@@ -340,7 +317,13 @@ The command reports bounded local-scan and upstream-validation checkpoints with
 elapsed time; transient Wikimedia API states such as `maxlag` remain retryable
 and never become cached missing entities.
 
-Known whole-file Geofabrik containment overlaps are retired losslessly during
+Affected relationships are repaired in deterministic groups of 25 QIDs. Each
+completed group is stored below
+`cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/`, so an interruption
+repeats at most the active group. The final regional Parquet files and manifests
+are still replaced atomically only after every group has completed.
+
+Known whole-file Geofabrik containment overlaps are retired safely during
 `sync-dir --push`: retained parents receive missing sidecar rows, contained
 child artifacts are removed remotely in one atomic commit, and local originals
 are preserved under `quarantine/containment-v1/`. A child PBF is ignored only
@@ -570,7 +553,7 @@ remains available when neither credential environment variable is set.
 uv run pytest
 ```
 
-The suite is fast (< 2 s) because nothing actually hits the network;
+The 1,300+ tracked tests are deterministic and require no live network;
 HTTP clients come in three flavors (`Http…`, `InMemory…`,
 `Cached…`) and the tests use the in-memory flavors.
 
