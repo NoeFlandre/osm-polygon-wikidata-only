@@ -45,13 +45,13 @@ LOGGER = logging.getLogger(__name__)
 # loosened for authenticated runs, otherwise the scheduler is the
 # bottleneck even when the API would happily accept more traffic.
 #
-# Concurrency math: 1200 rpm = 20 rps. At ~0.3s average API latency the
-# required in-flight count is ~6 (20 x 0.3); 8 leaves headroom while
-# staying well under the 16 hard cap enforced by the scheduler. This is
+# Concurrency math: 1200 rpm = 20 rps. At ~0.5s average API latency the
+# required in-flight count is ~10 (20 x 0.5); 12 leaves headroom while
+# staying below the 16 hard cap enforced by the scheduler. This is
 # a *client-side* choice, not a guaranteed server allowance, and is
 # subordinate to the global rate ceiling and per-host cooldowns.
 ANON_MAX_IN_FLIGHT = 3
-AUTH_MAX_IN_FLIGHT_DEFAULT = 8
+AUTH_MAX_IN_FLIGHT_DEFAULT = 12
 MAX_IN_FLIGHT_HARD_LIMIT = 16
 AUTH_MIN_HOST_INTERVAL_S = 0.05
 AUTH_MIN_REQUESTS_PER_MINUTE = 200
@@ -204,8 +204,8 @@ def _effective_settings(
 def _max_in_flight(environ: Mapping[str, str], *, authenticated: bool) -> int:
     """Resolve the process-wide concurrency bound from configuration.
 
-    Defaults to a conservative authenticated value (8) that can reach the
-    1200 rpm ceiling at typical latency, or 3 for anonymous traffic. The
+    Defaults to an authenticated value (12) that can approach the 1200 rpm
+    ceiling at typical latency, or 3 for anonymous traffic. The
     hard upper bound (16) matches the scheduler's own validation.
     """
     raw_value = environ.get(WIKIMEDIA_MAX_IN_FLIGHT)

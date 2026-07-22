@@ -11,7 +11,7 @@ import errno
 import logging
 import random
 import socket
-import time
+import threading
 import urllib.error
 from collections.abc import Callable
 from itertools import count
@@ -21,6 +21,27 @@ LOGGER = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+class _RetryCancelled(BaseException):
+    """Internal signal used to release retrying worker threads on shutdown."""
+
+
+_RETRY_CANCELLATION = threading.Event()
+
+
+def _reset_retry_cancellation() -> None:
+    _RETRY_CANCELLATION.clear()
+
+
+def _cancel_pending_retries() -> None:
+    _RETRY_CANCELLATION.set()
+
+
+def _wait_for_retry(delay: float) -> None:
+    if _RETRY_CANCELLATION.wait(delay):
+        raise _RetryCancelled
+
 
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 _TRANSIENT_ERRNOS = frozenset(
@@ -126,6 +147,8 @@ def with_retries[T](
     backoff_delay = min(base_delay, max_delay)
     attempt_numbers = count(1) if attempts is None else range(1, attempts + 1)
     for i in attempt_numbers:
+        if _RETRY_CANCELLATION.is_set():
+            raise _RetryCancelled
         try:
             return func()
         except retry_on as e:
@@ -146,7 +169,7 @@ def with_retries[T](
             )
             if on_retry is not None:
                 on_retry(i, e, delay)
-            time.sleep(delay)
+            _wait_for_retry(delay)
             backoff_delay = min(backoff_delay * 2, max_delay)
     assert last_exc is not None
     raise last_exc

@@ -28,10 +28,10 @@ def test_authenticated_runtime_shares_budget_with_augmentation_client(tmp_path) 
         session=runtime.session,
     )
 
-    # Conservative authenticated default that can actually reach the
-    # 1200 rpm ceiling at typical API latency (~20 rps x ~0.3s ~= 6,
-    # with headroom), while staying well under the 16 hard cap.
-    assert runtime.scheduler.max_in_flight == 8
+    # Authenticated default leaves enough concurrency to approach the
+    # 1200 rpm ceiling when API latency is around 0.5 seconds, while
+    # remaining below the scheduler's 16-request hard cap.
+    assert runtime.scheduler.max_in_flight == 12
     assert runtime.scheduler.current_requests_per_minute == 1_200
     assert augmentation._scheduler is runtime.scheduler
     assert augmentation._session is runtime.session

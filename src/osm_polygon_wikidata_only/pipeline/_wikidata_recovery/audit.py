@@ -27,6 +27,10 @@ from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps, loads
+from osm_polygon_wikidata_only.utils.retry import (
+    _cancel_pending_retries,
+    _reset_retry_cancellation,
+)
 
 from .models import (
     QidAuditResult,
@@ -363,21 +367,29 @@ def _resolve_entities(
 
         completed: dict[int, tuple[list[str], list[WikidataEntity | None], int]] = {}
         completed_qids = 0
-        with ThreadPoolExecutor(max_workers=min(_UPSTREAM_BATCH_WINDOW, len(chunks))) as executor:
-            futures = [
-                executor.submit(resolve_chunk, index, chunk) for index, chunk in enumerate(chunks)
-            ]
-            try:
-                for future in as_completed(futures):
-                    index, chunk, results, hits = future.result()
-                    completed[index] = (chunk, results, hits)
-                    completed_qids += len(chunk)
-                    if progress is not None:
-                        progress(completed_qids, len(qids))
-            except BaseException:
-                for future in futures:
-                    future.cancel()
-                raise
+        _reset_retry_cancellation()
+        try:
+            with ThreadPoolExecutor(
+                max_workers=min(_UPSTREAM_BATCH_WINDOW, len(chunks))
+            ) as executor:
+                futures = [
+                    executor.submit(resolve_chunk, index, chunk)
+                    for index, chunk in enumerate(chunks)
+                ]
+                try:
+                    for future in as_completed(futures):
+                        index, chunk, results, hits = future.result()
+                        completed[index] = (chunk, results, hits)
+                        completed_qids += len(chunk)
+                        if progress is not None:
+                            progress(completed_qids, len(qids))
+                except BaseException:
+                    _cancel_pending_retries()
+                    for future in futures:
+                        future.cancel()
+                    raise
+        finally:
+            _reset_retry_cancellation()
         for index in range(len(chunks)):
             chunk, results, hits = completed[index]
             resolved.update(zip(chunk, results, strict=True))

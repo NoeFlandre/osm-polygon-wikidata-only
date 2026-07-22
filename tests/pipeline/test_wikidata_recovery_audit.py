@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryClassification,
     audit_wikidata_integrity,
 )
+from osm_polygon_wikidata_only.utils import retry as retry_mod
 
 
 class _RecordingWikidataClient(WikidataClient):
@@ -220,6 +222,43 @@ def test_upstream_validation_does_not_wait_for_one_slow_chunk() -> None:
 
     assert not thread.is_alive()
     assert set(result[0][0]) == {"Q1", "Q2", "Q3"}
+
+
+def test_interrupted_audit_cancels_worker_retry_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry_started = threading.Event()
+
+    class RetryingClient(WikidataClient):
+        def get_entity(self, qid: str) -> WikidataEntity | None:
+            raise AssertionError("batch API expected")
+
+        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+            qid = next(iter(qids))
+            if qid != "Q1":
+                return [_entity(qid)]
+            return retry_mod.with_retries(
+                lambda: (_ for _ in ()).throw(OSError("offline")),
+                attempts=2,
+                base_delay=2,
+                retry_on=(OSError,),
+                on_retry=lambda *_args: retry_started.set(),
+            )
+
+    def interrupt(_futures: object) -> list[object]:
+        assert retry_started.wait(timeout=1)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(audit_mod, "as_completed", interrupt)
+    started_at = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        audit_mod._resolve_entities(
+            RetryingClient(),
+            ["Q1", "Q2", "Q3"],
+            batch_size=1,
+        )
+
+    assert time.monotonic() - started_at < 1
 
 
 def test_one_lost_qid_in_majority_covered_region_is_detected(tmp_path: Path) -> None:

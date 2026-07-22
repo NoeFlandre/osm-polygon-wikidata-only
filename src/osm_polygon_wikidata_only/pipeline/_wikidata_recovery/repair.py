@@ -53,6 +53,10 @@ from osm_polygon_wikidata_only.pipeline.completeness import NON_FATAL_FETCH_STAT
 from osm_polygon_wikidata_only.pipeline.row_construction import article_row
 from osm_polygon_wikidata_only.utils.json import dumps
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
+from osm_polygon_wikidata_only.utils.retry import (
+    _cancel_pending_retries,
+    _reset_retry_cancellation,
+)
 
 from .audit import (
     RECOVERY_CONTRACT_VERSION,
@@ -376,19 +380,24 @@ def _execute_recovery_batches(
         return index, artifacts
 
     if missing:
-        with ThreadPoolExecutor(max_workers=min(batch_window, len(missing))) as executor:
-            futures = [
-                executor.submit(build_and_checkpoint, index, batch_qids)
-                for index, batch_qids in missing
-            ]
-            try:
-                for future in as_completed(futures):
-                    index, artifacts = future.result()
-                    completed[index] = artifacts
-            except BaseException:
-                for future in futures:
-                    future.cancel()
-                raise
+        _reset_retry_cancellation()
+        try:
+            with ThreadPoolExecutor(max_workers=min(batch_window, len(missing))) as executor:
+                futures = [
+                    executor.submit(build_and_checkpoint, index, batch_qids)
+                    for index, batch_qids in missing
+                ]
+                try:
+                    for future in as_completed(futures):
+                        index, artifacts = future.result()
+                        completed[index] = artifacts
+                except BaseException:
+                    _cancel_pending_retries()
+                    for future in futures:
+                        future.cancel()
+                    raise
+        finally:
+            _reset_retry_cancellation()
     return [completed[index] for index in range(batch_total)]
 
 

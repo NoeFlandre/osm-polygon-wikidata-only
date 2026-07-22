@@ -94,7 +94,7 @@ def test_build_clients_logs_authenticated_mode_once_without_password(
         "Wikimedia API mode: credentials configured for NoeFlandre@pipeline; "
         "verification occurs per host; "
         "rate ceiling=1200 rpm; "
-        "in-flight=8; "
+        "in-flight=12; "
         "authenticated host interval=0.05s; "
         "anonymous intervals: Wikipedia=0.50s, Wikidata=1.20s, augmentation=0.50s. "
         "The ceiling is a client-side limit, not a guaranteed server allowance."
@@ -144,7 +144,7 @@ def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency
 
     Authenticated bot sessions keep the full 1200 rpm pacing ceiling,
     tighter host interval, and a conservative authenticated concurrency
-    default (8) sized to reach ~20 rps at typical API latency. Concurrency
+    default (12) sized to reach ~20 rps at typical API latency. Concurrency
     is a client-side choice subordinate to the global rate ceiling and
     per-host cooldowns; it is not a guaranteed server allowance.
     """
@@ -159,7 +159,7 @@ def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency
 
     assert isinstance(wikidata, dependencies.HttpWikidataClient)
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
-    assert wikidata._scheduler.max_in_flight == 8
+    assert wikidata._scheduler.max_in_flight == 12
     assert wikidata._scheduler.current_requests_per_minute == 1_200
     # Settings must continue to represent anonymous host pacing.
     assert wikidata._settings.wikidata_min_interval_s == pytest.approx(1.2)

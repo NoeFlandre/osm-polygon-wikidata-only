@@ -121,9 +121,9 @@ truth for Wikimedia request pacing. The scheduler is hierarchical:
   server allowance; the API may still throttle clients below it.
 - A global **concurrency bound** (`max_in_flight`) caps simultaneous
   in-flight requests across every Wikimedia host. The default is `3`
-  for anonymous runs and `8` for authenticated runs. `8` is enough to
-  saturate the `1200` rpm ceiling at typical API latency, while
-  staying well under the scheduler's hard cap of `16`.
+  for anonymous runs and `12` for authenticated runs. `12` provides
+  enough headroom to approach the `1200` rpm ceiling when API latency
+  is around half a second, while staying below the hard cap of `16`.
 - Each host keeps **independent per-host state**: a cooldown clock
   (set by `Retry-After` and back-pressure) and a minimum interval
   between requests. Per-host pacing happens *before* the global
