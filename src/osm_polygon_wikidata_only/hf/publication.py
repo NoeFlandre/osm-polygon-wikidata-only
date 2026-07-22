@@ -95,9 +95,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pyarrow.parquet as pq
 
@@ -117,6 +115,10 @@ from osm_polygon_wikidata_only.domain.schema import (
 )
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
     compute_augmentation_stats,
+)
+from osm_polygon_wikidata_only.hf._publication.models import (
+    CorePublicationArtifacts,
+    PublicationValidationError,
 )
 from osm_polygon_wikidata_only.hf._uploader.plan import (
     PublicationOp,
@@ -746,20 +748,6 @@ def assemble_augmentation_upload(
         add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
         add_op(readme_snapshot, path_in_repo="README.md"),
     ]
-
-
-class PublicationValidationError(ValueError):
-    """Raised when validation of publication artifacts or manifest fails."""
-
-
-@dataclass(frozen=True, slots=True)
-class CorePublicationArtifacts:
-    polygons_path: Path
-    polygon_articles_path: Path
-    wikipedia_documents_path: Path | None
-    manifest_path: Path
-    stem: str
-    manifest_entry: dict[str, Any]
 
 
 def load_existing_core_artifacts(data_root: DataRoot, stem: str) -> CorePublicationArtifacts:

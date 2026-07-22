@@ -45,6 +45,9 @@ The largest workflows are split by responsibility:
   snapshot helpers; the same `write_readme_snapshot` recomputes both
   core and augmentation stats from finalized local Parquet inputs before
   each publication path (legacy core, unified sync, augmentation-only);
+  immutable `CorePublicationArtifacts` and `PublicationValidationError`
+  definitions live in `hf._publication.models` and are re-exported by the
+  facade;
 - `hf.coverage_map`, `hf.geographic_text_presence`, and
   `hf.geographic_text_coverage` produce the deterministic PNG visualizations;
 - `hf.dataset_stats` exposes the canonical `DatasetStats` /
@@ -73,7 +76,12 @@ Underscore-prefixed (private) packages:
 
 - `osm_polygon_wikidata_only.hf._dataset_stats.{models,scanning,aggregation,rendering}`
 - `osm_polygon_wikidata_only.hf._geographic.{models,parquet_inputs,h3_geometry,aggregation,basemap,rendering,coverage,polygon_count}`
+- `osm_polygon_wikidata_only.hf._publication.models`
 - `osm_polygon_wikidata_only.hf._uploader.{errors,protocol,stub,token,authorization,operations,plan}`
+- `osm_polygon_wikidata_only.pipeline._wikidata_recovery.storage`, which owns
+  schema-checked recovery reads/writes and canonical local paths; recovery
+  result/error models, including `RecoveryRepairResult`, live beside the audit
+  models and remain available through the recovery facade
 
 Other focused modules (not underscore-prefixed but still implementation
 details behind facades):

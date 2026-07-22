@@ -16,7 +16,9 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the stable processing and augmentation CLI parser."""
     parser = argparse.ArgumentParser(
         prog="osm-polygon-wikidata-only",
-        description="Build a Hugging Face dataset of OSM polygons linked to Wikidata + Wikipedia.",
+        description=(
+            "Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
     common = argparse.ArgumentParser(add_help=False)

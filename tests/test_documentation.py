@@ -145,3 +145,49 @@ def test_architecture_documents_augmentation_readme_recomputation() -> None:
     assert "core and augmentation stats" in architecture or (
         "recomputes both" in architecture.lower()
     )
+
+
+def test_readme_describes_current_public_workflow_without_migration_language() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+
+    assert "at most eight requests in flight" in readme
+    assert "groups of 25 QIDs" in readme
+    assert "cache/wikidata_recovery/checkpoints" in readme
+    assert "1,300+ tracked tests" in readme
+    assert "lossless" not in readme.lower()
+    assert "at most three requests in flight" not in readme
+    assert "suite is fast (< 2 s)" not in readme
+
+
+def test_readme_repository_layout_names_current_focused_modules() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    layout = readme.split("## Repository layout", 1)[1].split("\n## ", 1)[0]
+
+    for name in (
+        "augmentation/",
+        "enrichment/wikidata/",
+        "enrichment/wikipedia/",
+        "hf/_dataset_stats/",
+        "hf/_geographic/",
+        "hf/_uploader/",
+        "pipeline/_wikidata_recovery/",
+    ):
+        assert name in layout
+    assert "tests/               # pytest suite (114+" not in layout
+
+
+def test_developer_docs_use_current_test_paths_and_quality_gate() -> None:
+    development = (REPOSITORY / "docs/development.md").read_text(encoding="utf-8")
+
+    assert "tests/enrichment/test_wikimedia_auth.py" in development
+    assert "tests/cli/test_dependencies.py" in development
+    assert "git diff --check" in development
+    assert "uv build" in development
+
+
+def test_architecture_names_current_private_ownership_boundaries() -> None:
+    architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
+
+    assert "hf._publication.models" in architecture
+    assert "pipeline._wikidata_recovery.storage" in architecture
+    assert "RecoveryRepairResult" in architecture
