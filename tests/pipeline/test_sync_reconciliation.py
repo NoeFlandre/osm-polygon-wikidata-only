@@ -1339,8 +1339,7 @@ def test_logging_sidecar_only_repair(
         "manifests/processed_pbfs.json",
         "manifests/augmentation_manifest.json",
         "assets/coverage_map.png",
-        "assets/geographic_wikipedia_text_coverage.png",
-        "assets/geographic_polygon_count.png",
+        "assets/geographic_text_density.png",
     }
     stub = StubHfHub(remote_files=stub_files)
     setup_test_hub(monkeypatch, stub)

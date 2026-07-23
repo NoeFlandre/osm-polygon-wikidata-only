@@ -17,6 +17,9 @@ from osm_polygon_wikidata_only.hf.continent_stats import (
     render_continent_stats,
 )
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
+from osm_polygon_wikidata_only.hf.geographic_text_density import (
+    aggregate_geographic_text_density,
+)
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     generate_geographic_text_presence,
     load_text_presence,
@@ -188,3 +191,63 @@ def test_dataset_card_uses_public_language_and_combined_map_first() -> None:
     assert "Wikipedia and Wikivoyage text" in card
     assert "assets/geographic_text_presence.png" in card
     assert card.index("assets/geographic_text_presence.png") < card.index("assets/coverage_map.png")
+    assert "assets/geographic_text_density.png" in card
+    assert "assets/geographic_wikipedia_text_coverage.png" not in card
+    assert "assets/geographic_polygon_count.png" not in card
+    assert card.count("![") == 3
+    assert "Each point represents one dataset polygon carrying an OSM" in card
+    assert "raw number of polygons with non-empty Wikipedia or Wikivoyage text" in card
+
+
+def test_combined_text_density_counts_overlap_once(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write(
+        processed / "polygons" / "x.parquet",
+        [
+            {"polygon_id": "p1", "wikidata": "Q1", "lon": 2.0, "lat": 48.0},
+            {"polygon_id": "p2", "wikidata": "Q2", "lon": 2.01, "lat": 48.01},
+            {"polygon_id": "p3", "wikidata": "Q3", "lon": 20.0, "lat": 0.0},
+        ],
+    )
+    _write(
+        processed / "wikipedia" / "documents" / "x.parquet",
+        [{"article_id": "a1", "wikidata": "Q1", "full_text": "Wikipedia"}],
+    )
+    _write(
+        processed / "polygon_articles" / "x.parquet",
+        [{"polygon_id": "p1", "article_id": "a1"}],
+    )
+    _write(
+        processed / "wikivoyage" / "documents" / "x.parquet",
+        [
+            {"document_id": "v1", "wikidata": "Q1", "full_text": "Both"},
+            {"document_id": "v2", "wikidata": "Q2", "full_text": "Voyage"},
+        ],
+    )
+
+    cells = aggregate_geographic_text_density(processed, h3_resolution=2)
+
+    assert sum(cell.polygon_count for cell in cells) == 2
+
+
+def test_combined_text_presence_deduplicates_polygon_ids_across_files(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    duplicate = {"polygon_id": "p1", "wikidata": "Q1", "lon": 2.0, "lat": 48.0}
+    _write(processed / "polygons" / "a.parquet", [duplicate])
+    _write(processed / "polygons" / "b.parquet", [duplicate])
+    _write(
+        processed / "wikipedia" / "documents" / "a.parquet",
+        [{"article_id": "a1", "wikidata": "Q1", "full_text": "Wikipedia"}],
+    )
+    _write(
+        processed / "polygon_articles" / "a.parquet",
+        [{"polygon_id": "p1", "article_id": "a1"}],
+    )
+
+    snapshot = load_text_presence(processed)
+    cells = aggregate_geographic_text_density(processed, snapshot=snapshot)
+
+    assert snapshot.polygon_count == 1
+    assert len(snapshot.covered_points) == 1
+    assert sum(cell.polygon_count for cell in cells) == 1
+    assert [cell.h3_cell for cell in cells] == sorted(cell.h3_cell for cell in cells)

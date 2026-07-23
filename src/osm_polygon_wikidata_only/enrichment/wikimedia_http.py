@@ -107,6 +107,11 @@ class PooledWikimediaOpener:
                 content=content,
                 timeout=timeout,
             )
+        except httpx.TimeoutException as error:
+            # Preserve urllib-compatible timeout semantics so the shared
+            # retry classifier recognizes HTTPX read/connect/write/pool
+            # timeouts as transient instead of aborting the pipeline.
+            raise urllib.error.URLError(TimeoutError(str(error))) from error
         except httpx.TransportError as error:
             raise urllib.error.URLError(error) from error
 

@@ -50,8 +50,9 @@ def test_card_embeds_coverage_map_reference() -> None:
 
 def test_card_embeds_geographic_assets() -> None:
     md = _render()
-    assert "assets/geographic_wikipedia_text_coverage.png" in md
-    assert "assets/geographic_polygon_count.png" in md
+    assert "assets/geographic_text_density.png" in md
+    assert "assets/geographic_wikipedia_text_coverage.png" not in md
+    assert "assets/geographic_polygon_count.png" not in md
 
 
 def test_card_documents_canonical_core_tables() -> None:

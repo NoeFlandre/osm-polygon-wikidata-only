@@ -130,6 +130,16 @@ def test_dataset_card_documents_augmentation_schemas() -> None:
     assert "### `wikidata/facts`" in md
 
 
+def test_dataset_card_describes_every_canonical_table_and_join() -> None:
+    md = _render_with_stats_section("## Dataset snapshot\n")
+    assert "`polygon_articles/<stem>.parquet` — Wikipedia-only" in md
+    assert "Wikivoyage documents associate with polygons through their shared Wikidata QID" in md
+    assert "`wikipedia/sections/<stem>.parquet` — section-level partitions" in md
+    assert "`wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents" in md
+    assert "`wikivoyage/sections/<stem>.parquet` — section-level partitions" in md
+    assert "`wikidata/facts/<stem>.parquet` — structured Wikidata claims" in md
+
+
 def test_dataset_card_documents_fact_columns() -> None:
     md = _render_with_stats_section("## Dataset snapshot\n")
     fact_section = md.split("### `wikidata/facts`", 1)[1].split("## Data sources", 1)[0]

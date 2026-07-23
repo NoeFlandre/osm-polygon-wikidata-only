@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
     REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
@@ -516,18 +517,16 @@ def test_render_dataset_card_includes_geographic_coverage_section() -> None:
         link_descriptions={"polygon_id": "id"},
     )
     assert "## Geographic coverage" in markdown
-    assert "### Wikipedia text coverage" in markdown
-    assert "### Polygon density" in markdown
-    assert (
-        f"![Geographic Wikipedia Text Coverage]({REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE})" in markdown
-    )
-    assert f"![Geographic Polygon Density]({REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE})" in markdown
+    assert "### Wikipedia + Wikivoyage text density" in markdown
+    assert REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE in markdown
+    assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE not in markdown
+    assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE not in markdown
     assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE == "assets/geographic_wikipedia_text_coverage.png"
     assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE == "assets/geographic_polygon_count.png"
 
 
-def test_render_dataset_card_states_both_geographic_coverage_formulas() -> None:
-    """The dataset card must spell out the coverage_rate and polygon_count formulas once each."""
+def test_render_dataset_card_explains_combined_text_density_metric() -> None:
+    """The card defines the raw, deduplicated cross-project H3 metric."""
     markdown = render_dataset_card(
         repo_id="org/name",
         stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
@@ -540,11 +539,8 @@ def test_render_dataset_card_states_both_geographic_coverage_formulas() -> None:
     )
     coverage_section = markdown.split("## Geographic coverage", 1)[1].split("\n## ", 1)[0]
 
-    assert "coverage_rate" in coverage_section
-    assert "covered_polygons" in coverage_section
-    assert "all_dataset_polygons" in coverage_section
-    assert "polygon_count" in coverage_section
-    assert "centroid" in coverage_section.lower()
+    assert "raw number of polygons" in coverage_section
+    assert "Wikipedia or Wikivoyage" in coverage_section
+    assert "counted once" in coverage_section
+    assert "not a proportion" in coverage_section
     assert "H3 cell" in coverage_section
-    # The conditioning clause appears exactly once.
-    assert coverage_section.count("OSM `wikidata=*` tag") == 1

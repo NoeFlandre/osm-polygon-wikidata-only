@@ -62,53 +62,35 @@ def test_public_docs_explain_enrichment_progress_heartbeat() -> None:
 
 
 def test_readme_documents_geographic_coverage_section() -> None:
-    """The README must reference both visualization assets and explain them concisely."""
+    """The README references the three current public maps only."""
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
     assert "## Geographic coverage" in readme
-    assert "assets/geographic_wikipedia_text_coverage.png" in readme
-    assert "assets/geographic_polygon_count.png" in readme
-    assert readme.count("assets/geographic_wikipedia_text_coverage.png") == 1
-    assert readme.count("assets/geographic_polygon_count.png") == 1
-    # The coverage section must mention the formula, denominator, and conditioning.
-    assert "denominator" in readme.lower()
-    assert "wikidata" in readme.lower()
-    # No opacity encoding claim.
-    assert "opacity encodes" not in readme.lower()
+    assert readme.count("assets/geographic_text_presence.png") == 1
+    assert readme.count("assets/coverage_map.png") == 1
+    assert readme.count("assets/geographic_text_density.png") == 1
+    assert "assets/geographic_wikipedia_text_coverage.png" not in readme
+    assert "assets/geographic_polygon_count.png" not in readme
 
 
-def test_readme_states_both_geographic_coverage_formulas() -> None:
-    """The README must spell out the coverage_rate and polygon_count formulas once each."""
+def test_readme_states_combined_geographic_density_definition() -> None:
+    """The README defines the raw cross-project H3 count."""
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
     coverage_section = readme.split("## Geographic coverage", 1)[1].split("\n## ", 1)[0]
 
-    # Coverage rate formula
-    assert "coverage_rate" in coverage_section
-    assert "covered_polygons" in coverage_section
-    assert "all_dataset_polygons" in coverage_section
-    # A covered polygon definition appears once.
+    assert "raw number of polygons" in coverage_section
+    assert "Wikipedia or Wikivoyage" in coverage_section
     assert "non-empty text" in coverage_section
-
-    # Polygon count formula
-    assert "polygon_count" in coverage_section
-    assert "centroid" in coverage_section.lower()
+    assert "counted once" in coverage_section
+    assert "not a proportion" in coverage_section
     assert "H3 cell" in coverage_section
-
-    # The conditioning clause appears once and is not duplicated.
-    conditioning_phrase = "OSM `wikidata=*` tag"
-    assert coverage_section.count(conditioning_phrase) == 1
-    assert "wikidata" in coverage_section.lower()
 
 
 def test_architecture_documents_geographic_coverage_generation() -> None:
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
     assert "Geographic coverage" in architecture
-    assert "geographic_polygon_count.png" in architecture
-    assert "geographic_wikipedia_text_coverage.png" in architecture
+    assert "geographic_text_density.png" in architecture
     assert "H3" in architecture
-    assert "20 polygons" in architecture or "twenty polygons" in architecture.lower()
     assert "logarithmic" in architecture.lower()
-    # The architecture doc must no longer claim opacity encodes polygon count.
-    assert "opacity encodes" not in architecture.lower()
 
 
 def test_readme_documents_five_augmentation_sidecars() -> None:

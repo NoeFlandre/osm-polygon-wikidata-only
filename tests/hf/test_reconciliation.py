@@ -429,3 +429,19 @@ def test_metadata_only_upload_contract(tmp_path: Path) -> None:
     final_op = ops[-1]
     assert final_op.action == "add"
     assert final_op.path_in_repo == "README.md"
+
+
+def test_repository_refresh_uses_current_three_map_contract(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    plan = ReconciliationPlanner(
+        data_root,
+        RemoteInventory(set()),
+        stems=set(),
+    ).plan()
+
+    assert "assets/coverage_map.png" in plan.repository_refresh
+    assert "assets/geographic_text_density.png" in plan.repository_refresh
+    assert "assets/geographic_polygon_count.png" not in plan.repository_refresh
+    assert "assets/geographic_wikipedia_text_coverage.png" not in plan.repository_refresh

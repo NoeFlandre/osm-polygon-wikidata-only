@@ -113,6 +113,22 @@ def test_pooled_opener_translates_transport_errors_to_urllib_url_error() -> None
     assert caught.value.reason is failure
 
 
+def test_pooled_opener_normalizes_read_timeout_as_retryable_timeout() -> None:
+    """HTTPX timeouts must retain urllib's retryable timeout semantics."""
+    failure = httpx.ReadTimeout("read operation timed out")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise failure
+
+    opener = PooledWikimediaOpener(client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with pytest.raises(urllib.error.URLError) as caught:
+        opener.open(urllib.request.Request("https://en.wikipedia.org/w/api.php"), timeout=1.0)
+
+    assert isinstance(caught.value.reason, TimeoutError)
+    assert caught.value.__cause__ is failure
+
+
 def test_pooled_opener_close_is_idempotent() -> None:
     client = httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200)))
     opener = PooledWikimediaOpener(client=client)

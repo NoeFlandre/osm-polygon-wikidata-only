@@ -133,6 +133,16 @@ class WikidataFactStats:
 
 
 @dataclass(frozen=True, slots=True)
+class CombinedLanguageStats:
+    """Combined Wikipedia and Wikivoyage document/language distribution."""
+
+    document_count: int = 0
+    language_count: int = 0
+    documents_per_language: tuple[tuple[str, int], ...] = ()
+    polygons_per_language: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PerFileSummary:
     """Per-file aggregation cached on disk across README refreshes.
 
@@ -215,3 +225,4 @@ class AugmentationStats:
     augmentation_parquet_bytes: int
     total_parquet_bytes: int
     unreadable_file_count: int
+    combined_languages: CombinedLanguageStats = field(default_factory=CombinedLanguageStats)
