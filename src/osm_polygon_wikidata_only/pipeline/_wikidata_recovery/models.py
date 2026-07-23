@@ -33,13 +33,14 @@ class RegionAuditResult:
     affected_qids: tuple[str, ...]
     affected_polygon_count: int
     orphan_fact_ids: tuple[str, ...] = ()
+    orphan_document_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
     reused: bool = field(default=False, compare=False)
 
     @property
     def requires_repair(self) -> bool:
         """Whether this region needs a transactional local correction."""
-        return bool(self.affected_qids or self.orphan_fact_ids)
+        return bool(self.affected_qids or self.orphan_fact_ids or self.orphan_document_ids)
 
 
 @dataclass(frozen=True, slots=True)

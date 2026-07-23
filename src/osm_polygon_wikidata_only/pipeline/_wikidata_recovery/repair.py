@@ -117,10 +117,31 @@ def repair_wikidata_region(
     sections = _read_table(paths["sections"], section_schema())
     facts = _read_table(paths["facts"], fact_schema())
     orphan_fact_ids = set(region.orphan_fact_ids)
+    orphan_document_ids = set(region.orphan_document_ids)
     retained_facts = [row for row in facts if str(row["fact_id"]) not in orphan_fact_ids]
     if len(facts) - len(retained_facts) != len(orphan_fact_ids):
         raise RecoveryRepairError("Recovery plan contains stale or duplicate orphan fact IDs")
-    _validate_existing_rows(polygons, links, documents, sections, retained_facts)
+    orphan_article_ids = {
+        str(row["article_id"])
+        for row in documents
+        if str(row["document_id"]) in orphan_document_ids
+    }
+    retained_documents = [
+        row for row in documents if str(row["document_id"]) not in orphan_document_ids
+    ]
+    if len(documents) - len(retained_documents) != len(orphan_document_ids):
+        raise RecoveryRepairError("Recovery plan contains stale or duplicate orphan document IDs")
+    retained_sections = [
+        row for row in sections if str(row["document_id"]) not in orphan_document_ids
+    ]
+    retained_links = [row for row in links if str(row["article_id"]) not in orphan_article_ids]
+    _validate_existing_rows(
+        polygons,
+        retained_links,
+        retained_documents,
+        retained_sections,
+        retained_facts,
+    )
 
     affected_qids = tuple(sorted(region.affected_qids))
     checkpoint_store = RecoveryCheckpointStore(
@@ -145,7 +166,7 @@ def repair_wikidata_region(
     ) -> RecoveryBatchArtifacts:
         return _build_batch_artifacts(
             batch_qids,
-            existing_documents=documents,
+            existing_documents=retained_documents,
             wikidata_client=wikidata_client,
             wikipedia_client=wikipedia_client,
             augmentation_client=augmentation_client,
@@ -167,7 +188,7 @@ def repair_wikidata_region(
 
     new_documents = batch_documents
     merged_documents, _ = _merge_rows(
-        documents,
+        retained_documents,
         new_documents,
         primary_key="document_id",
         label="document_id",
@@ -181,7 +202,7 @@ def repair_wikidata_region(
     }
     merged_links = _merge_links(
         polygons,
-        links,
+        retained_links,
         merged_documents,
         affected_qids=set(affected_qids),
     )
@@ -194,7 +215,7 @@ def repair_wikidata_region(
 
     new_sections = batch_sections
     merged_sections, _ = _merge_rows(
-        sections,
+        retained_sections,
         new_sections,
         primary_key="section_id",
         label="section_id",
@@ -227,6 +248,12 @@ def repair_wikidata_region(
         retained_facts,
         merged_facts,
         affected_qids=set(affected_qids),
+        removed_document_ids=orphan_document_ids,
+        removed_section_ids={
+            str(row["section_id"])
+            for row in sections
+            if str(row["document_id"]) in orphan_document_ids
+        },
     )
 
     terminal_classifications = _terminal_classifications(region, updated_links)
@@ -798,6 +825,8 @@ def _validate_preservation(
     updated_facts: list[dict[str, Any]],
     *,
     affected_qids: set[str],
+    removed_document_ids: set[str],
+    removed_section_ids: set[str],
 ) -> None:
     updated_polygon_map = {str(row["polygon_id"]): row for row in updated_polygons}
     for row in original_polygons:
@@ -813,6 +842,10 @@ def _validate_preservation(
     ):
         updated_map = {str(row[key]): row for row in updated}
         for row in original:
+            if label == "document" and str(row[key]) in removed_document_ids:
+                continue
+            if label == "section" and str(row[key]) in removed_section_ids:
+                continue
             if updated_map.get(str(row[key])) != row:
                 raise RecoveryRepairError(f"existing {label} changed: {row[key]}")
 

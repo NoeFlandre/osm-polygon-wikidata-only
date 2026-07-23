@@ -394,6 +394,72 @@ def test_repair_removes_only_orphan_fact_rows(tmp_path: Path) -> None:
     assert augmentation_client.entity_calls == []
 
 
+def test_repair_removes_orphan_wikipedia_document_and_its_sections(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "orphan-document"
+    _write_region(data_root, stem, ["Q1"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    sections_path = data_root.processed / "wikipedia" / "sections" / f"{stem}.parquet"
+    documents = pq.read_table(documents_path).to_pylist()  # type: ignore[no-untyped-call]
+    sections = pq.read_table(sections_path).to_pylist()  # type: ignore[no-untyped-call]
+    orphan_document = dict(documents[0])
+    orphan_document.update(
+        {
+            "article_id": "Q30901095:it:6369732:150337256",
+            "document_id": "Q30901095:wikipedia:it:6369732:150337256",
+            "wikidata": "Q30901095",
+            "language": "it",
+            "site": "itwiki",
+            "page_id": 6369732,
+            "revision_id": 150337256,
+        }
+    )
+    orphan_section = dict(sections[0])
+    orphan_section.update(
+        {
+            "section_id": stable_id(orphan_document["document_id"], 0, ""),
+            "document_id": orphan_document["document_id"],
+            "article_id": orphan_document["article_id"],
+            "wikidata": orphan_document["wikidata"],
+            "language": "it",
+            "site": "itwiki",
+            "page_id": orphan_document["page_id"],
+            "revision_id": orphan_document["revision_id"],
+        }
+    )
+    pq.write_table(
+        pa.Table.from_pylist([*documents, orphan_document], schema=pq.read_schema(documents_path)),
+        documents_path,
+    )
+    pq.write_table(
+        pa.Table.from_pylist([*sections, orphan_section], schema=section_schema()),
+        sections_path,
+    )
+
+    plan = audit_wikidata_integrity(
+        data_root,
+        [stem],
+        _RecordingWikidataClient({}),
+    ).region(stem)
+    result = repair_wikidata_region(
+        data_root,
+        plan,
+        wikidata_client=_RecordingWikidataClient({}),
+        wikipedia_client=InMemoryWikipediaClient({}),
+        augmentation_client=_AugmentationClient(set()),
+        settings=_settings(),
+    )
+
+    repaired_documents = pq.read_table(documents_path).to_pylist()  # type: ignore[no-untyped-call]
+    repaired_sections = pq.read_table(sections_path).to_pylist()  # type: ignore[no-untyped-call]
+    assert plan.orphan_document_ids == (orphan_document["document_id"],)
+    assert result.changed is True
+    assert result.map_inputs_changed is True
+    assert repaired_documents == documents
+    assert repaired_sections == sections
+
+
 def test_duplicate_document_identity_is_rejected_before_commit(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     stem = "duplicates"
