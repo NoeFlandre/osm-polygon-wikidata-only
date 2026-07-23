@@ -112,7 +112,15 @@ class PooledWikimediaOpener:
             # retry classifier recognizes HTTPX read/connect/write/pool
             # timeouts as transient instead of aborting the pipeline.
             raise urllib.error.URLError(TimeoutError(str(error))) from error
+        except (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError) as error:
+            # HTTPX uses its own exception hierarchy for broken sockets,
+            # mid-response disconnects, and proxy outages. Normalize those
+            # remote failures to a stdlib connection error so every Wikimedia
+            # client reaches the shared unbounded transient-retry path.
+            raise urllib.error.URLError(ConnectionError(str(error))) from error
         except httpx.TransportError as error:
+            # LocalProtocolError and UnsupportedProtocol represent permanent
+            # client/request defects and must remain non-retryable.
             raise urllib.error.URLError(error) from error
 
         body = response.content
