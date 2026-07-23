@@ -52,6 +52,7 @@ class _RegionScan:
     polygon_ids_by_qid: tuple[tuple[str, tuple[str, ...]], ...]
     missing_polygon_ids_by_qid: tuple[tuple[str, tuple[str, ...]], ...]
     orphan_fact_ids: tuple[str, ...] = ()
+    orphan_document_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
 
 
@@ -90,7 +91,13 @@ def audit_wikidata_integrity(
             else:
                 scans[stem] = _scan_region(data_root, stem, fingerprints)
         except (OSError, ValueError, TypeError, KeyError) as error:
-            scans[stem] = _RegionScan(stem, (), (), (), (), str(error))
+            scans[stem] = _RegionScan(
+                stem=stem,
+                fingerprints=(),
+                polygon_ids_by_qid=(),
+                missing_polygon_ids_by_qid=(),
+                blocked_reason=str(error),
+            )
         if _progress_checkpoint(region_index, len(scoped_stems), every=25):
             emit(
                 "Wikidata integrity audit local scan "
@@ -165,13 +172,14 @@ def audit_wikidata_integrity(
     )
     affected_polygons = sum(region.affected_polygon_count for region in region_results)
     orphan_facts = sum(len(region.orphan_fact_ids) for region in region_results)
+    orphan_documents = sum(len(region.orphan_document_ids) for region in region_results)
     emit(
         "Wikidata integrity audit complete: "
         f"regions scanned {len(region_results)}/{len(scoped_stems)}; "
         f"QIDs examined {len(qid_results)}; authoritative cache hits {cache_hits}; "
         f"QIDs requiring upstream validation {len(validation_qids)}; "
         f"affected QIDs {affected_qids}; affected polygons {affected_polygons}; "
-        f"orphan facts {orphan_facts}; "
+        f"orphan facts {orphan_facts}; orphan Wikipedia documents {orphan_documents}; "
         f"affected regions {affected_regions}; {time.monotonic() - started_at:.0f}s elapsed"
     )
     return RecoveryAuditResult(
@@ -249,6 +257,7 @@ def _scan_region(
 
     documents_by_article: dict[str, dict[str, Any]] = {}
     document_ids: set[str] = set()
+    orphan_document_ids: list[str] = []
     for row in document_rows:
         article_id = _required_string(row, "article_id", "wikipedia documents")
         document_id = _required_string(row, "document_id", "wikipedia documents")
@@ -258,7 +267,7 @@ def _scan_region(
         if document_id in document_ids:
             raise _ScanError(f"wikipedia documents contains duplicate document_id {document_id!r}")
         if qid not in polygon_ids_by_qid:
-            raise _ScanError(f"wikipedia document {document_id!r} references absent QID {qid!r}")
+            orphan_document_ids.append(document_id)
         documents_by_article[article_id] = row
         document_ids.add(document_id)
 
@@ -272,6 +281,9 @@ def _scan_region(
         if identity in link_ids:
             raise _ScanError(f"polygon_articles contains duplicate identity {identity!r}")
         link_ids.add(identity)
+        document = documents_by_article.get(article_id)
+        if document is not None and str(document["document_id"]) in orphan_document_ids:
+            continue
         polygon_qids = polygons.get(polygon_id)
         if polygon_qids is None:
             raise _ScanError(f"polygon_articles references absent polygon_id {polygon_id!r}")
@@ -280,7 +292,6 @@ def _scan_region(
                 f"polygon_articles QID {qid!r} disagrees with polygon {polygon_id!r} "
                 f"QIDs {polygon_qids!r}"
             )
-        document = documents_by_article.get(article_id)
         if document is None:
             raise _ScanError(f"polygon_articles references absent article_id {article_id!r}")
         if str(document.get("wikidata") or "") != qid:
@@ -319,6 +330,7 @@ def _scan_region(
         normalized_polygon_ids,
         missing,
         tuple(sorted(orphan_fact_ids)),
+        tuple(sorted(orphan_document_ids)),
     )
 
 
@@ -440,6 +452,7 @@ def _classify_region(
             affected_qids=(),
             affected_polygon_count=0,
             orphan_fact_ids=scan.orphan_fact_ids,
+            orphan_document_ids=scan.orphan_document_ids,
             blocked_reason=scan.blocked_reason,
         )
     missing = dict(scan.missing_polygon_ids_by_qid)
@@ -467,6 +480,7 @@ def _classify_region(
             {polygon_id for _, polygon_ids in affected for polygon_id in polygon_ids}
         ),
         orphan_fact_ids=scan.orphan_fact_ids,
+        orphan_document_ids=scan.orphan_document_ids,
     )
 
 
@@ -560,6 +574,7 @@ def _reuse_receipt(
         affected_qids=(),
         affected_polygon_count=0,
         orphan_fact_ids=(),
+        orphan_document_ids=(),
         reused=True,
     )
 
@@ -596,6 +611,7 @@ def record_region_recovery_receipt(
         affected_qids=(),
         affected_polygon_count=0,
         orphan_fact_ids=scan.orphan_fact_ids,
+        orphan_document_ids=scan.orphan_document_ids,
     )
     index_path = data_root.cache / _INDEX_RELATIVE_PATH
     receipts, contract_matches = _load_receipts(index_path)
