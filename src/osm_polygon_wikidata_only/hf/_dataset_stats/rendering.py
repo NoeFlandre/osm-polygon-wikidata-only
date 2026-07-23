@@ -16,7 +16,7 @@ just renders whatever it is given.
 
 from __future__ import annotations
 
-from .models import AugmentationStats, DatasetStats, ProjectTextStats
+from .models import AugmentationStats, CombinedLanguageStats, DatasetStats, ProjectTextStats
 
 __all__ = ["render_stats_section"]
 
@@ -36,10 +36,16 @@ def render_stats_section(
     parts: list[str] = []
     parts.append("## Dataset snapshot\n")
     parts.append(_render_headline_table(stats, augmentation_stats))
-    parts.append("\n## Wikipedia coverage funnel\n")
-    parts.append(_render_funnel_table(stats))
+    if augmentation_stats is None:
+        parts.append("\n## Wikipedia coverage funnel\n")
+        parts.append(_render_funnel_table(stats))
     parts.append("\n## Language distribution\n")
-    parts.append(_render_language_section(stats))
+    parts.append(
+        _render_combined_language_section(augmentation_stats.combined_languages)
+        if augmentation_stats is not None
+        and augmentation_stats.combined_languages.documents_per_language
+        else _render_language_section(stats)
+    )
     if augmentation_stats is not None:
         parts.append("\n## Storage accounting\n")
         parts.append(_render_storage_size_rows(augmentation_stats))
@@ -133,8 +139,13 @@ def _render_headline_table(
         # legacy rows, keep the augmentation-broken-down totals.
         rows.extend(
             [
-                ("Polygon-article links", _fmt_int(stats.link_count)),
-                ("Languages", _fmt_int(stats.language_count)),
+                ("Wikipedia polygon-document links", _fmt_int(stats.link_count)),
+                (
+                    "Wikipedia + Wikivoyage languages",
+                    _fmt_int(
+                        augmentation_stats.combined_languages.language_count or stats.language_count
+                    ),
+                ),
                 ("Geographic regions", _fmt_int(stats.region_count)),
                 ("Polygon and link tables size", _fmt_size(stats.dataset_size_bytes)),
             ]
@@ -258,6 +269,52 @@ def _render_language_section(stats: DatasetStats) -> str:
             f"{threshold_label} Wikipedia document(s)"
         )
     lines.append(f"- {tail_counts['polygons_lt5']} language(s) appear in fewer than 5 polygons")
+    return "\n".join(lines)
+
+
+def _render_combined_language_section(stats: CombinedLanguageStats) -> str:
+    """Render public language metrics across both text projects."""
+    if not stats.documents_per_language:
+        return "No language data yet.\n"
+    polygons = dict(stats.polygons_per_language)
+    lines = [
+        "Top 20 languages across Wikipedia and Wikivoyage documents:",
+        "",
+        "Document counts include canonical rows from both projects. Polygon counts "
+        "deduplicate places per language and require non-empty text: Wikipedia uses "
+        "the `polygon_articles` link table, while Wikivoyage joins through the shared "
+        "Wikidata QID.",
+        "",
+        "| Language | Documents | % of total | Polygons with non-empty text |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    denominator = max(stats.document_count, 1)
+    for language, count in stats.documents_per_language[:20]:
+        lines.append(
+            f"| {language} | {_fmt_int(count)} | "
+            f"{_fmt_pct(count / denominator * 100.0)} | "
+            f"{_fmt_int(polygons.get(language, 0))} |"
+        )
+    lines.extend(["", "**Concentration:**"])
+    for n in (1, 5, 10, 20):
+        count = sum(value for _, value in stats.documents_per_language[:n])
+        lines.append(
+            f"- Top {n} language{'s' if n > 1 else ''}: "
+            f"{_fmt_pct(count / denominator * 100.0)} of all Wikipedia + Wikivoyage documents"
+        )
+    lines.extend(
+        [
+            "",
+            "**Long-tail:**",
+            f"- {stats.language_count} language(s) total",
+            f"- {sum(count < 5 for _, count in stats.documents_per_language)} language(s) "
+            "appear in fewer than 5 Wikipedia + Wikivoyage documents",
+            f"- {sum(count < 10 for _, count in stats.documents_per_language)} language(s) "
+            "appear in fewer than 10 Wikipedia + Wikivoyage documents",
+            f"- {sum(count < 5 for _, count in stats.polygons_per_language)} language(s) "
+            "appear in fewer than 5 polygons with non-empty text",
+        ]
+    )
     return "\n".join(lines)
 
 

@@ -1074,6 +1074,7 @@ def test_render_stats_section_with_augmentation_adds_new_sections() -> None:
         unreadable_file_count=0,
     )
     md = render_stats_section(stats, augmentation_stats=aug)
+    assert "## Wikipedia coverage funnel" not in md
     assert "## Augmentation coverage" not in md
     assert "## Storage accounting" in md
     assert "## Wikipedia text corpus" in md

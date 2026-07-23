@@ -405,6 +405,7 @@ def build_golden_publication(out: Path) -> Path:
             "polygon_articles/monaco-latest.parquet",
             "manifests/processed_pbfs.json",
             "assets/geographic_text_presence.png",
+            "assets/geographic_text_density.png",
             "assets/geographic_wikipedia_text_coverage.png",
             "assets/geographic_polygon_count.png",
             "assets/coverage_map.png",

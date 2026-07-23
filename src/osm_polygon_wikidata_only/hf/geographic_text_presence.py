@@ -70,7 +70,7 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
 
     all_polygon_ids: set[str] = set()
     combined_ids: set[str] = set(wikipedia_polygons)
-    points: list[CoveredPoint] = []
+    points_by_id: dict[str, CoveredPoint] = {}
     for path in sorted_parquets(polygons_dir):
         for row in read_required_columns(
             path, ("polygon_id", "wikidata", "lon", "lat"), label="polygons"
@@ -84,8 +84,9 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
                 combined_ids.add(polygon_id)
             if polygon_id in combined_ids:
                 try:
-                    points.append(
-                        CoveredPoint(polygon_id, qid, float(row["lon"]), float(row["lat"]))
+                    points_by_id.setdefault(
+                        polygon_id,
+                        CoveredPoint(polygon_id, qid, float(row["lon"]), float(row["lat"])),
                     )
                 except (KeyError, TypeError, ValueError) as error:
                     raise CoverageMapError(
@@ -97,14 +98,14 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
         raise CoverageMapError(
             f"polygon_articles contains {len(unresolved)} polygon id(s) absent from polygons"
         )
-    points.sort(key=lambda point: point.polygon_id)
+    points = tuple(points_by_id[polygon_id] for polygon_id in sorted(points_by_id))
     return TextPresenceSnapshot(
         polygon_count=len(all_polygon_ids),
         wikipedia_covered_polygon_ids=frozenset(wikipedia_polygons),
         combined_covered_polygon_ids=frozenset(combined_ids),
         wikipedia_document_ids=frozenset(wikipedia_ids),
         wikivoyage_document_ids=frozenset(wikivoyage_ids),
-        covered_points=tuple(points),
+        covered_points=points,
     )
 
 
@@ -113,9 +114,10 @@ def generate_geographic_text_presence(
     output_path: Path,
     *,
     land_geojson_path: Path | None = None,
+    snapshot: TextPresenceSnapshot | None = None,
 ) -> RenderResult:
     """Render one point for every polygon with Wikipedia or Wikivoyage text."""
-    snapshot = load_text_presence(processed_root)
+    snapshot = snapshot or load_text_presence(processed_root)
     points = snapshot.covered_points
     generate_coverage_map(
         [point.lon for point in points],

@@ -7,6 +7,10 @@ CLI or pipeline code. Explicitly-named constants:
   commit that unifies the augmentation manifest under ``manifests/``.
 * :data:`LEGACY_REMOTE_COVERAGE_MAP_FILE`: used solely by the migration
   commit that unifies the coverage map under ``assets/``.
+* :data:`LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE` and
+  :data:`LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE`: used solely by
+  the migration commit that replaces the two old H3 maps with combined
+  Wikipedia/Wikivoyage text density.
 """
 
 from __future__ import annotations
@@ -46,14 +50,21 @@ LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE = "augmentation/manifests/augmentation_
 REMOTE_COVERAGE_MAP_FILE = "assets/coverage_map.png"
 LEGACY_REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
 
-# The geographic Wikipedia text coverage PNG embedded in the dataset README.
+# Superseded geographic Wikipedia coverage path, retained for compatibility
+# imports and its atomic remote deletion.
 REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE = "assets/geographic_wikipedia_text_coverage.png"
+LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE = REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE
 
-# The geographic polygon-density PNG embedded in the dataset README.
+# Superseded all-polygon H3 density path, retained for compatibility imports
+# and its atomic remote deletion.
 REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE = "assets/geographic_polygon_count.png"
+LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE = REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE
 
 # Every polygon with non-empty Wikipedia or Wikivoyage document text.
 REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE = "assets/geographic_text_presence.png"
+
+# Canonical H3 density of polygons with Wikipedia or Wikivoyage text.
+REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE = "assets/geographic_text_density.png"
 
 
 def remote_parquet_path(subdir: str, stem: str) -> str:
@@ -90,12 +101,15 @@ __all__ = [
     "LEGACY_REMOTE_ARTICLES_DIR",
     "LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE",
     "LEGACY_REMOTE_COVERAGE_MAP_FILE",
+    "LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
+    "LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",
     "REMOTE_ARTICLES_DIR",
     "REMOTE_AUGMENTATION_MANIFEST_FILE",
     "REMOTE_CONTAINMENT_RETIREMENT_FILE",
     "REMOTE_COVERAGE_MAP_FILE",
     "REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
     "REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",
+    "REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE",
     "REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE",
     "REMOTE_LINKS_DIR",
     "REMOTE_MANIFESTS_DIR",

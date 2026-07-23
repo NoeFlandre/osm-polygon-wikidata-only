@@ -45,6 +45,7 @@ from .cache import (
     load_cache_index,
     write_cache_index,
 )
+from .combined_languages import compute_combined_language_stats
 from .models import (
     AugmentationStats,
     PerFileSummary,
@@ -864,6 +865,10 @@ def compute_augmentation_stats(
         augmentation_parquet_bytes=aug_bytes,
         total_parquet_bytes=total_bytes,
         unreadable_file_count=unreadable,
+        combined_languages=compute_combined_language_stats(
+            processed_dir,
+            cache_index_dir=cache_index_dir,
+        ),
     )
 
 

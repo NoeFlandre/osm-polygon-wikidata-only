@@ -72,6 +72,10 @@ REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 def _stub_combined_text_map(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep publication contracts isolated from real Parquet rendering."""
     monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._load_text_presence",
+        lambda _root: object(),
+    )
+    monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
         lambda _root, dest, **_kw: dest.touch() or dest,
     )
@@ -142,11 +146,11 @@ def _stub_generators(monkeypatch: pytest.MonkeyPatch) -> None:
     assembly helpers return paths that exist on disk.
     """
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
+        "osm_polygon_wikidata_only.hf.publication._load_text_presence",
+        lambda _root: object(),
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -208,10 +212,13 @@ def test_assemblers_have_no_commit_message_parameter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_augmentation_upload_returns_combined_map(tmp_path: Path) -> None:
+def test_assemble_augmentation_upload_returns_combined_maps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     ops = assemble_augmentation_upload(
         data_root=data_root,
         repo_id=REPO_ID,
@@ -224,13 +231,15 @@ def test_assemble_augmentation_upload_returns_combined_map(tmp_path: Path) -> No
     # is the migration ``delete`` of the legacy augmentation path.
     add_ops = [op for op in ops if op.action == "add"]
     delete_ops = [op for op in ops if op.action == "delete"]
-    assert len(add_ops) == 8
-    assert len(delete_ops) == 2
+    assert len(add_ops) == 9
+    assert len(delete_ops) == 4
     assert add_ops[5].local_path == aug.manifest_path
     assert add_ops[5].path_in_repo == "manifests/augmentation_manifest.json"
     assert {op.path_in_repo for op in delete_ops} == {
         "articles/monaco-latest.parquet",
         "augmentation/manifests/augmentation_manifest.json",
+        "assets/geographic_wikipedia_text_coverage.png",
+        "assets/geographic_polygon_count.png",
     }
     assert remotes == [
         "wikipedia/documents/monaco-latest.parquet",
@@ -242,9 +251,12 @@ def test_assemble_augmentation_upload_returns_combined_map(tmp_path: Path) -> No
         "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
         "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
+        "assets/geographic_wikipedia_text_coverage.png",
+        "assets/geographic_polygon_count.png",
         "README.md",
     ]
-    assert len(ops) == 10
+    assert len(ops) == 13
 
 
 def test_assemble_augmentation_upload_writes_readme_at_end(
@@ -254,6 +266,7 @@ def test_assemble_augmentation_upload_writes_readme_at_end(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -277,6 +290,7 @@ def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -291,12 +305,8 @@ def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
         return _fn
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        trap("text"),
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
-        trap("count"),
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
+        trap("density"),
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.refresh_coverage_assets",
@@ -316,7 +326,7 @@ def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
         repo_id=REPO_ID,
         augmentation=aug,
     )
-    assert calls == ["presence"]
+    assert calls == ["presence", "density"]
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +340,7 @@ def test_assemble_region_upload_without_core_refreshes_combined_map(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -355,6 +366,9 @@ def test_assemble_region_upload_without_core_refreshes_combined_map(
         "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
         "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
+        "assets/geographic_wikipedia_text_coverage.png",
+        "assets/geographic_polygon_count.png",
         "README.md",
     ]
 
@@ -381,11 +395,12 @@ def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
     assert remotes[1] == "polygon_articles/monaco-latest.parquet"
     assert remotes[2] == "manifests/processed_pbfs.json"
     assert remotes[3] == "assets/geographic_text_presence.png"
-    assert remotes[4] == "assets/geographic_wikipedia_text_coverage.png"
-    assert remotes[5] == "assets/geographic_polygon_count.png"
-    assert remotes[6] == "assets/coverage_map.png"
-    assert remotes[7] == "coverage_map.png"
-    assert remotes[8:] == [
+    assert remotes[4] == "assets/geographic_text_density.png"
+    assert remotes[5] == "assets/geographic_wikipedia_text_coverage.png"
+    assert remotes[6] == "assets/geographic_polygon_count.png"
+    assert remotes[7] == "assets/coverage_map.png"
+    assert remotes[8] == "coverage_map.png"
+    assert remotes[9:] == [
         "wikipedia/documents/monaco-latest.parquet",
         "articles/monaco-latest.parquet",
         "wikipedia/sections/monaco-latest.parquet",
@@ -396,7 +411,7 @@ def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
         "augmentation/manifests/augmentation_manifest.json",
         "README.md",
     ]
-    assert len(ops) == 17
+    assert len(ops) == 18
 
 
 def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
@@ -439,11 +454,7 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
     core, data_root = _stub_process_result(tmp_path)
     aug = _stub_augmentation_result(data_root.processed)
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -461,21 +472,13 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
 
     call_order: list[str] = []
 
-    def text_stub(*a: object, **kw: object) -> Path:
-        call_order.append("text")
-        return a[1].touch() or a[1]  # type: ignore[index]
-
-    def count_stub(*a: object, **kw: object) -> Path:
-        call_order.append("count")
+    def density_stub(*a: object, **kw: object) -> Path:
+        call_order.append("density")
         return a[1].touch() or a[1]  # type: ignore[index]
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        text_stub,
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
-        count_stub,
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
+        density_stub,
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
@@ -499,11 +502,9 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
         world_land_warning=None,
     )
     assert call_order[-1] == "README.md"
-    assert "text" in call_order
-    assert "count" in call_order
+    assert "density" in call_order
     assert "coverage" in call_order
-    assert call_order.index("text") < call_order.index("README.md")
-    assert call_order.index("count") < call_order.index("README.md")
+    assert call_order.index("density") < call_order.index("README.md")
     assert call_order.index("coverage") < call_order.index("README.md")
 
 
@@ -512,10 +513,10 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_core_upload_returns_eleven_entries(
+def test_assemble_core_upload_returns_twelve_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Legacy core publication order includes all four map assets."""
+    """Legacy core publication migrates from two old H3 maps to one."""
     core, data_root = _stub_process_result(tmp_path)
     _stub_generators(monkeypatch)
 
@@ -533,13 +534,14 @@ def test_assemble_core_upload_returns_eleven_entries(
         "polygon_articles/monaco-latest.parquet",
         "manifests/processed_pbfs.json",
         "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
         "README.md",
         "assets/coverage_map.png",
         "coverage_map.png",
     ]
-    assert len(ops) == 11
+    assert len(ops) == 12
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -547,11 +549,7 @@ def test_assemble_core_upload_writes_readme_after_other_snapshots(
 ) -> None:
     core, data_root = _stub_process_result(tmp_path)
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -570,12 +568,8 @@ def test_assemble_core_upload_writes_readme_after_other_snapshots(
     call_order: list[str] = []
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: call_order.append("text") or a[1].touch() or a[1],
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
-        lambda *a, **kw: call_order.append("count") or a[1].touch() or a[1],
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
+        lambda *a, **kw: call_order.append("density") or a[1].touch() or a[1],
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
@@ -597,8 +591,7 @@ def test_assemble_core_upload_writes_readme_after_other_snapshots(
         world_land_warning=lambda msg: None,
     )
     assert call_order[-1] == "README.md"
-    assert call_order.index("text") < call_order.index("README.md")
-    assert call_order.index("count") < call_order.index("README.md")
+    assert call_order.index("density") < call_order.index("README.md")
     assert call_order.index("coverage") < call_order.index("README.md")
 
 
@@ -608,11 +601,7 @@ def test_assemble_core_upload_invokes_warning_callback(
     """The legacy core path invokes the world-land warning callback."""
     core, data_root = _stub_process_result(tmp_path)
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -654,11 +643,7 @@ def test_assemble_region_upload_swallows_world_land_failure(
     core, data_root = _stub_process_result(tmp_path)
     aug = _stub_augmentation_result(data_root.processed)
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -771,12 +756,8 @@ def test_assemble_core_upload_propagates_snapshot_failure(
         raise RuntimeError("snapshot failed")
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         boom,
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
@@ -815,12 +796,8 @@ def test_assemble_region_upload_propagates_snapshot_failure(
         raise RuntimeError("snapshot failed")
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         boom,
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
@@ -869,7 +846,7 @@ def test_legacy_core_command_submits_exactly_once(
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 11
+    assert len(ops) == 12
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -881,6 +858,7 @@ def test_augmentation_command_submits_exactly_once(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -930,7 +908,7 @@ def test_augmentation_command_submits_exactly_once(
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
     # Sidecars + manifest migration + combined map + README.
-    assert len(uploads[0][0]) == 10
+    assert len(uploads[0][0]) == 13
 
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
@@ -1045,11 +1023,11 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
         "Sync complete region monaco-latest",
         "Sync complete region andorra-latest",
     }
-    # PROCESS state (with core): 17 ops (8 core + 7 augmentation
-    # + 2 migration ``delete`` ops).
-    assert len(by_message["Sync complete region monaco-latest"]) == 17
+    # PROCESS state includes three current maps and deletes the three
+    # superseded remote map paths atomically.
+    assert len(by_message["Sync complete region monaco-latest"]) == 18
     # AUGMENT state (no core): sidecars, manifest migration, combined map, README.
-    assert len(by_message["Sync complete region andorra-latest"]) == 10
+    assert len(by_message["Sync complete region andorra-latest"]) == 13
 
 
 # ---------------------------------------------------------------------------
@@ -1080,16 +1058,12 @@ def test_snapshot_upload_manifests_writes_processed_manifest_snapshot(
     assert not readme.exists()
 
 
-def test_refresh_coverage_assets_writes_four_pngs(
+def test_refresh_coverage_assets_writes_three_pngs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     core, data_root = _stub_process_result(tmp_path)
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -1109,7 +1083,7 @@ def test_refresh_coverage_assets_writes_four_pngs(
         lambda _lons, _lats, dest, **_kw: dest.touch() or dest,
     )
     snapshots_dir = data_root.cache / "test_refresh"
-    map_path, presence_path, geo_path, count_path = refresh_coverage_assets(
+    map_path, presence_path, density_path = refresh_coverage_assets(
         data_root=data_root,
         snapshot_stem=core.polygons_path.stem,
         snapshots_dir=snapshots_dir,
@@ -1117,8 +1091,51 @@ def test_refresh_coverage_assets_writes_four_pngs(
     )
     assert map_path.exists()
     assert presence_path.exists()
-    assert geo_path.exists()
-    assert count_path.exists()
+    assert density_path.exists()
+
+
+def test_refresh_coverage_assets_loads_combined_text_inputs_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two text maps must share one expensive finalized-table scan."""
+    core, data_root = _stub_process_result(tmp_path)
+    sentinel = object()
+    loads: list[Path] = []
+    received: list[object] = []
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._load_text_presence",
+        lambda root: loads.append(root) or sentinel,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
+        lambda _root, dest, **kwargs: received.append(kwargs["snapshot"]) or dest.touch() or dest,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
+        lambda _root, dest, **kwargs: received.append(kwargs["snapshot"]) or dest.touch() or dest,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.load_centroids_from_parquet",
+        lambda _dir: ([], []),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
+        lambda _dir: None,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
+        lambda _lons, _lats, dest, **_kw: dest.touch() or dest,
+    )
+
+    refresh_coverage_assets(
+        data_root=data_root,
+        snapshot_stem=core.polygons_path.stem,
+        snapshots_dir=data_root.cache / "single_scan",
+        world_land_warning=None,
+    )
+
+    assert loads == [data_root.processed]
+    assert received == [sentinel, sentinel]
 
 
 # ---------------------------------------------------------------------------
@@ -1133,8 +1150,7 @@ def test_cli_commands_no_longer_implements_publication_assembly() -> None:
     for name in (
         "_sync_upload_files",
         "_coverage_refresh_required",
-        "_generate_geographic_text_coverage_snapshot",
-        "_generate_geographic_polygon_count_snapshot",
+        "_generate_geographic_text_density_snapshot",
         "_write_readme_snapshot",
         "_augmentation_upload_files",
         "load_centroids_from_parquet",
@@ -1200,6 +1216,7 @@ def test_canonical_augmentation_manifest_path_is_published(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -1297,6 +1314,7 @@ def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -1318,6 +1336,7 @@ def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
         "wikivoyage/sections/monaco-latest.parquet",
         "wikidata/facts/monaco-latest.parquet",
         "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
         "README.md",
         REMOTE_AUGMENTATION_MANIFEST_FILE,
     }
@@ -1344,6 +1363,7 @@ def test_repeated_augmentation_publication_is_idempotent(
     data_root = DataRoot(tmp_path)
     data_root.ensure()
     aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
@@ -1415,9 +1435,9 @@ def test_publication_plan_is_deterministic_and_unique(
         == 1
     )
     assert sum(op.path_in_repo == "coverage_map.png" for op in deletions) == 1
-    # 8 core + 7 augmentation additions (5 sidecars + README + canonical manifest)
-    # + 2 legacy deletions = 17 total ops.
-    assert len(ops) == 17, f"unexpected plan length: {len(ops)} {ops}"
+    # Three current maps are added while the root coverage map and both
+    # superseded H3 maps are deleted in the same atomic publication.
+    assert len(ops) == 18, f"unexpected plan length: {len(ops)} {ops}"
 
 
 # ---------------------------------------------------------------------------
@@ -1543,6 +1563,32 @@ def test_upload_files_rejects_legacy_coverage_map_only_when_canonical_missing() 
             hub=hub,
             token="stub-token",
             commit_message="dangling delete",
+        )
+
+
+@pytest.mark.parametrize(
+    "legacy_path",
+    [
+        "assets/geographic_wikipedia_text_coverage.png",
+        "assets/geographic_polygon_count.png",
+    ],
+)
+def test_upload_files_rejects_old_h3_map_delete_without_text_density(
+    legacy_path: str,
+) -> None:
+    """Both retired H3 assets require the new density map in the commit."""
+    from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+    from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+
+    with pytest.raises(UploadError, match="canonical"):
+        ops_mod.upload_files(
+            REPO_ID,
+            ops=[delete_op(legacy_path)],
+            hub=StubHfHub(),
+            token="stub-token",
+            commit_message="unsafe map retirement",
         )
 
 

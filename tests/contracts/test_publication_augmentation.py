@@ -178,11 +178,15 @@ def _stub_augmentation_result(data_root_processed: Path) -> AugmentationResult:
 
 def _stub_coverage_assets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_coverage_snapshot",
-        lambda *a, **kw: a[1].touch() or a[1],
+        "osm_polygon_wikidata_only.hf.publication._load_text_presence",
+        lambda _root: object(),
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_polygon_count_snapshot",
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
+        lambda _root, dest, **_kw: dest.touch() or dest,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
         lambda *a, **kw: a[1].touch() or a[1],
     )
     monkeypatch.setattr(
@@ -224,9 +228,10 @@ def test_write_readme_snapshot_includes_core_and_augmentation_stats(
     # is the last add).
     readme_path = add_ops[-2].local_path
     md = readme_path.read_text(encoding="utf-8")
-    # Core stats sections remain.
+    # The public augmentation-aware card omits the legacy
+    # Wikipedia-only funnel in favor of combined text metrics.
     assert "## Dataset snapshot" in md
-    assert "## Wikipedia coverage funnel" in md
+    assert "## Wikipedia coverage funnel" not in md
     assert "## Geographic distribution by continent" in md
     # Augmentation sections are present because sidecars exist.
     assert "## Augmentation coverage" not in md
@@ -406,7 +411,7 @@ def test_readme_remains_last_in_core_upload(
         world_land_warning=lambda msg: None,
     )
     # The README follows the canonical document retirement and coverage assets.
-    assert files[8].path_in_repo == "README.md"
+    assert files[9].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_region_upload(

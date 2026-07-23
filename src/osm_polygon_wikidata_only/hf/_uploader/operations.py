@@ -48,6 +48,8 @@ __all__ = [
 LEGACY_PATHS_REQUIRING_CANONICAL: dict[str, str] = {
     "augmentation/manifests/augmentation_manifest.json": "manifests/augmentation_manifest.json",
     "coverage_map.png": "assets/coverage_map.png",
+    "assets/geographic_wikipedia_text_coverage.png": "assets/geographic_text_density.png",
+    "assets/geographic_polygon_count.png": "assets/geographic_text_density.png",
 }
 
 

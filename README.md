@@ -32,12 +32,14 @@ Documentation: [architecture](docs/architecture.md) ·
 5. Publishes the canonical region tables on the Hugging Face Hub:
    * `polygons/<stem>.parquet` — one row per polygon.
    * `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article revision.
-   * `polygon_articles/<stem>.parquet` — many-to-many polygon↔article links.
+   * `polygon_articles/<stem>.parquet` — Wikipedia-only many-to-many
+     polygon↔document links.
    * `manifests/processed_pbfs.json` — aggregate stats per source PBF.
-6. Adds derived text and fact tables without reprocessing completed PBFs:
-   * `wikipedia/sections/<stem>.parquet`.
-   * `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`.
-   * `wikidata/facts/<stem>.parquet`.
+6. Adds text and fact tables without reprocessing completed PBFs:
+   * `wikipedia/sections/<stem>.parquet` — section-level Wikipedia text.
+   * `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents.
+   * `wikivoyage/sections/<stem>.parquet` — section-level Wikivoyage text.
+   * `wikidata/facts/<stem>.parquet` — structured claims for polygon entities.
 
 The repository is **code only**: every data artifact (PBFs, parquet,
 HF caches, request caches) lives on an external drive.
@@ -451,25 +453,31 @@ publication and reference validation.
 
 ### `polygon_articles/<stem>.parquet`
 
-Many-to-many links joining polygons to articles, plus a boolean
+Wikipedia-only many-to-many links joining polygons to documents, plus a boolean
 `is_best_language` flag (true for the language chosen by
-`LinkSummary.best_language()`).
+`LinkSummary.best_language()`). Wikivoyage documents join to polygons
+through their shared Wikidata QID instead of this table.
 
 ### `manifests/processed_pbfs.json`
 
 Aggregate stats per source PBF: polygon/article counts, language
 coverage, area-bucket counts, top tag keys.
 
-### Derived text and fact tables
+### Text and fact tables
 
 Text sections, Wikivoyage documents, and Wikidata facts are published
 when augmentation has run for a region. Wikipedia sections reference
 the canonical document IDs; retiring the legacy article table never
 removes or rewrites section content.
 
-- `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet`
-- `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`
-- `wikidata/facts/<stem>.parquet`
+- `wikipedia/sections/<stem>.parquet` — section-level partitions of
+  Wikipedia document text.
+- `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents
+  associated with places through Wikidata.
+- `wikivoyage/sections/<stem>.parquet` — section-level partitions of
+  Wikivoyage document text.
+- `wikidata/facts/<stem>.parquet` — structured Wikidata claims for
+  polygon entities.
 
 Column lists for documents, sections, and facts live in
 `osm_polygon_wikidata_only.augmentation.schema` (`DOCUMENT_COLUMNS`,
@@ -500,27 +508,30 @@ private augmentation snapshot from the local sidecars.
 
 ## Geographic coverage
 
-Both maps below aggregate dataset polygons into H3 cells at the same
-resolution. All denominators and counts are conditional on each polygon
-carrying an OSM `wikidata=*` tag.
+### Polygons with Wikipedia or Wikivoyage text
 
-### Wikipedia text coverage
+![Polygons with Wikipedia or Wikivoyage text](assets/geographic_text_presence.png)
 
-![Geographic Wikipedia Text Coverage](assets/geographic_wikipedia_text_coverage.png)
+Each point is a dataset polygon with at least one non-empty Wikipedia
+document or a non-empty Wikivoyage document sharing its Wikidata entity.
+A polygon is shown once even when several documents qualify.
 
-`coverage_rate(h) = covered_polygons(h) / all_dataset_polygons(h)`,
-where a covered polygon has at least one linked Wikipedia article with
-non-empty text. Cell colour encodes this fraction from 0% to 100%; grey
-cells hold fewer than 20 polygons and are not statistically meaningful.
+### All dataset polygons
 
-### Polygon density
+![Coverage Map](assets/coverage_map.png)
 
-![Geographic Polygon Density](assets/geographic_polygon_count.png)
+Each point represents one dataset polygon carrying an OSM `wikidata=*`
+tag, whether or not corresponding Wikipedia or Wikivoyage text exists.
 
-`polygon_count(h) = number of dataset polygons whose centroid belongs
-to H3 cell h`. Colour encodes the raw count on a logarithmic scale
-because counts are highly skewed across the world. Low counts remain
-visible.
+### Wikipedia + Wikivoyage text density
+
+![Geographic Wikipedia and Wikivoyage Text Density](assets/geographic_text_density.png)
+
+Each H3 cell contains the raw number of polygons with non-empty text
+from Wikipedia or Wikivoyage. A polygon is counted once even when both
+projects or several documents qualify. Colour uses a logarithmic
+purple-to-yellow scale; this is an absolute density count, not a proportion
+of all polygons.
 
 ---
 

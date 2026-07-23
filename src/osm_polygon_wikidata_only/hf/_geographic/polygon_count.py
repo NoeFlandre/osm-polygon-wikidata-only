@@ -93,23 +93,7 @@ def render_geographic_polygon_count(
     coerced = coerce_count_cells(cells)
     if not coerced:
         raise CoverageMapError("Cannot render polygon count map: no H3 cells supplied.")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
-    fig.set_facecolor("white")
-    init_axes(ax)
-    if land_features:
-        draw_landmasses(ax, land_features)
-
-    counts = [cell.polygon_count for cell in coerced]
-    minimum = max(min(counts), 1)
-    maximum = max(max(counts), minimum + 1)
-    cmap = plt.get_cmap(_COUNT_COLORMAP_NAME)
-    norm = mcolors.LogNorm(vmin=minimum, vmax=maximum)
-    for cell in coerced:
-        draw_count_cell(ax, cell, cmap=cmap, norm=norm)
-
-    total_polygons = sum(counts)
+    total_polygons = sum(cell.polygon_count for cell in coerced)
     low_sample_count = sum(1 for c in coerced if c.is_low_sample)
     caption = (
         "Geographic Polygon Density (Wikidata-tagged). Colour encodes the "
@@ -120,8 +104,48 @@ def render_geographic_polygon_count(
         f"{len(coerced):,} H3 cells ({low_sample_count:,} with fewer than "
         f"{min_polygons_per_cell} polygons)."
     )
+    return render_count_map(
+        coerced,
+        output_path,
+        title="Geographic Polygon Density",
+        caption=caption,
+        colorbar_label="Polygons per H3 cell",
+        land_features=land_features,
+    )
+
+
+def render_count_map(
+    cells: Sequence[PolygonCountCell],
+    output_path: Path,
+    *,
+    title: str,
+    caption: str,
+    colorbar_label: str,
+    land_features: Sequence[Any] | None = None,
+    allow_empty: bool = False,
+) -> RenderResult:
+    """Render a deterministic logarithmic magma count map."""
+    coerced = coerce_count_cells(cells)
+    if not coerced and not allow_empty:
+        raise CoverageMapError("Cannot render count map: no H3 cells supplied.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
+    fig.set_facecolor("white")
+    init_axes(ax)
+    if land_features:
+        draw_landmasses(ax, land_features)
+
+    counts = [cell.polygon_count for cell in coerced] or [1]
+    minimum = max(min(counts), 1)
+    maximum = max(max(counts), minimum + 1)
+    cmap = plt.get_cmap(_COUNT_COLORMAP_NAME)
+    norm = mcolors.LogNorm(vmin=minimum, vmax=maximum)
+    for cell in coerced:
+        draw_count_cell(ax, cell, cmap=cmap, norm=norm)
+
     fig.suptitle(
-        "Geographic Polygon Density",
+        title,
         fontsize=14,
         color="#222222",
         y=0.98,
@@ -140,7 +164,7 @@ def render_geographic_polygon_count(
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     colorbar = fig.colorbar(sm, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Polygons per H3 cell", fontsize=8, color="#333333")
+    colorbar.set_label(colorbar_label, fontsize=8, color="#333333")
     colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_count_tick))
     colorbar.ax.tick_params(labelsize=7)
 

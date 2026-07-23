@@ -3,53 +3,59 @@
 This module owns the construction of publication-op lists for the
 three documented publication contracts. Assemblers return
 ``list[PublicationOp]`` -- one ``add`` op per local artifact, plus
-explicit ``delete`` ops for the legacy paths (augmentation manifest
-and coverage map) to migrate the remote layout.
+explicit ``delete`` ops for legacy paths to migrate the remote layout.
 
 * Legacy core publication
   (called by :func:`cli.commands._enqueue_core_upload`):
     1. polygons
-    2. articles
-    3. polygon_articles
-    4. processed manifest
-    5. combined Wikipedia/Wikivoyage text presence
-    6. geographic Wikipedia text coverage
-    7. geographic polygon count
-    8. README
-    9. canonical all-polygons coverage map (add)
-    10. legacy coverage map (delete)
+    2. canonical Wikipedia documents
+    3. legacy articles (delete)
+    4. polygon_articles
+    5. processed manifest
+    6. combined Wikipedia/Wikivoyage text presence
+    7. combined Wikipedia/Wikivoyage H3 text density
+    8. legacy Wikipedia H3 coverage (delete)
+    9. legacy all-polygon H3 density (delete)
+    10. README
+    11. canonical all-polygons coverage map (add)
+    12. legacy coverage map (delete)
 
 * Unified sync with changed core
   (called by ``cli.run_sync._build_region_publication``):
     1. polygons
-    2. articles
-    3. polygon_articles
-    4. processed manifest
-    5. combined Wikipedia/Wikivoyage text presence
-    6. geographic Wikipedia text coverage
-    7. geographic polygon count
+    2. polygon_articles
+    3. processed manifest
+    4. combined Wikipedia/Wikivoyage text presence
+    5. combined Wikipedia/Wikivoyage H3 text density
+    6. legacy Wikipedia H3 coverage (delete)
+    7. legacy all-polygon H3 density (delete)
     8. canonical all-polygons coverage map (add)
     9. legacy coverage map (delete)
     10. wikipedia documents
-    11. wikipedia sections
-    12. wikivoyage documents
-    13. wikivoyage sections
-    14. wikidata facts
-    15. canonical augmentation manifest (add)
-    16. legacy augmentation manifest (delete)
-    17. README
+    11. legacy articles (delete)
+    12. wikipedia sections
+    13. wikivoyage documents
+    14. wikivoyage sections
+    15. wikidata facts
+    16. canonical augmentation manifest (add)
+    17. legacy augmentation manifest (delete)
+    18. README
 
 * Augmentation-only publication (legacy
   ``cli.commands._augmentation_upload_files`` behavior):
     1. wikipedia documents
-    2. wikipedia sections
-    3. wikivoyage documents
-    4. wikivoyage sections
-    5. wikidata facts
-    6. canonical augmentation manifest (add)
-    7. legacy augmentation manifest (delete)
-    8. combined Wikipedia/Wikivoyage coverage map
-    9. README
+    2. legacy articles (delete)
+    3. wikipedia sections
+    4. wikivoyage documents
+    5. wikivoyage sections
+    6. wikidata facts
+    7. canonical augmentation manifest (add)
+    8. legacy augmentation manifest (delete)
+    9. combined Wikipedia/Wikivoyage point map
+    10. combined Wikipedia/Wikivoyage H3 text density
+    11. legacy Wikipedia H3 coverage (delete)
+    12. legacy all-polygon H3 density (delete)
+    13. README
 
 Canonical remote layout
 ------------------------
@@ -64,6 +70,10 @@ path is referenced only by the explicitly-named
 :data:`osm_polygon_wikidata_only.hf.repo_layout.LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE`
 constant and disappears from the remote after the first atomic
 migration commit succeeds.
+
+The legacy geographic H3 assets are likewise retained only as explicit
+delete targets. Each retirement is paired with an add for
+``assets/geographic_text_density.png`` in the same atomic commit.
 
 The assembly functions are PURE: each returns the ordered op list
 but performs no upload and accepts no ``submit`` callable. CLI code
@@ -140,24 +150,28 @@ from osm_polygon_wikidata_only.hf.dataset_stats import (
     compute_dataset_stats,
     render_stats_section,
 )
-from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-    generate_geographic_polygon_count as _generate_geographic_polygon_count,
+from osm_polygon_wikidata_only.hf.geographic_text_density import (
+    generate_geographic_text_density as _generate_geographic_text_density,
 )
-from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-    generate_geographic_text_coverage as _generate_geographic_text_coverage,
+from osm_polygon_wikidata_only.hf.geographic_text_presence import (
+    TextPresenceSnapshot,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     generate_geographic_text_presence as _generate_geographic_text_presence,
+)
+from osm_polygon_wikidata_only.hf.geographic_text_presence import (
+    load_text_presence as _load_text_presence,
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
     LEGACY_REMOTE_COVERAGE_MAP_FILE,
+    LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
+    LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_CONTAINMENT_RETIREMENT_FILE,
     REMOTE_COVERAGE_MAP_FILE,
-    REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
@@ -326,8 +340,8 @@ def refresh_coverage_assets(
     snapshot_stem: str,
     snapshots_dir: Path,
     world_land_warning: Callable[[str], None] | None,
-) -> tuple[Path, Path, Path, Path]:
-    """Render the four public coverage PNGs into ``snapshots_dir``.
+) -> tuple[Path, Path, Path]:
+    """Render the three public coverage PNGs into ``snapshots_dir``.
 
     ``world_land_warning`` controls the world-land fallback policy.
     Pass a logging-like callable (e.g. ``LOGGER.warning``) to record
@@ -335,7 +349,7 @@ def refresh_coverage_assets(
     the exception silently. The publication module never invents a
     logger identity of its own.
 
-    Returns the all-polygons, combined-text, Wikipedia-rate, and density snapshots.
+    Returns the all-polygons, combined-point, and combined H3-density snapshots.
     """
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     map_snapshot = snapshots_dir / f"{snapshot_stem}-coverage_map.png"
@@ -359,38 +373,29 @@ def refresh_coverage_assets(
         data_root.processed,
         text_presence_snapshot,
         land_geojson_path=land_path,
+        snapshot=(text_snapshot := _load_text_presence(data_root.processed)),
     )
-    geo_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_coverage.png"
-    _generate_geographic_text_coverage_snapshot(data_root, geo_snapshot)
-    polygon_count_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_polygon_count.png"
-    _generate_geographic_polygon_count_snapshot(data_root, polygon_count_snapshot)
-    return map_snapshot, text_presence_snapshot, geo_snapshot, polygon_count_snapshot
+    density_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_density.png"
+    _generate_geographic_text_density_snapshot(
+        data_root,
+        density_snapshot,
+        snapshot=text_snapshot,
+    )
+    return map_snapshot, text_presence_snapshot, density_snapshot
 
 
-def _generate_geographic_text_coverage_snapshot(
+def _generate_geographic_text_density_snapshot(
     data_root: DataRoot,
     destination: Path,
+    *,
+    snapshot: TextPresenceSnapshot | None = None,
 ) -> Path:
-    """Build the geographic Wikipedia text coverage PNG into ``destination``."""
-    land_cache = data_root.cache
-    result = _generate_geographic_text_coverage(
+    """Build the combined text-density PNG into ``destination``."""
+    result = _generate_geographic_text_density(
         data_root.processed,
         destination,
-        land_cache_dir=land_cache,
-    )
-    return result.output_path
-
-
-def _generate_geographic_polygon_count_snapshot(
-    data_root: DataRoot,
-    destination: Path,
-) -> Path:
-    """Build the geographic polygon density PNG into ``destination``."""
-    land_cache = data_root.cache
-    result = _generate_geographic_polygon_count(
-        data_root.processed,
-        destination,
-        land_cache_dir=land_cache,
+        land_cache_dir=data_root.cache,
+        snapshot=snapshot,
     )
     return result.output_path
 
@@ -463,11 +468,13 @@ def assemble_core_upload(
     2. articles
     3. polygon_articles
     4. processed manifest
-    5. geographic text coverage
-    6. geographic polygon count
-    7. README
-    8. canonical coverage map (add)
-    9. legacy coverage map (delete)
+    5. combined text point map
+    6. combined text H3 density
+    7. legacy Wikipedia H3 coverage (delete)
+    8. legacy all-polygon H3 density (delete)
+    9. README
+    10. canonical coverage map (add)
+    11. legacy coverage map (delete)
 
     The function is pure: no HF upload state is owned here. The
     caller submits the returned list. Required artifacts are
@@ -478,13 +485,11 @@ def assemble_core_upload(
     """
     _validate_core_artifacts(core)
     snapshot, card_snapshot = snapshot_upload_manifests(data_root=data_root, core=core)
-    map_snapshot, text_presence_snapshot, geo_snapshot, polygon_count_snapshot = (
-        refresh_coverage_assets(
-            data_root=data_root,
-            snapshot_stem=core.polygons_path.stem,
-            snapshots_dir=data_root.cache / "upload_manifest_snapshots",
-            world_land_warning=world_land_warning,
-        )
+    map_snapshot, text_presence_snapshot, density_snapshot = refresh_coverage_assets(
+        data_root=data_root,
+        snapshot_stem=core.polygons_path.stem,
+        snapshots_dir=data_root.cache / "upload_manifest_snapshots",
+        world_land_warning=world_land_warning,
     )
     write_readme_snapshot(data_root, repo_id, card_snapshot)
     canonical_document = _snapshot_canonical_document(
@@ -505,8 +510,9 @@ def assemble_core_upload(
         ),
         add_op(snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
         add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
-        add_op(geo_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-        add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+        add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
+        delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+        delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(card_snapshot, path_in_repo="README.md"),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
         delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
@@ -591,16 +597,18 @@ def assemble_region_upload(
                 land_path = None
             generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
             geographic_text_presence_snapshot = snapshots / "geographic_text_presence.png"
+            text_snapshot = _load_text_presence(data_root.processed)
             _generate_geographic_text_presence(
                 data_root.processed,
                 geographic_text_presence_snapshot,
                 land_geojson_path=land_path,
+                snapshot=text_snapshot,
             )
-            geographic_text_snapshot = snapshots / "geographic_text_coverage.png"
-            _generate_geographic_text_coverage_snapshot(data_root, geographic_text_snapshot)
-            geographic_polygon_count_snapshot = snapshots / "geographic_polygon_count.png"
-            _generate_geographic_polygon_count_snapshot(
-                data_root, geographic_polygon_count_snapshot
+            geographic_text_density_snapshot = snapshots / "geographic_text_density.png"
+            _generate_geographic_text_density_snapshot(
+                data_root,
+                geographic_text_density_snapshot,
+                snapshot=text_snapshot,
             )
             ops.extend(
                 [
@@ -609,13 +617,11 @@ def assemble_region_upload(
                         path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
                     ),
                     add_op(
-                        geographic_text_snapshot,
-                        path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+                        geographic_text_density_snapshot,
+                        path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
                     ),
-                    add_op(
-                        geographic_polygon_count_snapshot,
-                        path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
-                    ),
+                    delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+                    delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
                     add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
                     delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
                 ]
@@ -631,13 +637,28 @@ def assemble_region_upload(
                 "Could not fetch world land data; combined text map will omit continents"
             )
             land_path = None
+        text_snapshot = _load_text_presence(data_root.processed)
         _generate_geographic_text_presence(
             data_root.processed,
             text_presence_snapshot,
             land_geojson_path=land_path,
+            snapshot=text_snapshot,
         )
         augmentation_only_map_ops.append(
             add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE)
+        )
+        density_snapshot = snapshots / "geographic_text_density.png"
+        _generate_geographic_text_density_snapshot(
+            data_root,
+            density_snapshot,
+            snapshot=text_snapshot,
+        )
+        augmentation_only_map_ops.extend(
+            [
+                add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
+                delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+                delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+            ]
         )
 
     ops.extend(
@@ -713,10 +734,20 @@ def assemble_augmentation_upload(
     except Exception:
         LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
         land_path = None
+    text_snapshot = _load_text_presence(data_root.processed)
     _generate_geographic_text_presence(
         data_root.processed,
         text_presence_snapshot,
         land_geojson_path=land_path,
+        snapshot=text_snapshot,
+    )
+    density_snapshot = (
+        snapshots / f"{augmentation.wikipedia_documents_path.stem}-geographic_text_density.png"
+    )
+    _generate_geographic_text_density_snapshot(
+        data_root,
+        density_snapshot,
+        snapshot=text_snapshot,
     )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
     return [
@@ -746,6 +777,9 @@ def assemble_augmentation_upload(
         ),
         *_augmentation_migration_ops(augmentation.manifest_path),
         add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
+        add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
+        delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+        delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(readme_snapshot, path_in_repo="README.md"),
     ]
 
@@ -890,21 +924,20 @@ def assemble_metadata_only_upload(
         has_aug_manifest = True
 
     readme_snapshot = snapshots / "README.md"
-    map_snapshot, text_presence_snapshot, geo_snapshot, polygon_count_snapshot = (
-        refresh_coverage_assets(
-            data_root=data_root,
-            snapshot_stem="metadata",
-            snapshots_dir=snapshots,
-            world_land_warning=world_land_warning,
-        )
+    map_snapshot, text_presence_snapshot, density_snapshot = refresh_coverage_assets(
+        data_root=data_root,
+        snapshot_stem="metadata",
+        snapshots_dir=snapshots,
+        world_land_warning=world_land_warning,
     )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
 
     ops = [
         add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
         add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
-        add_op(geo_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-        add_op(polygon_count_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+        add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
+        delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
+        delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
         delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
     ]

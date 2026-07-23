@@ -51,12 +51,15 @@ OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and W
 
 - `polygons/<stem>.parquet` — one row per polygon
 - `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article
-- `polygon_articles/<stem>.parquet` — polygon-to-Wikipedia many-to-many links
-- `wikipedia/sections/<stem>.parquet`
-- `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet`
-- `wikidata/facts/<stem>.parquet`
+- `polygon_articles/<stem>.parquet` — Wikipedia-only polygon-to-document many-to-many links
+- `wikipedia/sections/<stem>.parquet` — section-level partitions of Wikipedia document text
+- `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents associated with places through Wikidata
+- `wikivoyage/sections/<stem>.parquet` — section-level partitions of Wikivoyage document text
+- `wikidata/facts/<stem>.parquet` — structured Wikidata claims for polygon entities
 
-Generated on 2026-07-19.
+Wikivoyage documents associate with polygons through their shared Wikidata QID; `polygon_articles` is intentionally specific to Wikipedia.
+
+Generated on 2026-07-23.
 
 Maintained by **Noé Flandre**.
 
@@ -72,21 +75,15 @@ Each point is a dataset polygon with at least one non-empty Wikipedia document o
 
 ![Coverage Map](assets/coverage_map.png)
 
+Each point represents one dataset polygon carrying an OSM `wikidata=*` tag, whether or not corresponding Wikipedia or Wikivoyage text is available.
+
 ## Geographic coverage
 
-Both maps below aggregate dataset polygons into H3 cells at the same resolution. All denominators and counts are conditional on each polygon carrying an OSM `wikidata=*` tag.
+### Wikipedia + Wikivoyage text density
 
-### Wikipedia text coverage
+![Geographic Wikipedia and Wikivoyage Text Density](assets/geographic_text_density.png)
 
-![Geographic Wikipedia Text Coverage](assets/geographic_wikipedia_text_coverage.png)
-
-`coverage_rate(h) = covered_polygons(h) / all_dataset_polygons(h)`, where a covered polygon has at least one linked Wikipedia article with non-empty text. Cell colour encodes this fraction from 0% to 100%; grey cells hold fewer than 20 polygons and are not statistically meaningful.
-
-### Polygon density
-
-![Geographic Polygon Density](assets/geographic_polygon_count.png)
-
-`polygon_count(h) = number of dataset polygons whose centroid belongs to H3 cell h`. Colour encodes the raw count on a logarithmic scale because counts are highly skewed across the world. Low counts remain visible.
+Each H3 cell contains the raw number of polygons with non-empty Wikipedia or Wikivoyage text. A polygon is counted once even when both projects or several documents qualify. Colour uses a logarithmic purple-to-yellow scale; this is an absolute density count, not a proportion of all polygons.
 
 
 ## Schema
