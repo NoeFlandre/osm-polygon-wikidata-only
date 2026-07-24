@@ -73,6 +73,7 @@ class AugmentationResult:
     manifest_path: Path
     counts: dict[str, int]
     wikivoyage_integrity: WikivoyageIntegrityResult | None = None
+    polygon_document_links_path: Path | None = None
 
 
 def sidecar_paths(data_root: DataRoot, stem: str) -> tuple[Path, Path, Path, Path, Path]:
@@ -184,6 +185,7 @@ def augment_region(
         manifest_path,
         counts,
         wikivoyage_integrity=wikivoyage_integrity,
+        polygon_document_links_path=None,
     )
 
 
@@ -208,6 +210,26 @@ def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
     entry = manifest.get(stem, {})
     if entry.get("contract_version") != CONTRACT_VERSION:
         return False
+    if "link_schema_version" in entry or "link_artifact_sha256" in entry:
+        links_path = data_root.processed_links / f"{stem}.parquet"
+        if (
+            entry.get("link_schema_version") != "polygon-document-links-v1"
+            or not links_path.is_file()
+            or entry.get("link_artifact_sha256") != sha256_file(links_path)
+        ):
+            return False
+        processed_manifest_path = data_root.processed_manifests / "processed_pbfs.json"
+        try:
+            processed_entry = json.loads(processed_manifest_path.read_text(encoding="utf-8"))[
+                f"{stem}.osm.pbf"
+            ]
+        except (FileNotFoundError, KeyError, TypeError, json.JSONDecodeError):
+            return False
+        if (
+            processed_entry.get("link_schema_version") != "polygon-document-links-v1"
+            or processed_entry.get("link_count") != pq.read_metadata(links_path).num_rows  # type: ignore[no-untyped-call]
+        ):
+            return False
     expected_hashes = entry.get("core_hashes")
     if not _is_valid_core_hashes(expected_hashes, data_root, stem):
         return False
@@ -365,6 +387,7 @@ def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> Augment
         wikidata_facts_path=paths[4],
         manifest_path=manifest_path,
         counts=counts,
+        polygon_document_links_path=data_root.processed_links / f"{stem}.parquet",
     )
 
 

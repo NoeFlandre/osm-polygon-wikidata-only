@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pyarrow.parquet as pq
+
 from ._geographic.models import CoverageMapError, RenderResult
 from ._geographic.parquet_inputs import read_required_columns, require_directory, sorted_parquets
+from ._links.reader import read_document_links
 from .coverage_map import generate_coverage_map
 
 
@@ -40,23 +43,22 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
         canonical_wikipedia if canonical_wikipedia.exists() else processed_root / "articles",
         label="wikipedia/documents",
     )
-    links_dir = require_directory(processed_root / "polygon_articles", label="polygon_articles")
+    require_directory(processed_root / "polygon_articles", label="polygon_articles")
     wikivoyage_dir = processed_root / "wikivoyage" / "documents"
 
     wikipedia_ids: set[str] = set()
     for path in sorted_parquets(wikipedia_dir):
-        for row in read_required_columns(path, ("article_id", "full_text"), label="wikipedia"):
-            if row.get("article_id") and _non_blank(row.get("full_text")):
-                wikipedia_ids.add(str(row["article_id"]))
-
-    wikipedia_polygons: set[str] = set()
-    for path in sorted_parquets(links_dir):
-        for row in read_required_columns(path, ("polygon_id", "article_id"), label="links"):
-            if str(row.get("article_id")) in wikipedia_ids and row.get("polygon_id"):
-                wikipedia_polygons.add(str(row["polygon_id"]))
+        identifier_column = (
+            "document_id"
+            if "document_id" in pq.read_schema(path).names  # type: ignore[no-untyped-call]
+            else "article_id"
+        )
+        for row in read_required_columns(path, (identifier_column, "full_text"), label="wikipedia"):
+            if row.get(identifier_column) and _non_blank(row.get("full_text")):
+                wikipedia_ids.add(str(row[identifier_column]))
 
     wikivoyage_ids: set[str] = set()
-    wikivoyage_qids: set[str] = set()
+    legacy_wikivoyage_qids: set[str] = set()
     for path in sorted_parquets(wikivoyage_dir):
         for row in read_required_columns(
             path, ("document_id", "wikidata", "full_text"), label="wikivoyage"
@@ -66,10 +68,32 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
             if row.get("document_id"):
                 wikivoyage_ids.add(str(row["document_id"]))
             if row.get("wikidata"):
-                wikivoyage_qids.add(str(row["wikidata"]))
+                legacy_wikivoyage_qids.add(str(row["wikidata"]))
+    document_ids = {
+        "wikipedia": wikipedia_ids,
+        "wikivoyage": wikivoyage_ids,
+    }
+    wikipedia_polygons: set[str] = set()
+    combined_ids: set[str] = set()
+    links = read_document_links(processed_root)
+    for link in links:
+        if link.document_id not in document_ids.get(link.project, set()):
+            continue
+        combined_ids.add(link.polygon_id)
+        if link.project == "wikipedia":
+            wikipedia_polygons.add(link.polygon_id)
+    from osm_polygon_wikidata_only.domain.polygon_document_links import (
+        polygon_document_link_schema,
+    )
+
+    has_canonical_links = any(
+        pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
+            polygon_document_link_schema(), check_metadata=True
+        )
+        for path in sorted_parquets(processed_root / "polygon_articles")
+    )
 
     all_polygon_ids: set[str] = set()
-    combined_ids: set[str] = set(wikipedia_polygons)
     points_by_id: dict[str, CoveredPoint] = {}
     for path in sorted_parquets(polygons_dir):
         for row in read_required_columns(
@@ -80,7 +104,7 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
             if not polygon_id:
                 raise CoverageMapError(f"polygons parquet {path} contains an empty polygon_id")
             all_polygon_ids.add(polygon_id)
-            if qid in wikivoyage_qids:
+            if not has_canonical_links and qid in legacy_wikivoyage_qids:
                 combined_ids.add(polygon_id)
             if polygon_id in combined_ids:
                 try:

@@ -39,7 +39,18 @@ def _setup_mock_region(
     data_root.processed_manifests.mkdir(parents=True, exist_ok=True)
 
     poly_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "wikidata": "Q1", "lat": 1.0, "lon": 2.0}],
+        [
+            {
+                "polygon_id": "1",
+                "wikidata": "Q1",
+                "lat": 1.0,
+                "lon": 2.0,
+                "source_pbf": f"{stem}.osm.pbf",
+                "region": stem,
+                "osm_type": "relation",
+                "osm_id": 1,
+            }
+        ],
         schema=polygon_schema(),
     )
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
@@ -52,6 +63,14 @@ def _setup_mock_region(
                     "polygon_id": "1",
                     "article_id": "Q1:es:1234:5678",
                     "wikidata": "Q1",
+                    "language": "es",
+                    "source_pbf": f"{stem}.osm.pbf",
+                    "region": stem,
+                    "osm_type": "relation",
+                    "osm_id": 1,
+                    "page_id": 1234,
+                    "revision_id": 5678,
+                    "is_best_language": True,
                 }
             ],
             schema=polygon_article_schema(),
@@ -84,8 +103,14 @@ def _setup_mock_region(
                 "document_id": "Q1:wikipedia:es:1234:5678",
                 "article_id": "Q1:es:1234:5678",
                 "wikidata": "Q1",
-                "project": "wikipedia",
                 "language": "es",
+                "source_pbf": f"{stem}.osm.pbf",
+                "region": stem,
+                "osm_type": "relation",
+                "osm_id": 1,
+                "page_id": 1234,
+                "revision_id": 5678,
+                "project": "wikipedia",
             }
         ],
         schema=wikipedia_document_schema(),
@@ -1085,6 +1110,14 @@ def test_existing_paired_legacy_retirement_remains_intact(
                 "polygon_id": "1",
                 "article_id": "Q1:es:1234:5678",
                 "wikidata": "Q1",
+                "language": "es",
+                "source_pbf": f"{stem}.osm.pbf",
+                "region": stem,
+                "osm_type": "relation",
+                "osm_id": 1,
+                "page_id": 1234,
+                "revision_id": 5678,
+                "is_best_language": True,
             }
         ],
         schema=polygon_article_schema(),
@@ -1362,11 +1395,13 @@ def test_logging_sidecar_only_repair(
     rc = commands.main(args)
     assert rc == 0
 
-    # Assert that maps are NOT reported as refreshed
+    # This first run also performs the one-time unified-link migration, so a
+    # final repository metadata publication is expected after the regional
+    # sidecar repair drains.
     assert any(
         "Remote reconciliation complete: 1 regions repaired" in message for message in spy.messages
     )
-    assert not any("README and maps refreshed" in message for message in spy.messages)
+    assert any("README and maps refreshed" in message for message in spy.messages)
 
 
 def test_logging_metadata_only_repair(

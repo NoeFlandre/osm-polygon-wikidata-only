@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .paths import DEFAULT_LOCAL_DATA_ROOT
-
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 
 
@@ -93,7 +91,8 @@ class Settings:
     # or the saved login token". An explicit value here wins over both.
     hf_token: str | None = None
 
-    # Recommended local data root, overridable by --data-root / env var.
-    default_data_root: str = str(DEFAULT_LOCAL_DATA_ROOT)
+    # Compatibility field for callers that retain a preferred local root.
+    # CLI resolution intentionally requires --data-root or OSM_POLYGON_DATA_ROOT.
+    default_data_root: str = ""
 
     extra: dict[str, str] = field(default_factory=dict)

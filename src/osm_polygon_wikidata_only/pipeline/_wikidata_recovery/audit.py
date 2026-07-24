@@ -15,6 +15,9 @@ from osm_polygon_wikidata_only.augmentation.schema import fact_schema
 from osm_polygon_wikidata_only.augmentation.steps import sha256_file
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.polygon_document_links import (
+    polygon_document_link_schema,
+)
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.enrichment.wikidata.models import (
     BatchWikidataClient,
@@ -226,14 +229,21 @@ def _scan_region(
 ) -> _RegionScan:
     paths = {label: path for label, path, _ in _region_paths(data_root, stem)}
     _require_schema(paths["polygons"], polygon_schema())
-    _require_schema(paths["polygon_articles"], polygon_article_schema())
+    link_schema = pq.read_schema(paths["polygon_articles"])  # type: ignore[no-untyped-call]
+    canonical_links = link_schema.equals(polygon_document_link_schema(), check_metadata=True)
+    if not canonical_links:
+        _require_schema(paths["polygon_articles"], polygon_article_schema())
     _require_schema(paths["wikipedia_documents"], wikipedia_document_schema())
     _require_schema(paths["wikidata_facts"], fact_schema())
 
     polygon_rows = _read_rows(paths["polygons"], ["polygon_id", "wikidata"])
     link_rows = _read_rows(
         paths["polygon_articles"],
-        ["polygon_id", "article_id", "wikidata"],
+        (
+            ["polygon_id", "document_id", "project", "wikidata"]
+            if canonical_links
+            else ["polygon_id", "article_id", "wikidata"]
+        ),
     )
     document_rows = _read_rows(
         paths["wikipedia_documents"],
@@ -256,6 +266,7 @@ def _scan_region(
             polygon_ids_by_qid.setdefault(qid, []).append(polygon_id)
 
     documents_by_article: dict[str, dict[str, Any]] = {}
+    documents_by_id: dict[str, dict[str, Any]] = {}
     document_ids: set[str] = set()
     orphan_document_ids: list[str] = []
     for row in document_rows:
@@ -269,19 +280,30 @@ def _scan_region(
         if qid not in polygon_ids_by_qid:
             orphan_document_ids.append(document_id)
         documents_by_article[article_id] = row
+        documents_by_id[document_id] = row
         document_ids.add(document_id)
 
     linked_polygon_qids: set[tuple[str, str]] = set()
     link_ids: set[tuple[str, str]] = set()
     for row in link_rows:
+        if canonical_links and str(row.get("project") or "") != "wikipedia":
+            continue
         polygon_id = _required_string(row, "polygon_id", "polygon_articles")
-        article_id = _required_string(row, "article_id", "polygon_articles")
+        reference_id = _required_string(
+            row,
+            "document_id" if canonical_links else "article_id",
+            "polygon_articles",
+        )
         qid = _required_string(row, "wikidata", "polygon_articles")
-        identity = (polygon_id, article_id)
+        identity = (polygon_id, reference_id)
         if identity in link_ids:
             raise _ScanError(f"polygon_articles contains duplicate identity {identity!r}")
         link_ids.add(identity)
-        document = documents_by_article.get(article_id)
+        document = (
+            documents_by_id.get(reference_id)
+            if canonical_links
+            else documents_by_article.get(reference_id)
+        )
         if document is not None and str(document["document_id"]) in orphan_document_ids:
             continue
         polygon_qids = polygons.get(polygon_id)
@@ -293,9 +315,12 @@ def _scan_region(
                 f"QIDs {polygon_qids!r}"
             )
         if document is None:
-            raise _ScanError(f"polygon_articles references absent article_id {article_id!r}")
+            raise _ScanError(
+                f"polygon_articles references absent "
+                f"{'document_id' if canonical_links else 'article_id'} {reference_id!r}"
+            )
         if str(document.get("wikidata") or "") != qid:
-            raise _ScanError(f"article {article_id!r} disagrees with link QID {qid!r}")
+            raise _ScanError(f"document {reference_id!r} disagrees with link QID {qid!r}")
         linked_polygon_qids.add((polygon_id, qid))
 
     normalized_polygon_ids = tuple(

@@ -51,15 +51,15 @@ OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and W
 
 - `polygons/<stem>.parquet` — one row per polygon
 - `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article
-- `polygon_articles/<stem>.parquet` — Wikipedia-only polygon-to-document many-to-many links
+- `polygon_articles/<stem>.parquet` — unified polygon-to-document many-to-many links for Wikipedia and Wikivoyage; `project` identifies the source and `document_id` references its document table
 - `wikipedia/sections/<stem>.parquet` — section-level partitions of Wikipedia document text
 - `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents associated with places through Wikidata
 - `wikivoyage/sections/<stem>.parquet` — section-level partitions of Wikivoyage document text
 - `wikidata/facts/<stem>.parquet` — structured Wikidata claims for polygon entities
 
-Wikivoyage documents associate with polygons through their shared Wikidata QID; `polygon_articles` is intentionally specific to Wikipedia.
+Links are derived from the Wikidata identifiers shared by each OSM polygon and its Wikipedia or Wikivoyage documents.
 
-Generated on 2026-07-23.
+Generated on 2026-07-24.
 
 Maintained by **Noé Flandre**.
 
@@ -167,17 +167,17 @@ Each H3 cell contains the raw number of polygons with non-empty Wikipedia or Wik
 
 | Column | Description |
 | --- | --- |
-| `polygon_id` | FK to `polygons.polygon_id`. |
-| `article_id` | FK to `articles.article_id`. |
-| `wikidata` | Wikidata Q-id (denormalized for fast filtering). |
-| `language` | Wikipedia language code. |
+| `polygon_id` | FK to polygons polygon_id. |
+| `document_id` | FK to the project documents table. Format: <wikidata>:<project>:<language>:<page_id>:<revision_id>. |
+| `project` | Source project: wikipedia or wikivoyage. |
+| `wikidata` | Wikidata QID (denormalized for fast filtering). |
+| `language` | Document language code. |
 | `source_pbf` | Source PBF filename (denormalized). |
-| `region` | Geofabrik region slug. |
-| `osm_type` | OSM element type. |
+| `region` | Geofabrik region slug (denormalized). |
+| `osm_type` | OSM element type: way or relation. |
 | `osm_id` | OSM numeric identifier. |
-| `page_id` | MediaWiki page ID of the linked article. |
-| `revision_id` | MediaWiki revision ID of the linked article. |
-| `is_best_language` | True if this row's language matches the polygon's `best_language`. |
+| `page_id` | MediaWiki page ID. |
+| `revision_id` | MediaWiki revision ID. |
 
 ### `wikivoyage/documents`
 

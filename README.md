@@ -32,8 +32,8 @@ Documentation: [architecture](docs/architecture.md) ·
 5. Publishes the canonical region tables on the Hugging Face Hub:
    * `polygons/<stem>.parquet` — one row per polygon.
    * `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article revision.
-   * `polygon_articles/<stem>.parquet` — Wikipedia-only many-to-many
-     polygon↔document links.
+   * `polygon_articles/<stem>.parquet` — unified many-to-many
+     polygon↔document links for Wikipedia and Wikivoyage.
    * `manifests/processed_pbfs.json` — aggregate stats per source PBF.
 6. Adds text and fact tables without reprocessing completed PBFs:
    * `wikipedia/sections/<stem>.parquet` — section-level Wikipedia text.
@@ -41,8 +41,9 @@ Documentation: [architecture](docs/architecture.md) ·
    * `wikivoyage/sections/<stem>.parquet` — section-level Wikivoyage text.
    * `wikidata/facts/<stem>.parquet` — structured claims for polygon entities.
 
-The repository is **code only**: every data artifact (PBFs, parquet,
-HF caches, request caches) lives on an external drive.
+The generated dataset is published on Hugging Face. Local processing inputs,
+intermediate files, and caches use a configurable data root outside the source
+checkout.
 
 ---
 
@@ -102,12 +103,10 @@ This installs all runtime and development dependencies into a managed
 
 ---
 
-## External data root
+## Local data root
 
-All PBF inputs, intermediate outputs, Hugging Face caches, and the
-local parquet/manifest files live on an external drive under a single
-**data root**. The recommended local path is
-`/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/`.
+All PBF inputs, intermediate outputs, Hugging Face caches, and local
+parquet/manifest files live under one operator-selected **data root**.
 
 Resolution order:
 
@@ -135,7 +134,7 @@ Default sub-directories under the data root:
 Set the data root for a session:
 
 ```bash
-export OSM_POLYGON_DATA_ROOT=/Volumes/Seagate\ M3/projects/osm-polygon-wikidata-only
+export OSM_POLYGON_DATA_ROOT=/path/to/osm-polygon-data
 ```
 
 ---
@@ -453,10 +452,9 @@ publication and reference validation.
 
 ### `polygon_articles/<stem>.parquet`
 
-Wikipedia-only many-to-many links joining polygons to documents, plus a boolean
-`is_best_language` flag (true for the language chosen by
-`LinkSummary.best_language()`). Wikivoyage documents join to polygons
-through their shared Wikidata QID instead of this table.
+Unified many-to-many links joining polygons to Wikipedia and Wikivoyage
+documents. The `project` column identifies the source corpus and
+`document_id` references the corresponding project document table.
 
 ### `manifests/processed_pbfs.json`
 

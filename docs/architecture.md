@@ -175,7 +175,7 @@ are then queued in one background upload commit while the next PBF begins.
 The remote upload atomically adds the canonical `wikipedia/documents/` table
 and deletes the legacy `articles/` path in the same commit; the local staging
 file is removed only after confirmed publication. Failed upload jobs persist
-under the external data root and resume on the next invocation. The dataset
+under the configured local data root and resume on the next invocation. The dataset
 and pipeline are maintained by Noé Flandre.
 
 ## Geographic coverage visualizations
@@ -230,6 +230,25 @@ To handle publication-convergence defects (e.g., local processed stems missing f
 - **Restart recovery & resumability**: If a local region is completely processed and augmented but some of its core or augmentation parquets are missing on the remote, the pipeline schedules a publication repair. Missing core files are recovered directly from finalized local parquet files without re-triggering expensive raw PBF extraction, enrichment, or Wikidata lookups.
 - **Single remote inventory read**: The remote file inventory is fetched exactly once at the beginning of the command if `--push` is active, avoiding redundant API calls and rate-limiting.
 - **Metadata refresh**: A repository-level metadata repair (updating the manifest, README, maps, and coverage charts) is enqueued at the end of the run if any repository-level assets are missing on the remote.
+
+## Unified polygon-to-document links
+
+`polygon_articles/<stem>.parquet` is the canonical many-to-many join from
+polygons to both Wikipedia and Wikivoyage documents. Its `project` and
+`document_id` columns identify the target corpus and revision; every row must
+resolve to one polygon and one document with a matching Wikidata identifier.
+
+`sync-dir` upgrades legacy Wikipedia-only link shards from finalized local
+tables without PBF extraction or Wikimedia requests. Invalid historical
+relationships are recorded in a deterministic rejection ledger, while valid
+Wikipedia links and all valid Wikivoyage relationships are retained. The link
+file, any normalized sidecars, both manifests, the rejection ledger, and
+durable publication intent are committed through one resumable journal.
+Regional data uploads drain first; maps, aggregate statistics, and the dataset
+card are regenerated once at the end and only then is the metadata-refresh
+marker cleared. Both legacy and canonical link schemas are accepted explicitly
+during rollout, but every successful migration writes only the canonical
+schema.
 
 ## Unified sync action priority
 

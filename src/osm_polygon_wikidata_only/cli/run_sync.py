@@ -57,10 +57,19 @@ from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.manifest import load_manifest
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery.audit import (
+    record_region_recovery_receipt,
+)
+from osm_polygon_wikidata_only.pipeline.link_migration import (
+    apply_link_migration,
+    plan_link_migration,
+)
 from osm_polygon_wikidata_only.pipeline.local_validation import LocalValidationProgress
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
     add_pending_publications,
+    clear_metadata_refresh_marker,
+    load_metadata_refresh_marker,
     load_pending_publications,
     remove_pending_publications,
 )
@@ -344,6 +353,11 @@ def execute(
             force=settings.force or not settings.skip_existing,
         )
     )
+    link_plan = plan_link_migration(data_root.processed, stems=input_stems)
+    link_migration_stems = {
+        stem.stem for stem in link_plan.stems if stem.classification.value != "canonical"
+    }
+    recovery_stems.update(link_migration_stems)
     states = plan_sync_states(
         pbfs,
         core_stems=core_stems,
@@ -354,6 +368,7 @@ def execute(
     )
     recovered_stems: set[str] = set()
     recovery_map_refresh_stems: set[str] = set()
+    recovery_classifications: dict[str, dict[Any, Any]] = {}
 
     if push_enabled and reconciliation_plan is not None:
         for state in states:
@@ -458,6 +473,14 @@ def execute(
                 augmentation_client,
                 progress=progress,
             )
+            if getattr(augmentation_result, "wikipedia_documents_path", None):
+                current_links = plan_link_migration(data_root.processed, stems={state.stem})
+                if (
+                    current_links.stems
+                    and current_links.stems[0].classification.value != "canonical"
+                ):
+                    apply_link_migration(data_root.processed, stems={state.stem})
+                augmentation_result = load_existing_augmentation_result(data_root, state.stem)
             audit = audit_wikidata_integrity(
                 data_root,
                 [state.stem],
@@ -495,6 +518,20 @@ def execute(
     def _load_existing(state: RegionSyncState) -> Any:
         return load_existing_augmentation_result(data_root, state.stem)
 
+    def _migrate_links_if_needed(stem: str) -> bool:
+        current = plan_link_migration(data_root.processed, stems={stem})
+        if not current.stems:
+            return False
+        stem_plan = current.stems[0]
+        if stem_plan.classification.value == "canonical":
+            return False
+        if stem_plan.classification.value == "BLOCKED":
+            raise MigrationError(
+                f"Unified polygon-document link migration is blocked for {stem}: {stem_plan.reason}"
+            )
+        apply_link_migration(data_root.processed, stems={stem})
+        return True
+
     def _recover(state: RegionSyncState) -> Any:
         audit = audit_wikidata_integrity(
             data_root,
@@ -508,6 +545,12 @@ def execute(
         _ensure_recovery_audit_unblocked(audit)
         plan = audit.region(state.stem)
         if not plan.requires_repair:
+            if _migrate_links_if_needed(state.stem):
+                recovery_classifications[state.stem] = dict(plan.classifications)
+                recovered_stems.add(state.stem)
+                if not push_enabled:
+                    return None
+                return load_existing_augmentation_result(data_root, state.stem)
             if push_enabled and state.stem in all_pending_stems:
                 return load_existing_augmentation_result(data_root, state.stem)
             return None
@@ -522,12 +565,19 @@ def execute(
             scheduler_snapshot=runtime.scheduler.snapshot,
         )
         if not repair_result.changed:
+            if _migrate_links_if_needed(state.stem):
+                recovery_classifications[state.stem] = dict(plan.classifications)
+                recovered_stems.add(state.stem)
+                if not push_enabled:
+                    return None
+                return load_existing_augmentation_result(data_root, state.stem)
             if push_enabled and state.stem in all_pending_stems:
                 return load_existing_augmentation_result(data_root, state.stem)
             return None
         recovered_stems.add(state.stem)
         if repair_result.map_inputs_changed:
             recovery_map_refresh_stems.add(state.stem)
+        _migrate_links_if_needed(state.stem)
         return load_existing_augmentation_result(data_root, state.stem)
 
     def _prepare_publication(state: RegionSyncState, result: Any) -> None:
@@ -538,6 +588,9 @@ def execute(
             return
         prepare_local_retirement(data_root, state.stem)
         add_pending_publications(data_root, {state.stem})
+        classifications = recovery_classifications.get(state.stem)
+        if classifications is not None:
+            record_region_recovery_receipt(data_root, state.stem, classifications)
 
     def _submit_upload(ops: list[PublicationOp], message: str) -> None:
         if upload_queue is None:
@@ -668,6 +721,30 @@ def execute(
         if failures:
             rc = 1
             success = False
+
+    marker = load_metadata_refresh_marker(data_root) if push_enabled else None
+    if success and rc == 0 and not failures and marker is not None:
+        from osm_polygon_wikidata_only.hf.publication import (
+            assemble_metadata_only_upload,
+        )
+
+        LOGGER.info(
+            "Refreshing repository metadata after %d migrated region(s)",
+            len(marker["stems"]),
+        )
+        metadata_ops = assemble_metadata_only_upload(
+            data_root=data_root,
+            repo_id=settings.repo_id,
+            world_land_warning=None,
+        )
+        if upload_queue is None:
+            raise RuntimeError("Metadata refresh requires an upload queue")
+        upload_queue.upload_synchronously(
+            metadata_ops,
+            "Repair remote repository metadata and maps",
+        )
+        clear_metadata_refresh_marker(data_root)
+        metadata_repaired = True
 
     if success and rc == 0 and not failures:
         if push_enabled:
@@ -886,10 +963,24 @@ def _execute_upload_job(
     helper is never invoked, so the local legacy staging file and the
     durable pending-publications manifest survive intact for the next
     invocation to retry.
+
+    When the upload queue has snapshotted an op (``op.snapshot_path``
+    is set), the upload reads from the snapshot rather than the
+    canonical local_path so the upload is durable across canonical
+    mutation. The canonical local_path is preserved on the op for
+    the post-upload retirement check.
     """
+    upload_ops = [
+        PublicationOp(
+            action=op.action,
+            path_in_repo=op.path_in_repo,
+            local_path=op.snapshot_path or op.local_path,
+        )
+        for op in ops
+    ]
     upload_files(
         settings.repo_id,
-        ops=ops,
+        ops=upload_ops,
         hub=hub,
         token=settings.hf_token,
         commit_message=message,

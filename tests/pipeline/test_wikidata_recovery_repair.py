@@ -17,11 +17,15 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 from osm_polygon_wikidata_only.augmentation.steps import CONTRACT_VERSION, sha256_file
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.domain.polygon_document_links import (
+    polygon_document_link_schema,
+)
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.io.manifest import save_manifest
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair as repair_module
+from osm_polygon_wikidata_only.pipeline.link_migration import apply_link_migration
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryRepairError,
     audit_wikidata_integrity,
@@ -308,6 +312,28 @@ def test_repair_changes_only_affected_qid_and_preserves_existing_rows(tmp_path: 
     assert len(after["sections"]) == 2
     assert len(after["facts"]) == 2
     assert {path: sha256_file(path) for path in wikivoyage_hashes} == wikivoyage_hashes
+
+
+def test_repair_accepts_canonical_links_and_preserves_project_schema(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "canonical-repair"
+    _write_region(data_root, stem, ["Q1", "Q2"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    apply_link_migration(data_root.processed, stems={stem})
+    links_path = data_root.processed_links / f"{stem}.parquet"
+    assert pq.read_schema(links_path).equals(  # type: ignore[no-untyped-call]
+        polygon_document_link_schema(), check_metadata=True
+    )
+
+    result = _repair(data_root, stem, "Q2")
+
+    assert result.changed is True
+    assert pq.read_schema(links_path).equals(  # type: ignore[no-untyped-call]
+        polygon_document_link_schema(), check_metadata=True
+    )
+    links = pq.read_table(links_path).to_pylist()  # type: ignore[no-untyped-call]
+    assert {row["wikidata"] for row in links} == {"Q1", "Q2"}
+    assert {row["project"] for row in links} == {"wikipedia"}
 
 
 def test_repair_links_every_polygon_sharing_affected_qid(tmp_path: Path) -> None:

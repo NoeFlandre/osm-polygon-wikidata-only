@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import sorted_parquets
+from osm_polygon_wikidata_only.hf._links.reader import read_document_links
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 
 from .cache import _file_fingerprint
@@ -122,7 +123,7 @@ def compute_combined_language_stats(
 
     documents: set[tuple[str, str]] = set()
     document_counts: Counter[str] = Counter()
-    wikipedia_text_languages: dict[str, str] = {}
+    text_languages: dict[tuple[str, str], str] = {}
     for path in sorted_parquets(processed_root / "wikipedia" / "documents"):
         for row in _read_available(path, ("document_id", "article_id", "language", "full_text")):
             document_id = str(row.get("document_id") or row.get("article_id") or "")
@@ -131,18 +132,10 @@ def compute_combined_language_stats(
             if document_id and language and identity not in documents:
                 documents.add(identity)
                 document_counts[language] += 1
-            article_id = str(row.get("article_id") or "")
-            if article_id and language and _non_blank(row.get("full_text")):
-                wikipedia_text_languages[article_id] = language
+            if document_id and language and _non_blank(row.get("full_text")):
+                text_languages[("wikipedia", document_id)] = language
 
     polygons_by_language: dict[str, set[str]] = defaultdict(set)
-    for path in sorted_parquets(processed_root / "polygon_articles"):
-        for row in _read_available(path, ("polygon_id", "article_id")):
-            linked_language = wikipedia_text_languages.get(str(row.get("article_id") or ""))
-            polygon_id = str(row.get("polygon_id") or "")
-            if linked_language and polygon_id:
-                polygons_by_language[linked_language].add(polygon_id)
-
     voyage_qid_languages: dict[str, set[str]] = defaultdict(set)
     for path in sorted_parquets(processed_root / "wikivoyage" / "documents"):
         for row in _read_available(path, ("document_id", "wikidata", "language", "full_text")):
@@ -152,16 +145,35 @@ def compute_combined_language_stats(
             if document_id and language and identity not in documents:
                 documents.add(identity)
                 document_counts[language] += 1
-            qid = str(row.get("wikidata") or "")
-            if qid and language and _non_blank(row.get("full_text")):
-                voyage_qid_languages[qid].add(language)
+            if document_id and language and _non_blank(row.get("full_text")):
+                text_languages[("wikivoyage", document_id)] = language
+                qid = str(row.get("wikidata") or "")
+                if qid:
+                    voyage_qid_languages[qid].add(language)
 
-    for path in sorted_parquets(processed_root / "polygons"):
-        for row in _read_available(path, ("polygon_id", "wikidata")):
-            polygon_id = str(row.get("polygon_id") or "")
-            for language in voyage_qid_languages.get(str(row.get("wikidata") or ""), ()):
-                if polygon_id:
-                    polygons_by_language[language].add(polygon_id)
+    links = read_document_links(processed_root)
+    for link in links:
+        linked_language = text_languages.get((link.project, link.document_id))
+        if linked_language and link.polygon_id:
+            polygons_by_language[linked_language].add(link.polygon_id)
+
+    from osm_polygon_wikidata_only.domain.polygon_document_links import (
+        polygon_document_link_schema,
+    )
+
+    has_canonical_links = any(
+        pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
+            polygon_document_link_schema(), check_metadata=True
+        )
+        for path in sorted_parquets(processed_root / "polygon_articles")
+    )
+    if not has_canonical_links:
+        for path in sorted_parquets(processed_root / "polygons"):
+            for row in _read_available(path, ("polygon_id", "wikidata")):
+                polygon_id = str(row.get("polygon_id") or "")
+                for language in voyage_qid_languages.get(str(row.get("wikidata") or ""), ()):
+                    if polygon_id:
+                        polygons_by_language[language].add(polygon_id)
 
     polygon_counts = Counter(
         {language: len(polygon_ids) for language, polygon_ids in polygons_by_language.items()}

@@ -12,6 +12,7 @@ import numpy as np
 from matplotlib.path import Path as MatplotlibPath
 
 from ._geographic.parquet_inputs import read_required_columns, sorted_parquets
+from ._links.reader import read_document_links
 from .geographic_text_presence import load_text_presence
 
 
@@ -120,31 +121,30 @@ def compute_continent_stats(
         str(row["polygon_id"]): continent
         for row, continent in zip(polygon_rows, assignments, strict=True)
     }
-    qid_continents: dict[str, set[str]] = defaultdict(set)
     polygon_counts: dict[str, int] = defaultdict(int)
-    for row, continent in zip(polygon_rows, assignments, strict=True):
+    for _row, continent in zip(polygon_rows, assignments, strict=True):
         polygon_counts[continent] += 1
-        qid_continents[str(row["wikidata"])].add(continent)
 
     presence = load_text_presence(processed_root)
     wikipedia_docs: dict[str, set[str]] = defaultdict(set)
-    for path in sorted_parquets(processed_root / "polygon_articles"):
-        for row in read_required_columns(path, ("polygon_id", "article_id"), label="links"):
-            article_id = str(row.get("article_id") or "")
-            link_continent = polygon_continent.get(str(row.get("polygon_id") or ""))
-            if article_id in presence.wikipedia_document_ids and link_continent:
-                wikipedia_docs[link_continent].add(article_id)
+    for link in read_document_links(processed_root):
+        link_continent = polygon_continent.get(link.polygon_id)
+        if (
+            link.project == "wikipedia"
+            and link.document_id in presence.wikipedia_document_ids
+            and link_continent
+        ):
+            wikipedia_docs[link_continent].add(link.document_id)
 
     wikivoyage_docs: dict[str, set[str]] = defaultdict(set)
-    for path in sorted_parquets(processed_root / "wikivoyage" / "documents"):
-        for row in read_required_columns(
-            path, ("document_id", "wikidata", "full_text"), label="wikivoyage"
+    for link in read_document_links(processed_root):
+        link_continent = polygon_continent.get(link.polygon_id)
+        if (
+            link.project == "wikivoyage"
+            and link.document_id in presence.wikivoyage_document_ids
+            and link_continent
         ):
-            text = row.get("full_text")
-            if not isinstance(text, str) or not text.strip():
-                continue
-            for continent in qid_continents.get(str(row.get("wikidata") or ""), set()):
-                wikivoyage_docs[continent].add(str(row["document_id"]))
+            wikivoyage_docs[link_continent].add(link.document_id)
 
     wiki_polygon_counts: dict[str, int] = defaultdict(int)
     combined_counts: dict[str, int] = defaultdict(int)

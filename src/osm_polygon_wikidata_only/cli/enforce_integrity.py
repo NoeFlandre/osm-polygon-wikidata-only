@@ -13,7 +13,7 @@ the same input set).
 Usage:
 
     osm-polygon-wikidata-only-enforce-integrity \
-        --data-root /Volumes/Seagate M3/projects/osm-polygon-wikidata-only
+        --data-root /path/to/osm-polygon-data
 """
 
 from __future__ import annotations

@@ -39,6 +39,7 @@ class PublicationOp:
     action: Action
     path_in_repo: str
     local_path: Path | None = None
+    snapshot_path: Path | None = None
 
     def __post_init__(self) -> None:
         if self.action not in {"add", "delete"}:
@@ -52,6 +53,15 @@ class PublicationOp:
             raise ValueError(
                 f"PublicationOp(action='delete', path_in_repo={self.path_in_repo!r}) "
                 "must not carry a local_path"
+            )
+        # ``snapshot_path`` is queue-only state and MUST NOT appear on
+        # delete ops -- there is no immutable bytes to upload. The
+        # field is only meaningful for add ops (where the queue
+        # machinery sets it after taking a durable snapshot).
+        if self.action == "delete" and self.snapshot_path is not None:
+            raise ValueError(
+                f"PublicationOp(action='delete', path_in_repo={self.path_in_repo!r}) "
+                "must not carry a snapshot_path"
             )
 
 

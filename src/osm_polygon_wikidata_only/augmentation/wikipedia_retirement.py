@@ -25,8 +25,25 @@ def _assert_references_resolve(data_root: DataRoot, stem: str) -> None:
     article_ids = set(documents["article_id"].to_pylist())
     document_ids = set(documents["document_id"].to_pylist())
     if links_path.exists():
-        links = pq.read_table(links_path, columns=["article_id"])  # type: ignore[no-untyped-call]
-        if any(article_id not in article_ids for article_id in links["article_id"].to_pylist()):
+        link_schema = pq.read_schema(links_path)  # type: ignore[no-untyped-call]
+        if "article_id" in link_schema.names:
+            links = pq.read_table(links_path, columns=["article_id"])  # type: ignore[no-untyped-call]
+            unresolved = any(
+                article_id not in article_ids for article_id in links["article_id"].to_pylist()
+            )
+        else:
+            links = pq.read_table(  # type: ignore[no-untyped-call]
+                links_path, columns=["document_id", "project"]
+            )
+            unresolved = any(
+                project == "wikipedia" and document_id not in document_ids
+                for document_id, project in zip(
+                    links["document_id"].to_pylist(),
+                    links["project"].to_pylist(),
+                    strict=True,
+                )
+            )
+        if unresolved:
             raise MigrationError(
                 f"Stem {stem!r} has polygon links unresolved by canonical documents"
             )

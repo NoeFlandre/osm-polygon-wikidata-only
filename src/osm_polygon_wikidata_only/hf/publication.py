@@ -115,11 +115,13 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     build_wikipedia_document_table,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.polygon_document_links import (
+    CANONICAL_COLUMNS,
+    CANONICAL_DESCRIPTIONS,
+)
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
-    POLYGON_ARTICLE_COLUMNS,
-    POLYGON_ARTICLE_DESCRIPTIONS,
     POLYGON_COLUMNS,
     POLYGON_DESCRIPTIONS,
 )
@@ -325,8 +327,8 @@ def write_readme_snapshot(
             polygon_descriptions=POLYGON_DESCRIPTIONS,
             article_columns=list(ARTICLE_COLUMNS),
             article_descriptions=ARTICLE_DESCRIPTIONS,
-            link_columns=list(POLYGON_ARTICLE_COLUMNS),
-            link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
+            link_columns=list(CANONICAL_COLUMNS),
+            link_descriptions=CANONICAL_DESCRIPTIONS,
             maintainer="Noé Flandre",
             stats_section=stats_section,
             rejections_section=rejections_section,
@@ -436,6 +438,14 @@ def _validate_augmentation_artifacts(augmentation: AugmentationResult) -> None:
     for path in paths:
         if not path.exists():
             raise FileNotFoundError(f"Augmentation artifact missing before upload: {path}")
+    if (
+        augmentation.polygon_document_links_path is not None
+        and not augmentation.polygon_document_links_path.is_file()
+    ):
+        raise FileNotFoundError(
+            "Unified polygon-document links artifact missing before upload: "
+            f"{augmentation.polygon_document_links_path}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -535,9 +545,10 @@ def assemble_region_upload(
     provided, the core operations are prepended to the augmentation
     operations. When ``core`` is ``None``, the augmentation block also
     refreshes the Wikivoyage-sensitive combined text-presence map.
-    ``refresh_maps=False`` is reserved for recovery transactions whose
-    changed artifacts cannot affect any map input; the regional data,
-    manifests, and README are still assembled normally.
+    ``refresh_maps=False`` is reserved for migration/recovery transactions
+    followed by one repository-level metadata publication. Those regional
+    commits contain data and manifests only; maps and README are generated
+    once after every regional upload has drained.
 
     The augmentation block ALWAYS emits the canonical
     ``add`` op + the legacy ``delete`` op. The first publication
@@ -663,6 +674,16 @@ def assemble_region_upload(
 
     ops.extend(
         [
+            *(
+                [
+                    add_op(
+                        augmentation.polygon_document_links_path,
+                        path_in_repo=f"{REMOTE_LINKS_DIR}/{stem}.parquet",
+                    )
+                ]
+                if core is None and augmentation.polygon_document_links_path is not None
+                else []
+            ),
             *_legacy_article_retirement_ops(
                 stem=stem,
                 canonical_document_path=augmentation.wikipedia_documents_path,
@@ -685,10 +706,11 @@ def assemble_region_upload(
             ),
             *_augmentation_migration_ops(augmentation_manifest_snapshot),
             *augmentation_only_map_ops,
-            add_op(readme_snapshot, path_in_repo="README.md"),
         ]
     )
-    write_readme_snapshot(data_root, repo_id, readme_snapshot)
+    if refresh_maps:
+        write_readme_snapshot(data_root, repo_id, readme_snapshot)
+        ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
     return ops
 
 
@@ -751,6 +773,18 @@ def assemble_augmentation_upload(
     )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
     return [
+        *(
+            [
+                add_op(
+                    augmentation.polygon_document_links_path,
+                    path_in_repo=(
+                        f"{REMOTE_LINKS_DIR}/{augmentation.polygon_document_links_path.name}"
+                    ),
+                )
+            ]
+            if augmentation.polygon_document_links_path is not None
+            else []
+        ),
         *_legacy_article_retirement_ops(
             stem=augmentation.wikipedia_documents_path.stem,
             canonical_document_path=augmentation.wikipedia_documents_path,
@@ -822,7 +856,13 @@ def load_existing_core_artifacts(data_root: DataRoot, stem: str) -> CorePublicat
         )
 
     # Validate schemas
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
+    from osm_polygon_wikidata_only.domain.polygon_document_links import (
+        polygon_document_link_schema,
+    )
+    from osm_polygon_wikidata_only.domain.schema import (
+        polygon_article_schema,
+        polygon_schema,
+    )
 
     try:
         poly_arrow_schema = pq.read_schema(polygons_path)  # type: ignore[no-untyped-call]
@@ -837,7 +877,10 @@ def load_existing_core_artifacts(data_root: DataRoot, stem: str) -> CorePublicat
         raise PublicationValidationError(
             f"Could not read schema for {polygon_articles_path}: {e}"
         ) from e
-    if not links_arrow_schema.equals(polygon_article_schema(), check_metadata=True):
+    if not (
+        links_arrow_schema.equals(polygon_document_link_schema(), check_metadata=True)
+        or links_arrow_schema.equals(polygon_article_schema(), check_metadata=True)
+    ):
         raise PublicationValidationError(
             f"Schema mismatch for polygon links parquet: {polygon_articles_path}"
         )

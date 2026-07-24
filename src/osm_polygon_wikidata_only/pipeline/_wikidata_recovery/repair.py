@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+import pyarrow.parquet as pq
+
 from osm_polygon_wikidata_only.augmentation.models import document_from_article_row
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
 from osm_polygon_wikidata_only.augmentation.schema import (
@@ -29,6 +31,11 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.ids import article_id
+from osm_polygon_wikidata_only.domain.polygon_document_links import (
+    CANONICAL_COLUMNS,
+    polygon_document_link_schema,
+    validate_polygon_document_links,
+)
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     POLYGON_ARTICLE_COLUMNS,
@@ -112,8 +119,25 @@ def repair_wikidata_region(
     stem = region.stem
     paths = _region_paths(data_root, stem)
     polygons = _read_table(paths["polygons"], polygon_schema())
-    links = _read_table(paths["links"], polygon_article_schema())
+    links_schema = pq.read_schema(paths["links"])  # type: ignore[no-untyped-call]
     documents = _read_table(paths["documents"], wikipedia_document_schema())
+    canonical_links = links_schema.equals(polygon_document_link_schema(), check_metadata=True)
+    if canonical_links:
+        stored_links = _read_table(paths["links"], polygon_document_link_schema())
+        preserved_wikivoyage_links = [
+            dict(row) for row in stored_links if row["project"] == "wikivoyage"
+        ]
+        links = _canonical_wikipedia_links_to_legacy(
+            stored_links,
+            documents,
+            polygons,
+        )
+    elif links_schema.equals(polygon_article_schema(), check_metadata=True):
+        stored_links = _read_table(paths["links"], polygon_article_schema())
+        preserved_wikivoyage_links = []
+        links = stored_links
+    else:
+        raise RecoveryRepairError(f"Recovery input schema mismatch: {paths['links']}")
     sections = _read_table(paths["sections"], section_schema())
     facts = _read_table(paths["facts"], fact_schema())
     orphan_fact_ids = set(region.orphan_fact_ids)
@@ -256,12 +280,21 @@ def repair_wikidata_region(
         },
     )
 
-    terminal_classifications = _terminal_classifications(region, updated_links)
+    persisted_links = (
+        _legacy_wikipedia_links_to_canonical(
+            updated_links,
+            merged_documents,
+            preserved_wikivoyage_links,
+        )
+        if canonical_links
+        else updated_links
+    )
+    terminal_classifications = _terminal_classifications(region, persisted_links)
     changed = any(
         before != after
         for before, after in (
             (polygons, updated_polygons),
-            (links, updated_links),
+            (stored_links, persisted_links),
             (documents, merged_documents),
             (sections, merged_sections),
             (facts, merged_facts),
@@ -271,7 +304,7 @@ def repair_wikidata_region(
         before != after
         for before, after in (
             (polygons, updated_polygons),
-            (links, updated_links),
+            (stored_links, persisted_links),
             (documents, merged_documents),
         )
     )
@@ -299,7 +332,20 @@ def repair_wikidata_region(
         "augmentation_manifest": directory / "staged-augmentation-manifest.json",
     }
     _write_table(staged["polygons"], updated_polygons, POLYGON_COLUMNS, polygon_schema())
-    _write_table(staged["links"], updated_links, POLYGON_ARTICLE_COLUMNS, polygon_article_schema())
+    if canonical_links:
+        _write_table(
+            staged["links"],
+            persisted_links,
+            CANONICAL_COLUMNS,
+            polygon_document_link_schema(),
+        )
+    else:
+        _write_table(
+            staged["links"],
+            persisted_links,
+            POLYGON_ARTICLE_COLUMNS,
+            polygon_article_schema(),
+        )
     _write_table(
         staged["documents"],
         merged_documents,
@@ -314,7 +360,7 @@ def repair_wikidata_region(
         paths=paths,
         staged=staged,
         polygons=updated_polygons,
-        links=updated_links,
+        links=persisted_links,
         documents=merged_documents,
         sections=merged_sections,
         facts=merged_facts,
@@ -620,6 +666,84 @@ def _merge_links(
     return merged
 
 
+def _canonical_wikipedia_links_to_legacy(
+    links: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    polygons: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Adapt canonical Wikipedia links to the recovery engine's legacy shape."""
+    documents_by_id = {str(row["document_id"]): row for row in documents}
+    best_by_polygon = {
+        str(row["polygon_id"]): str(row.get("best_language") or "") for row in polygons
+    }
+    legacy: list[dict[str, Any]] = []
+    for link in links:
+        if link["project"] != "wikipedia":
+            continue
+        document_id = str(link["document_id"])
+        document = documents_by_id.get(document_id)
+        if document is None:
+            raise RecoveryRepairError(
+                f"canonical Wikipedia link references missing document {document_id!r}"
+            )
+        legacy.append(
+            {
+                "polygon_id": link["polygon_id"],
+                "article_id": document["article_id"],
+                "wikidata": link["wikidata"],
+                "language": link["language"],
+                "source_pbf": link["source_pbf"],
+                "region": link["region"],
+                "osm_type": link["osm_type"],
+                "osm_id": link["osm_id"],
+                "page_id": link["page_id"],
+                "revision_id": link["revision_id"],
+                "is_best_language": (
+                    str(link["language"]) == best_by_polygon.get(str(link["polygon_id"]), "")
+                ),
+            }
+        )
+    return legacy
+
+
+def _legacy_wikipedia_links_to_canonical(
+    links: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    preserved_wikivoyage_links: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Restore canonical Wikipedia rows and preserve Wikivoyage rows exactly."""
+    documents_by_article = {str(row["article_id"]): row for row in documents}
+    canonical = [dict(row) for row in preserved_wikivoyage_links]
+    for link in links:
+        article_identifier = str(link["article_id"])
+        document = documents_by_article.get(article_identifier)
+        if document is None:
+            raise RecoveryRepairError(
+                f"recovered link references missing article {article_identifier!r}"
+            )
+        canonical.append(
+            {
+                "polygon_id": link["polygon_id"],
+                "document_id": document["document_id"],
+                "project": "wikipedia",
+                "wikidata": link["wikidata"],
+                "language": link["language"],
+                "source_pbf": link["source_pbf"],
+                "region": link["region"],
+                "osm_type": link["osm_type"],
+                "osm_id": link["osm_id"],
+                "page_id": link["page_id"],
+                "revision_id": link["revision_id"],
+            }
+        )
+    try:
+        return validate_polygon_document_links(canonical)
+    except (TypeError, ValueError) as exc:
+        raise RecoveryRepairError(
+            f"Recovered canonical polygon-document links are invalid: {exc}"
+        ) from exc
+
+
 def _recompute_affected_polygon_fields(
     polygons: list[dict[str, Any]],
     links: list[dict[str, Any]],
@@ -854,7 +978,11 @@ def _terminal_classifications(
     region: RegionAuditResult,
     links: list[dict[str, Any]],
 ) -> dict[str, RecoveryClassification]:
-    linked_polygon_qids = {(str(link["polygon_id"]), str(link["wikidata"])) for link in links}
+    linked_polygon_qids = {
+        (str(link["polygon_id"]), str(link["wikidata"]))
+        for link in links
+        if link.get("project", "wikipedia") == "wikipedia"
+    }
     polygons_by_qid = dict(region.polygon_ids_by_qid)
     terminal: dict[str, RecoveryClassification] = {}
     for qid, state in region.classifications:

@@ -144,7 +144,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(str(error))
 
     if args.command in {"augment-region", "augment-dir"}:
+        from osm_polygon_wikidata_only.augmentation.orchestrator import (
+            load_existing_augmentation_result,
+        )
         from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+        from osm_polygon_wikidata_only.pipeline.link_migration import (
+            apply_link_migration,
+            plan_link_migration,
+        )
 
         augmentation_client = AugmentationWikimediaClient(
             settings,
@@ -156,9 +163,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         augmentation_results: list[AugmentationResult] = []
         for stem in stems:
             if settings.skip_existing and augmentation_is_current(data_root, stem):
-                LOGGER.info("Skipping augmentation for %s (already current)", stem)
-                continue
-            augmentation_result = augment_region(data_root, stem, augmentation_client)
+                migration = plan_link_migration(data_root.processed, stems={stem})
+                if not migration.stems or migration.stems[0].classification.value == "canonical":
+                    LOGGER.info("Skipping augmentation for %s (already current)", stem)
+                    continue
+                apply_link_migration(data_root.processed, stems={stem})
+                augmentation_result = load_existing_augmentation_result(data_root, stem)
+                LOGGER.info(
+                    "Migrated %s to unified polygon-document links without Wikimedia requests",
+                    stem,
+                )
+            else:
+                augmentation_result = augment_region(data_root, stem, augmentation_client)
+                apply_link_migration(data_root.processed, stems={stem})
+                augmentation_result = load_existing_augmentation_result(data_root, stem)
             augmentation_results.append(augmentation_result)
             LOGGER.info("Augmented %s: %s", stem, augmentation_result.counts)
             if args.push:

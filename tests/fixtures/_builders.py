@@ -43,11 +43,14 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     fact_schema,
     section_schema,
 )
+from osm_polygon_wikidata_only.domain.polygon_document_links import (
+    CANONICAL_COLUMNS,
+    CANONICAL_DESCRIPTIONS,
+)
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     ARTICLE_DESCRIPTIONS,
     POLYGON_ARTICLE_COLUMNS,
-    POLYGON_ARTICLE_DESCRIPTIONS,
     POLYGON_COLUMNS,
     POLYGON_DESCRIPTIONS,
     article_schema,
@@ -387,8 +390,8 @@ def build_golden_card(out: Path) -> Path:
         polygon_descriptions=POLYGON_DESCRIPTIONS,
         article_columns=list(ARTICLE_COLUMNS),
         article_descriptions=ARTICLE_DESCRIPTIONS,
-        link_columns=list(POLYGON_ARTICLE_COLUMNS),
-        link_descriptions=POLYGON_ARTICLE_DESCRIPTIONS,
+        link_columns=list(CANONICAL_COLUMNS),
+        link_descriptions=CANONICAL_DESCRIPTIONS,
         maintainer="Noé Flandre",
     )
     path = out / "golden" / "dataset_card.md"

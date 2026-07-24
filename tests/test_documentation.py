@@ -48,6 +48,17 @@ def test_public_docs_never_contain_test_password() -> None:
         assert "secret-value" not in document.read_text(encoding="utf-8")
 
 
+def test_public_docs_do_not_expose_personal_storage_layout() -> None:
+    for document in (
+        REPOSITORY / "README.md",
+        REPOSITORY / "docs/architecture.md",
+    ):
+        text = document.read_text(encoding="utf-8")
+        assert "/Volumes/" not in text
+        assert "Seagate" not in text
+        assert "external drive" not in text.lower()
+
+
 def test_public_docs_explain_enrichment_progress_heartbeat() -> None:
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8").lower()
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8").lower()

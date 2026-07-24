@@ -1,17 +1,14 @@
-"""Resolve the external data root used by the pipeline.
+"""Resolve the configurable local data root used by the pipeline.
 
-The repository is intentionally code-only: all PBF inputs, intermediate
-artifacts, saved datasets, and caches live outside the working tree on
-the configured external drive.
+Generated dataset artifacts are published on Hugging Face. Local PBF inputs,
+intermediate artifacts, and caches live outside the source working tree under
+an operator-selected data root.
 
 Resolution precedence (highest first):
 
 1. Explicit value passed to :class:`DataRoot` (typically from ``--data-root``).
 2. ``OSM_POLYGON_DATA_ROOT`` environment variable.
-3. The conventional local path ``/Volumes/Seagate M3/projects/osm-polygon-wikidata-only``
-   when it exists on disk (recommended default on the local setup).
-
-If none of the above yields a usable path, a clear error is raised.
+If neither source yields a usable path, a clear error is raised.
 """
 
 from __future__ import annotations
@@ -25,9 +22,6 @@ LOGGER = logging.getLogger(__name__)
 
 
 ENV_VAR = "OSM_POLYGON_DATA_ROOT"
-
-# Recommended local path. Documented; never the only valid path.
-DEFAULT_LOCAL_DATA_ROOT = Path("/Volumes/Seagate M3/projects/osm-polygon-wikidata-only")
 
 # Conventional top-level sub-directories under the data root.
 SUBDIR_RAW = "raw"
@@ -53,7 +47,7 @@ class DataRootError(RuntimeError):
 
 @dataclass(frozen=True)
 class DataRoot:
-    """Resolved external data root for the pipeline."""
+    """Resolved local data root for the pipeline."""
 
     path: Path
 
@@ -182,21 +176,7 @@ def resolve_data_root(
                 )
             return DataRoot(candidate)
 
-    # Fallback: the recommended local path, but only if it actually exists.
-    if DEFAULT_LOCAL_DATA_ROOT.exists():
-        if not DEFAULT_LOCAL_DATA_ROOT.is_dir():
-            raise DataRootError(
-                f"Recommended local data root {DEFAULT_LOCAL_DATA_ROOT} is not a directory."
-            )
-        if _is_inside(DEFAULT_LOCAL_DATA_ROOT, repo_root):
-            raise DataRootError(
-                f"Recommended local data root {DEFAULT_LOCAL_DATA_ROOT} is inside "
-                f"the repository ({repo_root}). Refusing to write artifacts into the repo."
-            )
-        return DataRoot(DEFAULT_LOCAL_DATA_ROOT)
-
     raise DataRootError(
         "Could not resolve a data root. Provide one via --data-root, set "
-        f"the {ENV_VAR} environment variable, or mount "
-        f"{DEFAULT_LOCAL_DATA_ROOT}."
+        f"the {ENV_VAR} environment variable, and keep it outside the source repository."
     )

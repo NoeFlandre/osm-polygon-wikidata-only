@@ -482,10 +482,16 @@ def update_augmentation_manifest(
     counts: dict[str, int],
     completed_at: str,
     rejections: dict[str, Any] | None = None,
+    link_schema_version: str | None = None,
+    link_artifact_sha256: str | None = None,
 ) -> Path:
     """Atomic merge of ``stem``'s entry into the augmentation manifest
     while keeping every other region intact. Returns the manifest
-    path; creates the parent directory on first write."""
+    path; creates the parent directory on first write.
+
+    Optional ``link_schema_version`` and ``link_artifact_sha256`` add
+    the link-migration fingerprint fields per the Phase 2.5 design.
+    """
     manifest_path = (
         data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     )
@@ -499,6 +505,10 @@ def update_augmentation_manifest(
     }
     if rejections is not None:
         entry["rejections"] = rejections
+    if link_schema_version is not None:
+        entry["link_schema_version"] = link_schema_version
+    if link_artifact_sha256 is not None:
+        entry["link_artifact_sha256"] = link_artifact_sha256
     manifest[stem] = entry
     atomic_write_text(manifest_path, dumps(manifest) + "\n")
     return manifest_path

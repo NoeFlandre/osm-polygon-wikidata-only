@@ -48,13 +48,38 @@ def _setup_mock_region(data_root: DataRoot, stem: str, *, augmented: bool = True
     data_root.processed_manifests.mkdir(parents=True, exist_ok=True)
 
     poly_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "wikidata": "Q1", "lat": 1.0, "lon": 2.0}],
+        [
+            {
+                "polygon_id": "1",
+                "wikidata": "Q1",
+                "lat": 1.0,
+                "lon": 2.0,
+                "source_pbf": f"{stem}.osm.pbf",
+                "region": stem,
+                "osm_type": "relation",
+                "osm_id": 1,
+            }
+        ],
         schema=polygon_schema(),
     )
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     pq.write_table(poly_table, polygons_path)  # type: ignore[no-untyped-call]
     links_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "article_id": "a1", "wikidata": "Q1"}],
+        [
+            {
+                "polygon_id": "1",
+                "article_id": "Q1:es:1234:5678",
+                "wikidata": "Q1",
+                "language": "es",
+                "source_pbf": f"{stem}.osm.pbf",
+                "region": stem,
+                "osm_type": "relation",
+                "osm_id": 1,
+                "page_id": 1234,
+                "revision_id": 5678,
+                "is_best_language": True,
+            }
+        ],
         schema=polygon_article_schema(),
     )
     pq.write_table(links_table, data_root.processed_links / f"{stem}.parquet")  # type: ignore[no-untyped-call]
@@ -78,11 +103,13 @@ def _setup_mock_region(data_root: DataRoot, stem: str, *, augmented: bool = True
     doc_table = pa.Table.from_pylist(
         [
             {
-                "document_id": "1",
-                "article_id": "a1",
+                "document_id": "Q1:wikipedia:es:1234:5678",
+                "article_id": "Q1:es:1234:5678",
                 "wikidata": "Q1",
                 "project": "wikipedia",
                 "language": "es",
+                "page_id": 1234,
+                "revision_id": 5678,
             }
         ],
         schema=wikipedia_document_schema(),
@@ -270,7 +297,6 @@ def test_two_runs_are_noop(
         "--data-root",
         str(tmp_path),
         "--push",
-        "--dry-run",
         "--repo-id",
         "user/repo",
         "--hf-token",
@@ -279,7 +305,13 @@ def test_two_runs_are_noop(
     ]
     rc = commands.main(args)
     assert rc == 0
-    # No commits recorded on a converged run
+    # The first run upgrades the legacy link schema even though every
+    # remote path already exists.
+    assert len(stub.commits) == 2
+    stub.commits.clear()
+
+    rc = commands.main(args)
+    assert rc == 0
     assert stub.commits == []
 
     # Second invocation: also no commits
