@@ -68,6 +68,11 @@ def test_card_includes_license_attribution() -> None:
     assert "CC BY-SA" in md
 
 
+def test_card_links_to_source_repository() -> None:
+    md = _render()
+    assert "[GitHub repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only)" in md
+
+
 def test_card_includes_loader_snippet() -> None:
     md = _render()
     assert "load_dataset" in md

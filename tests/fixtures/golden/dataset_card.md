@@ -63,6 +63,8 @@ Generated on 2026-07-23.
 
 Maintained by **Noé Flandre**.
 
+Source code: [GitHub repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only).
+
 ## Coverage
 
 ### Polygons with Wikipedia or Wikivoyage text

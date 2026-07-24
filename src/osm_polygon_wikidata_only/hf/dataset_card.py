@@ -125,6 +125,8 @@ def render_dataset_card(
         "`polygon_articles` is intentionally specific to Wikipedia.\n\n"
         f"Generated on {today}.\n\n"
         f"Maintained by **{maintainer}**.\n\n"
+        "Source code: [GitHub repository]"
+        "(https://github.com/NoeFlandre/osm-polygon-wikidata-only).\n\n"
         "## Coverage\n\n"
         "### Polygons with Wikipedia or Wikivoyage text\n\n"
         f"![Polygons with Wikipedia or Wikivoyage text]({REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE})\n\n"
