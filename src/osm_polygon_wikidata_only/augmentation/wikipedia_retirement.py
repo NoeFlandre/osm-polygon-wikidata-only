@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    build_wikipedia_document_table,
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -14,7 +16,28 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
 from .steps import sha256_file
-from .wikipedia_document_migration import MigrationError, plan_migration
+from .wikipedia_document_migration import MigrationError
+
+
+def _assert_legacy_rows_preserved(
+    canonical_path: Path,
+    legacy_path: Path,
+    stem: str,
+) -> None:
+    """Require canonical documents to contain every converted legacy row."""
+    canonical = pq.read_table(canonical_path)  # type: ignore[no-untyped-call]
+    expected = build_wikipedia_document_table(pq.read_table(legacy_path))  # type: ignore[no-untyped-call]
+    canonical_rows = canonical.to_pylist()
+    canonical_by_id = {str(row["document_id"]): row for row in canonical_rows}
+    if len(canonical_by_id) != len(canonical_rows):
+        raise MigrationError(f"Stem {stem!r} is not safe to retire: duplicate document_id")
+    for expected_row in expected.to_pylist():
+        document_id = str(expected_row["document_id"])
+        if canonical_by_id.get(document_id) != expected_row:
+            raise MigrationError(
+                f"Stem {stem!r} is not safe to retire: canonical documents "
+                f"do not preserve legacy document {document_id!r}"
+            )
 
 
 def _assert_references_resolve(data_root: DataRoot, stem: str) -> None:
@@ -59,14 +82,12 @@ def prepare_local_retirement(data_root: DataRoot, stem: str) -> None:
     """Verify losslessness and atomically repoint manifests to canonical data."""
     canonical = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
     legacy = data_root.processed_articles / f"{stem}.parquet"
-    if legacy.exists():
-        plan = plan_migration(data_root.processed, stems={stem})
-        if not plan.is_safe_to_apply or len(plan.stems) != 1:
-            raise MigrationError(f"Stem {stem!r} is not safe to retire")
     if not canonical.exists() or not pq.read_schema(canonical).equals(  # type: ignore[no-untyped-call]
         wikipedia_document_schema(), check_metadata=True
     ):
         raise MigrationError(f"Stem {stem!r} has no valid canonical Wikipedia document")
+    if legacy.exists():
+        _assert_legacy_rows_preserved(canonical, legacy, stem)
     _assert_references_resolve(data_root, stem)
     processed_manifest = data_root.processed_manifests / "processed_pbfs.json"
     if processed_manifest.exists():

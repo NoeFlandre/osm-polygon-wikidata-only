@@ -69,6 +69,32 @@ def test_finalize_deletes_only_after_lossless_checks(tmp_path: Path) -> None:
     prepare_local_retirement(data_root, STEM)  # crash-safe retry
 
 
+def test_prepare_accepts_canonical_superset_preserving_every_legacy_row(
+    tmp_path: Path,
+) -> None:
+    """Newly discovered documents do not make legacy retirement unsafe."""
+    data_root = _seed(tmp_path)
+    document = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
+    table = pq.read_table(document)  # type: ignore[no-untyped-call]
+    values = table.to_pylist()
+    additional = dict(values[0])
+    additional.update(
+        {
+            "document_id": "Q2:wikipedia:fr:20:30",
+            "article_id": "Q2:fr:20:30",
+            "wikidata": "Q2",
+            "language": "fr",
+            "page_id": 20,
+            "revision_id": 30,
+        }
+    )
+    pq.write_table(pa.Table.from_pylist([*values, additional], schema=table.schema), document)
+
+    prepare_local_retirement(data_root, STEM)
+
+    assert (data_root.processed_articles / f"{STEM}.parquet").exists()
+
+
 def test_conflicting_document_keeps_legacy(tmp_path: Path) -> None:
     data_root = _seed(tmp_path)
     legacy = data_root.processed_articles / f"{STEM}.parquet"
