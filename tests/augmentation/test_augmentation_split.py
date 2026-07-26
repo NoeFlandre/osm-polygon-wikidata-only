@@ -243,6 +243,58 @@ def test_load_core_inputs_splits_multi_qid_osm_tags(tmp_path: Path) -> None:
     assert result.qids == ("Q130758369", "Q4146539", "Q9")
 
 
+def test_load_core_inputs_preserves_canonical_superset_when_legacy_coexists(
+    tmp_path: Path,
+) -> None:
+    """Augmentation must not overwrite recovered canonical documents."""
+    from osm_polygon_wikidata_only.augmentation.steps import load_core_inputs
+    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+        build_wikipedia_document_table,
+    )
+    from osm_polygon_wikidata_only.domain.schema import article_schema
+
+    data_root = _seed_core(tmp_path)
+    schema = article_schema()
+    source = article_row()
+    normalized = {
+        field.name: (
+            source[field.name]
+            if field.name in source
+            else ""
+            if pa.types.is_string(field.type)
+            else None
+        )
+        for field in schema
+    }
+    canonical = build_wikipedia_document_table(pa.Table.from_pylist([normalized], schema=schema))
+    rows = canonical.to_pylist()
+    additional = dict(rows[0])
+    additional.update(
+        {
+            "document_id": "Q2:wikipedia:fr:11:21",
+            "article_id": "Q2:fr:11:21",
+            "wikidata": "Q2",
+            "language": "fr",
+            "page_id": 11,
+            "revision_id": 21,
+        }
+    )
+    canonical_path = data_root.processed / "wikipedia" / "documents" / "andorra-latest.parquet"
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.Table.from_pylist([*rows, additional], schema=canonical.schema),
+        canonical_path,
+    )
+
+    result = load_core_inputs(data_root, "andorra-latest")
+
+    assert {document.document_id for document in result.wikipedia_documents} == {
+        "Q1:wikipedia:en:10:20",
+        "Q2:wikipedia:fr:11:21",
+    }
+    assert result.core_paths[0] == canonical_path
+
+
 # ---------------------------------------------------------------------------
 # resolve_entities
 # ---------------------------------------------------------------------------

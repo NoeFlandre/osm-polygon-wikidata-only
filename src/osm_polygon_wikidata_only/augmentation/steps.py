@@ -110,9 +110,10 @@ def _validate_source_stem(stem: str) -> None:
 class WikipediaSourcePaths:
     """Canonical and legacy local paths for one stem's Wikipedia data.
 
-    During migration both files may coexist. The *legacy* article is the
-    read source of truth until :func:`~osm_polygon_wikidata_only.augmentation.wikipedia_retirement.finalize_local_retirement`
-    deletes it; afterwards the *canonical* document is the only source.
+    During migration both files may coexist. A valid canonical document table
+    is the preferred read source because recovery may have added documents
+    that are absent from the frozen legacy article table. The legacy table is
+    retained only as a fallback while retirement is pending.
 
     Consumers must choose the appropriate policy explicitly:
     :func:`read_source_path` for augmentation input loading, or
@@ -143,14 +144,23 @@ def wikipedia_source_paths(data_root: DataRoot, stem: str) -> WikipediaSourcePat
 
 
 def read_source_path(data_root: DataRoot, stem: str) -> Path:
-    """Return the legacy article path if present, else the canonical document path.
+    """Return the valid canonical document path, falling back to the legacy path.
 
-    Used by augmentation input loading. During migration both files may
-    coexist; the legacy article is read as the source of truth.
-    After retirement the canonical document is the only remaining source.
-    The returned path may not yet exist for a never-augmented stem.
+    When both files coexist, augmentation must preserve canonical documents
+    created by targeted recovery. An unreadable or non-canonical document file
+    falls back to the legacy article table so the existing migration path can
+    repair it. The returned path may not yet exist for a never-augmented stem.
     """
     sources = wikipedia_source_paths(data_root, stem)
+    if sources.canonical.exists():
+        if not sources.legacy.exists():
+            return sources.canonical
+        try:
+            schema: pa.Schema = pq.read_schema(sources.canonical)  # type: ignore[no-untyped-call]
+        except (OSError, pa.ArrowInvalid):
+            return sources.legacy
+        if schema.equals(wikipedia_document_schema(), check_metadata=True):
+            return sources.canonical
     return sources.legacy if sources.legacy.exists() else sources.canonical
 
 

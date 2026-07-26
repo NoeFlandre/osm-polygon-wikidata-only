@@ -314,6 +314,12 @@ def _scan_region(
                 f"polygon_articles QID {qid!r} disagrees with polygon {polygon_id!r} "
                 f"QIDs {polygon_qids!r}"
             )
+        if document is None and canonical_links:
+            # A canonical link can outlive its document if an interrupted or
+            # older augmentation run overwrote the recovered document table.
+            # Leave the polygon/QID pair unlinked so the normal missing-pair
+            # calculation routes it through targeted recovery.
+            continue
         if document is None:
             raise _ScanError(
                 f"polygon_articles references absent "

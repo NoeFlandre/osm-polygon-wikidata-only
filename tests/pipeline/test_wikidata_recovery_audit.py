@@ -27,6 +27,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata.cache import CachedWikidataCl
 from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataClient, WikidataEntity
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery import audit as audit_mod
+from osm_polygon_wikidata_only.pipeline.link_migration import apply_link_migration
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RECOVERY_CONTRACT_VERSION,
     RecoveryClassification,
@@ -181,6 +182,27 @@ def test_full_failure_region_is_detected_without_thresholds(tmp_path: Path) -> N
     assert region.affected_qids == tuple(sorted(qids))
     assert region.affected_polygon_count == 50
     assert client.batch_calls == [sorted(qids)]
+
+
+def test_dangling_canonical_link_is_routed_to_recovery(tmp_path: Path) -> None:
+    """A missing document is recoverable from the link's valid QID."""
+    data_root = _data_root(tmp_path)
+    stem = "dangling"
+    _write_region(data_root, stem, ["Q1"], linked_qids={"Q1"})
+    apply_link_migration(data_root.processed, stems={stem})
+    documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    pq.write_table(
+        pa.Table.from_pylist([], schema=wikipedia_document_schema()),
+        documents_path,
+    )
+    client = _RecordingWikidataClient({"Q1": _entity("Q1")})
+
+    result = audit_wikidata_integrity(data_root, [stem], client)
+
+    region = result.region(stem)
+    assert region.blocked_reason == ""
+    assert region.affected_qids == ("Q1",)
+    assert region.affected_polygon_count == 1
 
 
 def test_upstream_validation_does_not_wait_for_one_slow_chunk() -> None:

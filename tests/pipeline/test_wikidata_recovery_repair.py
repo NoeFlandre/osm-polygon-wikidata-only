@@ -15,6 +15,9 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     section_schema,
 )
 from osm_polygon_wikidata_only.augmentation.steps import CONTRACT_VERSION, sha256_file
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    wikipedia_document_schema,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.polygon_document_links import (
@@ -334,6 +337,31 @@ def test_repair_accepts_canonical_links_and_preserves_project_schema(tmp_path: P
     links = pq.read_table(links_path).to_pylist()  # type: ignore[no-untyped-call]
     assert {row["wikidata"] for row in links} == {"Q1", "Q2"}
     assert {row["project"] for row in links} == {"wikipedia"}
+
+
+def test_repair_restores_document_referenced_by_dangling_canonical_link(
+    tmp_path: Path,
+) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "dangling-canonical"
+    _write_region(data_root, stem, ["Q1"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    apply_link_migration(data_root.processed, stems={stem})
+    documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    sections_path = data_root.processed / "wikipedia" / "sections" / f"{stem}.parquet"
+    pq.write_table(
+        pa.Table.from_pylist([], schema=wikipedia_document_schema()),
+        documents_path,
+    )
+    pq.write_table(pa.Table.from_pylist([], schema=section_schema()), sections_path)
+
+    result = _repair(data_root, stem, "Q1")
+
+    assert result.changed is True
+    documents = pq.read_table(documents_path).to_pylist()  # type: ignore[no-untyped-call]
+    links = pq.read_table(data_root.processed_links / f"{stem}.parquet").to_pylist()  # type: ignore[no-untyped-call]
+    assert len(documents) == 1
+    assert links[0]["document_id"] == documents[0]["document_id"]
 
 
 def test_repair_links_every_polygon_sharing_affected_qid(tmp_path: Path) -> None:

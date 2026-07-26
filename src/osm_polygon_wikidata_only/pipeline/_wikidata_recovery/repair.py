@@ -122,6 +122,7 @@ def repair_wikidata_region(
     links_schema = pq.read_schema(paths["links"])  # type: ignore[no-untyped-call]
     documents = _read_table(paths["documents"], wikipedia_document_schema())
     canonical_links = links_schema.equals(polygon_document_link_schema(), check_metadata=True)
+    affected_qid_set = set(region.affected_qids)
     if canonical_links:
         stored_links = _read_table(paths["links"], polygon_document_link_schema())
         preserved_wikivoyage_links = [
@@ -131,6 +132,7 @@ def repair_wikidata_region(
             stored_links,
             documents,
             polygons,
+            affected_qids=affected_qid_set,
         )
     elif links_schema.equals(polygon_article_schema(), check_metadata=True):
         stored_links = _read_table(paths["links"], polygon_article_schema())
@@ -670,6 +672,8 @@ def _canonical_wikipedia_links_to_legacy(
     links: list[dict[str, Any]],
     documents: list[dict[str, Any]],
     polygons: list[dict[str, Any]],
+    *,
+    affected_qids: set[str],
 ) -> list[dict[str, Any]]:
     """Adapt canonical Wikipedia links to the recovery engine's legacy shape."""
     documents_by_id = {str(row["document_id"]): row for row in documents}
@@ -683,6 +687,11 @@ def _canonical_wikipedia_links_to_legacy(
         document_id = str(link["document_id"])
         document = documents_by_id.get(document_id)
         if document is None:
+            if str(link["wikidata"]) in affected_qids:
+                # The audit deliberately routed this dangling canonical link
+                # into recovery. Drop the stale row here; _merge_links rebuilds
+                # it from the authoritative document fetched for the QID.
+                continue
             raise RecoveryRepairError(
                 f"canonical Wikipedia link references missing document {document_id!r}"
             )
