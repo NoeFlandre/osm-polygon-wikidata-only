@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     count_words,
     estimate_tokens,
 )
+from osm_polygon_wikidata_only.enrichment.wikidata.parsing import is_valid_qid
 from osm_polygon_wikidata_only.enrichment.wikimedia import read_wikimedia_json
 from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
     _NonObjectJsonError,
@@ -179,7 +180,11 @@ class AugmentationWikimediaClient:
         return parsed
 
     def entities(self, qids: Iterable[str], *, props: str) -> dict[str, dict[str, Any]]:
-        ids = sorted(set(qids))
+        # Callers pass canonical QIDs, never raw OSM tag values. Filter again
+        # at the transport boundary so malformed or compound values cannot turn
+        # an otherwise recoverable region into a MediaWiki ``no-such-entity``
+        # failure.
+        ids = sorted({qid for qid in qids if is_valid_qid(qid)})
         out: dict[str, dict[str, Any]] = {}
         for start in range(0, len(ids), 50):
             chunk = ids[start : start + 50]

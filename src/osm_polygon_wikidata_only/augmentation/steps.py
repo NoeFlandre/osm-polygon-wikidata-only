@@ -79,6 +79,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
+from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
@@ -261,7 +262,9 @@ def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
         wikipedia_documents = [document_from_article_row(row) for row in article_table.to_pylist()]
     polygon_rows = pq.read_table(polygons_path, columns=["wikidata"]).to_pylist()  # type: ignore[no-untyped-call]
     wikipedia_documents.sort(key=lambda row: row.document_id)
-    qids = sorted({str(row["wikidata"]) for row in polygon_rows if row.get("wikidata")})
+    qids = sorted(
+        {qid for row in polygon_rows for qid in qids_from_osm_tag(str(row.get("wikidata") or ""))}
+    )
     return CoreInputs(
         wikipedia_documents=tuple(wikipedia_documents),
         qids=tuple(qids),

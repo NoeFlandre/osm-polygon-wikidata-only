@@ -223,6 +223,26 @@ def test_load_core_inputs_returns_core_inputs_record(tmp_path: Path) -> None:
     }
 
 
+def test_load_core_inputs_splits_multi_qid_osm_tags(tmp_path: Path) -> None:
+    """A semicolon-separated OSM tag must never reach Wikidata as one ID."""
+    from osm_polygon_wikidata_only.augmentation.steps import load_core_inputs
+
+    data_root = _seed_core(tmp_path)
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {"wikidata": "Q4146539;Q130758369"},
+                {"wikidata": " Q130758369 ; Q9 "},
+            ]
+        ),
+        data_root.processed_polygons / "andorra-latest.parquet",
+    )
+
+    result = load_core_inputs(data_root, "andorra-latest")
+
+    assert result.qids == ("Q130758369", "Q4146539", "Q9")
+
+
 # ---------------------------------------------------------------------------
 # resolve_entities
 # ---------------------------------------------------------------------------

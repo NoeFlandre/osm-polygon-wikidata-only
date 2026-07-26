@@ -141,6 +141,28 @@ def test_augmentation_entities_preserve_requested_qid_for_redirects(
     assert entities["Q111150206"]["redirects"]["to"] == "Q7733117"
 
 
+def test_augmentation_entities_drops_non_qid_inputs_before_requesting_wikidata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The entity transport never sends a compound OSM tag as an API ID."""
+    client = AugmentationWikimediaClient(Settings(), JsonFileCache(tmp_path), environ={})
+    requested_urls: list[str] = []
+
+    def get_json(url: str, *, key: str) -> dict[str, object]:
+        requested_urls.append(url)
+        return {"entities": {"Q1": {"id": "Q1", "claims": {}}}}
+
+    monkeypatch.setattr(client, "get_json", get_json)
+
+    entities = client.entities(["Q1", "Q4146539;Q130758369", "not-a-qid"], props="claims")
+
+    assert entities == {"Q1": {"id": "Q1", "claims": {}}}
+    assert len(requested_urls) == 1
+    assert "ids=Q1" in requested_urls[0]
+    assert "%3B" not in requested_urls[0]
+
+
 def test_existing_article_becomes_wikipedia_document_without_data_loss() -> None:
     row = article_row()
     document = document_from_article_row(row)
