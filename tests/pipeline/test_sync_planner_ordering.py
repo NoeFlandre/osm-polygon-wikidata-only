@@ -93,6 +93,24 @@ def test_plan_augment_backlog_runs_before_publish() -> None:
     assert states[0].action is SyncAction.AUGMENT
 
 
+def test_incomplete_augmentation_overrides_recovery_candidate() -> None:
+    """Recovery requires every augmentation sidecar to exist.
+
+    A legacy-link migration candidate may also be missing a sidecar.
+    It must finish AUGMENT first; augmentation performs the link
+    migration and integrity audit after writing all sidecars.
+    """
+    pbfs = [Path("turkmenistan-latest.osm.pbf")]
+    states = plan_sync_states(
+        pbfs,
+        core_stems={"turkmenistan-latest"},
+        augmentation_stems=set(),
+        recovery_stems={"turkmenistan-latest"},
+    )
+
+    assert states[0].action is SyncAction.AUGMENT
+
+
 def test_plan_force_process_overrides_publish() -> None:
     """Force must dominate the priority order."""
     pbfs = [

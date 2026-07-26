@@ -68,12 +68,12 @@ def plan_sync_states(
     states: list[RegionSyncState] = []
     for pbf in pbfs:
         stem = pbf.name.removesuffix(".osm.pbf")
-        if stem in recovery:
-            action = SyncAction.RECOVERY
-        elif force or stem not in core_stems:
+        if force or stem not in core_stems:
             action = SyncAction.PROCESS
         elif stem not in augmentation_stems:
             action = SyncAction.AUGMENT
+        elif stem in recovery:
+            action = SyncAction.RECOVERY
         elif stem in pending:
             action = SyncAction.PUBLISH
         else:
