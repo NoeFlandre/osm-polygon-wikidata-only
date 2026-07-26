@@ -281,6 +281,29 @@ def _check_shared_values(
                 )
 
 
+def _assert_canonical_preserves_legacy(
+    canonical_table: pa.Table,
+    legacy_canonical_table: pa.Table,
+    stem: str,
+) -> None:
+    """Require every converted legacy row to exist unchanged.
+
+    The canonical table may contain additional documents discovered
+    after the legacy article table was written.
+    """
+    canonical_rows = canonical_table.to_pylist()
+    canonical_by_id = {str(row["document_id"]): row for row in canonical_rows}
+    if len(canonical_by_id) != len(canonical_rows):
+        raise MigrationError(f"Stem '{stem}': duplicate document_id in canonical document")
+    for expected_row in legacy_canonical_table.to_pylist():
+        document_id = str(expected_row["document_id"])
+        if canonical_by_id.get(document_id) != expected_row:
+            raise MigrationError(
+                f"Stem '{stem}': canonical documents do not preserve "
+                f"legacy document '{document_id}'"
+            )
+
+
 def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
     """Write a Parquet file atomically via temp file and os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -397,20 +420,23 @@ def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
 
     # Check exact canonical schema (names, types, order, metadata)
     if doc_table.schema.equals(canonical_schema, check_metadata=True):
-        if doc_table.equals(canonical_table, check_metadata=True):
-            return _ready_plan(
+        try:
+            _assert_canonical_preserves_legacy(doc_table, canonical_table, stem)
+        except MigrationError as exc:
+            return _blocked_plan(
                 stem,
-                MigrationOperation.ALREADY_CANONICAL,
-                canonical_table,
+                str(exc),
                 article_hash=article_hash,
                 document_hash=doc_hash,
             )
-        return _blocked_plan(
-            stem,
-            "document has canonical schema but content differs",
-            article_hash=article_hash,
-            document_hash=doc_hash,
-        )
+        else:
+            return _ready_plan(
+                stem,
+                MigrationOperation.ALREADY_CANONICAL,
+                doc_table,
+                article_hash=article_hash,
+                document_hash=doc_hash,
+            )
 
     # Check exact legacy schema (names, types, order, metadata)
     if doc_table.schema.equals(legacy_schema, check_metadata=True):

@@ -16,7 +16,10 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
 from .steps import sha256_file
-from .wikipedia_document_migration import MigrationError
+from .wikipedia_document_migration import (
+    MigrationError,
+    _assert_canonical_preserves_legacy,
+)
 
 
 def _assert_legacy_rows_preserved(
@@ -27,17 +30,10 @@ def _assert_legacy_rows_preserved(
     """Require canonical documents to contain every converted legacy row."""
     canonical = pq.read_table(canonical_path)  # type: ignore[no-untyped-call]
     expected = build_wikipedia_document_table(pq.read_table(legacy_path))  # type: ignore[no-untyped-call]
-    canonical_rows = canonical.to_pylist()
-    canonical_by_id = {str(row["document_id"]): row for row in canonical_rows}
-    if len(canonical_by_id) != len(canonical_rows):
-        raise MigrationError(f"Stem {stem!r} is not safe to retire: duplicate document_id")
-    for expected_row in expected.to_pylist():
-        document_id = str(expected_row["document_id"])
-        if canonical_by_id.get(document_id) != expected_row:
-            raise MigrationError(
-                f"Stem {stem!r} is not safe to retire: canonical documents "
-                f"do not preserve legacy document {document_id!r}"
-            )
+    try:
+        _assert_canonical_preserves_legacy(canonical, expected, stem)
+    except MigrationError as error:
+        raise MigrationError(f"Stem {stem!r} is not safe to retire: {error}") from error
 
 
 def _assert_references_resolve(data_root: DataRoot, stem: str) -> None:

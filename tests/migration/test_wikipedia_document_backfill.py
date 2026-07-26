@@ -298,6 +298,31 @@ class TestPlanningClassification:
         sp = plan.stems[0]
         assert sp.operation == MigrationOperation.ALREADY_CANONICAL
 
+    def test_already_canonical_lossless_superset(self, tmp_path: Path) -> None:
+        """Canonical documents may contain newly discovered rows."""
+        legacy_row = _make_article_row()
+        additional_row = _make_article_row(
+            wikidata="Q236",
+            language="fr",
+            page_id=101,
+            revision_id=201,
+        )
+        processed = _build_processed_dir(
+            tmp_path,
+            articles={"stem-a": [legacy_row]},
+            documents={"stem-a": _make_canonical_document_table([legacy_row, additional_row])},
+        )
+
+        plan = plan_migration(processed)
+
+        assert plan.is_safe_to_apply
+        assert plan.stems[0].operation == MigrationOperation.ALREADY_CANONICAL
+        result = apply_migration(plan)
+        assert result.skipped_stems == ("stem-a",)
+        assert (
+            pq.read_metadata(processed / "wikipedia" / "documents" / "stem-a.parquet").num_rows == 2
+        )
+
     def test_mixed_operations(self, tmp_path: Path) -> None:
         row_a = _make_article_row(wikidata="Q235")
         row_b = _make_article_row(wikidata="Q236")
