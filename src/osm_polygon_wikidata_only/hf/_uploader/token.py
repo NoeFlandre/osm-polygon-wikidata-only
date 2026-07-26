@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from .errors import UploadError
+from .http_transport import configure_hf_http_transport
 
 __all__ = ["_resolve_hf_token", "resolve_hf_token", "verify_hf_token"]
 
@@ -57,6 +58,7 @@ def verify_hf_token(explicit: str | None, *, _whoami: Any = None) -> str | None:
     token = resolve_hf_token(explicit)
     if not token:
         return None
+    configure_hf_http_transport()
     if _whoami is None:
         try:
             from huggingface_hub import HfApi

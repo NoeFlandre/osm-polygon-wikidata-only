@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import UploadError
+from .http_transport import configure_hf_http_transport
 from .plan import PublicationOp
 from .protocol import HfHub
 from .token import _resolve_hf_token
@@ -66,6 +67,7 @@ def _build_hf_api(
     actionable hint instead of letting the request fail later with a
     confusing ``401 Unauthorized``.
     """
+    configure_hf_http_transport()
     factory = api_factory
     if factory is None:
         try:

@@ -116,6 +116,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--push requires a Hugging Face write token: pass --hf-token, "
                 "set HF_TOKEN, or run `huggingface-cli login`."
             )
+        LOGGER.info(
+            "Connecting to Hugging Face using bounded IPv4 transport (connect timeout: 10s)"
+        )
         try:
             username = verify_hf_token(settings.hf_token)
         except UploadError as error:

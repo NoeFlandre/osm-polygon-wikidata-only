@@ -114,20 +114,25 @@ def test_main_push_without_token_fails_fast(
 
 
 def test_main_push_rejects_token_rejected_by_whoami(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from osm_polygon_wikidata_only.hf.uploader import UploadError
+
+    messages: list[str] = []
 
     def _fake_verify(token: str | None) -> str | None:
         raise UploadError("Hugging Face rejected HF_TOKEN: invalid.")
 
     monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "present")
     monkeypatch.setattr(commands, "verify_hf_token", _fake_verify)
+    monkeypatch.setattr(commands.LOGGER, "info", messages.append)
     raw = tmp_path / "raw"
     raw.mkdir()
     with pytest.raises(SystemExit) as excinfo:
         main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
     assert excinfo.value.code == 2
+    assert any("Connecting to Hugging Face" in message for message in messages)
 
 
 def test_main_push_logs_authenticated_username(
