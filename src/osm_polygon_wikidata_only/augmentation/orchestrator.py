@@ -15,13 +15,15 @@ live as focused helpers in :mod:`augmentation.steps`. The
 resumability checks here so a single implementation backs every
 content-addressed hash in this package.
 
-``augment_region`` is the stable facade; its signature, return type,
-and side effects on disk are unchanged across the decomposition.
+``augment_region`` is the stable facade; its signature, return type, canonical
+outputs, and manifest semantics remain unchanged. Durable derived-work
+checkpoints live only below the configured data-root cache.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,16 +31,25 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.checkpoints import (
+    SECTION_CHECKPOINT_BATCH_SIZE,
+    AugmentationCheckpointStore,
+    augmentation_plan_key,
+    document_identities,
+    entities_digest,
+)
 from osm_polygon_wikidata_only.augmentation.integrity import (
     INTEGRITY_CONTRACT_VERSION,
     WikivoyageIntegrityResult,
     enforce_wikivoyage_integrity,
 )
+from osm_polygon_wikidata_only.augmentation.models import Document, Section
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
     fact_schema,
     section_schema,
 )
+from osm_polygon_wikidata_only.augmentation.wikimedia import discover_wikivoyage_sitelinks
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
@@ -50,7 +61,7 @@ from .steps import (
     CONTRACT_VERSION,
     AugmentationClient,
     build_wikidata_facts,
-    fetch_document_sections,
+    fetch_document_sections_batch,
     fetch_wikivoyage_documents,
     load_core_inputs,
     resolve_entities,
@@ -61,6 +72,7 @@ from .steps import (
 
 VOYAGE_WORKERS = 8
 ARTICLE_WORKERS = 8
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,26 +113,61 @@ def augment_region(
     wikipedia_documents = list(core_inputs.wikipedia_documents)
     qids = list(core_inputs.qids)
 
-    entities = resolve_entities(client, qids, progress=progress)
+    checkpoint_store = AugmentationCheckpointStore(
+        data_root.cache / "augmentation_checkpoints",
+        stem,
+        augmentation_plan_key(
+            core_hashes=core_inputs.core_hashes,
+            qids=core_inputs.qids,
+            document_identities=document_identities(core_inputs.wikipedia_documents),
+        ),
+    )
 
+    entities = checkpoint_store.load_entities(core_inputs.qids)
+    if entities is None:
+        entities = resolve_entities(client, qids, progress=progress)
+        checkpoint_store.save_entities(core_inputs.qids, entities)
+    else:
+        LOGGER.info("Augmentation checkpoint %s: reused Wikidata entities", stem)
+        progress.start("Wikidata entities", total=len(qids))
+        progress.complete()
+    entity_digest = entities_digest(entities)
+
+    voyage_documents = checkpoint_store.load_voyage_documents(entity_digest)
     with ThreadPoolExecutor(max_workers=VOYAGE_WORKERS) as voyage_executor:
-        voyage_documents = fetch_wikivoyage_documents(
-            client,
-            entities=entities,
-            progress=progress,
-            executor=voyage_executor,
-        )
+        if voyage_documents is None:
+            voyage_documents = fetch_wikivoyage_documents(
+                client,
+                entities=entities,
+                progress=progress,
+                executor=voyage_executor,
+            )
+            checkpoint_store.save_voyage_documents(entity_digest, voyage_documents)
+        else:
+            LOGGER.info("Augmentation checkpoint %s: reused Wikivoyage documents", stem)
+            voyage_total = sum(
+                len(discover_wikivoyage_sitelinks(entity)) for entity in entities.values()
+            )
+            progress.start("Wikivoyage documents", total=voyage_total)
+            progress.complete()
 
     all_documents = wikipedia_documents + voyage_documents
-    with ThreadPoolExecutor(max_workers=ARTICLE_WORKERS) as article_executor:
-        sections_by_project = fetch_document_sections(
-            client,
-            documents=all_documents,
-            progress=progress,
-            executor=article_executor,
-        )
+    sections_by_project = _checkpointed_document_sections(
+        checkpoint_store,
+        client,
+        all_documents,
+        progress,
+        stem=stem,
+    )
 
-    facts = build_wikidata_facts(client, entities=entities, progress=progress)
+    facts = checkpoint_store.load_facts(entity_digest)
+    if facts is None:
+        facts = build_wikidata_facts(client, entities=entities, progress=progress)
+        checkpoint_store.save_facts(entity_digest, facts)
+    else:
+        LOGGER.info("Augmentation checkpoint %s: reused Wikidata facts", stem)
+        progress.start("Wikidata facts", total=len(entities))
+        progress.complete()
 
     if core_inputs.core_hashes != {str(path): sha256_file(path) for path in core_inputs.core_paths}:
         raise RuntimeError("Core artifacts changed during augmentation")
@@ -176,6 +223,7 @@ def augment_region(
         completed_at=utc_now_iso(),
         rejections=rejections_payload,
     )
+    checkpoint_store.clear()
     return AugmentationResult(
         paths[0],
         paths[1],
@@ -187,6 +235,52 @@ def augment_region(
         wikivoyage_integrity=wikivoyage_integrity,
         polygon_document_links_path=None,
     )
+
+
+def _checkpointed_document_sections(
+    checkpoint_store: AugmentationCheckpointStore,
+    client: AugmentationClient,
+    documents: list[Document],
+    progress: AugmentationProgress,
+    *,
+    stem: str,
+) -> dict[str, list[Section]]:
+    """Build and durably checkpoint deterministic document batches."""
+    sections_by_project: dict[str, list[Section]] = {"wikipedia": [], "wikivoyage": []}
+    reused_batches = 0
+    total_batches = (len(documents) + SECTION_CHECKPOINT_BATCH_SIZE - 1) // (
+        SECTION_CHECKPOINT_BATCH_SIZE
+    )
+    progress.start("Article sections", total=len(documents))
+    with ThreadPoolExecutor(max_workers=ARTICLE_WORKERS) as article_executor:
+        for index, start in enumerate(range(0, len(documents), SECTION_CHECKPOINT_BATCH_SIZE)):
+            batch = documents[start : start + SECTION_CHECKPOINT_BATCH_SIZE]
+            identities = document_identities(batch)
+            rows = checkpoint_store.load_section_batch(index, identities)
+            if rows is None:
+                fresh = fetch_document_sections_batch(
+                    client,
+                    documents=batch,
+                    progress=progress,
+                    executor=article_executor,
+                )
+                rows = [*fresh["wikipedia"], *fresh["wikivoyage"]]
+                checkpoint_store.save_section_batch(index, identities, rows)
+            else:
+                reused_batches += 1
+                progress.advance(len(batch))
+            for section in rows:
+                sections_by_project[section.project].append(section)
+    for rows in sections_by_project.values():
+        rows.sort(key=lambda row: (row.document_id, row.section_index))
+    if reused_batches:
+        LOGGER.info(
+            "Augmentation checkpoint %s: reused %d/%d article-section batches",
+            stem,
+            reused_batches,
+            total_batches,
+        )
+    return sections_by_project
 
 
 def completed_region_stems(data_root: DataRoot) -> list[str]:

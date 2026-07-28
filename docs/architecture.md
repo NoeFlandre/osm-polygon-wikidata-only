@@ -97,6 +97,8 @@ details behind facades):
 - `osm_polygon_wikidata_only.augmentation.steps` — focused augmentation
   pipeline helpers (Wikidata fact builder, document fetcher,
   sidecar updater, augmentation manifest merge).
+- `osm_polygon_wikidata_only.augmentation.checkpoints` — private durable
+  phase and bounded-section-batch checkpoints for interrupted augmentation.
 - `osm_polygon_wikidata_only.pipeline.sync_runner` and
   `osm_polygon_wikidata_only.pipeline.sync_orchestrator` — framework-free
   orchestration for the unified sync workflow. `sync_runner` performs
@@ -177,6 +179,24 @@ and deletes the legacy `articles/` path in the same commit; the local staging
 file is removed only after confirmed publication. Failed upload jobs persist
 under the configured local data root and resume on the next invocation. The dataset
 and pipeline are maintained by Noé Flandre.
+
+## Augmentation interruption recovery
+
+Normal regional augmentation checkpoints completed derived work beneath
+`<data-root>/cache/augmentation_checkpoints/`; in production this is on the
+operator-configured external data volume. The content key includes the exact
+core hashes, QIDs, Wikipedia document identities, and checkpoint contract
+version. Entity payloads, Wikivoyage documents, and Wikidata facts are saved at
+complete phase boundaries. Article sections are saved in deterministic batches
+of 50 documents, so an interruption repeats at most the active batch; the
+existing request cache also preserves successful requests inside that batch.
+
+Checkpoint directories are published atomically and loaded only when their
+metadata, schemas, and input identities match exactly. Corrupt, incomplete, or
+stale checkpoints are ignored. Canonical sidecars retain their existing
+all-phases transaction boundary, and a region's checkpoint directory is removed
+only after integrity enforcement and its augmentation manifest entry complete
+successfully.
 
 ## Geographic coverage visualizations
 

@@ -429,6 +429,39 @@ def test_fetch_wikivoyage_documents_filters_none(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_fetch_document_sections_batch_preserves_partition_sort_and_progress() -> None:
+    """A resumable batch has the same semantics without resetting progress."""
+    from osm_polygon_wikidata_only.augmentation.steps import (
+        fetch_document_sections_batch,
+    )
+
+    client = FakeAugmentationClient()
+    wikipedia = document_from_article_row(article_row())
+    wikivoyage = client.wikivoyage_document("Q1", "fr", "frwikivoyage", "Andorre")
+    progress = AugmentationProgress()
+    progress.start("Article sections", total=4)
+    progress.advance(2)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        sections = fetch_document_sections_batch(
+            client,
+            documents=[wikipedia, wikivoyage],
+            progress=progress,
+            executor=executor,
+        )
+
+    assert sorted(sections) == ["wikipedia", "wikivoyage"]
+    assert [(row.document_id, row.section_index) for row in sections["wikipedia"]] == sorted(
+        (row.document_id, row.section_index) for row in sections["wikipedia"]
+    )
+    assert [(row.document_id, row.section_index) for row in sections["wikivoyage"]] == sorted(
+        (row.document_id, row.section_index) for row in sections["wikivoyage"]
+    )
+    snapshot = progress.snapshot()
+    assert snapshot.phase == "Article sections"
+    assert snapshot.completed == snapshot.total == 4
+
+
 def test_fetch_document_sections_partitions_by_project_and_sorts(tmp_path: Path) -> None:
     """Sections are partitioned into wikipedia/wikivoyage buckets
     and each bucket is sorted by ``(document_id, section_index)``."""
@@ -748,7 +781,7 @@ def test_augment_region_opens_two_pools_of_eight_workers(tmp_path: Path) -> None
             return future
 
     original_voyage = orchestrator.fetch_wikivoyage_documents
-    original_sections = orchestrator.fetch_document_sections
+    original_sections = orchestrator.fetch_document_sections_batch
     real_pool = orchestrator.ThreadPoolExecutor
 
     def voyage_recorder(client: Any, **kwargs: Any) -> Any:
@@ -761,7 +794,11 @@ def test_augment_region_opens_two_pools_of_eight_workers(tmp_path: Path) -> None
 
     pool_patch = mock.patch.object(orchestrator, "ThreadPoolExecutor", _RecordingPool)
     voyage_patch = mock.patch.object(orchestrator, "fetch_wikivoyage_documents", voyage_recorder)
-    sections_patch = mock.patch.object(orchestrator, "fetch_document_sections", sections_recorder)
+    sections_patch = mock.patch.object(
+        orchestrator,
+        "fetch_document_sections_batch",
+        sections_recorder,
+    )
     pool_patch.start()
     voyage_patch.start()
     sections_patch.start()

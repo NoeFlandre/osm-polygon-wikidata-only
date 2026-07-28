@@ -356,6 +356,22 @@ def fetch_document_sections(
     ``(document_id, section_index)``. The caller selects and owns
     the executor (the orchestrator uses ``max_workers=8``)."""
     progress.start("Article sections", total=len(documents))
+    return fetch_document_sections_batch(
+        client,
+        documents=documents,
+        progress=progress,
+        executor=executor,
+    )
+
+
+def fetch_document_sections_batch(
+    client: AugmentationClient,
+    *,
+    documents: list[Document],
+    progress: AugmentationProgress,
+    executor: Executor,
+) -> dict[str, list[Section]]:
+    """Fetch one bounded document batch without resetting phase progress."""
 
     def fetch_html(document: Document) -> str:
         try:
