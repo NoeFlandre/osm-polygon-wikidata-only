@@ -34,9 +34,8 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from .cache import (
     _file_fingerprint,
@@ -53,6 +52,8 @@ from .models import (
     WikidataFactStats,
 )
 from .scanning import safe_table, sorted_parquets
+from .summary_codec import summary_from_json as _summary_from_json
+from .summary_codec import summary_to_json as _summary_to_json
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.dataset_stats")
 
@@ -378,120 +379,6 @@ def _scan_facts_file(processed_dir: Path, parquet_path: Path) -> PerFileSummary:
         unavailable_qualifiers=unavailable_qualifiers,
         unavailable_references=unavailable_references,
         value_type_counts=dict(value_types),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Cache (de)serialization
-# ---------------------------------------------------------------------------
-
-
-def _summary_to_json(summary: PerFileSummary) -> dict[str, Any]:
-    return {
-        "relative_path": summary.relative_path,
-        "fingerprint": summary.fingerprint,
-        "file_size_bytes": summary.file_size_bytes,
-        "kind": summary.kind,
-        "scan_failed": summary.scan_failed,
-        "rows": summary.rows,
-        "non_empty": summary.non_empty,
-        "empty_or_null": summary.empty_or_null,
-        "total_chars": summary.total_chars,
-        "total_words": summary.total_words,
-        "total_tokens_estimate": summary.total_tokens_estimate,
-        "document_ids": sorted(summary.document_ids),
-        "section_ids": sorted(summary.section_ids),
-        "qids": sorted(summary.qids),
-        "languages": dict(sorted(summary.languages.items())),
-        "fact_rows": summary.fact_rows,
-        "fact_ids": sorted(summary.fact_ids),
-        "subject_qids": sorted(summary.subject_qids),
-        "property_ids": sorted(summary.property_ids),
-        "property_labels": dict(sorted(summary.property_labels.items())),
-        "property_counts": dict(sorted(summary.property_counts.items())),
-        "with_property_en_label": summary.with_property_en_label,
-        "with_value_en_label": summary.with_value_en_label,
-        "with_qualifiers": summary.with_qualifiers,
-        "with_references": summary.with_references,
-        "unavailable_qualifiers": summary.unavailable_qualifiers,
-        "unavailable_references": summary.unavailable_references,
-        "value_type_counts": dict(sorted(summary.value_type_counts.items())),
-    }
-
-
-def _summary_from_json(blob: Mapping[str, object]) -> PerFileSummary | None:
-    """Inverse of :func:`_summary_to_json`. Returns ``None`` on a
-    structurally-incompatible cache entry."""
-
-    def _get_list(key: str) -> list[str]:
-        if key in blob:
-            value = blob[key]
-            if isinstance(value, list):
-                return [str(x) for x in value]
-        return []
-
-    def _get_dict_str(key: str) -> dict[str, str]:
-        if key in blob and isinstance(blob[key], dict):
-            value = blob[key]
-            inner = cast(dict[object, object], value)
-            return {str(k): str(v) for k, v in inner.items()}
-        return {}
-
-    def _get_dict_int(key: str) -> dict[str, int]:
-        if key in blob and isinstance(blob[key], dict):
-            value = blob[key]
-            inner = cast(dict[object, object], value)
-            items: list[tuple[str, int]] = []
-            for k, v in inner.items():
-                coerced_int = int(cast(Any, v))
-                items.append((str(k), coerced_int))
-            return dict(items)
-        return {}
-
-    required = ("relative_path", "fingerprint", "file_size_bytes", "kind")
-    if not all(key in blob for key in required):
-        return None
-
-    def _i(key: str) -> int:
-        raw = blob.get(key)
-        return int(raw) if isinstance(raw, (int, float, str, bytes)) else 0
-
-    def _b(key: str) -> bool:
-        raw = blob.get(key)
-        return bool(raw) if raw is not None else False
-
-    def _s(key: str) -> str:
-        return str(blob.get(key)) if blob.get(key) is not None else ""
-
-    return PerFileSummary(
-        relative_path=_s("relative_path"),
-        fingerprint=_s("fingerprint"),
-        file_size_bytes=_i("file_size_bytes"),
-        kind=_s("kind"),
-        scan_failed=_b("scan_failed"),
-        rows=_i("rows"),
-        non_empty=_i("non_empty"),
-        empty_or_null=_i("empty_or_null"),
-        total_chars=_i("total_chars"),
-        total_words=_i("total_words"),
-        total_tokens_estimate=_i("total_tokens_estimate"),
-        document_ids=frozenset(_get_list("document_ids")),
-        section_ids=frozenset(_get_list("section_ids")),
-        qids=frozenset(_get_list("qids")),
-        languages=_get_dict_int("languages"),
-        fact_rows=_i("fact_rows"),
-        fact_ids=frozenset(_get_list("fact_ids")),
-        subject_qids=frozenset(_get_list("subject_qids")),
-        property_ids=frozenset(_get_list("property_ids")),
-        property_labels=_get_dict_str("property_labels"),
-        property_counts=_get_dict_int("property_counts"),
-        with_property_en_label=_i("with_property_en_label"),
-        with_value_en_label=_i("with_value_en_label"),
-        with_qualifiers=_i("with_qualifiers"),
-        with_references=_i("with_references"),
-        unavailable_qualifiers=_i("unavailable_qualifiers"),
-        unavailable_references=_i("unavailable_references"),
-        value_type_counts=_get_dict_int("value_type_counts"),
     )
 
 
