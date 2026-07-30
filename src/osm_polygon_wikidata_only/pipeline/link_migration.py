@@ -27,12 +27,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import tempfile
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -68,46 +65,20 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
     qids_from_osm_tag as _qids_from_osm_tag,
 )
+from osm_polygon_wikidata_only.pipeline._link_migration.conversion import (
+    build_canonical_rows as _build_canonical_rows,
+)
+from osm_polygon_wikidata_only.pipeline._link_migration.models import (
+    MigrationPlan,
+    StemClassification,
+    StemPlan,
+)
+from osm_polygon_wikidata_only.pipeline._link_migration.transaction import (
+    commit_ordered_replacements as _commit_ordered_replacements,
+)
 from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 
 _LINK_TRANSACTION_VERSION = "link-migration-transaction-v1"
-
-
-# ---------------------------------------------------------------------------
-# Types
-# ---------------------------------------------------------------------------
-
-
-class StemClassification(StrEnum):
-    MIGRATABLE = "migratable"
-    CANONICAL = "canonical"
-    BLOCKED = "BLOCKED"
-
-
-@dataclass(frozen=True, slots=True)
-class StemPlan:
-    """Per-stem migration plan entry."""
-
-    stem: str
-    classification: StemClassification
-    reason: str
-    polygons_fingerprint: str
-    links_fingerprint: str
-    documents_fingerprint: str
-    row_count: int
-    canonical_digest: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class MigrationPlan:
-    """Immutable read-only migration plan."""
-
-    processed_dir: Path
-    stems: tuple[StemPlan, ...]
-
-    @property
-    def is_safe_to_apply(self) -> bool:
-        return all(s.classification != StemClassification.BLOCKED for s in self.stems)
 
 
 # ---------------------------------------------------------------------------
@@ -366,133 +337,6 @@ def _table_digest(table: pa.Table) -> str:
     return hasher.hexdigest()
 
 
-def _build_canonical_rows(
-    stem: str,
-    legacy_table: pa.Table,
-    polygons_table: pa.Table,
-    docs_table: pa.Table,
-) -> list[dict[str, Any]]:
-    """Build canonical-polygon-document-link rows from a legacy stem.
-
-    Lossless conversion: every canonical row corresponds to exactly one
-    distinct legacy ``(polygon_id, article_id)`` tuple. The polygon
-    and document fields are joined **per legacy row**, never via a
-    QID-wide Cartesian product across polygons x documents.
-
-    Per-polygon QID membership: the resolved document's QID must belong
-    to the SPECIFIC polygon's parsed multi-QID tag (not the region's
-    union). Legacy row QID / page_id / revision_id / language fields
-    are validated against the resolved document and polygon.
-
-    Duplicate legacy rows for the same ``(polygon_id, article_id)``:
-    byte-identical rows collapse to one; conflicting rows
-    (different QID, page_id, revision_id, or language) block the
-    stem.
-    """
-    polygons_by_id: dict[str, dict[str, Any]] = {
-        str(row["polygon_id"]): row for row in polygons_table.to_pylist()
-    }
-    docs_by_article_id: dict[str, list[dict[str, Any]]] = {}
-    for doc in docs_table.to_pylist():
-        docs_by_article_id.setdefault(str(doc["article_id"]), []).append(doc)
-
-    # Pre-compute each polygon's resolved QID set.
-    polygon_qids: dict[str, set[str]] = {}
-    for pid, prow in polygons_by_id.items():
-        polygon_qids[pid] = set(_qids_from_osm_tag(str(prow.get("wikidata", ""))))
-
-    legacy_rows = legacy_table.to_pylist()
-    seen: dict[tuple[str, str], dict[str, Any]] = {}
-    seen_legacy: dict[tuple[str, str], dict[str, Any]] = {}
-    for legacy_row in legacy_rows:
-        polygon_id = str(legacy_row.get("polygon_id", ""))
-        article_id = str(legacy_row.get("article_id", ""))
-        legacy_wikidata = str(legacy_row.get("wikidata", ""))
-        legacy_page_id = int(legacy_row.get("page_id", 0))
-        legacy_revision_id = int(legacy_row.get("revision_id", 0))
-        legacy_language = str(legacy_row.get("language", ""))
-        identity = (polygon_id, article_id)
-        normalized_legacy = {column: legacy_row.get(column) for column in POLYGON_ARTICLE_COLUMNS}
-        if identity in seen_legacy:
-            if seen_legacy[identity] != normalized_legacy:
-                raise ValueError(
-                    f"conflicting duplicate legacy rows for (polygon_id={polygon_id!r}, "
-                    f"article_id={article_id!r}); cannot collapse"
-                )
-            continue
-        seen_legacy[identity] = normalized_legacy
-
-        if polygon_id not in polygons_by_id:
-            raise ValueError(
-                f"legacy polygon_id={polygon_id!r} is not present in polygons/{stem}.parquet"
-            )
-        matching_docs = docs_by_article_id.get(article_id)
-        if not matching_docs:
-            raise ValueError(
-                f"legacy article_id={article_id!r} for polygon_id={polygon_id!r} "
-                f"has no matching wikipedia/documents/{stem}.parquet row"
-            )
-        if len(matching_docs) > 1:
-            raise ValueError(
-                f"legacy article_id={article_id!r} for polygon_id={polygon_id!r} "
-                f"is ambiguous: {len(matching_docs)} matching documents"
-            )
-        doc = matching_docs[0]
-
-        # Per-polygon QID membership: the document's QID must be in
-        # this specific polygon's resolved QID set.
-        doc_qid = str(doc["wikidata"])
-        polygon_set = polygon_qids.get(polygon_id, set())
-        if doc_qid and doc_qid not in polygon_set:
-            # Reject-only normalization: the invalid relationship is
-            # recorded by
-            # ``plan_link_migration_normalization_rejections_for_stem``
-            # and omitted from the canonical table. Never rewrite a
-            # QID to make the relationship appear valid.
-            continue
-
-        # Validate legacy row fields against the resolved document.
-        if legacy_wikidata and legacy_wikidata != doc_qid:
-            raise ValueError(
-                f"legacy row (polygon_id={polygon_id!r}, article_id={article_id!r}) "
-                f"wikidata={legacy_wikidata!r} conflicts with document wikidata={doc_qid!r}"
-            )
-        if legacy_page_id and legacy_page_id != int(doc.get("page_id", 0)):
-            raise ValueError(
-                f"legacy row (polygon_id={polygon_id!r}, article_id={article_id!r}) "
-                f"page_id={legacy_page_id} conflicts with document page_id="
-                f"{int(doc.get('page_id', 0))}"
-            )
-        if legacy_revision_id and legacy_revision_id != int(doc.get("revision_id", 0)):
-            raise ValueError(
-                f"legacy row (polygon_id={polygon_id!r}, article_id={article_id!r}) "
-                f"revision_id={legacy_revision_id} conflicts with document revision_id="
-                f"{int(doc.get('revision_id', 0))}"
-            )
-        if legacy_language and legacy_language != str(doc.get("language", "")):
-            raise ValueError(
-                f"legacy row (polygon_id={polygon_id!r}, article_id={article_id!r}) "
-                f"language={legacy_language!r} conflicts with document language="
-                f"{str(doc.get('language', ''))!r}"
-            )
-
-        canonical_row = {
-            "polygon_id": polygon_id,
-            "document_id": str(doc["document_id"]),
-            "project": "wikipedia",
-            "wikidata": doc_qid,
-            "language": str(doc.get("language", "")),
-            "source_pbf": str(polygons_by_id[polygon_id].get("source_pbf", "")),
-            "region": str(polygons_by_id[polygon_id].get("region", "")),
-            "osm_type": str(polygons_by_id[polygon_id].get("osm_type", "")),
-            "osm_id": int(polygons_by_id[polygon_id].get("osm_id", 0)),
-            "page_id": int(doc.get("page_id", 0)),
-            "revision_id": int(doc.get("revision_id", 0)),
-        }
-        seen[identity] = canonical_row
-    return validate_polygon_document_links(seen.values())
-
-
 # ---------------------------------------------------------------------------
 # Planning
 # ---------------------------------------------------------------------------
@@ -602,202 +446,6 @@ def plan_link_migration(
         stems_data.append(_classify_stem(stem, processed_dir))
 
     return MigrationPlan(processed_dir=processed_dir, stems=tuple(stems_data))
-
-
-# ---------------------------------------------------------------------------
-# Ordered journaled transaction primitive (private)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _TransactionEntry:
-    target: Path
-    staged: Path
-    backup: Path | None
-    existed: bool
-    original_hash: str
-    staged_hash: str
-
-
-def _commit_ordered_replacements(
-    directory: Path,
-    stem: str,
-    replacements: list[tuple[Path, Path]],
-    *,
-    _crash_hook: Callable[[int, Path], None] | None = None,
-) -> None:
-    """Public entry: ordered journaled replacement (private to the module).
-
-    Manifests come last -- any ``*.json`` target is moved to the end of
-    the replacement list, regardless of input order. The journal is
-    stamped at every phase. On exception, the helper rolls back and
-    cleans up.
-    """
-    if not replacements:
-        return
-    targets = [target for target, _ in replacements]
-    if len(set(targets)) != len(targets):
-        raise ValueError("Link migration transaction contains duplicate targets")
-
-    # Sort: non-JSON replacements first, JSON manifest last.
-    def _kind(p: Path) -> int:
-        return 1 if p.suffix == ".json" else 0
-
-    ordered = sorted(replacements, key=lambda item: (_kind(item[0]), str(item[0])))
-
-    directory.mkdir(parents=True, exist_ok=True)
-    journal_path = directory / "journal.json"
-    if journal_path.exists():
-        # Recovery: replay the journal. For each entry, if the target
-        # is already at the staged hash, the entry was already applied
-        # before the crash; otherwise, apply it now.
-        _recover_directory(directory, stem)
-        return
-
-    entries: list[_TransactionEntry] = []
-    for target, staged in ordered:
-        if not staged.is_file():
-            raise FileNotFoundError(f"Staged link migration file is missing: {staged}")
-        backup = directory / f"{target.name}.backup"
-        existed = target.is_file()
-        original_hash = ""
-        if existed:
-            shutil.copyfile(target, backup)
-            original_hash = _file_content_hash(target)
-        entries.append(
-            _TransactionEntry(
-                target=target,
-                staged=staged,
-                backup=backup if existed else None,
-                existed=existed,
-                original_hash=original_hash,
-                staged_hash=_file_content_hash(staged),
-            )
-        )
-
-    journal: dict[str, Any] = {
-        "contract_version": _LINK_TRANSACTION_VERSION,
-        "stem": stem,
-        "phase": "prepared",
-        "entries": [
-            {
-                "target": str(entry.target),
-                "staged": str(entry.staged),
-                "backup": str(entry.backup) if entry.backup else "",
-                "existed": entry.existed,
-                "original_hash": entry.original_hash,
-                "staged_hash": entry.staged_hash,
-            }
-            for entry in entries
-        ],
-    }
-    _atomic_write_json(journal_path, journal)
-
-    try:
-        for index, entry in enumerate(entries):
-            _apply_single(entry)
-            if _crash_hook is not None:
-                _crash_hook(index, entry.target)
-            # Post-hook verification: the hook may have corrupted the
-            # target. If so, roll back this entry and re-raise.
-            if _file_content_hash(entry.target) != entry.staged_hash:
-                raise RuntimeError(f"Link migration post-hook hash mismatch for {entry.target}")
-        journal["phase"] = "committed"
-        _atomic_write_json(journal_path, journal)
-    except BaseException:
-        # Distinguish two cases:
-        # 1. Validation-time failure (raise on index 0, before any
-        #    progress): full rollback; no partial state preserved.
-        # 2. Mid-flight crash (raise on index > 0): roll forward;
-        #    leave the journal AND every staged file so a subsequent
-        #    call can replay. We must NOT delete staged files here --
-        #    roll-forward recovery needs them on disk.
-        if index == 0:
-            _rollback_entries(entries)
-            journal["phase"] = "rolled_back"
-            _atomic_write_json(journal_path, journal)
-            _cleanup(directory)
-        else:
-            journal["phase"] = "interrupted"
-            journal["interrupted_at_index"] = int(index)
-            _atomic_write_json(journal_path, journal)
-            # Intentionally do NOT unlink staged files. The next call
-            # to ``_commit_ordered_replacements`` will see the journal
-            # and replay from where the crash interrupted.
-        raise
-
-    _cleanup(directory)
-
-
-def _apply_single(entry: _TransactionEntry) -> None:
-    target = entry.target
-    staged = entry.staged
-    staged_hash = entry.staged_hash
-    if target.is_file() and _file_content_hash(target) == staged_hash:
-        return
-    if not staged.is_file() or _file_content_hash(staged) != staged_hash:
-        raise RuntimeError(f"Link migration staged file is unavailable: {staged}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file():
-        os.replace(staged, target)
-    else:
-        shutil.move(str(staged), str(target))
-    if _file_content_hash(target) != staged_hash:
-        raise RuntimeError(f"Link migration verification failed: {target}")
-
-
-def _rollback_entries(entries: list[_TransactionEntry]) -> None:
-    for entry in reversed(entries):
-        if entry.existed and entry.backup is not None:
-            if not entry.backup.is_file():
-                raise RuntimeError(f"Link migration backup is unavailable: {entry.backup}")
-            os.replace(entry.backup, entry.target)
-            if _file_content_hash(entry.target) != entry.original_hash:
-                raise RuntimeError(f"Link migration rollback verification failed: {entry.target}")
-        else:
-            if entry.target.is_file():
-                entry.target.unlink()
-
-
-def _cleanup(directory: Path) -> None:
-    for entry in directory.iterdir():
-        if entry.is_file():
-            entry.unlink()
-    with suppress(OSError):
-        directory.rmdir()
-
-
-def _recover_directory(directory: Path, stem: str) -> None:
-    journal_path = directory / "journal.json"
-    if not journal_path.is_file():
-        return
-    raw = json.loads(journal_path.read_text(encoding="utf-8"))
-    if raw.get("contract_version") != _LINK_TRANSACTION_VERSION:
-        raise RuntimeError(f"Invalid link migration journal: {journal_path}")
-    if raw.get("stem") != stem:
-        raise RuntimeError(f"Link migration journal stem mismatch: {raw.get('stem')!r} vs {stem!r}")
-    entries = raw.get("entries", [])
-    for entry in entries:
-        target = Path(entry["target"])
-        staged = Path(entry["staged"])
-        backup = Path(entry["backup"]) if entry.get("backup") else None
-        existed = bool(entry["existed"])
-        staged_hash = entry["staged_hash"]
-        if target.is_file() and _file_content_hash(target) == staged_hash:
-            # Already applied; verify and continue.
-            continue
-        if not staged.is_file() or _file_content_hash(staged) != staged_hash:
-            raise RuntimeError(f"Link migration recovery: staged file unavailable: {staged}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if existed and backup is not None and backup.is_file():
-            backup.unlink()
-        if target.is_file():
-            os.replace(staged, target)
-        else:
-            shutil.move(str(staged), str(target))
-        if _file_content_hash(target) != staged_hash:
-            raise RuntimeError(f"Link migration recovery verification failed: {target}")
-    _cleanup(directory)
 
 
 # ---------------------------------------------------------------------------
