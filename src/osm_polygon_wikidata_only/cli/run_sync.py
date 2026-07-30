@@ -43,6 +43,9 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_retirement import (
     finalize_local_retirement,
     prepare_local_retirement,
 )
+from osm_polygon_wikidata_only.cli._sync.retirement import (
+    paired_retirement_stems as _paired_retirement_stems,
+)
 from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
@@ -51,10 +54,6 @@ from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
-from osm_polygon_wikidata_only.hf.repo_layout import (
-    LEGACY_REMOTE_ARTICLES_DIR,
-    REMOTE_WIKIPEDIA_DOCUMENTS_DIR,
-)
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
@@ -873,80 +872,6 @@ def _post_upload_publication_cleanup(
         retired.append(stem)
 
     remove_pending_publications(data_root, set(retired))
-
-
-def _is_valid_stem(stem: str) -> bool:
-    """A stem must be non-empty, free of traversal and path separators."""
-    if not stem or stem in {".", ".."}:
-        return False
-    return not ("/" in stem or "\\" in stem)
-
-
-def _paired_retirement_stems(data_root: DataRoot, ops: list[PublicationOp]) -> set[str]:
-    """Return stems whose ops list contains a correctly-paired add+delete.
-
-    Each canonical add must:
-
-    * use ``path_in_repo == wikipedia/documents/<stem>.parquet`` exactly
-      (no nested paths, no traversal, no lookalike prefixes);
-    * carry a ``local_path`` whose resolved absolute path equals
-      ``data_root.processed / wikipedia / documents / <stem>.parquet``.
-
-    Each legacy delete must use ``path_in_repo == articles/<stem>.parquet``
-    exactly with the same restrictions.
-
-    Duplicate or conflicting canonical add operations for the same stem
-    cause that stem to be excluded (fail closed). Other correctly-paired
-    stems remain authorized.
-    """
-    canonical_add_count: dict[str, int] = {}
-    canonical_adds_valid: dict[str, Path] = {}
-    legacy_deletes: set[str] = set()
-
-    for op in ops:
-        path_in_repo = op.path_in_repo
-        if not isinstance(path_in_repo, str) or not path_in_repo:
-            continue
-        stem = Path(path_in_repo).stem
-        if not _is_valid_stem(stem):
-            continue
-        if op.action == "add":
-            expected_remote = f"{REMOTE_WIKIPEDIA_DOCUMENTS_DIR}/{stem}.parquet"
-            if path_in_repo != expected_remote:
-                continue
-            canonical_add_count[stem] = canonical_add_count.get(stem, 0) + 1
-            local = op.local_path
-            if local is None:
-                continue
-            try:
-                resolved = Path(local).resolve(strict=False)
-            except (OSError, RuntimeError):
-                continue
-            expected_local = (
-                data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
-            ).resolve()
-            if resolved != expected_local:
-                continue
-            if not expected_local.is_file():
-                continue
-            prior = canonical_adds_valid.get(stem)
-            if prior is not None and prior != resolved:
-                canonical_adds_valid[stem] = Path("__conflict__")
-            else:
-                canonical_adds_valid[stem] = resolved
-        elif op.action == "delete":
-            expected_remote = f"{LEGACY_REMOTE_ARTICLES_DIR}/{stem}.parquet"
-            if path_in_repo != expected_remote:
-                continue
-            legacy_deletes.add(stem)
-
-    single_add_stems = {stem for stem, count in canonical_add_count.items() if count == 1}
-    valid_singles = {
-        stem
-        for stem, marker in canonical_adds_valid.items()
-        if marker != Path("__conflict__") and stem in single_add_stems
-    }
-    return valid_singles & legacy_deletes
 
 
 def _execute_upload_job(
