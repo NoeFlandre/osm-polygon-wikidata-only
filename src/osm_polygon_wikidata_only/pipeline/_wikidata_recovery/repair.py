@@ -34,7 +34,6 @@ from osm_polygon_wikidata_only.domain.ids import article_id
 from osm_polygon_wikidata_only.domain.polygon_document_links import (
     CANONICAL_COLUMNS,
     polygon_document_link_schema,
-    validate_polygon_document_links,
 )
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
@@ -76,6 +75,13 @@ from .checkpoints import (
     RecoveryCheckpointStore,
     recovery_plan_key,
 )
+from .link_rows import (
+    canonical_wikipedia_links_to_legacy as _canonical_wikipedia_links_to_legacy,
+)
+from .link_rows import (
+    legacy_wikipedia_links_to_canonical as _legacy_wikipedia_links_to_canonical,
+)
+from .link_rows import merge_links as _merge_links
 from .models import (
     RecoveryClassification,
     RecoveryRepairError,
@@ -90,6 +96,12 @@ from .transaction import (
     commit_replacements,
     recover_interrupted_transactions,
     transaction_directory,
+)
+from .validation import (
+    validate_existing_rows as _validate_existing_rows,
+)
+from .validation import (
+    validate_preservation as _validate_preservation,
 )
 
 RECOVERY_NETWORK_WORKERS = 8
@@ -622,137 +634,6 @@ def _fetch_missing_documents(
         return [document for documents in per_qid for document in documents]
 
 
-def _merge_links(
-    polygons: list[dict[str, Any]],
-    links: list[dict[str, Any]],
-    documents: list[dict[str, Any]],
-    *,
-    affected_qids: set[str],
-) -> list[dict[str, Any]]:
-    existing_identities: set[tuple[str, str]] = set()
-    merged = [dict(row) for row in links]
-    for row in links:
-        identity = (str(row["polygon_id"]), str(row["article_id"]))
-        if identity in existing_identities:
-            raise RecoveryRepairError(f"duplicate polygon-article identity {identity!r}")
-        existing_identities.add(identity)
-    documents_by_qid: dict[str, list[dict[str, Any]]] = {}
-    for document in documents:
-        documents_by_qid.setdefault(str(document["wikidata"]), []).append(document)
-    for values in documents_by_qid.values():
-        values.sort(key=lambda row: str(row["document_id"]))
-    for polygon in polygons:
-        for qid in qids_from_osm_tag(str(polygon["wikidata"])):
-            if qid not in affected_qids:
-                continue
-            for document in documents_by_qid.get(qid, []):
-                identity = (str(polygon["polygon_id"]), str(document["article_id"]))
-                if identity in existing_identities:
-                    continue
-                merged.append(
-                    {
-                        "polygon_id": polygon["polygon_id"],
-                        "article_id": document["article_id"],
-                        "wikidata": qid,
-                        "language": document["language"],
-                        "source_pbf": polygon["source_pbf"],
-                        "region": polygon["region"],
-                        "osm_type": polygon["osm_type"],
-                        "osm_id": polygon["osm_id"],
-                        "page_id": document["page_id"],
-                        "revision_id": document["revision_id"],
-                        "is_best_language": False,
-                    }
-                )
-                existing_identities.add(identity)
-    return merged
-
-
-def _canonical_wikipedia_links_to_legacy(
-    links: list[dict[str, Any]],
-    documents: list[dict[str, Any]],
-    polygons: list[dict[str, Any]],
-    *,
-    affected_qids: set[str],
-) -> list[dict[str, Any]]:
-    """Adapt canonical Wikipedia links to the recovery engine's legacy shape."""
-    documents_by_id = {str(row["document_id"]): row for row in documents}
-    best_by_polygon = {
-        str(row["polygon_id"]): str(row.get("best_language") or "") for row in polygons
-    }
-    legacy: list[dict[str, Any]] = []
-    for link in links:
-        if link["project"] != "wikipedia":
-            continue
-        document_id = str(link["document_id"])
-        document = documents_by_id.get(document_id)
-        if document is None:
-            if str(link["wikidata"]) in affected_qids:
-                # The audit deliberately routed this dangling canonical link
-                # into recovery. Drop the stale row here; _merge_links rebuilds
-                # it from the authoritative document fetched for the QID.
-                continue
-            raise RecoveryRepairError(
-                f"canonical Wikipedia link references missing document {document_id!r}"
-            )
-        legacy.append(
-            {
-                "polygon_id": link["polygon_id"],
-                "article_id": document["article_id"],
-                "wikidata": link["wikidata"],
-                "language": link["language"],
-                "source_pbf": link["source_pbf"],
-                "region": link["region"],
-                "osm_type": link["osm_type"],
-                "osm_id": link["osm_id"],
-                "page_id": link["page_id"],
-                "revision_id": link["revision_id"],
-                "is_best_language": (
-                    str(link["language"]) == best_by_polygon.get(str(link["polygon_id"]), "")
-                ),
-            }
-        )
-    return legacy
-
-
-def _legacy_wikipedia_links_to_canonical(
-    links: list[dict[str, Any]],
-    documents: list[dict[str, Any]],
-    preserved_wikivoyage_links: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Restore canonical Wikipedia rows and preserve Wikivoyage rows exactly."""
-    documents_by_article = {str(row["article_id"]): row for row in documents}
-    canonical = [dict(row) for row in preserved_wikivoyage_links]
-    for link in links:
-        article_identifier = str(link["article_id"])
-        document = documents_by_article.get(article_identifier)
-        if document is None:
-            raise RecoveryRepairError(
-                f"recovered link references missing article {article_identifier!r}"
-            )
-        canonical.append(
-            {
-                "polygon_id": link["polygon_id"],
-                "document_id": document["document_id"],
-                "project": "wikipedia",
-                "wikidata": link["wikidata"],
-                "language": link["language"],
-                "source_pbf": link["source_pbf"],
-                "region": link["region"],
-                "osm_type": link["osm_type"],
-                "osm_id": link["osm_id"],
-                "page_id": link["page_id"],
-                "revision_id": link["revision_id"],
-            }
-        )
-    try:
-        return validate_polygon_document_links(canonical)
-    except (TypeError, ValueError) as exc:
-        raise RecoveryRepairError(
-            f"Recovered canonical polygon-document links are invalid: {exc}"
-        ) from exc
-
-
 def _recompute_affected_polygon_fields(
     polygons: list[dict[str, Any]],
     links: list[dict[str, Any]],
@@ -868,119 +749,6 @@ def _merge_rows(
         added.add(identifier)
         merged.append(dict(row))
     return merged, added
-
-
-def _validate_existing_rows(
-    polygons: list[dict[str, Any]],
-    links: list[dict[str, Any]],
-    documents: list[dict[str, Any]],
-    sections: list[dict[str, Any]],
-    facts: list[dict[str, Any]],
-) -> None:
-    polygon_tags = _unique_mapping(polygons, "polygon_id", "wikidata", "polygon_id")
-    polygon_qids = {
-        polygon_id: qids_from_osm_tag(raw_tag) for polygon_id, raw_tag in polygon_tags.items()
-    }
-    invalid = next(
-        (raw_tag for raw_tag in polygon_tags.values() if not qids_from_osm_tag(raw_tag)), None
-    )
-    if invalid is not None:
-        raise RecoveryRepairError(f"polygon contains invalid Wikidata identifier {invalid!r}")
-    documents_by_article = _unique_rows(documents, "article_id", "article_id")
-    _unique_rows(documents, "document_id", "document_id")
-    document_ids = {str(row["document_id"]) for row in documents}
-    _unique_rows(sections, "section_id", "section_id")
-    _unique_rows(facts, "fact_id", "fact_id")
-    link_ids: set[tuple[str, str]] = set()
-    for link in links:
-        polygon_id = str(link["polygon_id"])
-        article_identifier = str(link["article_id"])
-        identity = (polygon_id, article_identifier)
-        if identity in link_ids:
-            raise RecoveryRepairError(f"duplicate polygon-article identity {identity!r}")
-        link_ids.add(identity)
-        if polygon_id not in polygon_qids:
-            raise RecoveryRepairError(f"link references missing polygon {polygon_id!r}")
-        document = documents_by_article.get(article_identifier)
-        if document is None:
-            raise RecoveryRepairError(f"link references missing document {article_identifier!r}")
-        qid = str(link["wikidata"])
-        if qid not in polygon_qids[polygon_id] or str(document["wikidata"]) != qid:
-            raise RecoveryRepairError(f"link QID mismatch for {identity!r}")
-    for section in sections:
-        if str(section["document_id"]) not in document_ids:
-            raise RecoveryRepairError(
-                f"section references missing document {section['document_id']!r}"
-            )
-    valid_qids = {qid for qids in polygon_qids.values() for qid in qids}
-    for fact in facts:
-        if str(fact["wikidata"]) not in valid_qids:
-            raise RecoveryRepairError(f"fact references absent QID {fact['wikidata']!r}")
-
-
-def _unique_mapping(
-    rows: list[dict[str, Any]],
-    key: str,
-    value: str,
-    label: str,
-) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for row in rows:
-        identifier = str(row[key])
-        if identifier in result:
-            raise RecoveryRepairError(f"duplicate {label} {identifier!r}")
-        result[identifier] = str(row[value])
-    return result
-
-
-def _unique_rows(
-    rows: list[dict[str, Any]],
-    key: str,
-    label: str,
-) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        identifier = str(row[key])
-        if identifier in result:
-            raise RecoveryRepairError(f"duplicate {label} {identifier!r}")
-        result[identifier] = row
-    return result
-
-
-def _validate_preservation(
-    original_polygons: list[dict[str, Any]],
-    updated_polygons: list[dict[str, Any]],
-    original_documents: list[dict[str, Any]],
-    updated_documents: list[dict[str, Any]],
-    original_sections: list[dict[str, Any]],
-    updated_sections: list[dict[str, Any]],
-    original_facts: list[dict[str, Any]],
-    updated_facts: list[dict[str, Any]],
-    *,
-    affected_qids: set[str],
-    removed_document_ids: set[str],
-    removed_section_ids: set[str],
-) -> None:
-    updated_polygon_map = {str(row["polygon_id"]): row for row in updated_polygons}
-    for row in original_polygons:
-        if (
-            not (set(qids_from_osm_tag(str(row["wikidata"]))) & affected_qids)
-            and updated_polygon_map[str(row["polygon_id"])] != row
-        ):
-            raise RecoveryRepairError(f"healthy polygon changed: {row['polygon_id']}")
-    for original, updated, key, label in (
-        (original_documents, updated_documents, "document_id", "document"),
-        (original_sections, updated_sections, "section_id", "section"),
-        (original_facts, updated_facts, "fact_id", "fact"),
-    ):
-        updated_map = {str(row[key]): row for row in updated}
-        for row in original:
-            if label == "document" and str(row[key]) in removed_document_ids:
-                continue
-            if label == "section" and str(row[key]) in removed_section_ids:
-                continue
-            if updated_map.get(str(row[key])) != row:
-                raise RecoveryRepairError(f"existing {label} changed: {row[key]}")
 
 
 def _terminal_classifications(
