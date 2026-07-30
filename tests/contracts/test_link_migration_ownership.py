@@ -21,7 +21,4 @@ def test_link_migration_conversion_has_focused_owner() -> None:
 
 
 def test_link_migration_transaction_has_focused_owner() -> None:
-    assert (
-        link_migration._commit_ordered_replacements
-        is transaction.commit_ordered_replacements
-    )
+    assert link_migration._commit_ordered_replacements is transaction.commit_ordered_replacements

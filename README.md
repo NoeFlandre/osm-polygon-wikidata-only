@@ -55,14 +55,17 @@ checkout.
 │   ├── __init__.py
 │   ├── augmentation/    # Wikipedia/Wikivoyage sections and Wikidata facts
 │   ├── cli/             # Argument parsing and command adapters
+│   ├── cli/_sync/       # Fail-closed sync publication/retirement helpers
 │   ├── config/          # DataRoot paths and runtime Settings
 │   ├── domain/          # Pure models, schemas, geometry, and identifiers
 │   ├── enrichment/wikidata/ # Wikidata models, parsing, cache, and transport
 │   ├── enrichment/wikipedia/ # Wikipedia models, parsing, cache, and transport
 │   ├── hf/_dataset_stats/ # Dataset-card statistics internals
 │   ├── hf/_geographic/    # Deterministic H3 visualizations
+│   ├── hf/_publication/   # Publication artifact models and validation
 │   ├── hf/_uploader/      # Hub authorization and upload operations
 │   ├── io/              # PBF, Parquet, manifests, cache, and atomic I/O
+│   ├── pipeline/_link_migration/ # Conversion and journaled migration helpers
 │   ├── pipeline/_wikidata_recovery/ # Audited, resumable repair internals
 │   └── utils/           # JSON, logging, retries, time, and scheduling
 ├── tests/               # Unit, integration, contract, and golden tests

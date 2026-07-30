@@ -47,14 +47,16 @@ The largest workflows are split by responsibility:
   each publication path (legacy core, unified sync, augmentation-only);
   immutable `CorePublicationArtifacts` and `PublicationValidationError`
   definitions live in `hf._publication.models` and are re-exported by the
-  facade;
+  facade; `hf._publication.artifacts` is the single schema-validation and
+  finalized-core loading boundary;
 - `hf.coverage_map`, `hf.geographic_text_presence`, and
   `hf.geographic_text_coverage` produce the deterministic PNG visualizations;
 - `hf.dataset_stats` exposes the canonical `DatasetStats` /
   `compute_dataset_stats` / `render_stats_section` facade. The private
   augmentation scanner and private aggregation models live under
   `hf._dataset_stats.augmentation` and `hf._dataset_stats.models`
-  and are NOT exported by the public facade;
+  and are NOT exported by the public facade. Deterministic cache encoding is
+  isolated in `hf._dataset_stats.summary_codec`;
 - `hf.dataset_card` renders the multi-table README with the documented
   YAML configurations (one per core and augmentation table) and the
   augmentation schema descriptions sourced from
@@ -74,14 +76,24 @@ only through the public facades listed in
 
 Underscore-prefixed (private) packages:
 
-- `osm_polygon_wikidata_only.hf._dataset_stats.{models,scanning,aggregation,rendering}`
+- `osm_polygon_wikidata_only.hf._dataset_stats.{models,scanning,aggregation,rendering,summary_codec}`
 - `osm_polygon_wikidata_only.hf._geographic.{models,parquet_inputs,h3_geometry,aggregation,basemap,rendering,coverage,polygon_count}`
-- `osm_polygon_wikidata_only.hf._publication.models`
+- `osm_polygon_wikidata_only.hf._publication.{models,artifacts}`
 - `osm_polygon_wikidata_only.hf._uploader.{errors,protocol,stub,token,authorization,operations,plan}`
-- `osm_polygon_wikidata_only.pipeline._wikidata_recovery.storage`, which owns
-  schema-checked recovery reads/writes and canonical local paths; recovery
-  result/error models, including `RecoveryRepairResult`, live beside the audit
-  models and remain available through the recovery facade
+- `osm_polygon_wikidata_only.pipeline._link_migration.models`,
+  `pipeline._link_migration.conversion`, and
+  `pipeline._link_migration.transaction`, which own immutable plans, pure
+  legacy-link conversion, and crash-safe ordered replacement behind
+  `pipeline.link_migration`;
+- `osm_polygon_wikidata_only.pipeline._wikidata_recovery.storage`,
+  `pipeline._wikidata_recovery.link_rows`, and
+  `pipeline._wikidata_recovery.validation`, which own schema-checked recovery
+  I/O, link conversion, referential integrity, and preservation checks;
+  recovery result/error models, including `RecoveryRepairResult`, remain
+  available through the recovery facade;
+- `osm_polygon_wikidata_only.cli._sync.retirement`, which owns fail-closed
+  canonical-add/legacy-delete pairing while `cli.run_sync` remains the
+  composition root
 
 Other focused modules (not underscore-prefixed but still implementation
 details behind facades):

@@ -158,11 +158,14 @@ def test_readme_repository_layout_names_current_focused_modules() -> None:
 
     for name in (
         "augmentation/",
+        "cli/_sync/",
         "enrichment/wikidata/",
         "enrichment/wikipedia/",
         "hf/_dataset_stats/",
         "hf/_geographic/",
+        "hf/_publication/",
         "hf/_uploader/",
+        "pipeline/_link_migration/",
         "pipeline/_wikidata_recovery/",
     ):
         assert name in layout
@@ -182,6 +185,11 @@ def test_architecture_names_current_private_ownership_boundaries() -> None:
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
 
     assert "hf._publication.models" in architecture
+    assert "hf._publication.artifacts" in architecture
+    assert "hf._dataset_stats.summary_codec" in architecture
+    assert "pipeline._link_migration.transaction" in architecture
+    assert "cli._sync.retirement" in architecture
+    assert "pipeline._wikidata_recovery.validation" in architecture
     assert "pipeline._wikidata_recovery.storage" in architecture
     assert "RecoveryRepairResult" in architecture
 

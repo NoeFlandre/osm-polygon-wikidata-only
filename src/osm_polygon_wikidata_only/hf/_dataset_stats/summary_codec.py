@@ -62,10 +62,7 @@ def summary_from_json(blob: Mapping[str, object]) -> PerFileSummary | None:
         value = blob.get(key)
         if not isinstance(value, dict):
             return {}
-        return {
-            str(k): int(cast(Any, v))
-            for k, v in cast(dict[object, object], value).items()
-        }
+        return {str(k): int(cast(Any, v)) for k, v in cast(dict[object, object], value).items()}
 
     def integer(key: str) -> int:
         value = blob.get(key)
