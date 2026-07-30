@@ -36,7 +36,7 @@ import logging
 from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .cache import (
     _file_fingerprint,
@@ -433,18 +433,17 @@ def _summary_from_json(blob: Mapping[str, object]) -> PerFileSummary | None:
     def _get_dict_str(key: str) -> dict[str, str]:
         if key in blob and isinstance(blob[key], dict):
             value = blob[key]
-            inner: dict[object, object] = value  # type: ignore[assignment]
+            inner = cast(dict[object, object], value)
             return {str(k): str(v) for k, v in inner.items()}
         return {}
 
     def _get_dict_int(key: str) -> dict[str, int]:
         if key in blob and isinstance(blob[key], dict):
             value = blob[key]
-            inner: dict[object, object] = value  # type: ignore[assignment]
+            inner = cast(dict[object, object], value)
             items: list[tuple[str, int]] = []
             for k, v in inner.items():
-                coerced_v = v
-                coerced_int = int(coerced_v)  # type: ignore[call-overload]
+                coerced_int = int(cast(Any, v))
                 items.append((str(k), coerced_int))
             return dict(items)
         return {}

@@ -384,4 +384,4 @@ public functions or explicit capability protocols.
 ## Verification
 
 Run `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`,
-and `uv run mypy src` before merging a change.
+and `uv run ty check src scripts` before merging a change.

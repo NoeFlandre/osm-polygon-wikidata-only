@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 
@@ -1056,11 +1056,12 @@ def _stage_manifests(
         raise RecoveryRepairError(f"Augmentation manifest is unreadable: {error}") from error
     if not isinstance(augmentation, dict) or not isinstance(augmentation.get(stem), dict):
         raise RecoveryRepairError(f"Augmentation manifest is missing region {stem!r}")
-    augmentation_entry = dict(augmentation[stem])
+    augmentation_mapping = cast(dict[str, object], augmentation)
+    augmentation_entry = dict(cast(dict[str, object], augmentation_mapping[stem]))
     counts = augmentation_entry.get("counts")
     if not isinstance(counts, dict):
         raise RecoveryRepairError(f"Augmentation manifest counts are invalid for {stem!r}")
-    updated_counts = dict(counts)
+    updated_counts = dict(cast(dict[str, object], counts))
     updated_counts.update(
         {
             "wikipedia_documents": len(documents),
@@ -1078,8 +1079,8 @@ def _stage_manifests(
             "counts": updated_counts,
         }
     )
-    augmentation[stem] = augmentation_entry
-    atomic_write_text(staged["augmentation_manifest"], dumps(augmentation) + "\n")
+    augmentation_mapping[stem] = augmentation_entry
+    atomic_write_text(staged["augmentation_manifest"], dumps(augmentation_mapping) + "\n")
 
 
 __all__ = ["RecoveryRepairError", "RecoveryRepairResult", "repair_wikidata_region"]

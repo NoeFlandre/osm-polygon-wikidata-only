@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping

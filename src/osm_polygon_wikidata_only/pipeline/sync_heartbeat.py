@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgressSnapshot
+from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgressSnapshot
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaAuthSnapshot
 from osm_polygon_wikidata_only.pipeline.heartbeat import EnrichmentHeartbeat
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
@@ -88,7 +89,7 @@ class SyncHeartbeat(EnrichmentHeartbeat):
         self._sync_started_at = clock()
         super().__init__(
             region=region,
-            snapshot=lambda: None,  # type: ignore[arg-type,return-value]
+            snapshot=lambda: EnrichmentProgressSnapshot(0, 0, 0, 0, 0, "sync"),
             log=log,
             interval_s=interval_s,
             clock=clock,

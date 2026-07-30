@@ -52,7 +52,7 @@ the boundary, move one responsibility, and prove output equivalence.
 uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src
+uv run ty check src scripts
 uv build
 git diff --check
 ```

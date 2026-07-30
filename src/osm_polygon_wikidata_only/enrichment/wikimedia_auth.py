@@ -346,7 +346,7 @@ class WikimediaSession:
         parsed: object = json.loads(body.decode("utf-8"))
         if not isinstance(parsed, dict):
             raise ValueError("expected JSON object")
-        return parsed
+        return cast(dict[str, object], parsed)
 
     def _read(self, opener: _Opener, request: urllib.request.Request) -> tuple[bytes, str]:
         def operation() -> tuple[bytes, str]:

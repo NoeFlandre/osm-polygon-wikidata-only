@@ -23,6 +23,7 @@ from typing import Any
 
 import osmium
 import osmium.geom
+import osmium.osm
 
 _REGION_RE = re.compile(r"^(?P<region>.+)-latest\.osm\.pbf$")
 

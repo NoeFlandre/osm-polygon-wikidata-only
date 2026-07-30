@@ -92,14 +92,16 @@ def load_pending_publications(data_root: DataRoot) -> set[str]:
     if not isinstance(stems, list):
         raise TypeError("Pending publication manifest 'stems' field must be a list")
 
+    validated_stems: list[str] = []
     for idx, stem in enumerate(stems):
         if not isinstance(stem, str):
             raise TypeError(f"Pending publication stem at index {idx} is not a string: {stem!r}")
         _validate_stem(stem)
-    if len(stems) != len(set(stems)):
+        validated_stems.append(stem)
+    if len(validated_stems) != len(set(validated_stems)):
         raise ValueError("Pending publication manifest contains duplicate stems")
 
-    return set(stems)
+    return set(validated_stems)
 
 
 def save_pending_publications(data_root: DataRoot, stems: set[str]) -> None:

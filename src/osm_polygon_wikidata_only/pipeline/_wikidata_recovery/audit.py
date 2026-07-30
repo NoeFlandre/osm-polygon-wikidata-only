@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -563,7 +563,7 @@ def _load_receipts(path: Path) -> tuple[dict[str, object], bool]:
     regions = raw.get("regions")
     if not isinstance(regions, dict):
         return {}, False
-    return dict(regions), True
+    return dict(cast(dict[str, object], regions)), True
 
 
 def _reuse_receipt(

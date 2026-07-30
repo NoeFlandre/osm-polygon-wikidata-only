@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.augmentation.steps import sha256_file
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
@@ -108,7 +108,7 @@ def _read_journal(path: Path) -> dict[str, Any]:
     entries = raw.get("entries")
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
         raise RuntimeError(f"Invalid recovery transaction entries: {path}")
-    return raw
+    return cast(dict[str, Any], raw)
 
 
 def _write_journal(path: Path, journal: dict[str, Any]) -> None:

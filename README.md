@@ -66,7 +66,7 @@ checkout.
 │   ├── pipeline/_wikidata_recovery/ # Audited, resumable repair internals
 │   └── utils/           # JSON, logging, retries, time, and scheduling
 ├── tests/               # Unit, integration, contract, and golden tests
-├── pyproject.toml       # Build, dev deps, ruff/mypy/pytest config
+├── pyproject.toml       # Build, dev dependencies, Ruff/ty/pytest config
 └── README.md
 ```
 
@@ -99,7 +99,7 @@ This installs all runtime and development dependencies into a managed
 |---|---|
 | `pytest`, `pytest-cov` | Tests |
 | `ruff` | Lint + format |
-| `mypy` | Type-check |
+| `ty` | Type-check production code and maintained scripts |
 
 ---
 
@@ -416,7 +416,7 @@ Run the complete local gate before contributing:
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src
+uv run ty check src scripts
 ```
 
 The test suite uses in-memory clients and stub PBF readers for unit coverage.
@@ -578,7 +578,7 @@ uv run ruff format .
 ### Type-check
 
 ```bash
-uv run mypy src
+uv run ty check src scripts
 ```
 
 ---

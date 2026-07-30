@@ -184,3 +184,16 @@ def test_architecture_names_current_private_ownership_boundaries() -> None:
     assert "hf._publication.models" in architecture
     assert "pipeline._wikidata_recovery.storage" in architecture
     assert "RecoveryRepairResult" in architecture
+
+
+def test_current_documentation_uses_uv_ruff_and_ty_quality_gate() -> None:
+    documents = (
+        REPOSITORY / "README.md",
+        REPOSITORY / "docs/development.md",
+        REPOSITORY / "docs/architecture.md",
+    )
+    combined = "\n".join(document.read_text(encoding="utf-8") for document in documents)
+
+    assert "uv run ruff check ." in combined
+    assert "uv run ty check src scripts" in combined
+    assert "mypy" not in combined.lower()

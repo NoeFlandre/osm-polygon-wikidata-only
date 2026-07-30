@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.domain.models import ManifestStats
 from osm_polygon_wikidata_only.utils.json import dumps, loads
@@ -36,7 +36,7 @@ def load_manifest(path: Path) -> dict[str, dict[str, Any]]:
     parsed: object = loads(text)
     if not isinstance(parsed, dict):
         return {}
-    return parsed
+    return cast(dict[str, dict[str, Any]], parsed)
 
 
 def save_manifest(path: Path, entries: dict[str, dict[str, Any]]) -> None:

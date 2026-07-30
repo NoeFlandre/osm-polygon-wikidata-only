@@ -24,10 +24,11 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
+    AugmentationResult,
     augment_region,
     augmentation_is_current,
     load_existing_augmentation_result,
@@ -45,6 +46,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_retirement import (
 from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.hf._publication.models import CorePublicationArtifacts
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
@@ -73,7 +75,7 @@ from osm_polygon_wikidata_only.pipeline.pending_publications import (
     load_pending_publications,
     remove_pending_publications,
 )
-from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf
+from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf, ProcessResult
 from osm_polygon_wikidata_only.pipeline.sync_planner import (
     RegionSyncState,
     SyncAction,
@@ -645,8 +647,8 @@ def execute(
             data_root=data_root,
             repo_id=settings.repo_id,
             stem=stem,
-            augmentation=augmentation,  # type: ignore[arg-type]
-            core=core,  # type: ignore[arg-type]
+            augmentation=cast(AugmentationResult, augmentation),
+            core=cast(ProcessResult | CorePublicationArtifacts | None, core),
             world_land_warning=None,
             refresh_maps=(
                 getattr(state, "action", None) is not SyncAction.RECOVERY

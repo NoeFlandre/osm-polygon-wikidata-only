@@ -33,7 +33,7 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaHttpSession,
@@ -103,7 +103,7 @@ def read_wikimedia_json(
     parsed: object = json.loads(raw.decode("utf-8"))
     if not isinstance(parsed, dict):
         raise _NonObjectJsonError(type(parsed).__name__)
-    return parsed
+    return cast(dict[str, Any], parsed)
 
 
 def _maybe_report_throttle(

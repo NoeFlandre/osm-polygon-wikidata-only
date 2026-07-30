@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only import __version__
 from osm_polygon_wikidata_only.config.settings import Settings
@@ -86,7 +87,7 @@ def _parse_geom(geom_json: str) -> dict[str, object] | None:
     except json.JSONDecodeError as e:
         LOGGER.debug("Skipping element with invalid GeoJSON: %s", e)
         return None
-    return parsed if isinstance(parsed, dict) else None
+    return cast(dict[str, object], parsed) if isinstance(parsed, dict) else None
 
 
 def _compute_geom(geom_json: str) -> tuple[PolygonGeometry, dict[str, object]] | None:
@@ -188,11 +189,11 @@ def extract_pbf(pbf_path: Path, *, settings: Settings) -> ExtractedPbf:
 
     reader = _pbf_reader_mod.PBFReader(pbf_path)
 
-    def add_candidate(candidate: object) -> None:
+    def add_candidate(candidate: PolygonCandidate) -> None:
         if settings.limit is not None and len(polygons) >= settings.limit:
             return
         polygon = candidate_to_polygon(
-            candidate,  # type: ignore[arg-type]
+            candidate,
             source_pbf_stem=stem.stem,
             region=stem.region,
             source_pbf=pbf_path.name,
@@ -203,7 +204,8 @@ def extract_pbf(pbf_path: Path, *, settings: Settings) -> ExtractedPbf:
 
     stream_candidates = getattr(reader, "iter_polygon_candidates", None)
     if callable(stream_candidates):
-        stream_candidates(add_candidate)
+        typed_stream = cast(Callable[[Callable[[PolygonCandidate], None]], None], stream_candidates)
+        typed_stream(add_candidate)
     else:
         for candidate in reader.collect_polygon_candidates():
             add_candidate(candidate)
