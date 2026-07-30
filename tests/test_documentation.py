@@ -205,3 +205,27 @@ def test_current_documentation_uses_uv_ruff_and_ty_quality_gate() -> None:
     assert "uv run ruff check ." in combined
     assert "uv run ty check src scripts" in combined
     assert "mypy" not in combined.lower()
+
+
+def test_public_docs_explain_the_complete_project_tooling_stack() -> None:
+    documents = (
+        REPOSITORY / "README.md",
+        REPOSITORY / "docs/development.md",
+        REPOSITORY / "docs/architecture.md",
+    )
+    combined = "\n".join(document.read_text(encoding="utf-8") for document in documents).lower()
+
+    for tool in (
+        "uv",
+        "ruff",
+        "ty",
+        "pytest",
+        "pre-commit",
+        "typer",
+        "rich",
+        "tqdm",
+        "just",
+        "github actions",
+    ):
+        assert tool in combined
+    assert "osm-polygon-wikidata-only-audit-remote" in combined

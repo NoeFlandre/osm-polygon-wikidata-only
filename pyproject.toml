@@ -25,11 +25,15 @@ dependencies = [
     "matplotlib>=3.8",
     "osmium>=3.7",
     "pyarrow>=16",
+    "typer>=0.27.0",
+    "rich>=15.0.0",
+    "tqdm>=4.68.4",
 ]
 
 [project.scripts]
 osm-polygon-wikidata-only = "osm_polygon_wikidata_only.cli.app:run"
 osm-polygon-wikidata-only-enforce-integrity = "osm_polygon_wikidata_only.cli.enforce_integrity:run"
+osm-polygon-wikidata-only-audit-remote = "osm_polygon_wikidata_only.cli.audit_remote:run"
 
 [project.urls]
 Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
@@ -48,6 +52,7 @@ packages = ["src/osm_polygon_wikidata_only"]
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.1",
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.5",

@@ -8,6 +8,14 @@ The project supports Python 3.12 and uses `uv` for reproducible environments:
 uv sync --frozen
 ```
 
+Install [`just`](https://just.systems/) as the project command runner, then
+install the repository's fast pre-commit hooks:
+
+```bash
+uv run pre-commit install
+just --list
+```
+
 Production data belongs under `OSM_POLYGON_DATA_ROOT`; tests use temporary
 directories and in-memory clients. The automated suite must not access the
 network or require a real PBF collection.
@@ -49,16 +57,36 @@ the boundary, move one responsibility, and prove output equivalence.
 ## Quality gate
 
 ```bash
-uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check src scripts
-uv build
-git diff --check
+just check
 ```
+
+The recipes use uv to run pytest with coverage, Ruff lint and format checks, ty
+over `src` and maintained `scripts`, the package build, and the whitespace
+gate. GitHub Actions invokes the same Just recipes. Pre-commit intentionally
+runs only the fast Ruff and ty subset; `just check` remains the complete gate.
+Concretely, the gate owns `uv run ruff check .`,
+`uv run ruff format --check .`, `uv run ty check src scripts`, `uv build`, and
+`git diff --check`; contributors do not need to maintain a separate command
+sequence.
 
 Strict typing applies to `src/`. Decoded third-party JSON may begin as `Any`,
 but public and internal boundaries should narrow it immediately.
+
+## Operator audit
+
+`osm-polygon-wikidata-only-audit-remote` is a read-only maintenance command:
+
+```bash
+uv run osm-polygon-wikidata-only-audit-remote \
+  --data-root "$OSM_POLYGON_DATA_ROOT"
+```
+
+Typer owns this command's option parsing, Rich renders its report, and tqdm
+shows interactive progress while local augmentation state is checked. tqdm is
+disabled automatically when stderr is not a terminal, keeping captured logs
+clean. The command calculates a reconciliation plan but never uploads, deletes,
+or rewrites data. These interface libraries are deliberately not used by the
+stable argparse production CLI or its `sync-dir` logging.
 
 ## Release checklist
 

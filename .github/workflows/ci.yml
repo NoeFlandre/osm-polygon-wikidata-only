@@ -17,17 +17,18 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: taiki-e/install-action@just
       - name: Install Python
         run: uv python install 3.12
       - name: Install locked dependencies
         run: uv sync --frozen
       - name: Test with coverage
-        run: uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
+        run: just coverage
       - name: Lint
-        run: uv run ruff check .
+        run: just lint
       - name: Check formatting
-        run: uv run ruff format --check .
+        run: just format-check
       - name: Type check
-        run: uv run ty check src scripts
+        run: just typecheck
       - name: Build distributions
-        run: uv build
+        run: just build

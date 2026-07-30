@@ -34,5 +34,77 @@ def test_project_uses_ty_as_its_only_static_type_checker() -> None:
     assert "mypy" not in config["tool"]
 
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "uv run ty check src scripts" in workflow
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    assert "run: just typecheck" in workflow
+    assert "uv run ty check src scripts" in justfile
     assert "uv run mypy" not in workflow
+
+
+def test_project_declares_operator_and_quality_tooling_directly() -> None:
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime_names = {
+        dependency.split("=", 1)[0].split(">", 1)[0]
+        for dependency in config["project"]["dependencies"]
+    }
+    development_names = {
+        dependency.split("=", 1)[0].split(">", 1)[0]
+        for dependency in config["dependency-groups"]["dev"]
+    }
+
+    assert {"typer", "rich", "tqdm"} <= runtime_names
+    assert {"pytest", "pytest-cov", "ruff", "ty", "pre-commit"} <= development_names
+    assert (
+        config["project"]["scripts"]["osm-polygon-wikidata-only-audit-remote"]
+        == "osm_polygon_wikidata_only.cli.audit_remote:run"
+    )
+
+
+def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    for recipe in (
+        "sync:",
+        "test:",
+        "coverage:",
+        "lint:",
+        "format:",
+        "format-check:",
+        "typecheck:",
+        "build:",
+        "check:",
+    ):
+        assert recipe in justfile
+    for command in (
+        "uv sync --frozen",
+        "uv run pytest",
+        "uv run ruff check .",
+        "uv run ruff format --check .",
+        "uv run ty check src scripts",
+        "uv build",
+        "git diff --check",
+    ):
+        assert command in justfile
+    assert "mypy" not in justfile
+
+
+def test_pre_commit_runs_fast_uv_managed_quality_hooks() -> None:
+    root = Path(__file__).parents[1]
+    config = (root / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+
+    assert "repo: local" in config
+    assert "uv run ruff check ." in config
+    assert "uv run ruff format --check ." in config
+    assert "uv run ty check src scripts" in config
+    assert "mypy" not in config
+
+
+def test_github_actions_delegates_quality_commands_to_just() -> None:
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "taiki-e/install-action@just" in workflow
+    for recipe in ("coverage", "lint", "format-check", "typecheck", "build"):
+        assert f"run: just {recipe}" in workflow
+    assert "uv sync --frozen" in workflow

@@ -15,6 +15,22 @@ isolation.
 | `cli` | Argument parsing and dependency wiring only. |
 | `utils` | Small utilities: JSON, time, retry, request scheduler. |
 
+## Project toolchain
+
+uv owns dependency resolution, the lockfile, isolated command execution, and
+package builds. pytest owns behavioral and contract verification; Ruff owns
+linting and formatting; ty is the sole static type checker. A root `Justfile`
+is the human-facing command catalog, and GitHub Actions delegates its coverage,
+lint, format-check, type-check, and build steps to those same recipes.
+Repository-local pre-commit hooks run the fast Ruff and ty subset.
+
+The production CLI remains argparse-based because its help and parsing behavior
+are public compatibility contracts. The independent, read-only remote audit is
+an operator interface: Typer parses its options, Rich renders deterministic
+tables, and tqdm displays its local-region scan only on an interactive
+terminal. This keeps interactive presentation concerns out of pipeline
+orchestration and dataset generation.
+
 ## Dependency direction
 
 Dependencies point inward: CLI and pipeline orchestration compose I/O and
@@ -395,5 +411,6 @@ public functions or explicit capability protocols.
 
 ## Verification
 
-Run `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`,
-and `uv run ty check src scripts` before merging a change.
+Run `just check` before merging a change. It executes the frozen uv sync,
+pytest coverage suite, Ruff lint and format checks, ty, the package build, and
+the whitespace gate used by GitHub Actions.

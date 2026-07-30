@@ -97,12 +97,15 @@ This installs all runtime and development dependencies into a managed
 | `datasets` | Hugging Face dataset utilities |
 | `huggingface-hub` | HF Hub client |
 | `pyarrow` | Parquet serialization |
+| `typer`, `rich`, `tqdm` | Read-only operator audit CLI, structured reports, and interactive progress |
 
 | Dev | Purpose |
 |---|---|
 | `pytest`, `pytest-cov` | Tests |
 | `ruff` | Lint + format |
 | `ty` | Type-check production code and maintained scripts |
+| `pre-commit` | Fast commit-time quality checks |
+| [`just`](https://just.systems/) | Shared local and CI command runner |
 
 ---
 
@@ -413,17 +416,37 @@ when you intentionally want to rebuild a completed PBF.
 
 ## Development quality checks
 
-Run the complete local gate before contributing:
+The project exposes the same uv-managed checks locally and in GitHub
+Actions through `just`:
 
 ```bash
-uv run pytest -q
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check src scripts
+just check
+```
+
+Install the pre-commit hooks once per checkout:
+
+```bash
+uv run pre-commit install
 ```
 
 The test suite uses in-memory clients and stub PBF readers for unit coverage.
 It does not require a real PBF, external data root, or Wikimedia request.
+
+### Read-only remote audit
+
+The separate operator command uses Typer for its CLI, Rich for its report, and
+tqdm for interactive per-region progress:
+
+```bash
+uv run osm-polygon-wikidata-only-audit-remote \
+  --data-root "$OSM_POLYGON_DATA_ROOT"
+```
+
+It compares finalized local artifacts with the Hugging Face inventory and
+prints a reconciliation plan. It does not modify local files or the remote
+dataset. The production `osm-polygon-wikidata-only` command remains a stable,
+non-interactive argparse interface; `sync-dir` keeps its low-noise log
+heartbeats instead of terminal progress bars.
 
 ---
 
@@ -564,7 +587,7 @@ remains available when neither credential environment variable is set.
 ### Run the tests
 
 ```bash
-uv run pytest
+just test
 ```
 
 The 1,300+ tracked tests are deterministic and require no live network;
@@ -574,15 +597,19 @@ HTTP clients come in three flavors (`Http…`, `InMemory…`,
 ### Lint and format
 
 ```bash
-uv run ruff check .
-uv run ruff format .
+just lint
+just format
 ```
 
 ### Type-check
 
 ```bash
-uv run ty check src scripts
+just typecheck
 ```
+
+Run `just --list` for every available recipe. All Python commands are executed
+through uv; GitHub Actions uses the same coverage, lint, format-check,
+type-check, and build recipes.
 
 ---
 
