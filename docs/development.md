@@ -61,13 +61,20 @@ just check
 ```
 
 The recipes use uv to run pytest with coverage, Ruff lint and format checks, ty
-over `src` and maintained `scripts`, the package build, and the whitespace
-gate. GitHub Actions invokes the same Just recipes. Pre-commit intentionally
-runs only the fast Ruff and ty subset; `just check` remains the complete gate.
+over `src` and maintained `scripts`, the strict MkDocs build, the package build,
+and the whitespace gate. GitHub Actions invokes the same quality recipes and
+publishes the documentation site from `main`. Pre-commit intentionally runs
+only the fast Ruff and ty subset; `just check` remains the complete gate.
 Concretely, the gate owns `uv run ruff check .`,
 `uv run ruff format --check .`, `uv run ty check src scripts`, `uv build`, and
 `git diff --check`; contributors do not need to maintain a separate command
 sequence.
+
+Build the documentation site locally without starting a server:
+
+```bash
+just docs
+```
 
 Strict typing applies to `src/`. Decoded third-party JSON may begin as `Any`,
 but public and internal boundaries should narrow it immediately.

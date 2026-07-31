@@ -27,5 +27,8 @@ typecheck:
 build:
     uv build
 
-check: sync coverage lint format-check typecheck build
+docs:
+    uv run mkdocs build --strict --site-dir /tmp/osm-polygon-wikidata-only-site
+
+check: sync coverage lint format-check typecheck build docs
     git diff --check

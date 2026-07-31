@@ -8,6 +8,7 @@ Face dataset.
 
 * **GitHub**: <https://github.com/NoeFlandre/osm-polygon-wikidata-only>
 * **Hugging Face dataset**: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only>
+* **Documentation**: <https://noeflandre.github.io/osm-polygon-wikidata-only/>
 * **Maintainer**: Noé Flandre
 
 Documentation: [architecture](docs/architecture.md) ·
@@ -118,9 +119,9 @@ Resolution order:
 
 1. `--data-root <path>` CLI flag.
 2. `OSM_POLYGON_DATA_ROOT` environment variable.
-3. The recommended local path above, when it exists.
 
-A data root that does not exist is rejected (no silent fallback).
+A data root is required, must already exist, and is rejected when it points
+inside the source checkout. There is no silent fallback.
 
 Default sub-directories under the data root:
 

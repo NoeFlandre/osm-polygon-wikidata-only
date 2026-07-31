@@ -73,6 +73,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "format-check:",
         "typecheck:",
         "build:",
+        "docs:",
         "check:",
     ):
         assert recipe in justfile
@@ -83,6 +84,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "uv run ruff format --check .",
         "uv run ty check src scripts",
         "uv build",
+        "uv run mkdocs build --strict",
         "git diff --check",
     ):
         assert command in justfile
