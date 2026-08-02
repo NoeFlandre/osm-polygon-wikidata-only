@@ -50,6 +50,16 @@ LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE = "augmentation/manifests/augmentation_
 REMOTE_COVERAGE_MAP_FILE = "assets/coverage_map.png"
 LEGACY_REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
 
+# The static hero image shown at the top of the public README and dataset card.
+REMOTE_DATASET_HERO_FILE = "assets/dataset_hero.png"
+_REPOSITORY_DATASET_HERO_FILE = Path(__file__).resolve().parents[3] / REMOTE_DATASET_HERO_FILE
+_PACKAGED_DATASET_HERO_FILE = Path(__file__).resolve().parents[1] / REMOTE_DATASET_HERO_FILE
+LOCAL_DATASET_HERO_FILE = (
+    _REPOSITORY_DATASET_HERO_FILE
+    if _REPOSITORY_DATASET_HERO_FILE.is_file()
+    else _PACKAGED_DATASET_HERO_FILE
+)
+
 # Superseded geographic Wikipedia coverage path, retained for compatibility
 # imports and its atomic remote deletion.
 REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE = "assets/geographic_wikipedia_text_coverage.png"
@@ -103,10 +113,12 @@ __all__ = [
     "LEGACY_REMOTE_COVERAGE_MAP_FILE",
     "LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
     "LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",
+    "LOCAL_DATASET_HERO_FILE",
     "REMOTE_ARTICLES_DIR",
     "REMOTE_AUGMENTATION_MANIFEST_FILE",
     "REMOTE_CONTAINMENT_RETIREMENT_FILE",
     "REMOTE_COVERAGE_MAP_FILE",
+    "REMOTE_DATASET_HERO_FILE",
     "REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
     "REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",
     "REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE",

@@ -413,9 +413,9 @@ def build_golden_publication(out: Path) -> Path:
             "assets/geographic_polygon_count.png",
             "assets/coverage_map.png",
             "coverage_map.png",
+            "wikipedia/documents/monaco-latest.parquet",
         ],
         "augmentation": [
-            "wikipedia/documents/monaco-latest.parquet",
             "articles/monaco-latest.parquet",
             "wikipedia/sections/monaco-latest.parquet",
             "wikivoyage/documents/monaco-latest.parquet",
@@ -423,6 +423,7 @@ def build_golden_publication(out: Path) -> Path:
             "wikidata/facts/monaco-latest.parquet",
             "manifests/augmentation_manifest.json",
             "augmentation/manifests/augmentation_manifest.json",
+            "assets/dataset_hero.png",
             "README.md",
         ],
     }

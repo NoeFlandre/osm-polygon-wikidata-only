@@ -1,5 +1,7 @@
 # osm-polygon-wikidata-only
 
+![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)
+
 Extract polygonal OpenStreetMap features carrying a `wikidata=*` tag
 from Geofabrik `.osm.pbf` extracts, enrich them with Wikidata and
 Wikipedia (articles per sitelink language, with revisions, license,

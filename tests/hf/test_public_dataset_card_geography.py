@@ -194,7 +194,7 @@ def test_dataset_card_uses_public_language_and_combined_map_first() -> None:
     assert "assets/geographic_text_density.png" in card
     assert "assets/geographic_wikipedia_text_coverage.png" not in card
     assert "assets/geographic_polygon_count.png" not in card
-    assert card.count("![") == 3
+    assert card.count("![") == 4
     assert "Each point represents one dataset polygon carrying an OSM" in card
     assert "raw number of polygons with non-empty Wikipedia or Wikivoyage text" in card
 

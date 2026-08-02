@@ -47,6 +47,8 @@ dataset_info:
 
 # NoeFlandre/osm-polygon-wikidata-only
 
+![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)
+
 OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and Wikivoyage text across all available languages. The published tables are:
 
 - `polygons/<stem>.parquet` — one row per polygon
@@ -59,7 +61,7 @@ OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and W
 
 Links are derived from the Wikidata identifiers shared by each OSM polygon and its Wikipedia or Wikivoyage documents.
 
-Generated on 2026-07-24.
+Generated on 2026-08-02.
 
 Maintained by **Noé Flandre**.
 

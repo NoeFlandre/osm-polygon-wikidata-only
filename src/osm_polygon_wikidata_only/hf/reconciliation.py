@@ -12,6 +12,7 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_DATASET_HERO_FILE,
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_MANIFEST_FILE,
     canonical_region_paths,
@@ -155,6 +156,7 @@ class ReconciliationPlanner:
             (REMOTE_AUGMENTATION_MANIFEST_FILE, "manifests/augmentation_manifest.json"),
             ("README.md", "README.md"),
             (REMOTE_COVERAGE_MAP_FILE, "assets/coverage_map.png"),
+            (REMOTE_DATASET_HERO_FILE, REMOTE_DATASET_HERO_FILE),
             (REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE, "assets/geographic_text_density.png"),
         ]
         for remote_path, _ in repo_files:

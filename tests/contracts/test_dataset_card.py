@@ -48,6 +48,13 @@ def test_card_embeds_coverage_map_reference() -> None:
     assert "![Coverage Map](assets/coverage_map.png)" in md
 
 
+def test_card_starts_with_the_dataset_hero() -> None:
+    md = _render()
+    hero = "![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)"
+    assert hero in md
+    assert md.index(hero) < md.index("OSM polygons tagged with")
+
+
 def test_card_embeds_geographic_assets() -> None:
     md = _render()
     assert "assets/geographic_text_density.png" in md

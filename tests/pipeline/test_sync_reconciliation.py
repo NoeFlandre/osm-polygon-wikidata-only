@@ -578,6 +578,7 @@ def test_metadata_only_gaps_repaired_and_enqueued_last(
     assert stub.remote_files is not None
     assert "README.md" in stub.remote_files
     assert "assets/coverage_map.png" in stub.remote_files
+    assert "assets/dataset_hero.png" in stub.remote_files
 
     # Verify enqueued last:
     # The last commit in stub.commits should be the metadata-only repair commit

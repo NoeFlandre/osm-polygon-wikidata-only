@@ -411,7 +411,7 @@ def test_readme_remains_last_in_core_upload(
         world_land_warning=lambda msg: None,
     )
     # The README follows the canonical document retirement and coverage assets.
-    assert files[9].path_in_repo == "README.md"
+    assert files[10].path_in_repo == "README.md"
 
 
 def test_readme_remains_last_in_region_upload(

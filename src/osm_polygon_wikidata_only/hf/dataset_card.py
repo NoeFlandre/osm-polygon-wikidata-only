@@ -38,6 +38,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_DATASET_HERO_FILE,
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
 )
@@ -106,6 +107,7 @@ def render_dataset_card(
 
     body = (
         f"# {repo_id}\n\n"
+        f"![{repo_id} dataset overview]({REMOTE_DATASET_HERO_FILE})\n\n"
         "OSM polygons tagged with a `wikidata=*` reference, "
         "enriched with Wikipedia and Wikivoyage text across all available languages. "
         "The published tables are:\n\n"

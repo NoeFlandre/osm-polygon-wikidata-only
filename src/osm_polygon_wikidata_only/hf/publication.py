@@ -16,9 +16,10 @@ explicit ``delete`` ops for legacy paths to migrate the remote layout.
     7. combined Wikipedia/Wikivoyage H3 text density
     8. legacy Wikipedia H3 coverage (delete)
     9. legacy all-polygon H3 density (delete)
-    10. README
-    11. canonical all-polygons coverage map (add)
-    12. legacy coverage map (delete)
+    10. static dataset hero image (add)
+    11. README
+    12. canonical all-polygons coverage map (add)
+    13. legacy coverage map (delete)
 
 * Unified sync with changed core
   (called by ``cli.run_sync._build_region_publication``):
@@ -39,7 +40,8 @@ explicit ``delete`` ops for legacy paths to migrate the remote layout.
     15. wikidata facts
     16. canonical augmentation manifest (add)
     17. legacy augmentation manifest (delete)
-    18. README
+    18. static dataset hero image (add)
+    19. README (when metadata is refreshed)
 
 * Augmentation-only publication (legacy
   ``cli.commands._augmentation_upload_files`` behavior):
@@ -55,7 +57,12 @@ explicit ``delete`` ops for legacy paths to migrate the remote layout.
     10. combined Wikipedia/Wikivoyage H3 text density
     11. legacy Wikipedia H3 coverage (delete)
     12. legacy all-polygon H3 density (delete)
-    13. README
+    13. static dataset hero image (add)
+    14. README
+
+The static hero image is stored locally at ``assets/dataset_hero.png`` and
+published remotely as ``assets/dataset_hero.png`` whenever a README snapshot
+is published. It is a presentation asset, separate from the generated maps.
 
 Canonical remote layout
 ------------------------
@@ -179,9 +186,11 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_COVERAGE_MAP_FILE,
     LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
+    LOCAL_DATASET_HERO_FILE,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
     REMOTE_CONTAINMENT_RETIREMENT_FILE,
     REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_DATASET_HERO_FILE,
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_LINKS_DIR,
@@ -194,6 +203,13 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.publication")
+
+
+def _dataset_hero_op() -> PublicationOp:
+    """Return the immutable repository hero asset publication operation."""
+    if not LOCAL_DATASET_HERO_FILE.is_file():
+        raise FileNotFoundError(f"Dataset hero asset is missing: {LOCAL_DATASET_HERO_FILE}")
+    return add_op(LOCAL_DATASET_HERO_FILE, path_in_repo=REMOTE_DATASET_HERO_FILE)
 
 
 def _augmentation_migration_ops(
@@ -456,6 +472,7 @@ def assemble_core_upload(
     manifests directory at all.
     """
     _validate_core_artifacts(core)
+    hero_op = _dataset_hero_op()
     snapshot, card_snapshot = snapshot_upload_manifests(data_root=data_root, core=core)
     map_snapshot, text_presence_snapshot, density_snapshot = refresh_coverage_assets(
         data_root=data_root,
@@ -485,6 +502,7 @@ def assemble_core_upload(
         add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+        hero_op,
         add_op(card_snapshot, path_in_repo="README.md"),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
         delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
@@ -526,6 +544,7 @@ def assemble_region_upload(
     if core is not None:
         _validate_core_artifacts(core)
     _validate_augmentation_artifacts(augmentation)
+    hero_op = _dataset_hero_op() if refresh_maps else None
     snapshots = data_root.cache / "sync_upload_snapshots" / stem
     snapshots.mkdir(parents=True, exist_ok=True)
     augmentation_manifest_snapshot = snapshots / "augmentation_manifest.json"
@@ -671,7 +690,9 @@ def assemble_region_upload(
         ]
     )
     if refresh_maps:
+        assert hero_op is not None
         write_readme_snapshot(data_root, repo_id, readme_snapshot)
+        ops.append(hero_op)
         ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
     return ops
 
@@ -707,6 +728,7 @@ def assemble_augmentation_upload(
     here.
     """
     _validate_augmentation_artifacts(augmentation)
+    hero_op = _dataset_hero_op()
     snapshots = data_root.cache / "augmentation_upload_snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
     readme_snapshot = snapshots / f"{augmentation.wikipedia_documents_path.stem}-README.md"
@@ -776,6 +798,7 @@ def assemble_augmentation_upload(
         add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
+        hero_op,
         add_op(readme_snapshot, path_in_repo="README.md"),
     ]
 
@@ -816,6 +839,7 @@ def assemble_metadata_only_upload(
         world_land_warning=world_land_warning,
     )
     write_readme_snapshot(data_root, repo_id, readme_snapshot)
+    hero_op = _dataset_hero_op()
 
     ops = [
         add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
@@ -825,6 +849,7 @@ def assemble_metadata_only_upload(
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
         delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
+        hero_op,
     ]
     if has_aug_manifest:
         ops.extend(_augmentation_migration_ops(augmentation_manifest_snapshot))

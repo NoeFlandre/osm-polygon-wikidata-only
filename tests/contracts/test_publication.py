@@ -231,7 +231,7 @@ def test_assemble_augmentation_upload_returns_combined_maps(
     # is the migration ``delete`` of the legacy augmentation path.
     add_ops = [op for op in ops if op.action == "add"]
     delete_ops = [op for op in ops if op.action == "delete"]
-    assert len(add_ops) == 9
+    assert len(add_ops) == 10
     assert len(delete_ops) == 4
     assert add_ops[5].local_path == aug.manifest_path
     assert add_ops[5].path_in_repo == "manifests/augmentation_manifest.json"
@@ -254,9 +254,10 @@ def test_assemble_augmentation_upload_returns_combined_maps(
         "assets/geographic_text_density.png",
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
+        "assets/dataset_hero.png",
         "README.md",
     ]
-    assert len(ops) == 13
+    assert len(ops) == 14
 
 
 def test_assemble_augmentation_upload_writes_readme_at_end(
@@ -369,6 +370,7 @@ def test_assemble_region_upload_without_core_refreshes_combined_map(
         "assets/geographic_text_density.png",
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
+        "assets/dataset_hero.png",
         "README.md",
     ]
 
@@ -409,9 +411,10 @@ def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
         "wikidata/facts/monaco-latest.parquet",
         "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
+        "assets/dataset_hero.png",
         "README.md",
     ]
-    assert len(ops) == 18
+    assert len(ops) == 19
 
 
 def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
@@ -537,11 +540,12 @@ def test_assemble_core_upload_returns_twelve_entries(
         "assets/geographic_text_density.png",
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
+        "assets/dataset_hero.png",
         "README.md",
         "assets/coverage_map.png",
         "coverage_map.png",
     ]
-    assert len(ops) == 12
+    assert len(ops) == 13
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -846,7 +850,7 @@ def test_legacy_core_command_submits_exactly_once(
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 12
+    assert len(ops) == 13
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -908,7 +912,7 @@ def test_augmentation_command_submits_exactly_once(
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
     # Sidecars + manifest migration + combined map + README.
-    assert len(uploads[0][0]) == 13
+    assert len(uploads[0][0]) == 14
 
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
@@ -1025,9 +1029,9 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     }
     # PROCESS state includes three current maps and deletes the three
     # superseded remote map paths atomically.
-    assert len(by_message["Sync complete region monaco-latest"]) == 18
+    assert len(by_message["Sync complete region monaco-latest"]) == 19
     # AUGMENT state (no core): sidecars, manifest migration, combined map, README.
-    assert len(by_message["Sync complete region andorra-latest"]) == 13
+    assert len(by_message["Sync complete region andorra-latest"]) == 14
 
 
 # ---------------------------------------------------------------------------
@@ -1337,6 +1341,7 @@ def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
         "wikidata/facts/monaco-latest.parquet",
         "assets/geographic_text_presence.png",
         "assets/geographic_text_density.png",
+        "assets/dataset_hero.png",
         "README.md",
         REMOTE_AUGMENTATION_MANIFEST_FILE,
     }
@@ -1437,7 +1442,7 @@ def test_publication_plan_is_deterministic_and_unique(
     assert sum(op.path_in_repo == "coverage_map.png" for op in deletions) == 1
     # Three current maps are added while the root coverage map and both
     # superseded H3 maps are deleted in the same atomic publication.
-    assert len(ops) == 18, f"unexpected plan length: {len(ops)} {ops}"
+    assert len(ops) == 19, f"unexpected plan length: {len(ops)} {ops}"
 
 
 # ---------------------------------------------------------------------------

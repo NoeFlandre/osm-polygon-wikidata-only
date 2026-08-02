@@ -49,6 +49,7 @@ packages = ["src/osm_polygon_wikidata_only"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/osm_polygon_wikidata_only/hf/ne_110m_admin_0_countries.geojson" = "osm_polygon_wikidata_only/hf/ne_110m_admin_0_countries.geojson"
+"assets/dataset_hero.png" = "osm_polygon_wikidata_only/assets/dataset_hero.png"
 
 [dependency-groups]
 dev = [
