@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
@@ -33,6 +34,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     completed_region_stems,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.hf.uploader import (
@@ -50,6 +52,7 @@ from osm_polygon_wikidata_only.pipeline.processor import (
     ProcessResult,
 )
 from osm_polygon_wikidata_only.utils.logging import configure_logging
+from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 
 from .dependencies import build_clients as _build_clients
 from .dependencies import resolve_cli_data_root as _resolve_data_root
@@ -96,6 +99,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     data_root = _resolve_data_root(args)
     data_root.ensure()
     settings = _build_settings(args)
+    if getattr(args, "dataset_version", "v1") == "v2" and settings.repo_id == DEFAULT_REPO_ID:
+        settings = replace(settings, repo_id=V2_REPO_ID)
 
     if args.push and not args.dry_run:
         resolved = resolve_hf_token(settings.hf_token)
@@ -130,6 +135,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.info("Authenticated to Hugging Face as %s (target: %s)", username, settings.repo_id)
 
     if args.command == "sync-dir":
+        if getattr(args, "dataset_version", "v1") == "v2":
+            from osm_polygon_wikidata_only.v2.cli import execute_v2
+
+            try:
+                with exclusive_run_lock(data_root.cache / "sync.lock"):
+                    return execute_v2(args, data_root=data_root, settings=settings)
+            except RunLockError as error:
+                parser.error(str(error))
         from .run_sync import execute as cli_run_sync
 
         try:

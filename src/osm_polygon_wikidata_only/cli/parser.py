@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         "sync-dir", parents=[common], help="Converge core and augmentation for every PBF"
     )
     p_sync.add_argument("input", type=Path, help="Directory containing *.osm.pbf files")
+    p_sync.add_argument(
+        "--dataset-version",
+        choices=("v1", "v2"),
+        default="v1",
+        help="Select the isolated dataset contract (default: v1)",
+    )
     p_augment = sub.add_parser(
         "augment-region", parents=[common], help="Augment one completed region without reading PBF"
     )
