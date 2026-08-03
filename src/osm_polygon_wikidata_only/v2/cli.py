@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
@@ -10,9 +11,12 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
-from osm_polygon_wikidata_only.hf.uploader import upload_files
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.uploader import UploadError, upload_files
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 from osm_polygon_wikidata_only.v2.runner import run_v2_sync
+
+LOGGER = logging.getLogger(__name__)
 
 
 def execute_v2(
@@ -24,6 +28,16 @@ def execute_v2(
     """Run V2 with the normal shared Wikimedia runtime and uploader."""
     runtime = build_wikimedia_runtime(settings, data_root=data_root)
     hub = StubHfHub() if args.dry_run else None
+    remote_inventory = None
+    if args.push:
+        try:
+            remote_inventory = RemoteInventory.fetch(
+                V2_REPO_ID,
+                hub=hub,
+                token=settings.hf_token,
+            )
+        except UploadError as error:
+            LOGGER.info("V2 Hub repository is new or not listable yet: %s", error)
 
     def upload(ops: list[PublicationOp], message: str) -> None:
         upload_files(
@@ -42,6 +56,7 @@ def execute_v2(
         wikipedia_client=runtime.wikipedia,
         push=bool(args.push),
         upload=upload if args.push else None,
+        remote_inventory=remote_inventory,
     )
 
 

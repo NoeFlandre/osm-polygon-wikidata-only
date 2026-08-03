@@ -2,14 +2,15 @@
 
 ![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)
 
-Extract polygonal OpenStreetMap features carrying a `wikidata=*` tag
-from Geofabrik `.osm.pbf` extracts, enrich them with Wikidata and
-Wikipedia (articles per sitelink language, with revisions, license,
-attribution), and publish the result as a clean, multi-table Hugging
-Face dataset.
+Extract polygonal OpenStreetMap features from Geofabrik `.osm.pbf` extracts,
+enrich them with Wikidata, Wikipedia, and Wikivoyage, and publish clean,
+multi-table Hugging Face datasets. The default V1 contract is Wikidata-first;
+the explicit V2 contract also keeps polygons discovered through valid
+multilingual `wikipedia=*` tags, including polygons without a Wikidata QID.
 
 * **GitHub**: <https://github.com/NoeFlandre/osm-polygon-wikidata-only>
 * **Hugging Face dataset**: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only>
+* **V2 Hugging Face dataset**: <https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia>
 * **Documentation**: <https://noeflandre.github.io/osm-polygon-wikidata-only/>
 * **Maintainer**: Noé Flandre
 
@@ -75,6 +76,13 @@ Documentation: [architecture](docs/architecture.md) ·
    * `wikidata/facts/<stem>.parquet` — structured claims for polygon entities.
 7. Publishes one frozen Trackio run with static dataset metrics and three plots.
 
+V2 is an explicit, isolated workflow. It starts from finalized V1 artifacts,
+scans each source PBF for direct Wikipedia tags, reuses matching V1 documents,
+fetches only missing direct pages, and writes under `processed_v2/`. It uses a
+unified `polygon_document_links/` table with `link_sources` provenance and
+publishes to the separate V2 dataset above. V1 files and the default workflow
+are never rewritten by a V2 run.
+
 The generated dataset is published on Hugging Face. Local processing inputs,
 intermediate files, and caches use a configurable data root outside the source
 checkout.
@@ -101,6 +109,7 @@ checkout.
 │   ├── io/              # PBF, Parquet, manifests, cache, and atomic I/O
 │   ├── pipeline/_link_migration/ # Conversion and journaled migration helpers
 │   ├── pipeline/_wikidata_recovery/ # Audited, resumable repair internals
+│   ├── v2/               # Isolated Wikipedia-tag dataset contract and runner
 │   └── utils/           # JSON, logging, retries, time, and scheduling
 ├── tests/               # Unit, integration, contract, and golden tests
 ├── pyproject.toml       # Build, dev dependencies, Ruff/ty/pytest config
@@ -213,6 +222,7 @@ uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 | `--commit-message <msg>` | Custom git commit message for the push |
 | `--dry-run` | Use a stub HF client (records calls without uploading) |
 | `--log-level <level>` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `--dataset-version v1|v2` | Select the sync contract; V2 is opt-in and publishes to its separate Hub dataset |
 
 ### Examples
 
@@ -237,6 +247,23 @@ uv run osm-polygon-wikidata-only process-dir \
     --languages en,fr \
     --skip-existing
 ```
+
+Build the isolated V2 dataset. This keeps V1 artifacts intact, reuses their
+finalized documents and sidecars, and fetches only direct Wikipedia-tag pages
+that are not already present in V1:
+
+```bash
+uv run osm-polygon-wikidata-only sync-dir \
+    "$OSM_POLYGON_DATA_ROOT/raw" \
+    --dataset-version v2 \
+    --skip-existing \
+    --push
+```
+
+V2 local artifacts are written below `processed_v2/`; its request cache is
+below `cache/v2/`. Both locations use the configured data root, so stopping
+and restarting the command is safe. Use `--force` only when deliberately
+rebuilding a V2 region.
 
 ### Wikimedia Bot Password authentication
 

@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
 from osm_polygon_wikidata_only.v2.card import write_v2_card
@@ -44,6 +45,7 @@ def run_v2_sync(
     cache: JsonFileCache | None = None,
     push: bool = False,
     upload: Upload | None = None,
+    remote_inventory: RemoteInventory | None = None,
 ) -> int:
     """Build V2 regions and optionally publish each completed region."""
     pbfs = collect_pbfs([input_path])
@@ -60,12 +62,24 @@ def run_v2_sync(
     completed = 0
     for pbf in pbfs:
         stem = pbf.name.removesuffix(".osm.pbf")
-        if (
+        current = (
             settings.skip_existing
             and not settings.force
             and _region_is_current(data_root.processed_v2, stem, manifest)
-        ):
-            LOGGER.info("Skipping V2 %s (already current)", stem)
+        )
+        if current:
+            region_ops = region_publication_ops(data_root.processed_v2, stem)
+            remote_complete = remote_inventory is not None and all(
+                remote_inventory.contains(op.path_in_repo) for op in region_ops
+            )
+            if not push or remote_complete:
+                LOGGER.info("Skipping V2 %s (already current)", stem)
+                completed += 1
+                continue
+            if upload is None:
+                raise RuntimeError("V2 publication requested without an upload callback")
+            LOGGER.info("Publishing existing V2 %s (remote artifacts are incomplete)", stem)
+            upload(region_ops, f"Repair V2 region {stem}")
             completed += 1
             continue
         LOGGER.info("Starting V2 region %s", stem)

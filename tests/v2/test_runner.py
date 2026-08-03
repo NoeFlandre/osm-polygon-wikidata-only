@@ -3,6 +3,7 @@ from pathlib import Path
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem
 from osm_polygon_wikidata_only.v2.runner import run_v2_sync
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
@@ -58,6 +59,13 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
             wikipedia_client=client,
             push=True,
             upload=lambda ops, message: uploads.append((ops, message)),
+            remote_inventory=RemoteInventory(
+                {
+                    "polygons/region-latest.parquet",
+                    "wikipedia/documents/region-latest.parquet",
+                    "polygon_document_links/region-latest.parquet",
+                }
+            ),
         )
         == 0
     )

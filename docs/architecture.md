@@ -10,6 +10,7 @@ isolation.
 | `io` | PBF streaming, cache files, manifests, atomic writes, and Parquet persistence. |
 | `enrichment` | Wikidata/Wikipedia clients, cache wrappers, batching, and linking. |
 | `pipeline` | Extract, enrich, construct rows, write artifacts, update manifests, run sync. |
+| `v2` | Isolated Wikipedia-tag dataset contract, V1 reuse index, direct-page enrichment, storage, card, and publication runner. |
 | `augmentation` | Augmentation orchestrator, focused pipeline steps, Wikimedia discovery, normalization. |
 | `hf` | Remote paths, dataset card, dataset stats, geographic visualizations, publication, atomic Hub uploads. ALL remote paths published by this codebase are centralized in `hf.repo_layout`; the single exception is the named legacy migration constant `LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE` consumed only by the atomic migration commit that unifies the augmentation manifest under `manifests/`. |
 | `cli` | Argument parsing and dependency wiring only. |
@@ -80,6 +81,36 @@ The largest workflows are split by responsibility:
 
 Private implementation modules may evolve, but the supported imports in
 [`docs/api.md`](api.md) are compatibility boundaries.
+
+## V2 Wikipedia-tag workflow
+
+V2 is selected only with `sync-dir --dataset-version v2`. It does not call the
+V1 processor or alter the V1 `processed/` tree. The runner scans each source
+PBF with an opt-in reader that retains polygonal elements carrying either a
+valid Wikidata tag or a valid multilingual Wikipedia reference. It then merges
+those discoveries with the finalized V1 polygon rows.
+
+The read-only V1 reuse index is keyed by normalized `(language, page_id)` and
+title, with QID indexes for diagnostics. A direct Wikipedia tag first checks
+that index. Only a page absent from V1 reaches the existing Wikipedia client,
+wrapped in a V2-versioned JSON cache under `cache/v2/`. This preserves the
+V1 corpus while avoiding duplicate HTTP work.
+
+V2 writes an isolated `processed_v2/` tree. Its `polygons` schema adds direct
+tag references, structured rejections, and discovery-source provenance. Its
+`wikipedia/documents` schema permits a null Wikidata QID for direct-only pages.
+`polygon_document_links` is the single V2 relationship table for Wikipedia
+and Wikivoyage, with `link_sources` identifying Wikidata sitelinks versus
+direct Wikipedia tags. Existing V1 sidecars are copied by content and are
+never deleted or rewritten in V1 storage.
+
+Each region is written through staged Parquet files and a journal-free
+replacement transaction, then the V2 manifest is updated atomically. A
+completed local region is skipped on a non-publishing rerun; when publishing,
+the runner checks the optional remote inventory and uploads an existing local
+region if the Hub is incomplete. Region commits are followed by a deterministic
+V2 README and manifest publication. A failed upload leaves local artifacts
+available for retry and never causes V1 rollback.
 
 ### Focused internal modules
 
