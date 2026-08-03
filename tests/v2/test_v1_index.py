@@ -108,3 +108,90 @@ def test_index_reuses_legacy_articles_when_canonical_documents_are_absent(
     index = build_v1_reuse_index(tmp_path)
     assert index.files == (path,)
     assert index.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
+
+
+def test_persistent_index_reuses_completed_shards_without_rescanning(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    first = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert first.by_title("en", "Douglas Adams")
+    assert (cache_dir / "v1_reuse_index.sqlite3").is_file()
+
+    def fail_if_scanned(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
+        raise AssertionError("an unchanged V1 shard was rescanned")
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    monkeypatch.setattr(v1_index, "_scan_index_rows", fail_if_scanned)
+    second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert second.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
+
+
+def test_persistent_index_adds_new_shards_incrementally(tmp_path: Path) -> None:
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+
+    second = _document(
+        document_id="Q43:wikipedia:fr:2:3",
+        article_id="Q43:fr:2:3",
+        wikidata="Q43",
+        language="fr",
+        site="frwiki",
+        title="Douglas Adams FR",
+        page_id=2,
+        revision_id=3,
+    )
+    path = tmp_path / "wikipedia" / "documents" / "second.parquet"
+    pq.write_table(pa.Table.from_pylist([second], schema=wikipedia_document_schema()), path)
+
+    index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert index.by_title("en", "Douglas Adams")
+    assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
+
+
+def test_persistent_index_resumes_after_an_interrupted_shard(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    second = _document(
+        document_id="Q43:wikipedia:fr:2:3",
+        article_id="Q43:fr:2:3",
+        wikidata="Q43",
+        language="fr",
+        site="frwiki",
+        title="Douglas Adams FR",
+        page_id=2,
+        revision_id=3,
+    )
+    second_path = tmp_path / "wikipedia" / "documents" / "second.parquet"
+    pq.write_table(
+        pa.Table.from_pylist([second], schema=wikipedia_document_schema()),
+        second_path,
+    )
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index._scan_index_rows
+    scanned: list[str] = []
+
+    def fail_on_second(path: Path, *, legacy_articles: bool):
+        scanned.append(path.name)
+        if path.name == second_path.name:
+            raise OSError("interrupted index build")
+        return original(path, legacy_articles=legacy_articles)
+
+    monkeypatch.setattr(v1_index, "_scan_index_rows", fail_on_second)
+    with pytest.raises(OSError, match="interrupted index build"):
+        build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert scanned == [second_path.name]
+
+    monkeypatch.setattr(v1_index, "_scan_index_rows", original)
+    index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"

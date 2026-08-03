@@ -56,7 +56,10 @@ def run_v2_sync(
         LOGGER.warning("No PBF inputs to process for V2")
         return 0
     data_root.processed_v2.mkdir(parents=True, exist_ok=True)
-    index = build_v1_reuse_index(data_root.processed)
+    index = build_v1_reuse_index(
+        data_root.processed,
+        cache_dir=data_root.v2_cache / "v1-index",
+    )
     v2_cache = cache or JsonFileCache(
         data_root.v2_cache / "wikipedia",
         contract_version=V2_CACHE_CONTRACT_VERSION,

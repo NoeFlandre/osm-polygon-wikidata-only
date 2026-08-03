@@ -96,6 +96,11 @@ that index. Only a page absent from V1 reaches the existing Wikipedia client,
 wrapped in a V2-versioned JSON cache under `cache/v2/`. This preserves the
 V1 corpus while avoiding duplicate HTTP work.
 
+The V1 reuse index is persisted in `cache/v2/v1-index/`. It validates and
+commits one V1 Parquet shard at a time, keeps only identity metadata in SQLite,
+and loads matching document rows on demand. Restarting therefore resumes from
+the last completed shard without rebuilding the full in-memory corpus.
+
 V2 writes an isolated `processed_v2/` tree. Its `polygons` schema adds direct
 tag references, structured rejections, and discovery-source provenance. Its
 `wikipedia/documents` schema permits a null Wikidata QID for direct-only pages.
