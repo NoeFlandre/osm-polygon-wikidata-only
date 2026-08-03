@@ -8,6 +8,7 @@ usage: PROG sync-dir [-h] [--data-root DATA_ROOT] [--repo-id REPO_ID]
  [--commit-message COMMIT_MESSAGE]
  [--upload-threads UPLOAD_THREADS] [--hf-token HF_TOKEN]
  [--log-level {DEBUG,INFO,WARNING,ERROR}] [--dry-run]
+ [--dataset-version {v1,v2}]
  input
 
 positional arguments:
@@ -35,3 +36,4 @@ options:
  saved `huggingface-cli login` token.
  --log-level {DEBUG,INFO,WARNING,ERROR}
  --dry-run Use a stub HF client (no network)
+ --dataset-version {v1,v2} Select the isolated dataset contract (default: v1)
