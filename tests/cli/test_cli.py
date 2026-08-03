@@ -144,7 +144,9 @@ def test_main_push_logs_authenticated_username(
     raw = tmp_path / "raw"
     raw.mkdir()
     caplog.set_level("INFO", logger="osm_polygon_wikidata_only.cli")
-    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push", "--dry-run"]) == 0
+    # Authentication is intentionally exercised on the real push path. A
+    # dry-run skips Hugging Face verification, so it cannot prove this log.
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"]) == 0
     assert any("noeflandre" in record.getMessage() for record in caplog.records)
 
 
