@@ -190,10 +190,6 @@ def merge_v2_region(
             polygons[key] = dict(discovered)
     documents = {str(row["document_id"]): dict(row) for row in v1.documents}
     links = {(_link_key(row)): dict(row) for row in v1.links}
-    links_by_polygon: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in links.values():
-        links_by_polygon[str(row["polygon_id"])].append(row)
-
     for polygon_id, polygon in sorted(polygons.items()):
         raw_refs = json.loads(str(polygon.get("wikipedia_tag_refs", "[]")))
         refs = tuple(
@@ -222,7 +218,10 @@ def merge_v2_region(
                 links[key]["link_sources"] = json.dumps(sorted(sources), separators=(",", ":"))
             else:
                 links[key] = dict(link)
-            links_by_polygon[polygon_id].append(links[key])
+
+    links_by_polygon: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in links.values():
+        links_by_polygon[str(row["polygon_id"])].append(row)
 
     for polygon_id, polygon in polygons.items():
         rows = links_by_polygon.get(polygon_id, [])
