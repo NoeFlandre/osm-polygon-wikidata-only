@@ -14,6 +14,9 @@ TRACKIO_RUN_NAME = "final-dataset-snapshot"
 TRACKIO_SPACE_ID = "NoeFlandre/osm-polygon-wikidata-only-trackio"
 TRACKIO_DATASET_ID = "NoeFlandre/osm-polygon-wikidata-only-trackio-data"
 TRACKIO_SPACE_URL = f"https://huggingface.co/spaces/{TRACKIO_SPACE_ID}"
+DATASET_PRESENTATION_URL = (
+    "https://noeflandre.github.io/osm-polygon-wikidata-only/presentations/dataset.html"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +94,7 @@ FINAL_DATASET_SNAPSHOT = FinalDatasetSnapshot()
 
 
 __all__ = [
+    "DATASET_PRESENTATION_URL",
     "FINAL_DATASET_SNAPSHOT",
     "TRACKIO_DATASET_ID",
     "TRACKIO_PROJECT",

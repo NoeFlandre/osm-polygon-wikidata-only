@@ -15,6 +15,9 @@ Face dataset.
 
 ## Trackio snapshot
 
+[View the dataset presentation](https://noeflandre.github.io/osm-polygon-wikidata-only/presentations/dataset.html)
+for a visual overview of the published tables and geographic coverage.
+
 The finished dataset is recorded in the single public Trackio run
 [`final-dataset-snapshot`](https://huggingface.co/spaces/NoeFlandre/osm-polygon-wikidata-only-trackio).
 It contains exactly three plots: a text-coverage funnel, the top ten Wikipedia

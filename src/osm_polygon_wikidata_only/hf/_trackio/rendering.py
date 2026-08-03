@@ -4,13 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import FINAL_DATASET_SNAPSHOT, TRACKIO_SPACE_URL, FinalDatasetSnapshot
+from .models import (
+    DATASET_PRESENTATION_URL,
+    FINAL_DATASET_SNAPSHOT,
+    TRACKIO_SPACE_URL,
+    FinalDatasetSnapshot,
+)
 
 
 def render_snapshot_markdown(snapshot: FinalDatasetSnapshot = FINAL_DATASET_SNAPSHOT) -> str:
     """Render the public description shared by the README and dataset card."""
     return (
         "## Trackio snapshot\n\n"
+        f"[View the dataset presentation]({DATASET_PRESENTATION_URL}) for a visual "
+        "overview of the published tables and geographic coverage.\n\n"
         f"The finished dataset is recorded in the single public Trackio run "
         f"[`final-dataset-snapshot`]({TRACKIO_SPACE_URL}). It contains exactly "
         "three plots: a text-coverage funnel, the top ten Wikipedia languages "

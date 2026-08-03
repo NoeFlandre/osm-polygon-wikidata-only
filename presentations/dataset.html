@@ -1,0 +1,2873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The dataset in one view</title>
+
+<!-- KaTeX for LaTeX math -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+
+<!-- Chart.js for inline charts -->
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+<!-- highlight.js for code syntax highlighting -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css">
+<script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+
+<style>
+/* Colloquium Default Theme */
+
+/* ===== Custom Properties ===== */
+:root {
+    --colloquium-bg: #ffffff;
+    --colloquium-text: #1a1a2e;
+    --colloquium-heading: #16213e;
+    --colloquium-accent: #0f3460;
+    --colloquium-link: #e94560;
+    --colloquium-code-bg: #f4f4f8;
+    --colloquium-code-text: #1a1a2e;
+    --colloquium-muted: #6b7280;
+    --colloquium-border: #e5e7eb;
+    --colloquium-progress-bg: #e5e7eb;
+    --colloquium-progress-fill: #0f3460;
+
+    --colloquium-font-body: "Inter", "Helvetica Neue", Arial, sans-serif;
+    --colloquium-font-heading: "Inter", "Helvetica Neue", Arial, sans-serif;
+    --colloquium-font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+
+    /* 16:9 reference dimensions — slides are authored at this size and scaled */
+    --colloquium-slide-width: 1280;
+    --colloquium-slide-height: 720;
+    --colloquium-slide-padding: 60px;
+}
+
+/* ===== Reset & Base ===== */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--colloquium-font-body);
+    color: var(--colloquium-text);
+    background: #000;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Slide Container — 16:9 scaling ===== */
+/* The deck is a fixed 1280x720 canvas that gets CSS-transformed to fit the viewport */
+.colloquium-deck {
+    width: 1280px;
+    height: 720px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    background: var(--colloquium-bg);
+    overflow: hidden;
+}
+
+.slide {
+    display: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 1280px;
+    height: 720px;
+    padding: var(--colloquium-slide-padding);
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+    font-size: 24px;
+    line-height: 1.5;
+    background: var(--colloquium-bg);
+}
+
+.slide.active {
+    display: flex;
+}
+
+/* ===== Typography ===== */
+.slide h1 {
+    font-family: var(--colloquium-font-heading);
+    font-size: 2.2em;
+    font-weight: 700;
+    color: var(--colloquium-heading);
+    margin-bottom: 0.4em;
+    line-height: 1.2;
+}
+
+.slide h2 {
+    font-family: var(--colloquium-font-heading);
+    font-size: 1.6em;
+    font-weight: 600;
+    color: var(--colloquium-heading);
+    margin-bottom: 0.5em;
+    line-height: 1.3;
+}
+
+.slide h3 {
+    font-family: var(--colloquium-font-heading);
+    font-size: 1.2em;
+    font-weight: 600;
+    color: var(--colloquium-heading);
+    margin-bottom: 0.4em;
+}
+
+.slide p {
+    margin-bottom: 0.8em;
+}
+
+.slide p:last-child {
+    margin-bottom: 0;
+}
+
+.slide strong {
+    font-weight: 600;
+}
+
+.slide em {
+    font-style: italic;
+}
+
+/* ===== Lists ===== */
+.slide ul, .slide ol {
+    margin-bottom: 0.8em;
+    padding-left: 1.4em;
+}
+
+.slide li {
+    margin-bottom: 0.3em;
+}
+
+.slide li::marker {
+    color: var(--colloquium-accent);
+}
+
+/* ===== Links ===== */
+.slide a {
+    color: var(--colloquium-link);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.slide a:hover {
+    border-bottom-color: var(--colloquium-link);
+}
+
+/* ===== Code ===== */
+.slide code {
+    font-family: var(--colloquium-font-mono);
+    font-size: 0.85em;
+    background: var(--colloquium-code-bg);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.slide pre {
+    background: var(--colloquium-code-bg);
+    border-radius: 8px;
+    padding: 1em 1.2em;
+    margin-bottom: 0.8em;
+    overflow-x: hidden;
+    font-size: 0.75em;
+    line-height: 1.5;
+}
+
+.slide pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* ===== Images ===== */
+.slide img {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 4px;
+    object-fit: contain;
+}
+
+.slide .slide-content {
+    flex: 1;
+    min-height: 0;
+    overflow: visible;
+}
+
+.slide .slide-content img {
+    max-height: calc(720px - var(--colloquium-slide-padding) * 2 - 100px);
+    display: block;
+}
+
+.colloquium-iframe-container {
+    max-width: 100%;
+}
+
+.colloquium-iframe {
+    display: block;
+    max-width: 100%;
+}
+
+.align-center .slide-content > .colloquium-iframe-container {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.align-left .slide-content > .colloquium-iframe-container {
+    margin-right: auto;
+}
+
+.align-right .slide-content > .colloquium-iframe-container {
+    margin-left: auto;
+}
+
+.slide figure.colloquium-figure {
+    margin: 0 auto 0.8em;
+    max-width: 100%;
+    width: fit-content;
+}
+
+.slide figure.colloquium-figure > img {
+    display: block;
+}
+
+.slide figure.colloquium-figure > figcaption {
+    margin-top: 0.45em;
+    font-size: 0.6em;
+    line-height: 1.35;
+    color: var(--colloquium-muted);
+}
+
+.slide.figure-caption,
+.slide.figure-captions {
+    counter-reset: colloquium-figure;
+}
+
+.slide.figure-caption figure.colloquium-figure,
+.slide.figure-captions figure.colloquium-figure {
+    counter-increment: colloquium-figure;
+}
+
+.slide.figure-caption figure.colloquium-figure > figcaption::before,
+.slide.figure-captions figure.colloquium-figure > figcaption::before {
+    content: "Figure " counter(colloquium-figure) ": ";
+    color: var(--colloquium-heading);
+    font-weight: 600;
+}
+
+/* ===== Box ===== */
+.colloquium-box {
+    border-radius: 18px;
+    padding: 0.85em 1em;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.colloquium-box--accent {
+    background: var(--colloquium-accent);
+    color: white;
+}
+
+.colloquium-box--muted {
+    background: var(--colloquium-code-bg);
+    color: var(--colloquium-text);
+}
+
+.colloquium-box--surface {
+    background: color-mix(in srgb, var(--colloquium-bg) 85%, white 15%);
+    color: var(--colloquium-text);
+    border: 1px solid var(--colloquium-border);
+}
+
+.colloquium-box--align-center {
+    text-align: center;
+}
+
+.colloquium-box--align-right {
+    text-align: right;
+}
+
+.colloquium-box-title {
+    font-weight: 700;
+    margin-bottom: 0.35em;
+}
+
+.colloquium-box-content > :first-child {
+    margin-top: 0;
+}
+
+.colloquium-box-content > :last-child {
+    margin-bottom: 0;
+}
+
+.colloquium-box ul,
+.colloquium-box ol {
+    margin-bottom: 0;
+    padding-left: 1.25em;
+}
+
+.colloquium-box li::marker {
+    color: var(--colloquium-accent);
+}
+
+.colloquium-box--compact .colloquium-box-title {
+    margin-bottom: 0.25em;
+}
+
+.colloquium-box--compact .colloquium-box-content p {
+    margin: 0.3em 0;
+}
+
+.colloquium-box--compact ul,
+.colloquium-box--compact ol {
+    margin-top: 0.35em;
+    margin-bottom: 0;
+    padding-left: 1.2em;
+}
+
+.colloquium-box--compact li {
+    margin-bottom: 0.08em;
+    line-height: 1.14;
+}
+
+.colloquium-box--compact li + li {
+    margin-top: 0.02em;
+}
+
+.colloquium-box--accent li::marker {
+    color: white;
+}
+
+.colloquium-box--accent a,
+.colloquium-box--accent strong,
+.colloquium-box--accent em,
+.colloquium-box--accent code {
+    color: inherit;
+}
+
+.colloquium-box--accent code {
+    background: color-mix(in srgb, black 12%, transparent);
+}
+
+/* ===== Charts ===== */
+.colloquium-chart-container {
+    width: 100%;
+    height: 400px;
+    margin: 0.5em 0;
+}
+
+.slide .slide-content img.colloquium-chart-print {
+    display: none;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    max-height: none;
+}
+
+/* ===== Tables ===== */
+.slide table {
+    border-collapse: collapse;
+    margin-bottom: 0.8em;
+    font-size: 0.85em;
+    width: 100%;
+}
+
+.slide th, .slide td {
+    border: 1px solid var(--colloquium-border);
+    padding: 0.4em 0.7em;
+    text-align: left;
+}
+
+.slide th {
+    background: var(--colloquium-code-bg);
+    font-weight: 600;
+}
+
+/* ===== Blockquotes ===== */
+.slide blockquote {
+    border-left: 4px solid var(--colloquium-accent);
+    padding-left: 1em;
+    margin-bottom: 0.8em;
+    color: var(--colloquium-muted);
+    font-style: italic;
+}
+
+/* ===== Horizontal Rule ===== */
+.slide hr {
+    border: none;
+    border-top: 2px solid var(--colloquium-border);
+    margin: 1em 0;
+}
+
+/* ===== Math (KaTeX) ===== */
+.slide .katex-display {
+    margin: 0.8em 0;
+    overflow-x: hidden;
+    overflow-x: clip;
+    overflow-y: visible;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    width: 100%;
+    touch-action: pan-y;
+    overscroll-behavior-x: none;
+}
+
+.slide .katex-display .katex {
+    max-width: 100%;
+    pointer-events: none;
+}
+
+.slide .katex-display::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+/* ===== Layout: Title Slide ===== */
+.slide--title {
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.slide--title.active {
+    display: flex;
+}
+
+.slide--title h1 {
+    font-size: 2.8em;
+    margin-bottom: 0.3em;
+}
+
+.slide--title .slide-content {
+    flex: 0 0 auto;
+}
+
+.slide--title .slide-content p {
+    font-size: 1.1em;
+    color: var(--colloquium-muted);
+}
+
+/* Shared title-slide components */
+.colloquium-title-eyebrow {
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--colloquium-accent);
+    margin-bottom: 1.1em;
+}
+
+.colloquium-title-rule {
+    width: 84px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--colloquium-accent);
+    margin-bottom: 1.4em;
+}
+
+.colloquium-title-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15em;
+}
+
+.colloquium-title-meta p {
+    margin: 0;
+    color: var(--colloquium-muted);
+}
+
+.colloquium-title-name {
+    font-size: 1.55em;
+    font-weight: 500;
+    color: var(--colloquium-heading);
+}
+
+.colloquium-title-note {
+    font-size: 0.9em;
+    line-height: 1.45;
+    color: var(--colloquium-muted);
+    max-width: 26em;
+}
+
+/* ===== Layout: Title Left ===== */
+.slide--title-left {
+    justify-content: center;
+    align-items: flex-start;
+    text-align: left;
+    padding: 72px 84px 60px;
+}
+
+.slide--title-left.active {
+    display: flex;
+}
+
+.slide--title-left h1 {
+    max-width: 980px;
+    font-size: 3em;
+    line-height: 1.02;
+    letter-spacing: -0.05em;
+    margin-bottom: 0.95em;
+}
+
+.slide--title-left .slide-content {
+    flex: 0 0 auto;
+    max-width: 560px;
+}
+
+.slide--title-left .slide-content > * + * {
+    margin-top: 1em;
+}
+
+/* ===== Layout: Title Sidebar ===== */
+.slide--title-sidebar {
+    padding: 72px 84px 60px;
+}
+
+.slide--title-sidebar.active {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    column-gap: 56px;
+    align-content: center;
+    align-items: start;
+}
+
+.slide--title-sidebar h1 {
+    grid-column: 1;
+    align-self: start;
+    max-width: 760px;
+    font-size: 2.9em;
+    line-height: 1.03;
+    letter-spacing: -0.045em;
+    text-align: left;
+    margin: 0;
+}
+
+.slide--title-sidebar .slide-content {
+    grid-column: 2;
+    align-self: start;
+    position: relative;
+    padding: 0 0 24px 28px;
+}
+
+.slide--title-sidebar .slide-content::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 24px;
+    left: 0;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--colloquium-accent);
+}
+
+.slide--title-sidebar .slide-content > * + * {
+    margin-top: 1em;
+}
+
+.slide--title-sidebar.title-sidebar-rule-full .slide-content {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+}
+
+.slide--title-sidebar.title-sidebar-rule-full .slide-content::before {
+    bottom: 0;
+}
+
+/* Title-sidebar uses grid, so vertical positioning maps to align-content. */
+.slide--title-sidebar.valign-top.active {
+    align-content: start;
+}
+
+.slide--title-sidebar.valign-center.active {
+    align-content: center;
+}
+
+.slide--title-sidebar.valign-bottom.active {
+    align-content: end;
+}
+
+/* ===== Layout: Title Banner ===== */
+.slide--title-banner {
+    justify-content: flex-start;
+    align-items: flex-start;
+    text-align: left;
+    padding: 72px 84px 60px;
+}
+
+.slide--title-banner.active {
+    display: flex;
+}
+
+.slide--title-banner h1 {
+    max-width: 980px;
+    font-size: 3em;
+    line-height: 1.02;
+    letter-spacing: -0.05em;
+    margin-bottom: 0.45em;
+}
+
+.slide--title-banner .slide-content {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    max-width: 620px;
+}
+
+.slide--title-banner .slide-content > * + * {
+    margin-top: 1em;
+}
+
+/* ===== Layout: Section Break ===== */
+.slide--section-break {
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    background: var(--colloquium-accent);
+    color: #ffffff;
+}
+
+.slide--section-break.active {
+    display: flex;
+}
+
+.slide--section-break h2 {
+    color: #ffffff;
+    font-size: 2.2em;
+}
+
+.slide--section-break .slide-content {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* ===== Layout: Two Column ===== */
+.slide--two-column .slide-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2em;
+    align-items: start;
+    width: 100%;
+}
+
+/* ===== Layout: Image Left ===== */
+.slide--image-left .slide-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2em;
+    align-items: center;
+    width: 100%;
+}
+
+.slide--image-left .slide-content img {
+    max-height: 500px;
+}
+
+/* ===== Layout: Image Right ===== */
+.slide--image-right .slide-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2em;
+    align-items: center;
+    width: 100%;
+}
+
+.slide--image-right .slide-content img {
+    max-height: 500px;
+    order: 2;
+}
+
+/* ===== Layout: Code ===== */
+.slide--code pre {
+    font-size: 0.7em;
+    max-height: 500px;
+}
+
+/* ===== Utility: Title Position ===== */
+.title-top.active { justify-content: flex-start; }
+.title-center.active { justify-content: center; }
+.title-center.active > h1, .title-center.active > h2 { text-align: center; }
+.title-hidden h1, .title-hidden h2 { display: none; }
+
+/* ===== Utility: Text Alignment ===== */
+.align-left.active { text-align: left; }
+.align-center.active { text-align: center; }
+.align-right.active { text-align: right; }
+
+.align-center.active .slide-content > img,
+.align-center.active .slide-content > p > img {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.align-left.active .slide-content > img,
+.align-left.active .slide-content > p > img {
+    display: block;
+    margin-right: auto;
+}
+
+.align-right.active .slide-content > img,
+.align-right.active .slide-content > p > img {
+    display: block;
+    margin-left: auto;
+}
+
+/* ===== Utility: Vertical Alignment ===== */
+.valign-top.active { justify-content: flex-start; }
+.valign-center.active { justify-content: center; }
+.valign-bottom.active { justify-content: flex-end; }
+
+/* ===== Utility: Columns ===== */
+.colloquium-grid {
+    display: grid;
+    gap: 2em;
+    align-items: stretch;
+    width: 100%;
+}
+
+/* ===== Utility: Rows ===== */
+.colloquium-rows {
+    display: grid;
+    gap: 0.9em;
+    width: 100%;
+    min-height: 0;
+    flex: 1;
+}
+
+.colloquium-row {
+    min-height: 0;
+}
+
+/* Images in grid layouts: fit within the available content height */
+.colloquium-grid img {
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: calc(720px - var(--colloquium-slide-padding) * 2 - 100px);
+    object-fit: contain;
+}
+
+.colloquium-rows img {
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.colloquium-grid > .col,
+.colloquium-rows > .colloquium-row {
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+}
+
+.slide .slide-content:has(> figure.colloquium-figure:first-child:last-child),
+.slide .colloquium-grid > .col:has(> figure.colloquium-figure:first-child:last-child),
+.slide .colloquium-row:has(> figure.colloquium-figure:first-child:last-child) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.colloquium-grid > .col > :last-child,
+.colloquium-rows > .colloquium-row > :last-child {
+    margin-bottom: 0;
+}
+
+/* Standalone images inside grid cells should fit the cell by default. */
+.slide .colloquium-grid > .col > p:first-child:last-child:has(> img),
+.slide .colloquium-row > p:first-child:last-child:has(> img) {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
+.slide.img-valign-top .colloquium-grid > .col > p:first-child:last-child:has(> img),
+.slide.img-valign-top .colloquium-row > p:first-child:last-child:has(> img) {
+    align-items: flex-start;
+}
+
+.slide.img-valign-center .colloquium-grid > .col > p:first-child:last-child:has(> img),
+.slide.img-valign-center .colloquium-row > p:first-child:last-child:has(> img) {
+    align-items: center;
+}
+
+.slide.img-valign-bottom .colloquium-grid > .col > p:first-child:last-child:has(> img),
+.slide.img-valign-bottom .colloquium-row > p:first-child:last-child:has(> img) {
+    align-items: flex-end;
+}
+
+.slide.img-valign-center .slide-content:has(> figure.colloquium-figure:first-child:last-child),
+.slide.img-valign-center .colloquium-grid > .col:has(> figure.colloquium-figure:first-child:last-child),
+.slide.img-valign-center .colloquium-row:has(> figure.colloquium-figure:first-child:last-child) {
+    justify-content: center;
+}
+
+.slide.img-valign-bottom .slide-content:has(> figure.colloquium-figure:first-child:last-child),
+.slide.img-valign-bottom .colloquium-grid > .col:has(> figure.colloquium-figure:first-child:last-child),
+.slide.img-valign-bottom .colloquium-row:has(> figure.colloquium-figure:first-child:last-child) {
+    justify-content: flex-end;
+}
+
+.slide .slide-content > figure.colloquium-figure:first-child:last-child,
+.slide .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child,
+.slide .colloquium-row > figure.colloquium-figure:first-child:last-child {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    width: auto;
+    height: auto;
+    max-height: none;
+    margin: 0;
+    overflow: visible;
+}
+
+.slide .colloquium-grid > .col > p:first-child:last-child:has(> img) > img,
+.slide .colloquium-row > p:first-child:last-child:has(> img) > img {
+    width: 100%;
+    height: 100%;
+    flex: 1 1 auto;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: top center;
+    min-height: 0;
+}
+
+.slide .slide-content > figure.colloquium-figure:first-child:last-child > img,
+.slide .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child > img,
+.slide .colloquium-row > figure.colloquium-figure:first-child:last-child > img {
+    width: auto;
+    height: auto;
+    flex: 0 0 auto;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: top center;
+    min-height: 0;
+}
+
+.slide.img-valign-top .colloquium-grid > .col > p:first-child:last-child:has(> img) > img,
+.slide.img-valign-top .colloquium-row > p:first-child:last-child:has(> img) > img,
+.slide.img-valign-top .slide-content > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-valign-top .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-valign-top .colloquium-row > figure.colloquium-figure:first-child:last-child > img {
+    object-position: top center;
+}
+
+.slide.img-valign-center .colloquium-grid > .col > p:first-child:last-child:has(> img) > img,
+.slide.img-valign-center .colloquium-row > p:first-child:last-child:has(> img) > img,
+.slide.img-valign-center .slide-content > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-valign-center .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-valign-center .colloquium-row > figure.colloquium-figure:first-child:last-child > img {
+    object-position: center center;
+}
+
+.slide.img-valign-bottom .colloquium-grid > .col > p:first-child:last-child:has(> img) > img,
+.slide.img-valign-bottom .colloquium-row > p:first-child:last-child:has(> img) > img,
+.slide.img-valign-bottom .slide-content > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-valign-bottom .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-valign-bottom .colloquium-row > figure.colloquium-figure:first-child:last-child > img {
+    object-position: bottom center;
+}
+
+.img-overflow .colloquium-grid > .col,
+.img-overflow .colloquium-rows > .colloquium-row,
+.img-overflow .slide-content {
+    overflow: visible;
+}
+
+.slide.img-overflow .colloquium-grid > .col > p:first-child:last-child:has(> img),
+.slide.img-overflow .colloquium-row > p:first-child:last-child:has(> img),
+.slide.img-overflow .slide-content > figure.colloquium-figure:first-child:last-child,
+.slide.img-overflow .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child,
+.slide.img-overflow .colloquium-row > figure.colloquium-figure:first-child:last-child {
+    overflow: visible;
+}
+
+.slide.img-overflow .colloquium-grid > .col > p:first-child:last-child:has(> img) > img,
+.slide.img-overflow .colloquium-row > p:first-child:last-child:has(> img) > img,
+.slide.img-overflow .slide-content > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-overflow .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child > img,
+.slide.img-overflow .colloquium-row > figure.colloquium-figure:first-child:last-child > img {
+    width: auto;
+    height: auto;
+    flex: 0 0 auto;
+    max-width: none;
+    max-height: none;
+}
+
+/* ===== Utility: Image Alignment (independent of title) ===== */
+.img-align-center .slide-content img,
+.img-align-left .slide-content img,
+.img-align-right .slide-content img {
+    display: block;
+}
+
+.img-align-center .slide-content img { margin-left: auto; margin-right: auto; }
+.img-align-left .slide-content img { margin-right: auto; }
+.img-align-right .slide-content img { margin-left: auto; }
+
+/* ===== Utility: Image Fill ===== */
+.img-fill .slide-content img {
+    max-height: none;
+    max-width: none;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.img-fill .slide-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+}
+
+/* ===== Utility: Padding ===== */
+.pad-compact.active { padding: 30px; }
+.pad-normal.active  { padding: 60px; }
+.pad-wide.active    { padding: 90px; }
+
+/* ===== Utility: Font Size (slide-level) ===== */
+.size-small.active  { font-size: 20px; }
+.size-normal.active { font-size: 24px; }
+.size-large.active  { font-size: 28px; }
+
+/* ===== Utility: Inline/Block Text Size ===== */
+.text-xs { font-size: 0.65em; }
+.text-sm { font-size: 0.8em; }
+.text-base { font-size: 1em; }
+.text-lg { font-size: 1.2em; }
+.text-xl { font-size: 1.4em; }
+.text-2xl { font-size: 1.7em; }
+.text-3xl { font-size: 2.2em; }
+.text-4xl { font-size: 2.8em; }
+
+/* ===== Utility: Spacing ===== */
+.colloquium-spacer-sm { height: 0.75em; }
+.colloquium-spacer-md { height: 1.25em; }
+.colloquium-spacer-lg { height: 2em; }
+
+/* ===== Utility: Footnotes ===== */
+.colloquium-footnote {
+    margin-top: 1em;
+    font-size: 0.68em;
+    line-height: 1.35;
+    color: var(--colloquium-muted);
+}
+
+.colloquium-footnote p {
+    margin: 0.35em 0 0;
+}
+
+.colloquium-footnote p:first-child {
+    margin-top: 0;
+}
+
+/* ===== Fragments (incremental reveal) ===== */
+.fragment[data-fragment-index] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+}
+.fragment[data-fragment-index].visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ===== Footer (inside each slide) ===== */
+.colloquium-footer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    font-size: 13px;
+    color: var(--colloquium-muted);
+    user-select: none;
+}
+
+.colloquium-footer-left,
+.colloquium-footer-center,
+.colloquium-footer-right {
+    display: flex;
+    align-items: center;
+}
+
+.colloquium-footer-left   { justify-content: flex-start; }
+.colloquium-footer-center { justify-content: center; flex: 1; }
+.colloquium-footer-right  { justify-content: flex-end; }
+
+.colloquium-footer-nav {
+    cursor: pointer;
+}
+
+.slide .colloquium-footer-logo {
+    height: 24px;
+    width: auto;
+    border-radius: 0;
+    max-height: none;
+}
+
+.colloquium-counter {
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.colloquium-counter:hover {
+    opacity: 1;
+}
+
+.colloquium-footer-nav:hover {
+    color: var(--colloquium-accent);
+}
+
+/* Inverted footer on section breaks */
+.slide--section-break .colloquium-footer {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* ===== Slide Picker Overlay ===== */
+.colloquium-picker-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 200;
+}
+
+.colloquium-picker-overlay.active {
+    display: block;
+}
+
+.colloquium-picker {
+    position: absolute;
+    bottom: 48px;
+    right: 24px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    max-height: 70vh;
+    overflow-y: auto;
+    width: 360px;
+    padding: 8px 0;
+}
+
+.colloquium-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    font-family: var(--colloquium-font-body);
+    font-size: 15px;
+    color: var(--colloquium-text);
+    cursor: pointer;
+    text-align: left;
+}
+
+.colloquium-picker-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.colloquium-picker-item:hover {
+    background: var(--colloquium-code-bg);
+}
+
+.colloquium-picker-item.current {
+    color: var(--colloquium-accent);
+    font-weight: 600;
+}
+
+.colloquium-picker-num {
+    min-width: 28px;
+    color: var(--colloquium-muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    text-align: right;
+}
+
+.colloquium-picker-item.current .colloquium-picker-num {
+    color: var(--colloquium-accent);
+}
+
+/* ===== Picker Trigger ===== */
+.colloquium-picker-trigger {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 155;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    border: none;
+    border-radius: 999px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--colloquium-heading);
+    font-family: var(--colloquium-font-body);
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.colloquium-picker-trigger:hover {
+    background: #fff;
+}
+
+.colloquium-picker-trigger-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--colloquium-muted);
+}
+
+.colloquium-picker-trigger-count {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--colloquium-accent);
+}
+
+body.colloquium-embedded .colloquium-picker-trigger {
+    display: none !important;
+}
+
+/* ===== Present Button ===== */
+.colloquium-present {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 150;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: var(--colloquium-accent);
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+body:hover .colloquium-present {
+    opacity: 0.7;
+}
+
+.colloquium-present:hover {
+    opacity: 1 !important;
+}
+
+/* Hide when already fullscreen */
+:fullscreen .colloquium-present {
+    display: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .colloquium-present {
+        display: none !important;
+    }
+
+    .colloquium-picker-trigger {
+        display: flex;
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        min-height: 52px;
+        padding: 12px 16px;
+        gap: 12px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 6px 24px rgba(0,0,0,0.22);
+    }
+
+    .colloquium-picker-trigger-label {
+        font-size: 12px;
+    }
+
+    .colloquium-picker-trigger-count {
+        font-size: 16px;
+    }
+
+    .colloquium-picker {
+        right: 12px;
+        left: 12px;
+        bottom: 76px;
+        width: auto;
+        max-height: min(72vh, 560px);
+    }
+}
+
+/* ===== Overflow Warning ===== */
+.colloquium-overflow-warn {
+    position: absolute;
+    bottom: 40px;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: repeating-linear-gradient(
+        90deg, #e94560 0, #e94560 8px, transparent 8px, transparent 16px
+    );
+    opacity: 0.8;
+    pointer-events: none;
+}
+
+:fullscreen .colloquium-overflow-warn {
+    display: none;
+}
+
+/* ===== Progress Bar ===== */
+.colloquium-progress {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: var(--colloquium-progress-bg);
+    z-index: 100;
+}
+
+.colloquium-progress-bar {
+    height: 100%;
+    background: var(--colloquium-progress-fill);
+    transition: width 0.3s ease;
+}
+
+/* ===== Conversation Bubbles ===== */
+.colloquium-conversation {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    width: 100%;
+}
+
+.colloquium-message {
+    max-width: 80%;
+    border-radius: 12px;
+    padding: 0.5em 0.8em;
+}
+
+.colloquium-message--user {
+    align-self: flex-end;
+    background: var(--colloquium-accent);
+    color: #ffffff;
+}
+
+.colloquium-message--assistant {
+    align-self: flex-start;
+    background: var(--colloquium-code-bg);
+    color: var(--colloquium-text);
+}
+
+.colloquium-message--system {
+    align-self: center;
+    border: 1px solid var(--colloquium-border);
+    background: transparent;
+    color: var(--colloquium-muted);
+    font-style: italic;
+    font-size: 0.85em;
+    max-width: 90%;
+}
+
+.colloquium-message-role {
+    font-size: 0.65em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.15em;
+    opacity: 0.75;
+}
+
+.colloquium-message--user .colloquium-message-role {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.colloquium-message-role-name {
+    display: inline;
+}
+
+.colloquium-message-model {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 500;
+    opacity: 0.9;
+}
+
+.colloquium-message-content p {
+    margin: 0 0 0.3em;
+    white-space: pre-line;
+}
+
+.colloquium-message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.colloquium-message-content li {
+    white-space: pre-line;
+}
+
+.colloquium-message-content code {
+    font-size: 0.85em;
+}
+
+.colloquium-message--user .colloquium-message-content code {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* ===== Built With Badge ===== */
+.slide a.colloquium-builtwith {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75em;
+    max-width: 100%;
+    padding: 0.55em 0.8em;
+    border: 1px solid color-mix(in srgb, var(--colloquium-border) 75%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--colloquium-code-bg) 75%, white 25%);
+    color: var(--colloquium-text);
+    text-decoration: none;
+    line-height: 1.1;
+}
+
+.slide a.colloquium-builtwith:hover {
+    border-color: color-mix(in srgb, var(--colloquium-accent) 55%, var(--colloquium-border) 45%);
+    color: var(--colloquium-heading);
+}
+
+.colloquium-builtwith-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15em;
+    height: 1.15em;
+    flex: 0 0 auto;
+}
+
+.colloquium-builtwith-icon svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.colloquium-builtwith-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05em;
+}
+
+.colloquium-builtwith-label {
+    font-size: 0.6em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--colloquium-muted);
+}
+
+.colloquium-builtwith-repo {
+    font-size: 0.82em;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.colloquium-builtwith-stars {
+    font-size: 0.72em;
+    color: var(--colloquium-muted);
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+/* ===== Citations ===== */
+.slide a.colloquium-cite {
+    color: var(--colloquium-accent);
+    text-decoration: none;
+    font-size: 0.85em;
+    white-space: nowrap;
+}
+
+.slide a.colloquium-cite:hover {
+    text-decoration: underline;
+}
+
+.colloquium-footnote-ref {
+    font-size: 0.65em;
+    line-height: 0;
+    vertical-align: super;
+}
+
+.slide .colloquium-footnote-ref a {
+    color: var(--colloquium-accent);
+    text-decoration: none;
+}
+
+.slide .colloquium-footnote-ref a:hover {
+    text-decoration: underline;
+}
+
+.colloquium-cite-missing {
+    color: #dc2626;
+    font-weight: 600;
+}
+
+/* ===== Per-Slide Footnote Area ===== */
+.colloquium-slide-meta {
+    position: absolute;
+    bottom: 40px;
+    font-size: 12px;
+    color: var(--colloquium-muted);
+    max-width: 40%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2em;
+    z-index: 4;
+}
+
+.colloquium-slide-meta--left {
+    left: 24px;
+    align-items: flex-start;
+    text-align: left;
+}
+
+.colloquium-slide-meta--right {
+    right: 24px;
+    align-items: flex-end;
+    text-align: right;
+}
+
+.colloquium-slide-cite,
+.colloquium-slide-footnote {
+    max-width: 100%;
+}
+
+.colloquium-slide-cite {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.colloquium-slide-cite a.colloquium-cite {
+    font-size: inherit;
+    color: var(--colloquium-accent);
+}
+
+.colloquium-slide-cite a.colloquium-cite:hover {
+    color: var(--colloquium-heading);
+}
+
+.colloquium-slide-footnote {
+    line-height: 1.35;
+}
+
+.colloquium-slide-footnote-item + .colloquium-slide-footnote-item {
+    margin-top: 0.15em;
+}
+
+.colloquium-slide-footnote-label {
+    font-weight: 600;
+}
+
+.colloquium-slide-footnote-text {
+    display: inline;
+}
+
+.colloquium-slide-footnote-text .colloquium-cite {
+    white-space: normal;
+}
+
+.colloquium-slide-footnote > :first-child {
+    margin-top: 0;
+}
+
+.colloquium-slide-footnote > :last-child {
+    margin-bottom: 0;
+}
+
+.colloquium-slide-meta--right .colloquium-slide-footnote ul,
+.colloquium-slide-meta--right .colloquium-slide-footnote ol {
+    padding-right: 1.2em;
+    padding-left: 0;
+    list-style-position: inside;
+}
+
+/* ===== References Slide ===== */
+.colloquium-references-slide {
+}
+
+.colloquium-reference {
+    padding-left: 2em;
+    text-indent: -2em;
+    margin-bottom: 0.6em;
+    font-size: 0.75em;
+    line-height: 1.5;
+}
+
+.colloquium-ref-url {
+    color: var(--colloquium-muted);
+    font-size: 0.9em;
+    text-decoration: none;
+}
+
+.colloquium-ref-url:hover {
+    color: var(--colloquium-accent);
+    text-decoration: underline;
+}
+
+/* ===== Print / PDF Styles ===== */
+@page {
+    size: 13.333in 7.5in;  /* 16:9 widescreen at 96 CSS px/in => 1280x720 */
+    margin: 0;
+}
+
+@media print {
+    html, body {
+        width: 13.333in;
+        height: auto;
+        overflow: visible;
+        background: #fff;
+        margin: 0;
+        padding: 0;
+    }
+
+    .colloquium-deck {
+        position: static;
+        transform: none !important;
+        width: auto;
+        height: auto;
+        background: none;
+    }
+
+    .slide {
+        display: flex !important;
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        page-break-after: always;
+        page-break-inside: avoid;
+        break-after: page;
+        break-inside: avoid;
+        margin: 0;
+        font-size: 24px;
+        overflow: visible;
+    }
+
+    .slide:last-child {
+        page-break-after: auto;
+    }
+
+    /* Display equations can be clipped inside printed columns even when the
+       right side of the slide has free space available. */
+    .slide .katex-display {
+        overflow: visible !important;
+    }
+
+    /* Hidden slides never get the runtime figure fit pass, so printed grid/row
+       figures need an explicit container-sized fallback. */
+    .slide .slide-content > figure.colloquium-figure:first-child:last-child,
+    .slide .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child,
+    .slide .colloquium-row > figure.colloquium-figure:first-child:last-child {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    .slide .slide-content > figure.colloquium-figure:first-child:last-child > img,
+    .slide .colloquium-grid > .col > figure.colloquium-figure:first-child:last-child > img,
+    .slide .colloquium-row > figure.colloquium-figure:first-child:last-child > img {
+        width: 100% !important;
+        height: auto !important;
+        max-width: 100% !important;
+        max-height: calc(720px - var(--colloquium-slide-padding) * 2 - 100px) !important;
+    }
+
+    /* Printed slides are not .active, so re-apply layout/utility rules without that gate. */
+    .slide--title,
+    .slide--title-left,
+    .slide--title-banner,
+    .slide--section-break {
+        display: flex !important;
+    }
+
+    .slide--title-sidebar {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        column-gap: 56px;
+        align-content: center;
+        align-items: start;
+    }
+
+    .slide--title-sidebar.valign-top {
+        align-content: start;
+    }
+
+    .slide--title-sidebar.valign-center {
+        align-content: center;
+    }
+
+    .slide--title-sidebar.valign-bottom {
+        align-content: end;
+    }
+
+    .title-top { justify-content: flex-start; }
+    .title-center { justify-content: center; }
+    .title-center > h1, .title-center > h2 { text-align: center; }
+
+    .align-left { text-align: left; }
+    .align-center { text-align: center; }
+    .align-right { text-align: right; }
+
+    .align-center .slide-content > img,
+    .align-center .slide-content > p > img {
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .align-left .slide-content > img,
+    .align-left .slide-content > p > img {
+        display: block;
+        margin-right: auto;
+    }
+
+    .align-right .slide-content > img,
+    .align-right .slide-content > p > img {
+        display: block;
+        margin-left: auto;
+    }
+
+    .valign-top { justify-content: flex-start; }
+    .valign-center { justify-content: center; }
+    .valign-bottom { justify-content: flex-end; }
+
+    .size-small { font-size: 20px; }
+    .size-normal { font-size: 24px; }
+    .size-large { font-size: 28px; }
+
+    .colloquium-progress,
+    .colloquium-picker-overlay,
+    .colloquium-present,
+    .colloquium-picker-trigger,
+    .colloquium-overflow-warn {
+        display: none !important;
+    }
+
+    .colloquium-counter {
+        cursor: default;
+    }
+
+    a {
+        color: inherit !important;
+        text-decoration: underline;
+    }
+
+    .slide a.colloquium-cite,
+    .colloquium-slide-cite a.colloquium-cite,
+    .slide a.colloquium-ref-url {
+        color: var(--colloquium-accent) !important;
+    }
+
+    /* Swap chart canvases for static images */
+    .colloquium-chart-container canvas {
+        display: none !important;
+    }
+
+    .colloquium-chart-print {
+        display: block !important;
+    }
+
+    /* Show all fragments in print */
+    .fragment[data-fragment-index] {
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        transition: none !important;
+    }
+}
+
+/* ===== Toast (transient confirmation, e.g. "Copied slide markdown") ===== */
+.colloquium-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    z-index: 1000;
+    padding: 8px 16px;
+    border-radius: 6px;
+    background: rgba(20, 20, 20, 0.92);
+    color: #fff;
+    font-size: 14px;
+    font-family: var(--colloquium-font-body, sans-serif);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.colloquium-toast.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ===== Capture mode — hide UI chrome for headless screenshots ===== */
+.colloquium-capture .colloquium-present,
+.colloquium-capture .colloquium-progress,
+.colloquium-capture .colloquium-overflow-warn,
+.colloquium-capture .colloquium-picker-trigger,
+.colloquium-capture .colloquium-picker-overlay,
+.colloquium-capture .colloquium-toast {
+    display: none !important;
+}
+
+/* Show all fragments in capture mode */
+.colloquium-capture .fragment[data-fragment-index] {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transition: none !important;
+}
+
+
+:root {
+  --colloquium-bg: #f7f9fc;
+  --colloquium-text: #243447;
+  --colloquium-heading: #102a43;
+  --colloquium-accent: #1769aa;
+  --colloquium-link: #1769aa;
+  --colloquium-code-bg: #eaf1f7;
+  --colloquium-muted: #52606d;
+  --colloquium-border: #d9e2ec;
+  --colloquium-font-body: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --colloquium-font-heading: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --colloquium-font-mono: "SFMono-Regular", Consolas, monospace;
+  --colloquium-slide-padding: 58px 72px 54px;
+}
+.slide { font-size: 22px; }
+.slide h1 { font-size: 2.05em; letter-spacing: -0.02em; margin-bottom: 0.32em; }
+.slide h2 { font-size: 1.45em; letter-spacing: -0.01em; margin-bottom: 0.42em; }
+.slide h3 { color: var(--colloquium-accent); }
+.slide p { max-width: 1040px; }
+.slide ul { max-width: 1080px; }
+.slide table { font-size: 0.74em; margin-top: 0.35em; }
+.slide th, .slide td { padding: 0.34em 0.55em; }
+.slide--title { background: #102a43; color: #f7f9fc; }
+.slide--title h1, .slide--title h2 { color: #f7f9fc; max-width: 980px; }
+.slide--title .slide-content p { color: #d9e2ec; }
+.slide--title .slide-content { max-width: 900px; }
+.slide--title .kicker { color: #7cc4fa; font-size: 0.78em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.slide--title-left { padding: 64px 78px 54px; }
+.slide--title-left h1 { font-size: 2.2em; max-width: 1080px; }
+.slide--content > .slide-content { max-width: 1136px; }
+.slide .slide-content img { max-height: 540px; margin: 0 auto; }
+.slide .map { width: 100%; max-height: 520px; object-fit: contain; border: 1px solid var(--colloquium-border); border-radius: 12px; }
+.slide .map-caption { color: var(--colloquium-muted); font-size: 0.72em; margin-top: 0.35em; text-align: center; }
+.slide .small { font-size: 0.75em; color: var(--colloquium-muted); }
+.slide .lead { font-size: 1.18em; line-height: 1.35; max-width: 980px; color: var(--colloquium-heading); }
+.slide .rule { height: 4px; width: 70px; background: #39a9db; border-radius: 4px; margin: 0.2em auto 0.9em; }
+.slide .table-lg { font-size: 1em; margin-top: 0.4em; }
+.slide .table-lg th, .slide .table-lg td { padding: 0.5em 0.75em; }
+.slide .table-lg + .small { font-size: 0.85em; margin-top: 0.7em; }
+.slide .mono { font-family: var(--colloquium-font-mono); font-size: 0.86em; }
+.slide .tight li { margin-bottom: 0.12em; }
+.slide .muted { color: var(--colloquium-muted); }
+.slide .accent { color: var(--colloquium-accent); }
+.slide .flow { font-size: 1.04em; line-height: 1.75; color: var(--colloquium-heading); }
+.slide .flow strong { color: var(--colloquium-accent); }
+.slide .callout { background: #eaf1f7; border-left: 5px solid #1769aa; padding: 0.65em 0.9em; border-radius: 4px; max-width: 1080px; }
+.slide .callout p { margin: 0; }
+.slide .two-up img { max-height: 390px; }
+.slide .two-up p { font-size: 0.8em; }
+.slide .source-note { font-size: 0.62em; color: var(--colloquium-muted); }
+.slide code { font-size: 0.78em; }
+.slide pre { font-size: 0.7em; }
+.slide--title-left .slide-content { max-width: 1080px; }
+</style>
+</head>
+<body>
+<div class="colloquium-deck">
+<section class="slide slide--title active" data-index="0" data-colloquium-md="PCEtLSBsYXlvdXQ6IHRpdGxlIC0tPgoKIyBBIGdsb2JhbCBpbmRleCBvZiBPU00gcG9seWdvbnMgd2l0aCBsaW5rZWQga25vd2xlZGdlCgo8cCBjbGFzcz0ia2lja2VyIj5EYXRhc2V0IG92ZXJ2aWV3PC9wPgoKPGRpdiBjbGFzcz0icnVsZSI+PC9kaXY+Cgo8cD5XaWtpZGF0YSBjb25uZWN0cyByZWFsIHBsYWNlcyBpbiBPcGVuU3RyZWV0TWFwIHRvIG11bHRpbGluZ3VhbCBXaWtpcGVkaWEgYW5kIFdpa2l2b3lhZ2UgdGV4dC48L3A+CjxwPlNuYXBzaG90OiAyMDI2LTA4LTAyPC9wPgoKPCEtLSBub3RlczogW1NvdXJjZXNdIEdlbmVyYXRlZCBmcm9tIHRoZSBsb2NhbCBwcm9jZXNzZWQgUGFycXVldCBzbmFwc2hvdCwgcHJvY2Vzc2VkX3BiZnMuanNvbiwgYW5kIHRoZSBwcm9qZWN0IFJFQURNRS4gQ29sbG9xdWl1bSB3b3JrZmxvdzogaHR0cHM6Ly9weXBpLm9yZy9wcm9qZWN0L2NvbGxvcXVpdW0vMC4yLjIvIC0tPg==">
+<h1>Wordlwide OSM polygons with linked knowledge</h1>
+<div class="slide-content"><p class="kicker">Dataset overview</p>
+<div class="rule"></div>
+<p>Wikidata connects real places in OpenStreetMap to multilingual Wikipedia and Wikivoyage text.</p>
+<p>Snapshot: 2026-08-02</p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">1 / 11</span></div></div>
+</section>
+
+<section class="slide slide--title-left" data-index="1" data-colloquium-md="PCEtLSBsYXlvdXQ6IHRpdGxlLWxlZnQgLS0+CgojIEV2ZXJ5IHJvdyBzdGFydHMgd2l0aCBhIHJlYWwgT1NNIHBvbHlnb24KCjxwIGNsYXNzPSJsZWFkIj5UaGUgcGlwZWxpbmUgcmVhZHMgR2VvZmFicmlrIGV4dHJhY3RzIGFuZCBrZWVwcyBjbG9zZWQgd2F5cyBhbmQgbXVsdGlwb2x5Z29uIHJlbGF0aW9ucyB3aXRoIGEgbm9uLWVtcHR5IDxjb2RlPndpa2lkYXRhPSo8L2NvZGU+IHRhZy48L3A+CgotIDxzdHJvbmc+MSwxODQsMTEwPC9zdHJvbmc+IHBvbHlnb24gcm93cyBhY3Jvc3MgPHN0cm9uZz4zNzU8L3N0cm9uZz4gYWN0aXZlIHJlZ2lvbnMKLSBlYWNoIHBvbHlnb24ga2VlcHMgaXRzIE9TTSBpZGVudGl0eSwgZ2VvbWV0cnksIHRhZ3MsIGNlbnRyb2lkLCBhbmQgYXJlYQotIHRoZSByYXcgaW5wdXQgc2V0IGhhcyAzODYgUEJGczsgMTEgY29udGFpbmVkIGV4dHJhY3RzIGFyZSByZXRpcmVkIGZyb20gdGhlIGFjdGl2ZSBzZXQKCjxwIGNsYXNzPSJjYWxsb3V0Ij5UaGlzIGlzIGEgcGxhY2UtZmlyc3QgZGF0YXNldC4gVGV4dCBhbmQgZmFjdHMgYXJlIGxpbmtlZCB0byB0aGUgcG9seWdvbiB0aHJvdWdoIGl0cyBXaWtpZGF0YSBRLWlkLjwvcD4KCjwhLS0gbm90ZXM6IFtTb3VyY2VzXSBQcm9qZWN0IFJFQURNRSwgZG9tYWluIHNjaGVtYXMsIGFuZCBwcm9jZXNzZWRfcGJmcy5qc29uLiBTZWxlY3Rpb24gaXMgaW1wbGVtZW50ZWQgaW4gc3JjL29zbV9wb2x5Z29uX3dpa2lkYXRhX29ubHkvZG9tYWluL2ZpbHRlcnMucHkgYW5kIGlvL3BiZl9yZWFkZXIucHkuIC0tPg==">
+<h1>Every row starts with a real OSM polygon</h1>
+<div class="slide-content"><p class="lead">The pipeline reads Geofabrik extracts and keeps closed ways and multipolygon relations with a non-empty <code>wikidata=*</code> tag.</p>
+<ul>
+<li><strong>1,184,110</strong> polygon rows across <strong>375</strong> active regions</li>
+<li>each polygon keeps its OSM identity, geometry, tags, centroid, and area</li>
+<li>the raw input set has 386 PBFs; 11 contained extracts are retired from the active set</li>
+</ul>
+<p class="callout">This is a place-first dataset. Text and facts are linked to the polygon through its Wikidata Q-id.</p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">2 / 11</span></div></div>
+</section>
+
+<section class="slide slide--content" data-index="2" data-colloquium-md="IyMgU2V2ZW4gUGFycXVldCB0YWJsZXMgZm9ybSBvbmUgbGlua2VkIGRhdGFzZXQKCnwgVGFibGUgfCBXaGF0IGl0IGNvbnRhaW5zIHwKfCAtLS0gfCAtLS0gfAp8IDxjb2RlPnBvbHlnb25zPC9jb2RlPiB8IE9uZSByb3cgcGVyIHNlbGVjdGVkIE9TTSBwb2x5Z29uIHwKfCA8Y29kZT5wb2x5Z29uX2FydGljbGVzPC9jb2RlPiB8IE9uZSBsaW5rIHJvdyBwZXIgcG9seWdvbiBhbmQgV2lraXBlZGlhIG9yIFdpa2l2b3lhZ2UgZG9jdW1lbnQgfAp8IDxjb2RlPndpa2lwZWRpYS9kb2N1bWVudHM8L2NvZGU+IHwgRnVsbCBXaWtpcGVkaWEgZG9jdW1lbnQgcm93cyB8CnwgPGNvZGU+d2lraXBlZGlhL3NlY3Rpb25zPC9jb2RlPiB8IFNlY3Rpb24tbGV2ZWwgV2lraXBlZGlhIHRleHQgfAp8IDxjb2RlPndpa2l2b3lhZ2UvZG9jdW1lbnRzPC9jb2RlPiB8IEZ1bGwgV2lraXZveWFnZSBkb2N1bWVudCByb3dzIHwKfCA8Y29kZT53aWtpdm95YWdlL3NlY3Rpb25zPC9jb2RlPiB8IFNlY3Rpb24tbGV2ZWwgV2lraXZveWFnZSB0ZXh0IHwKfCA8Y29kZT53aWtpZGF0YS9mYWN0czwvY29kZT4gfCBTZWxlY3RlZCBzdHJ1Y3R1cmVkIFdpa2lkYXRhIGNsYWltcyB8Cgo8cCBjbGFzcz0ic21hbGwiPkV2ZXJ5IHRhYmxlIGlzIHBhcnRpdGlvbmVkIGJ5IHRoZSBHZW9mYWJyaWsgc3RlbS4gVGhlIGxpbmsgdGFibGUgaGFzIGEgPGNvZGU+cHJvamVjdDwvY29kZT4gY29sdW1uIHNvIG9uZSBqb2luIHdvcmtzIGZvciBib3RoIHRleHQgc291cmNlcy48L3A+Cgo8IS0tIG5vdGVzOiBbU291cmNlc10gR2VuZXJhdGVkIGRhdGFzZXQgY2FyZCBzY2hlbWEgc2VjdGlvbiBhbmQgc3JjL29zbV9wb2x5Z29uX3dpa2lkYXRhX29ubHkvaGYvcmVwb19sYXlvdXQucHkuIFRoZSBsaW5rIGNvbnRyYWN0IGlzIGRlZmluZWQgaW4gZG9tYWluL3BvbHlnb25fZG9jdW1lbnRfbGlua3MucHkuIC0tPg==">
+<h2>Seven Parquet tables form one linked dataset</h2>
+<div class="slide-content"><table class="table-lg">
+<thead>
+<tr>
+<th>Table</th>
+<th>What it contains</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>polygons</code></td>
+<td>One row per selected OSM polygon</td>
+</tr>
+<tr>
+<td><code>polygon_articles</code></td>
+<td>One link row per polygon and Wikipedia or Wikivoyage document</td>
+</tr>
+<tr>
+<td><code>wikipedia/documents</code></td>
+<td>Full Wikipedia document rows</td>
+</tr>
+<tr>
+<td><code>wikipedia/sections</code></td>
+<td>Section-level Wikipedia text</td>
+</tr>
+<tr>
+<td><code>wikivoyage/documents</code></td>
+<td>Full Wikivoyage document rows</td>
+</tr>
+<tr>
+<td><code>wikivoyage/sections</code></td>
+<td>Section-level Wikivoyage text</td>
+</tr>
+<tr>
+<td><code>wikidata/facts</code></td>
+<td>Selected structured Wikidata claims</td>
+</tr>
+</tbody>
+</table>
+<p class="small">Every table is partitioned by the Geofabrik stem. The link table has a <code>project</code> column so one join works for both text sources.</p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">3 / 11</span></div></div>
+</section>
+
+<section class="slide slide--title-left" data-index="3" data-colloquium-md="PCEtLSBsYXlvdXQ6IHRpdGxlLWxlZnQgLS0+CgojIFdpa2lkYXRhIGlzIHRoZSBicmlkZ2UgYmV0d2VlbiBnZW9tZXRyeSBhbmQgdGV4dAoKPHAgY2xhc3M9ImZsb3ciPjxzdHJvbmc+T1NNIHBvbHlnb248L3N0cm9uZz4gJm5ic3A7IOKGkiAmbmJzcDsgPHN0cm9uZz5XaWtpZGF0YSBRLWlkPC9zdHJvbmc+ICZuYnNwOyDihpIgJm5ic3A7IDxzdHJvbmc+V2lraXBlZGlhIGRvY3VtZW50czwvc3Ryb25nPjwvcD4KPHAgY2xhc3M9ImZsb3ciPjxzdHJvbmc+T1NNIHBvbHlnb248L3N0cm9uZz4gJm5ic3A7IOKGkiAmbmJzcDsgPHN0cm9uZz5XaWtpZGF0YSBRLWlkPC9zdHJvbmc+ICZuYnNwOyDihpIgJm5ic3A7IDxzdHJvbmc+V2lraXZveWFnZSBkb2N1bWVudHM8L3N0cm9uZz48L3A+CjxwIGNsYXNzPSJmbG93Ij48c3Ryb25nPldpa2lkYXRhIFEtaWQ8L3N0cm9uZz4gJm5ic3A7IOKGkiAmbmJzcDsgPHN0cm9uZz5mYWN0cyB0YWJsZTwvc3Ryb25nPjwvcD4KCjxwIGNsYXNzPSJsZWFkIj5BIGRvY3VtZW50IGNhbiBiZSBsaW5rZWQgdG8gc2V2ZXJhbCBwb2x5Z29ucy4gQSBwb2x5Z29uIGNhbiBoYXZlIGRvY3VtZW50cyBpbiBtYW55IGxhbmd1YWdlcyBhbmQgaW4gYm90aCBwcm9qZWN0cy48L3A+Cgo8dWwgY2xhc3M9InRpZ2h0Ij4KICA8bGk+PGNvZGU+ZG9jdW1lbnRfaWQ8L2NvZGU+IGlkZW50aWZpZXMgYSBwYWdlIHJldmlzaW9uLjwvbGk+CiAgPGxpPjxjb2RlPnByb2plY3Q8L2NvZGU+IGRpc3Rpbmd1aXNoZXMgV2lraXBlZGlhIGZyb20gV2lraXZveWFnZS48L2xpPgogIDxsaT5TZWN0aW9ucyByZWZlcmVuY2UgdGhlaXIgcGFyZW50IGRvY3VtZW50LCBzbyBmdWxsIHRleHQgYW5kIHNlY3Rpb24gdGV4dCBjYW4gYmUgdXNlZCB0b2dldGhlci48L2xpPgo8L3VsPgoKPCEtLSBub3RlczogW1NvdXJjZXNdIFByb2plY3QgUkVBRE1FIHNjaGVtYSBzZWN0aW9ucyBhbmQgdGhlIGNhbm9uaWNhbCBsaW5rIHNjaGVtYSBpbiBkb21haW4vcG9seWdvbl9kb2N1bWVudF9saW5rcy5weS4gLS0+">
+<h1>Wikidata is the bridge between geometry and text</h1>
+<div class="slide-content"><p class="flow"><strong>OSM polygon</strong> &nbsp; → &nbsp; <strong>Wikidata Q-id</strong> &nbsp; → &nbsp; <strong>Wikipedia documents</strong></p>
+<p class="flow"><strong>OSM polygon</strong> &nbsp; → &nbsp; <strong>Wikidata Q-id</strong> &nbsp; → &nbsp; <strong>Wikivoyage documents</strong></p>
+<p class="flow"><strong>Wikidata Q-id</strong> &nbsp; → &nbsp; <strong>facts table</strong></p>
+<p class="lead">A document can be linked to several polygons. A polygon can have documents in many languages and in both projects.</p>
+<ul class="tight">
+  <li><code>document_id</code> identifies a page revision.</li>
+  <li><code>project</code> distinguishes Wikipedia from Wikivoyage.</li>
+  <li>Sections reference their parent document, so full text and section text can be used together.</li>
+</ul></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">4 / 11</span></div></div>
+</section>
+
+<section class="slide slide--content cols-2" data-index="4" data-colloquium-md="PCEtLSBjbGFzczogY29scy0yIC0tPgoKIyMgVGhlIHNuYXBzaG90IGhhcyBicm9hZCBjb3ZlcmFnZSwgd2l0aCBhIGNsZWFyIHRleHQgYm91bmRhcnkKCjxwIGNsYXNzPSJjYWxsb3V0Ij48c3Ryb25nPkNvcmUgc2NhbGU8L3N0cm9uZz48YnI+MSwxMTksMjIzIHVuaXF1ZSBXaWtpZGF0YSBlbnRpdGllczxicj4yLDI3Myw3NTAgV2lraXBlZGlhIGRvY3VtZW50czxicj4xNCw0MjAgV2lraXZveWFnZSBkb2N1bWVudHM8L3A+Cgp8fHwKCjxwIGNsYXNzPSJjYWxsb3V0Ij48c3Ryb25nPkRlcml2ZWQgdGV4dCBhbmQgZmFjdHM8L3N0cm9uZz48YnI+MTEsOTk3LDE2NSBXaWtpcGVkaWEgc2VjdGlvbnM8YnI+MzAyLDIwMCBXaWtpdm95YWdlIHNlY3Rpb25zPGJyPjMsOTAxLDA5MiBXaWtpZGF0YSBmYWN0czwvcD4KCjxwIGNsYXNzPSJsZWFkIj42NjYsMjUxIHBvbHlnb25zIGhhdmUgYXQgbGVhc3Qgb25lIG5vbi1lbXB0eSBXaWtpcGVkaWEgb3IgV2lraXZveWFnZSBkb2N1bWVudCwgb3IgNTYuMyUgb2YgdGhlIHBvbHlnb24gc2V0LjwvcD4KPHAgY2xhc3M9InNtYWxsIj5Eb2N1bWVudCB3b3JkcyBjb3VudCBmdWxsIGRvY3VtZW50IHJvd3MuIFNlY3Rpb24gcm93cyBhcmUgZXhjbHVkZWQgYmVjYXVzZSB0aGV5IHJlcGVhdCBkb2N1bWVudCB0ZXh0LjwvcD4KCjwhLS0gbm90ZXM6IFtTb3VyY2VzXSBHZW5lcmF0ZWQgZGF0YXNldCBjYXJkIHNuYXBzaG90IHRhYmxlIGFuZCBjb3ZlcmFnZSBtYXAgaW5wdXRzLiBDb3VudHMgYXJlIHJlYWQgZnJvbSB0aGUgY3VycmVudCBsb2NhbCBjYXJkIGdlbmVyYXRlZCBieSB0aGUgcGlwZWxpbmUuIC0tPg==">
+<h2>The snapshot has broad coverage, with a clear text boundary</h2>
+<div class="slide-content colloquium-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));"><div class="col"><p class="callout"><strong>Core scale</strong><br>1,119,223 unique Wikidata entities<br>2,273,750 Wikipedia documents<br>14,420 Wikivoyage documents</p></div><div class="col"><p class="callout"><strong>Derived text and facts</strong><br>11,997,165 Wikipedia sections<br>302,200 Wikivoyage sections<br>3,901,092 Wikidata facts</p>
+<p class="lead">666,251 polygons have at least one non-empty Wikipedia or Wikivoyage document, or 56.3% of the polygon set.</p>
+<p class="small">Document words count full document rows. Section rows are excluded because they repeat document text.</p></div></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">5 / 11</span></div></div>
+</section>
+
+<section class="slide slide--content" data-index="5" data-colloquium-md="IyMgVGV4dCBjb3ZlcmFnZSBpcyBzdHJvbmdlc3QgaW4gRXVyb3BlLCBidXQgbm90IHVuaWZvcm0KCnwgQ29udGluZW50IHwgUG9seWdvbnMgfCBXaWtpcGVkaWEgdGV4dCB8IFdpa2lwZWRpYSArIFZveWFnZSB8IENvdmVyYWdlIHwKfCAtLS0gfCAtLS06IHwgLS0tOiB8IC0tLTogfCAtLS06IHwKfCBBZnJpY2EgfCAxMSwyODkgfCA4LDMwOSB8IDgsMzA5IHwgNzMuNiUgfAp8IEFudGFyY3RpY2EgfCAyNTQgfCAyNTEgfCAyNTEgfCA5OC44JSB8CnwgQXNpYSB8IDExNyw2MTAgfCA5NCw5MjQgfCA5NCw5NDUgfCA4MC43JSB8CnwgRXVyb3BlIHwgNzkyLDU2OSB8IDM3Myw3ODIgfCAzNzMsNzgyIHwgNDcuMiUgfAp8IE5vcnRoIEFtZXJpY2EgfCAxNjIsMDEyIHwgMTIwLDE2NiB8IDEyMCwxNjcgfCA3NC4yJSB8CnwgT2NlYW5pYSB8IDE5LDgwNyB8IDExLDQ2NyB8IDExLDQ2OCB8IDU3LjklIHwKfCBTb3V0aCBBbWVyaWNhIHwgMTgsOTA2IHwgMTMsNTAzIHwgMTMsNTAzIHwgNzEuNCUgfAp8IFVuYXNzaWduZWQgfCA2MSw2NjMgfCA0Myw4MjQgfCA0Myw4MjYgfCA3MS4xJSB8Cgo8cCBjbGFzcz0ic21hbGwiPkEgcG9seWdvbiBpcyBhc3NpZ25lZCBieSBpdHMgV0dTODQgY2VudHJvaWQgYW5kIE5hdHVyYWwgRWFydGggY291bnRyeSBib3VuZGFyaWVzLiBPZmZzaG9yZSBvciB1bm1hdGNoZWQgY2VudHJvaWRzIHN0YXkgPGNvZGU+VW5hc3NpZ25lZDwvY29kZT4uIENvdmVyYWdlIGlzIHRleHQtY292ZXJlZCBwb2x5Z29ucyBkaXZpZGVkIGJ5IHBvbHlnb25zIGluIHRoYXQgcm93LjwvcD4KCjwhLS0gbm90ZXM6IFtTb3VyY2VzXSBHZW5lcmF0ZWQgZ2VvZ3JhcGhpYyBkaXN0cmlidXRpb24gdGFibGUgZnJvbSB0aGUgZGF0YXNldCBjYXJkIHNuYXBzaG90LiBNZXRob2QgYW5kIGNhdmVhdHMgYXJlIGRvY3VtZW50ZWQgaW4gc3JjL29zbV9wb2x5Z29uX3dpa2lkYXRhX29ubHkvaGYvY29udGluZW50X3N0YXRzLnB5IGFuZCB0aGUgUkVBRE1FLiAtLT4=">
+<h2>Text coverage is strongest in Europe, but not uniform</h2>
+<div class="slide-content"><table>
+<thead>
+<tr>
+<th>Continent</th>
+<th style="text-align:right">Polygons</th>
+<th style="text-align:right">Wikipedia text</th>
+<th style="text-align:right">Wikipedia + Voyage</th>
+<th style="text-align:right">Coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Africa</td>
+<td style="text-align:right">11,289</td>
+<td style="text-align:right">8,309</td>
+<td style="text-align:right">8,309</td>
+<td style="text-align:right">73.6%</td>
+</tr>
+<tr>
+<td>Antarctica</td>
+<td style="text-align:right">254</td>
+<td style="text-align:right">251</td>
+<td style="text-align:right">251</td>
+<td style="text-align:right">98.8%</td>
+</tr>
+<tr>
+<td>Asia</td>
+<td style="text-align:right">117,610</td>
+<td style="text-align:right">94,924</td>
+<td style="text-align:right">94,945</td>
+<td style="text-align:right">80.7%</td>
+</tr>
+<tr>
+<td>Europe</td>
+<td style="text-align:right">792,569</td>
+<td style="text-align:right">373,782</td>
+<td style="text-align:right">373,782</td>
+<td style="text-align:right">47.2%</td>
+</tr>
+<tr>
+<td>North America</td>
+<td style="text-align:right">162,012</td>
+<td style="text-align:right">120,166</td>
+<td style="text-align:right">120,167</td>
+<td style="text-align:right">74.2%</td>
+</tr>
+<tr>
+<td>Oceania</td>
+<td style="text-align:right">19,807</td>
+<td style="text-align:right">11,467</td>
+<td style="text-align:right">11,468</td>
+<td style="text-align:right">57.9%</td>
+</tr>
+<tr>
+<td>South America</td>
+<td style="text-align:right">18,906</td>
+<td style="text-align:right">13,503</td>
+<td style="text-align:right">13,503</td>
+<td style="text-align:right">71.4%</td>
+</tr>
+<tr>
+<td>Unassigned</td>
+<td style="text-align:right">61,663</td>
+<td style="text-align:right">43,824</td>
+<td style="text-align:right">43,826</td>
+<td style="text-align:right">71.1%</td>
+</tr>
+</tbody>
+</table>
+<p class="small">A polygon is assigned by its WGS84 centroid and Natural Earth country boundaries. Offshore or unmatched centroids stay <code>Unassigned</code>. Coverage is text-covered polygons divided by polygons in that row.</p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">6 / 11</span></div></div>
+</section>
+
+<section class="slide slide--content cols-2" data-index="6" data-colloquium-md="PCEtLSBjbGFzczogY29scy0yIC0tPgoKIyMgTGFuZ3VhZ2VzIHNob3cgYSBsb25nIHRhaWwKCjxoMz5Ub3AgZG9jdW1lbnQgbGFuZ3VhZ2VzPC9oMz4KCnwgTGFuZ3VhZ2UgfCBEb2N1bWVudHMgfCBTaGFyZSB8CnwgLS0tIHwgLS0tOiB8IC0tLTogfAp8IGBlbmAgfCAyMjMsMzAxIHwgMTAuMSUgfAp8IGBkZWAgfCAxNDYsMzEyIHwgNi42JSB8CnwgYGZyYCB8IDEwOSw3MjAgfCA1LjAlIHwKfCBgY2ViYCB8IDEwNSw0NzkgfCA0LjglIHwKfCBgc3ZgIHwgNzQsNTE4IHwgMy40JSB8CnwgYHJ1YCB8IDczLDIyOCB8IDMuMyUgfAp8IGBlc2AgfCA3MCw4MDggfCAzLjIlIHwKfCBgaXRgIHwgNjUsOTI3IHwgMy4wJSB8Cgp8fHwKCjxoMz5XaGF0IHRoZSBkaXN0cmlidXRpb24gbWVhbnM8L2gzPgo8dWwgY2xhc3M9InRpZ2h0Ij4KICA8bGk+PHN0cm9uZz4zNTE8L3N0cm9uZz4gbGFuZ3VhZ2VzIG9jY3VyIGFjcm9zcyBib3RoIHByb2plY3RzLjwvbGk+CiAgPGxpPlRoZSB0b3AgZml2ZSBsYW5ndWFnZXMgYWNjb3VudCBmb3IgMjkuOSUgb2YgYWxsIGRvY3VtZW50cy48L2xpPgogIDxsaT5UaGUgdG9wIHR3ZW50eSBhY2NvdW50IGZvciA2My42JS48L2xpPgogIDxsaT5MYW5ndWFnZSBjb3VudHMgZGVzY3JpYmUgZG9jdW1lbnQgcm93cywgbm90IHVuaXF1ZSBwbGFjZXMuPC9saT4KPC91bD4KCjwhLS0gbm90ZXM6IFtTb3VyY2VzXSBHZW5lcmF0ZWQgbGFuZ3VhZ2UgdGFibGUgYW5kIGNvbmNlbnRyYXRpb24gdmFsdWVzIGZyb20gdGhlIGRhdGFzZXQgY2FyZCBzbmFwc2hvdC4gTGFuZ3VhZ2UgZGVmaW5pdGlvbnMgYXJlIGluIGhmL2RhdGFzZXRfc3RhdHMucHkgYW5kIGhmL2NvbnRpbmVudF9zdGF0cy5weS4gLS0+">
+<h2>Languages show a long tail</h2>
+<div class="slide-content colloquium-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));"><div class="col"><h3>Top document languages</h3>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th style="text-align:right">Documents</th>
+<th style="text-align:right">Share</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>en</code></td>
+<td style="text-align:right">223,301</td>
+<td style="text-align:right">10.1%</td>
+</tr>
+<tr>
+<td><code>de</code></td>
+<td style="text-align:right">146,312</td>
+<td style="text-align:right">6.6%</td>
+</tr>
+<tr>
+<td><code>fr</code></td>
+<td style="text-align:right">109,720</td>
+<td style="text-align:right">5.0%</td>
+</tr>
+<tr>
+<td><code>ceb</code></td>
+<td style="text-align:right">105,479</td>
+<td style="text-align:right">4.8%</td>
+</tr>
+<tr>
+<td><code>sv</code></td>
+<td style="text-align:right">74,518</td>
+<td style="text-align:right">3.4%</td>
+</tr>
+<tr>
+<td><code>ru</code></td>
+<td style="text-align:right">73,228</td>
+<td style="text-align:right">3.3%</td>
+</tr>
+<tr>
+<td><code>es</code></td>
+<td style="text-align:right">70,808</td>
+<td style="text-align:right">3.2%</td>
+</tr>
+<tr>
+<td><code>it</code></td>
+<td style="text-align:right">65,927</td>
+<td style="text-align:right">3.0%</td>
+</tr>
+</tbody>
+</table></div><div class="col"><h3>What the distribution means</h3>
+<ul class="tight">
+  <li><strong>351</strong> languages occur across both projects.</li>
+  <li>The top five languages account for 29.9% of all documents.</li>
+  <li>The top twenty account for 63.6%.</li>
+  <li>Language counts describe document rows.</li>
+</ul></div></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">7 / 11</span></div></div>
+</section>
+
+<section class="slide slide--content cols-2" data-index="7" data-colloquium-md="PCEtLSBjbGFzczogY29scy0yIC0tPgoKIyMgVHdvIG1hcHMgYW5zd2VyIHR3byBkaWZmZXJlbnQgZ2VvZ3JhcGhpYyBxdWVzdGlvbnMKCiFbQWxsIGRhdGFzZXQgcG9seWdvbnNdKGFzc2V0cy9jb3ZlcmFnZV9tYXAucG5nKQoKPHA+PHN0cm9uZz5BbGwgcG9seWdvbnMuPC9zdHJvbmc+IEVhY2ggcG9pbnQgaXMgYW4gT1NNIHBvbHlnb24gY2FycnlpbmcgYSBXaWtpZGF0YSB0YWcuPC9wPgoKfHx8CgohW1BvbHlnb25zIHdpdGggdGV4dF0oYXNzZXRzL3RleHRfcHJlc2VuY2UucG5nKQoKPHA+PHN0cm9uZz5Qb2x5Z29ucyB3aXRoIHRleHQuPC9zdHJvbmc+IEVhY2ggcG9pbnQgaGFzIG5vbi1lbXB0eSBXaWtpcGVkaWEgb3IgV2lraXZveWFnZSB0ZXh0LjwvcD4KCjxwIGNsYXNzPSJzbWFsbCI+VGhlIHRoaXJkIHZpZXcgZ3JvdXBzIHRoZSBzYW1lIHRleHQtY292ZXJlZCBwb2x5Z29ucyBpbnRvIEgzIGNlbGxzIGFuZCB1c2VzIGEgbG9nYXJpdGhtaWMgY291bnQgc2NhbGUuPC9wPgoKPCEtLSBub3RlczogW1NvdXJjZXNdIE1hcHMgYXJlIGdlbmVyYXRlZCBieSBoZi9jb3ZlcmFnZV9tYXAucHksIGhmL2dlb2dyYXBoaWNfdGV4dF9wcmVzZW5jZS5weSwgYW5kIGhmL2dlb2dyYXBoaWNfdGV4dF9kZW5zaXR5LnB5LiBOYXR1cmFsIEVhcnRoIGlzIHVzZWQgZm9yIGxhbmQgY29udGV4dC4gLS0+">
+<h2>Two maps answer two different geographic questions</h2>
+<div class="slide-content colloquium-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));"><div class="col"><p><img src="assets/coverage_map.png" alt="All dataset polygons" /></p>
+<p><strong>All polygons.</strong> Each point is an OSM polygon carrying a Wikidata tag.</p></div><div class="col"><p><img src="assets/text_presence.png" alt="Polygons with text" /></p>
+<p><strong>Polygons with text.</strong> Each point has non-empty Wikipedia or Wikivoyage text.</p>
+</div></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">8 / 11</span></div></div>
+</section>
+
+<section class="slide slide--content" data-index="8" data-colloquium-md="IyMgSDMgZGVuc2l0eSBzaG93cyB3aGVyZSB0ZXh0LWNvdmVyZWQgcGxhY2VzIGNsdXN0ZXIKCiFbVGV4dCBkZW5zaXR5XShhc3NldHMvdGV4dF9kZW5zaXR5LnBuZykKCjxwIGNsYXNzPSJtYXAtY2FwdGlvbiI+RWFjaCBIMyBjZWxsIGNvbnRhaW5zIHRoZSBudW1iZXIgb2YgdW5pcXVlIHBvbHlnb25zIHdpdGggbm9uLWVtcHR5IFdpa2lwZWRpYSBvciBXaWtpdm95YWdlIHRleHQuIEEgcG9seWdvbiBpcyBjb3VudGVkIG9uY2UgZXZlbiBpZiBpdCBoYXMgc2V2ZXJhbCBkb2N1bWVudHMuPC9wPgoKPCEtLSBub3RlczogW1NvdXJjZXNdIEdlbmVyYXRlZCBieSBoZi9nZW9ncmFwaGljX3RleHRfZGVuc2l0eS5weSBmcm9tIGxvY2FsIFBhcnF1ZXQgdGFibGVzLiBIMyByZXNvbHV0aW9uIGFuZCBsb3ctc2FtcGxlIHJ1bGVzIGFyZSBkZWZpbmVkIGluIGhmL19nZW9ncmFwaGljL2gzX2dlb21ldHJ5LnB5LiAtLT4=">
+<h2>H3 density shows where text-covered places cluster</h2>
+<div class="slide-content"><p><img src="assets/text_density.png" alt="Text density" /></p>
+<p class="map-caption">Each H3 cell contains the number of unique polygons with non-empty Wikipedia or Wikivoyage text. A polygon is counted once even if it has several documents.</p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">9 / 11</span></div></div>
+</section>
+
+<section class="slide slide--title-left" data-index="9" data-colloquium-md="PCEtLSBsYXlvdXQ6IHRpdGxlLWxlZnQgLS0+CgojIEEgcmVwcm9kdWNpYmxlIHNuYXBzaG90IHRoYXQgaXMgcmVhZHkgdG8gdXNlCgo8dWw+CiAgPGxpPlBhcnF1ZXQgZmlsZXMgYXJlIHBhcnRpdGlvbmVkIGJ5IHJlZ2lvbiBhbmQgY2FuIGJlIGxvYWRlZCB3aXRoIEh1Z2dpbmcgRmFjZSBEYXRhc2V0cyBvciBQeUFycm93LjwvbGk+CiAgPGxpPlRleHQgaXMgcGxhaW4gdGV4dCB3aXRoIHBhZ2UgYW5kIHJldmlzaW9uIGlkZW50aWZpZXJzLCBsaWNlbnNlLCBhbmQgYXR0cmlidXRpb24gZmllbGRzLjwvbGk+CiAgPGxpPkVzdGltYXRlZCB0b2tlbnMgdXNlIDxjb2RlPmNoYXJhY3RlcnMgLy8gNDwvY29kZT4gZm9yIG5vbi1lbXB0eSBkb2N1bWVudCB0ZXh0LCB3aXRoIGEgbWluaW11bSBvZiBvbmUgdG9rZW4gcGVyIHJvdy48L2xpPgogIDxsaT5Tb3VyY2UgbGljZW5zZXMgYXJlIGV4cGxpY2l0OiBPRGJMIGZvciBPcGVuU3RyZWV0TWFwLCBDQzAgZm9yIFdpa2lkYXRhLCBhbmQgQ0MgQlktU0EgNC4wIGZvciBXaWtpcGVkaWEgYW5kIFdpa2l2b3lhZ2UuPC9saT4KPC91bD4KCmBgYHB5dGhvbgpmcm9tIGRhdGFzZXRzIGltcG9ydCBsb2FkX2RhdGFzZXQKZHMgPSBsb2FkX2RhdGFzZXQoCiAgICAicGFycXVldCIsCiAgICBkYXRhX2ZpbGVzPXsicG9seWdvbnMiOiAiaGY6Ly9kYXRhc2V0cy9Ob2VGbGFuZHJlL29zbS1wb2x5Z29uLXdpa2lkYXRhLW9ubHkvcG9seWdvbnMvKi5wYXJxdWV0In0sCikKYGBgCgo8cD48YSBocmVmPSJodHRwczovL2h1Z2dpbmdmYWNlLmNvL2RhdGFzZXRzL05vZUZsYW5kcmUvb3NtLXBvbHlnb24td2lraWRhdGEtb25seSI+T3BlbiB0aGUgZGF0YXNldCBvbiBIdWdnaW5nIEZhY2U8L2E+PC9wPgoKPCEtLSBub3RlczogW1NvdXJjZXNdIFByb2plY3QgUkVBRE1FIGRhdGEtbG9hZGluZyBhbmQgbGljZW5zZSBzZWN0aW9ucy4gSHVnZ2luZyBGYWNlIGRhdGFzZXQgVVJMOiBodHRwczovL2h1Z2dpbmdmYWNlLmNvL2RhdGFzZXRzL05vZUZsYW5kcmUvb3NtLXBvbHlnb24td2lraWRhdGEtb25seS4gLS0+">
+<h1>A reproducible snapshot that is ready to use</h1>
+<div class="slide-content"><ul>
+  <li>Parquet files are partitioned by region and can be loaded with Hugging Face Datasets or PyArrow.</li>
+  <li>Text is plain text with page and revision identifiers, license, and attribution fields.</li>
+  <li>Source licenses are explicit: ODbL for OpenStreetMap, CC0 for Wikidata, and CC BY-SA 4.0 for Wikipedia and Wikivoyage.</li>
+</ul>
+<pre><code class="language-python">from datasets import load_dataset
+ds = load_dataset(
+    &quot;parquet&quot;,
+    data_files={&quot;polygons&quot;: &quot;hf://datasets/NoeFlandre/osm-polygon-wikidata-only/polygons/*.parquet&quot;},
+)
+</code></pre>
+<p><a href="https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only">Open the dataset on Hugging Face</a></p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">10 / 11</span></div></div>
+</section>
+
+<section class="slide slide--title-left" data-index="10" data-colloquium-md="PCEtLSBsYXlvdXQ6IHRpdGxlLWxlZnQgLS0+CgojIFRoZSBkYXRhc2V0IGdyb3dzIHRocm91Z2ggYSByZXN1bWFibGUgcGlwZWxpbmUKCjxwIGNsYXNzPSJsZWFkIj5FYWNoIHJ1biByZWFkcyBuZXcgb3IgY2hhbmdlZCBQQkZzLCBlbnJpY2hlcyBvbmx5IHRoZSByZWdpb25zIHRoYXQgbmVlZCB3b3JrLCB3cml0ZXMgYXRvbWljIFBhcnF1ZXQgYXJ0aWZhY3RzLCByZWZyZXNoZXMgdGhlIGdlbmVyYXRlZCBjYXJkIGFuZCBtYXBzLCB0aGVuIHB1Ymxpc2hlcyBvbmUgY29oZXJlbnQgSHViIHVwZGF0ZS48L3A+Cgo8ZGl2IGNsYXNzPSJjYWxsb3V0Ij48cD48c3Ryb25nPlVzZSB0aGUgZGF0YSBmb3IgYW5hbHlzaXMuPC9zdHJvbmc+IFVzZSB0aGUgY29kZWJhc2UgZGVjayB0byBzZWUgaG93IHRoZSBwaXBlbGluZSBrZWVwcyB0aGF0IHNuYXBzaG90IGRldGVybWluaXN0aWMgYW5kIHJlY292ZXJhYmxlLjwvcD48L2Rpdj4KCjxwPjxhIGhyZWY9Imh0dHBzOi8vZ2l0aHViLmNvbS9Ob2VGbGFuZHJlL29zbS1wb2x5Z29uLXdpa2lkYXRhLW9ubHkiPlNvdXJjZSBjb2RlIG9uIEdpdEh1YjwvYT48L3A+Cgo8IS0tIG5vdGVzOiBbU291cmNlc10gUHJvamVjdCBSRUFETUUsIGRvY3MvYXJjaGl0ZWN0dXJlLm1kLCBhbmQgcGlwZWxpbmUgcHVibGljYXRpb24gbW9kdWxlcy4gUHVibGljIGxpbmtzOiBodHRwczovL2dpdGh1Yi5jb20vTm9lRmxhbmRyZS9vc20tcG9seWdvbi13aWtpZGF0YS1vbmx5IGFuZCBodHRwczovL2h1Z2dpbmdmYWNlLmNvL2RhdGFzZXRzL05vZUZsYW5kcmUvb3NtLXBvbHlnb24td2lraWRhdGEtb25seS4gLS0+">
+<h1>The dataset grows through a resumable pipeline</h1>
+<div class="slide-content"><p class="lead">Each run reads new or changed PBFs, enriches only the regions that need work, writes atomic Parquet artifacts, refreshes the generated card and maps, then publishes one coherent Hub update.</p>
+<div class="callout"><p>Use the codebase deck to see how the pipeline keeps that snapshot deterministic and recoverable.</p></div>
+<p><a href="https://github.com/NoeFlandre/osm-polygon-wikidata-only">Source code on GitHub</a></p></div>
+<div class="colloquium-footer"><div class="colloquium-footer-left">OSM Polygon Wikidata</div><div class="colloquium-footer-center"></div><div class="colloquium-footer-right colloquium-footer-nav"><span class="colloquium-counter">11 / 11</span></div></div>
+</section>
+</div>
+
+<button class="colloquium-present" title="Present (F)">&#9654;</button>
+
+<button class="colloquium-picker-trigger" title="Open slide picker">
+    <span class="colloquium-picker-trigger-label">Slides</span>
+    <span class="colloquium-picker-trigger-count">1 / 11</span>
+</button>
+
+<div class="colloquium-progress">
+    <div class="colloquium-progress-bar" style="width: 0%"></div>
+</div>
+
+<script>
+/**
+ * Colloquium Presentation Engine
+ * 16:9 scaled canvas, keyboard/click/touch navigation, hash routing, fullscreen
+ * Slide picker + per-slide footer
+ */
+class ColloquiumPresentation {
+    constructor() {
+        this.deck = document.querySelector('.colloquium-deck');
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.currentIndex = 0;
+        this.totalSlides = this.slides.length;
+        this._iframeKeyboardRelayDocuments = new WeakSet();
+
+        if (this._isEmbedded()) {
+            document.body.classList.add('colloquium-embedded');
+        }
+
+        // Fragment state: current revealed fragment index per slide (0 = none)
+        this.fragmentStates = this.slides.map(() => 0);
+        this.fragmentCounts = this.slides.map(
+            s => parseInt(s.getAttribute('data-fragment-count') || '0', 10)
+        );
+
+        // Reference dimensions (16:9)
+        this.width = 1280;
+        this.height = 720;
+
+        // Capture mode — hide UI chrome for headless screenshots
+        if (new URLSearchParams(location.search).has('capture')) {
+            document.body.classList.add('colloquium-capture');
+        }
+
+        if (this.totalSlides === 0) return;
+
+        this.deck.setAttribute('tabindex', '-1');
+        this.progressBar = document.querySelector('.colloquium-progress-bar');
+        this.pickerTrigger = document.querySelector('.colloquium-picker-trigger');
+        this.pickerTriggerCount = this.pickerTrigger
+            ? this.pickerTrigger.querySelector('.colloquium-picker-trigger-count')
+            : null;
+        this.pickerOpen = false;
+
+        this._scaleDeck();
+        window.addEventListener('resize', () => this._scaleDeck());
+
+        this._createPicker();
+        this._bindFooter();
+        this._bindPickerTrigger();
+        this._bindPresent();
+        this._bindKeyboard();
+        this._bindIframes();
+        this._bindClick();
+        this._bindTouch();
+        this._bindHashChange();
+
+        // Navigate to hash or first slide
+        const hash = parseInt(location.hash.replace('#', ''), 10);
+        if (hash >= 1 && hash <= this.totalSlides) {
+            this.goTo(hash - 1);
+        } else {
+            this.goTo(0);
+        }
+    }
+
+    _isEmbedded() {
+        try {
+            return window.self !== window.top;
+        } catch (_) {
+            return true;
+        }
+    }
+
+    /**
+     * Check each slide for content overflow and add a visual warning.
+     * Temporarily shows all slides to measure, then restores.
+     */
+    _checkOverflow() {
+        const origDisplay = this.slides.map(s => s.style.display);
+        this.slides.forEach(s => s.style.display = 'flex');
+
+        this.slides.forEach((slide, i) => {
+            if (slide.scrollHeight > slide.clientHeight + 2) {
+                const warn = document.createElement('div');
+                warn.className = 'colloquium-overflow-warn';
+                warn.title = `Slide ${i + 1} content overflows`;
+                slide.appendChild(warn);
+            }
+        });
+
+        this.slides.forEach((s, i) => s.style.display = origDisplay[i]);
+    }
+
+    /**
+     * Scale the 1280x720 deck to fit the viewport while maintaining 16:9 aspect ratio.
+     * Centers the deck with black letterbox/pillarbox bars.
+     */
+    _scaleDeck() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const scale = Math.min(vw / this.width, vh / this.height);
+
+        const scaledW = this.width * scale;
+        const scaledH = this.height * scale;
+        const offsetX = (vw - scaledW) / 2;
+        const offsetY = (vh - scaledH) / 2;
+
+        this.deck.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+
+        if (window.colloquiumFitCaptionedFiguresIn) {
+            requestAnimationFrame(() => {
+                window.colloquiumFitCaptionedFiguresIn(this.slides[this.currentIndex]);
+            });
+        }
+    }
+
+    goTo(index, showAllFragments = false) {
+        if (index < 0 || index >= this.totalSlides) return;
+
+        this.slides[this.currentIndex].classList.remove('active');
+        this.currentIndex = index;
+        this.slides[this.currentIndex].classList.add('active');
+
+        // Set fragment state
+        if (showAllFragments) {
+            this.fragmentStates[index] = this.fragmentCounts[index];
+        } else {
+            this.fragmentStates[index] = 0;
+        }
+        this._updateFragments(index);
+
+        if (window.colloquiumFitDisplayMathIn) {
+            requestAnimationFrame(() => {
+                window.colloquiumFitDisplayMathIn(this.slides[this.currentIndex]);
+            });
+        }
+        if (window.colloquiumFitCaptionedFiguresIn) {
+            requestAnimationFrame(() => {
+                window.colloquiumFitCaptionedFiguresIn(this.slides[this.currentIndex]);
+            });
+        }
+
+        // Update hash
+        history.replaceState(null, '', '#' + (this.currentIndex + 1));
+
+        // Update progress bar
+        if (this.progressBar) {
+            const progress = this.totalSlides > 1
+                ? (this.currentIndex / (this.totalSlides - 1)) * 100
+                : 100;
+            this.progressBar.style.width = progress + '%';
+        }
+
+        this._updatePickerTrigger();
+    }
+
+    next() {
+        const fc = this.fragmentCounts[this.currentIndex];
+        const fs = this.fragmentStates[this.currentIndex];
+        if (fc > 0 && fs < fc) {
+            this.fragmentStates[this.currentIndex] = fs + 1;
+            this._updateFragments(this.currentIndex);
+        } else {
+            this.goTo(this.currentIndex + 1);
+        }
+    }
+
+    prev() {
+        const fs = this.fragmentStates[this.currentIndex];
+        if (fs > 0) {
+            this.fragmentStates[this.currentIndex] = fs - 1;
+            this._updateFragments(this.currentIndex);
+        } else {
+            this.goTo(this.currentIndex - 1, true);
+        }
+    }
+
+    first() {
+        this.goTo(0);
+    }
+
+    last() {
+        this.goTo(this.totalSlides - 1, true);
+    }
+
+    // --- Fragment Management ---
+
+    _updateFragments(slideIndex) {
+        const slide = this.slides[slideIndex];
+        const currentStep = this.fragmentStates[slideIndex];
+        const fragments = slide.querySelectorAll('[data-fragment-index]');
+        fragments.forEach(el => {
+            const idx = parseInt(el.getAttribute('data-fragment-index'), 10);
+            el.classList.toggle('visible', idx <= currentStep);
+        });
+    }
+
+    // --- Slide Picker ---
+
+    _getSlideTitle(slide, i) {
+        const h1 = slide.querySelector('h1');
+        if (h1) return h1.textContent;
+        const h2 = slide.querySelector('h2');
+        if (h2) return h2.textContent;
+        const img = slide.querySelector('img[alt]');
+        if (img && img.alt) return img.alt;
+        const text = slide.textContent.trim();
+        if (text) return text.substring(0, 50) + (text.length > 50 ? '…' : '');
+        return 'Slide ' + (i + 1);
+    }
+
+    _createPicker() {
+        this.overlay = document.createElement('div');
+        this.overlay.className = 'colloquium-picker-overlay';
+
+        const picker = document.createElement('div');
+        picker.className = 'colloquium-picker';
+
+        this.pickerItems = [];
+
+        this.slides.forEach((slide, i) => {
+            const btn = document.createElement('button');
+            btn.className = 'colloquium-picker-item';
+            btn.innerHTML =
+                '<span class="colloquium-picker-num">' + (i + 1) + '</span>' +
+                '<span class="colloquium-picker-title">' + this._getSlideTitle(slide, i) + '</span>';
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.goTo(i);
+                this._closePicker();
+            });
+            this.pickerItems.push(btn);
+            picker.appendChild(btn);
+        });
+
+        this.overlay.appendChild(picker);
+        document.body.appendChild(this.overlay);
+
+        // Close on click outside the picker card
+        this.overlay.addEventListener('click', (e) => {
+            if (e.target === this.overlay) {
+                this._closePicker();
+            }
+        });
+    }
+
+    _openPicker() {
+        // Highlight current slide
+        this.pickerItems.forEach((btn, i) => {
+            btn.classList.toggle('current', i === this.currentIndex);
+        });
+        this.overlay.classList.add('active');
+        this.pickerOpen = true;
+
+        // Scroll current item into view
+        const current = this.pickerItems[this.currentIndex];
+        if (current) {
+            current.scrollIntoView({ block: 'center' });
+        }
+    }
+
+    _closePicker() {
+        this.overlay.classList.remove('active');
+        this.pickerOpen = false;
+    }
+
+    _togglePicker() {
+        if (this.pickerOpen) {
+            this._closePicker();
+        } else {
+            this._openPicker();
+        }
+    }
+
+    _updatePickerTrigger() {
+        if (!this.pickerTriggerCount) return;
+        this.pickerTriggerCount.textContent = (this.currentIndex + 1) + ' / ' + this.totalSlides;
+    }
+
+    _bindFooter() {
+        // The entire right footer zone is the picker trigger.
+        document.querySelectorAll('.colloquium-footer-nav').forEach((target) => {
+            target.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._togglePicker();
+            });
+        });
+    }
+
+    _bindPickerTrigger() {
+        if (!this.pickerTrigger) return;
+        this.pickerTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._togglePicker();
+        });
+    }
+
+    _bindPresent() {
+        const btn = document.querySelector('.colloquium-present');
+        if (btn) {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._toggleFullscreen();
+            });
+        }
+    }
+
+    // --- Navigation Bindings ---
+
+    _bindKeyboard() {
+        document.addEventListener('keydown', (e) => {
+            if (this._isTextInputTarget(e.target)) return;
+            this._handleNavigationKey(e);
+        });
+    }
+
+    _isTextInputTarget(target) {
+        if (!target || !target.tagName) return false;
+        if (target.isContentEditable) return true;
+        return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+    }
+
+    _handleNavigationKey(e) {
+        switch (e.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+            case ' ':
+            case 'PageDown':
+                e.preventDefault();
+                this.next();
+                break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+            case 'PageUp':
+                e.preventDefault();
+                this.prev();
+                break;
+            case 'Home':
+                e.preventDefault();
+                this.first();
+                break;
+            case 'End':
+                e.preventDefault();
+                this.last();
+                break;
+            case 'c':
+            case 'C':
+                // Plain 'c' copies the current slide's markdown source.
+                // Leave Cmd/Ctrl+C alone so the browser can copy selected text.
+                if (e.metaKey || e.ctrlKey || e.altKey) return;
+                e.preventDefault();
+                this._copyCurrentSlideMarkdown();
+                break;
+            case 'f':
+            case 'F':
+                e.preventDefault();
+                this._toggleFullscreen();
+                break;
+            case 'Escape':
+                if (this.pickerOpen) {
+                    this._closePicker();
+                } else if (document.fullscreenElement) {
+                    document.exitFullscreen();
+                }
+                break;
+        }
+    }
+
+    _bindIframes() {
+        document.querySelectorAll('iframe.colloquium-iframe').forEach((iframe) => {
+            this._bindIframeKeyboardRelay(iframe);
+            iframe.addEventListener('load', () => this._bindIframeKeyboardRelay(iframe));
+            iframe.addEventListener('focus', () => this._recoverFocusFromIframe(iframe));
+        });
+    }
+
+    _bindIframeKeyboardRelay(iframe) {
+        if (iframe.dataset.colloquiumPreserveKeyboard === 'false') return false;
+
+        try {
+            const iframeDocument = iframe.contentWindow && iframe.contentWindow.document;
+            if (!iframeDocument) return false;
+            if (this._iframeKeyboardRelayDocuments.has(iframeDocument)) return true;
+
+            iframeDocument.addEventListener('keydown', (e) => {
+                if (this._isTextInputTarget(e.target)) return;
+                this._handleNavigationKey(e);
+            });
+            this._iframeKeyboardRelayDocuments.add(iframeDocument);
+            return true;
+        } catch (_) {
+            // Cross-origin frames cannot expose their keyboard events to the parent deck.
+            return false;
+        }
+    }
+
+    _recoverFocusFromIframe(iframe) {
+        if (iframe.dataset.colloquiumPreserveKeyboard === 'false') return;
+        if (this._bindIframeKeyboardRelay(iframe)) return;
+
+        setTimeout(() => {
+            if (document.activeElement === iframe) {
+                iframe.blur();
+                window.focus();
+                this.deck.focus({ preventScroll: true });
+            }
+        }, 0);
+    }
+
+    _bindClick() {
+        // Track the pointer-down position so we can tell a click from a drag.
+        // A drag (mouse moved between down and up) means the user was selecting
+        // text or otherwise interacting, not trying to advance the slide.
+        let downX = 0;
+        let downY = 0;
+        const DRAG_THRESHOLD = 8; // px of movement that counts as a drag, not a click
+        document.addEventListener('mousedown', (e) => {
+            downX = e.clientX;
+            downY = e.clientY;
+        });
+
+        document.addEventListener('click', (e) => {
+            // Handle citation links — navigate to the slide containing the target ref
+            const citeLink = e.target.closest('a.colloquium-cite');
+            if (citeLink) {
+                e.preventDefault();
+                e.stopPropagation();
+                const href = citeLink.getAttribute('href');
+                if (href && href.startsWith('#')) {
+                    const target = document.getElementById(href.slice(1));
+                    if (target) {
+                        const slide = target.closest('.slide');
+                        if (slide) {
+                            const idx = this.slides.indexOf(slide);
+                            if (idx >= 0) this.goTo(idx);
+                        }
+                    }
+                }
+                return;
+            }
+
+            // Ignore clicks on links, interactive elements, footer, and picker
+            if (e.target.closest('a, button, input, textarea, select, .colloquium-footer, .colloquium-picker-overlay, .colloquium-present, .colloquium-picker-trigger')) return;
+
+            // Don't navigate if the user is highlighting/copying text. A drag
+            // (pointer moved between down and up) or a live text selection both
+            // mean "select", not "next slide".
+            const dragDistance = Math.hypot(e.clientX - downX, e.clientY - downY);
+            if (dragDistance > DRAG_THRESHOLD) return;
+            // A multi-click (double/triple) is a word/paragraph selection gesture,
+            // not navigation. This catches the later clicks of a multi-click; the
+            // very first click can't be distinguished without deferring all
+            // navigation, which we avoid so slide clicks stay snappy.
+            if (e.detail > 1) return;
+            const selection = window.getSelection();
+            if (selection && !selection.isCollapsed && selection.toString().trim()) return;
+
+            const x = e.clientX / window.innerWidth;
+            if (x < 0.33) {
+                this.prev();
+            } else {
+                this.next();
+            }
+        });
+    }
+
+    _bindTouch() {
+        let startX = 0;
+        let startY = 0;
+
+        document.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+
+        document.addEventListener('touchend', (e) => {
+            const dx = e.changedTouches[0].clientX - startX;
+            const dy = e.changedTouches[0].clientY - startY;
+
+            // Only trigger on horizontal swipes (more horizontal than vertical, min 50px)
+            if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+                if (dx < 0) {
+                    this.next();
+                } else {
+                    this.prev();
+                }
+            }
+        }, { passive: true });
+    }
+
+    _bindHashChange() {
+        window.addEventListener('hashchange', () => {
+            const hash = parseInt(location.hash.replace('#', ''), 10);
+            if (hash >= 1 && hash <= this.totalSlides && hash - 1 !== this.currentIndex) {
+                this.goTo(hash - 1);
+            }
+        });
+    }
+
+    _toggleFullscreen() {
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            document.documentElement.requestFullscreen().catch(() => {});
+        }
+    }
+
+    // --- Copy slide as markdown ---
+
+    _decodeMarkdown(b64) {
+        // base64 (UTF-8) → string, so unicode math/symbols round-trip cleanly.
+        const binary = atob(b64);
+        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+        return new TextDecoder().decode(bytes);
+    }
+
+    _copyCurrentSlideMarkdown() {
+        const slide = this.slides[this.currentIndex];
+        const encoded = slide && slide.getAttribute('data-colloquium-md');
+        if (!encoded) {
+            this._showToast('No markdown source for this slide');
+            return;
+        }
+        let markdown;
+        try {
+            markdown = this._decodeMarkdown(encoded);
+        } catch (_) {
+            this._showToast('Could not read slide markdown');
+            return;
+        }
+        const done = () => this._showToast('Copied slide markdown');
+        const fail = () => this._showToast('Copy failed — clipboard blocked');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(markdown).then(done, () => {
+                if (!this._copyViaTextarea(markdown)) fail();
+                else done();
+            });
+        } else if (this._copyViaTextarea(markdown)) {
+            done();
+        } else {
+            fail();
+        }
+    }
+
+    _copyViaTextarea(text) {
+        // Fallback for insecure contexts (file://, plain http) where the async
+        // Clipboard API is unavailable.
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try {
+            ok = document.execCommand('copy');
+        } catch (_) {
+            ok = false;
+        }
+        document.body.removeChild(ta);
+        return ok;
+    }
+
+    _showToast(message) {
+        if (!this._toast) {
+            this._toast = document.createElement('div');
+            this._toast.className = 'colloquium-toast';
+            document.body.appendChild(this._toast);
+        }
+        this._toast.textContent = message;
+        this._toast.classList.add('visible');
+        clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => {
+            this._toast.classList.remove('visible');
+        }, 1500);
+    }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    window.colloquium = new ColloquiumPresentation();
+});
+
+</script>
+
+<script>
+window.colloquiumFitDisplayMathIn = function(root) {
+    var scope = root || document;
+    scope.querySelectorAll(".katex-display").forEach(function(display) {
+        display.style.fontSize = "";
+        var katexNode = display.querySelector(".katex");
+        if (!katexNode) return;
+
+        var availableWidth = display.clientWidth;
+        var contentWidth = katexNode.scrollWidth;
+        if (!availableWidth || !contentWidth || contentWidth <= availableWidth) return;
+
+        var scale = availableWidth / contentWidth;
+        display.style.fontSize = (scale * 100) + "%";
+    });
+};
+
+window.colloquiumFitCaptionedFiguresIn = function(root) {
+    var scope = root || document;
+    var selector = [
+        ".slide-content > figure.colloquium-figure:first-child:last-child",
+        ".colloquium-grid > .col > figure.colloquium-figure:first-child:last-child",
+        ".colloquium-row > figure.colloquium-figure:first-child:last-child"
+    ].join(", ");
+
+    scope.querySelectorAll(selector).forEach(function(figure) {
+        var img = figure.querySelector("img");
+        var caption = figure.querySelector("figcaption");
+        if (!img || !caption) return;
+
+        var container = figure.parentElement;
+        if (!container) return;
+
+        figure.style.width = "";
+        img.style.width = "";
+        img.style.height = "";
+        img.style.maxWidth = "";
+        img.style.maxHeight = "";
+
+        var naturalWidth = img.naturalWidth || 0;
+        var naturalHeight = img.naturalHeight || 0;
+        if (!naturalWidth || !naturalHeight) {
+            img.addEventListener("load", function() {
+                window.colloquiumFitCaptionedFiguresIn(scope);
+            }, { once: true });
+            return;
+        }
+
+        var availableWidth = container.clientWidth;
+        var availableHeight = container.clientHeight;
+        if (!availableWidth || !availableHeight) return;
+
+        var scale = Math.min(
+            availableWidth / naturalWidth,
+            availableHeight / naturalHeight
+        );
+        if (!isFinite(scale) || scale <= 0) return;
+
+        var renderWidth = Math.max(1, Math.floor(naturalWidth * scale));
+        var renderHeight = Math.max(1, Math.floor(naturalHeight * scale));
+
+        figure.style.width = renderWidth + "px";
+        img.style.width = renderWidth + "px";
+        img.style.height = renderHeight + "px";
+        img.style.maxWidth = "none";
+        img.style.maxHeight = "none";
+    });
+};
+
+// Render KaTeX math elements and highlight code after deferred scripts load
+window.addEventListener("load", function() {
+    if (typeof katex !== "undefined") {
+        var mathEls = document.querySelectorAll(".math");
+        if (mathEls.length > 0) {
+            // Temporarily show all slides so KaTeX can measure container
+            // dimensions for delimiter sizing (e.g. tall parentheses)
+            var mathSlides = document.querySelectorAll(".slide");
+            var mathOrigDisplay = [];
+            var mathOrigVisibility = [];
+            mathSlides.forEach(function(s) {
+                mathOrigDisplay.push(s.style.display);
+                mathOrigVisibility.push(s.style.visibility);
+                s.style.display = "flex";
+                if (!s.classList.contains("active")) {
+                    s.style.visibility = "hidden";
+                }
+            });
+
+            mathEls.forEach(function(el) {
+                var displayMode = el.tagName === "DIV";
+                katex.render(el.textContent, el, {
+                    displayMode: displayMode,
+                    throwOnError: false
+                });
+            });
+            window.colloquiumFitDisplayMathIn(document);
+
+            // Restore original slide display and visibility
+            mathSlides.forEach(function(s, i) {
+                s.style.display = mathOrigDisplay[i];
+                s.style.visibility = mathOrigVisibility[i];
+            });
+        }
+
+        if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(function() {
+                window.colloquiumFitDisplayMathIn(document);
+                window.colloquiumFitCaptionedFiguresIn(document);
+            });
+        }
+    }
+    if (typeof hljs !== "undefined") {
+        hljs.highlightAll();
+    }
+    window.colloquiumFitCaptionedFiguresIn(document);
+    // Initialize Chart.js charts — temporarily show all slides so canvases
+    // have dimensions, render charts, capture static print images, then restore.
+    if (typeof Chart !== "undefined") {
+        var chartCanvases = document.querySelectorAll("[data-chart-config]");
+        if (chartCanvases.length > 0) {
+            // Make all slides visible so Chart.js can measure canvas size
+            // Use visibility:hidden to avoid a visual flash
+            var slides = document.querySelectorAll(".slide");
+            var origDisplay = [];
+            slides.forEach(function(s) {
+                origDisplay.push(s.style.display);
+                s.style.display = "flex";
+                if (!s.classList.contains("active")) {
+                    s.style.visibility = "hidden";
+                }
+            });
+
+            chartCanvases.forEach(function(canvas) {
+                try {
+                    var config = JSON.parse(canvas.getAttribute("data-chart-config"));
+                    // Convert tick prefix/suffix strings into real callbacks
+                    var scales = config.options && config.options.scales;
+                    if (scales) {
+                        Object.keys(scales).forEach(function(axis) {
+                            var ticks = scales[axis].ticks;
+                            if (!ticks) return;
+                            var pre = ticks.prefix || "";
+                            var suf = ticks.suffix || "";
+                            if (pre || suf) {
+                                delete ticks.prefix;
+                                delete ticks.suffix;
+                                ticks.callback = function(v) { return pre + v + suf; };
+                            }
+                        });
+                    }
+                    new Chart(canvas, config);
+                } catch(e) {
+                    var slideEl = canvas.closest(".slide");
+                    var slideNum = slideEl ? (slideEl.getAttribute("data-index") || "?") : "?";
+                    var chartId = canvas.id || "unknown";
+                    console.error(
+                        "Colloquium: failed to render chart '" + chartId +
+                        "' on slide " + (parseInt(slideNum, 10) + 1) + ": " + e.message
+                    );
+                }
+            });
+
+            // After a frame, capture each chart as a static image for print,
+            // then always restore slide visibility (even if chart rendering failed).
+            requestAnimationFrame(function() {
+                chartCanvases.forEach(function(canvas) {
+                    try {
+                        var img = document.createElement("img");
+                        img.src = canvas.toDataURL("image/png");
+                        img.className = "colloquium-chart-print";
+                        canvas.parentNode.insertBefore(img, canvas.nextSibling);
+                    } catch(e) {}
+                });
+                // Restore original slide visibility
+                slides.forEach(function(s, i) {
+                    s.style.display = origDisplay[i];
+                    s.style.visibility = "";
+                });
+            });
+        }
+    }
+});
+</script>
+</body>
+</html>

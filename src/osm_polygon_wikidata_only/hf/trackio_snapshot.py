@@ -10,6 +10,7 @@ import typer
 from osm_polygon_wikidata_only.config.paths import resolve_data_root
 
 from ._trackio.models import (
+    DATASET_PRESENTATION_URL,
     FINAL_DATASET_SNAPSHOT,
     TRACKIO_DATASET_ID,
     TRACKIO_PROJECT,
@@ -53,6 +54,7 @@ def run() -> None:
 
 
 __all__ = [
+    "DATASET_PRESENTATION_URL",
     "FINAL_DATASET_SNAPSHOT",
     "TRACKIO_DATASET_ID",
     "TRACKIO_PROJECT",

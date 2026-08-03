@@ -104,6 +104,17 @@ def test_architecture_documents_geographic_coverage_generation() -> None:
     assert "logarithmic" in architecture.lower()
 
 
+def test_pages_workflow_publishes_dataset_presentation() -> None:
+    workflow = (REPOSITORY / ".github/workflows/docs.yml").read_text(encoding="utf-8")
+    for path in (
+        "presentations/dataset.html",
+        "presentations/assets/coverage_map.png",
+        "presentations/assets/text_density.png",
+        "presentations/assets/text_presence.png",
+    ):
+        assert path in workflow
+
+
 def test_readme_documents_five_augmentation_sidecars() -> None:
     """The source README must mention the five augmentation sidecars in the
     Output schema section without claiming hardcoded counts."""

@@ -34,6 +34,13 @@ jobs:
         uses: actions/configure-pages@v5
       - name: Build documentation
         run: uv run mkdocs build --strict --site-dir site
+      - name: Add public dataset presentation
+        run: |
+          mkdir -p site/presentations/assets
+          cp presentations/dataset.html site/presentations/dataset.html
+          cp presentations/assets/coverage_map.png site/presentations/assets/coverage_map.png
+          cp presentations/assets/text_density.png site/presentations/assets/text_density.png
+          cp presentations/assets/text_presence.png site/presentations/assets/text_presence.png
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

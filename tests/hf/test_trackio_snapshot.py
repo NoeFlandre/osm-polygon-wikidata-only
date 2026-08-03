@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from osm_polygon_wikidata_only.hf.trackio_snapshot import (
+    DATASET_PRESENTATION_URL,
     FINAL_DATASET_SNAPSHOT,
     TRACKIO_RUN_NAME,
     publish_trackio_snapshot,
@@ -64,6 +65,7 @@ def test_snapshot_markdown_is_public_and_excludes_runtime_telemetry() -> None:
     markdown = render_snapshot_markdown()
     assert "final-dataset-snapshot" in markdown
     assert "trackio" in markdown.lower()
+    assert DATASET_PRESENTATION_URL in markdown
     assert "2,468,604" in markdown
     assert "19.2 GB" in markdown
     for forbidden in ("runtime", "API calls", "retries", "throughput", "processed regions"):
