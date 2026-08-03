@@ -1,0 +1,267 @@
+"""Lossless V1 reuse and V2 relationship assembly.
+
+The V2 build starts from finalized V1 shards.  Existing Wikipedia,
+Wikivoyage, Wikidata, and polygon-link rows are copied unchanged where
+possible.  Only direct Wikipedia-tag relationships not already represented
+by a V1 document are fetched.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import pyarrow.parquet as pq
+
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    wikipedia_document_from_article_row,
+)
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_COLUMNS
+from osm_polygon_wikidata_only.v2.direct_enrichment import enrich_wikipedia_refs
+from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf
+from osm_polygon_wikidata_only.v2.storage import write_v2_region
+from osm_polygon_wikidata_only.v2.wikipedia_tags import parse_wikipedia_tags
+
+SIDECAR_SUBDIRS: tuple[str, ...] = (
+    "wikipedia/sections",
+    "wikivoyage/documents",
+    "wikivoyage/sections",
+    "wikidata/facts",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class V1RegionData:
+    """Rows and sidecar source paths loaded from one finalized V1 shard."""
+
+    polygons: tuple[dict[str, Any], ...]
+    documents: tuple[dict[str, Any], ...]
+    links: tuple[dict[str, Any], ...]
+    sidecars: tuple[Path, ...]
+
+
+def _rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return pq.read_table(path).to_pylist()
+
+
+def load_v1_region(data_root: DataRoot, stem: str) -> V1RegionData:
+    """Load V1 rows while accepting both pre- and post-migration links."""
+    polygons = _rows(data_root.processed_polygons / f"{stem}.parquet")
+    documents_path = data_root.processed / "wikipedia/documents" / f"{stem}.parquet"
+    if documents_path.is_file():
+        documents = _rows(documents_path)
+    else:
+        articles_path = data_root.processed_articles / f"{stem}.parquet"
+        documents = [
+            wikipedia_document_from_article_row(row).to_dict() for row in _rows(articles_path)
+        ]
+    links = _rows(data_root.processed_links / f"{stem}.parquet")
+    by_article = {str(row.get("article_id")): row for row in documents}
+    normalized_links = [_normalize_link(row, by_article) for row in links]
+    sidecars = tuple(
+        source / f"{stem}.parquet"
+        for source in (data_root.processed / subdir for subdir in SIDECAR_SUBDIRS)
+        if (source / f"{stem}.parquet").is_file()
+    )
+    return V1RegionData(
+        polygons=tuple(_v2_polygon_row(row) for row in polygons),
+        documents=tuple(documents),
+        links=tuple(normalized_links),
+        sidecars=sidecars,
+    )
+
+
+def _v2_polygon_row(row: dict[str, Any]) -> dict[str, Any]:
+    result = dict(row)
+    tags: dict[str, str]
+    try:
+        parsed = json.loads(str(row.get("tags", "{}")))
+        tags = parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        tags = {}
+    refs, rejections = parse_wikipedia_tags(tags)
+    result["wikipedia_tag_refs"] = json.dumps(
+        [
+            {
+                "language": ref.language,
+                "title": ref.title,
+                "raw_key": ref.raw_key,
+                "raw_value": ref.raw_value,
+            }
+            for ref in refs
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    result["wikipedia_tag_rejections"] = json.dumps(
+        [
+            {"raw_key": item.raw_key, "raw_value": item.raw_value, "reason": item.reason}
+            for item in rejections
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    sources = ["wikidata"] if row.get("wikidata") else []
+    if refs:
+        sources.append("wikipedia_tag")
+    result["discovery_sources"] = json.dumps(sources, separators=(",", ":"))
+    return result
+
+
+def _normalize_link(row: dict[str, Any], by_article: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    document_id = row.get("document_id")
+    if not document_id:
+        document = by_article.get(str(row.get("article_id", "")))
+        document_id = document.get("document_id") if document else None
+    if not document_id:
+        raise ValueError(f"V1 link has no resolvable document identity: {row}")
+    return {
+        **{column: row.get(column) for column in CANONICAL_COLUMNS},
+        "document_id": str(document_id),
+        "project": row.get("project", "wikipedia"),
+        "wikidata": row.get("wikidata"),
+        "link_sources": json.dumps(["wikidata_sitelink"], separators=(",", ":")),
+    }
+
+
+def copy_v1_sidecars(data_root: DataRoot, stem: str, destination: Path) -> tuple[Path, ...]:
+    """Copy finalized V1 sidecars into isolated V2 storage idempotently."""
+    copied: list[Path] = []
+    for source_root in (data_root.processed / subdir for subdir in SIDECAR_SUBDIRS):
+        source = source_root / f"{stem}.parquet"
+        if not source.is_file():
+            continue
+        target = destination / source_root.relative_to(data_root.processed) / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.is_file() or target.stat().st_size != source.stat().st_size:
+            temporary = target.with_suffix(target.suffix + ".tmp")
+            shutil.copy2(source, temporary)
+            temporary.replace(target)
+        copied.append(target)
+    return tuple(copied)
+
+
+def merge_v2_region(
+    data_root: DataRoot,
+    extracted: V2ExtractedPbf,
+    *,
+    index: Any,
+    wikipedia_client: Any,
+    cache: Any = None,
+    fetch_full_text: bool = True,
+) -> tuple[dict[str, Any], ...]:
+    """Merge V1 rows with V2 discoveries and persist one canonical region."""
+    stem = extracted.stem.stem
+    v1 = load_v1_region(data_root, stem)
+    polygons = {str(row["polygon_id"]): dict(row) for row in v1.polygons}
+    for discovered in extracted.polygons:
+        key = str(discovered["polygon_id"])
+        existing = polygons.get(key)
+        if existing is not None:
+            if (
+                existing.get("wikidata")
+                and discovered.get("wikidata")
+                and existing["wikidata"] != discovered["wikidata"]
+            ):
+                raise ValueError(f"Conflicting Wikidata values for polygon {key}")
+            existing.update(
+                {
+                    name: discovered[name]
+                    for name in (
+                        "tags",
+                        "tag_keys",
+                        "tag_count",
+                        "wikipedia_tag_refs",
+                        "wikipedia_tag_rejections",
+                        "discovery_sources",
+                    )
+                }
+            )
+        else:
+            polygons[key] = dict(discovered)
+    documents = {str(row["document_id"]): dict(row) for row in v1.documents}
+    links = {(_link_key(row)): dict(row) for row in v1.links}
+    links_by_polygon: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in links.values():
+        links_by_polygon[str(row["polygon_id"])].append(row)
+
+    for polygon_id, polygon in sorted(polygons.items()):
+        raw_refs = json.loads(str(polygon.get("wikipedia_tag_refs", "[]")))
+        refs = tuple(
+            parse_wikipedia_tags({str(item.get("raw_key", "")): str(item.get("raw_value", ""))})[0]
+            for item in raw_refs
+        )
+        refs = tuple(ref for group in refs for ref in group)
+        if not refs:
+            continue
+        direct = enrich_wikipedia_refs(
+            polygon_id,
+            refs,
+            index=index,
+            wikipedia_client=wikipedia_client,
+            polygon_context=polygon,
+            cache=cache,
+            fetch_full_text=fetch_full_text,
+        )
+        for document in direct.documents:
+            documents[str(document["document_id"])] = dict(document)
+        for link in direct.links:
+            key = _link_key(link)
+            if key in links:
+                sources = set(json.loads(links[key].get("link_sources", "[]")))
+                sources.update(json.loads(link.get("link_sources", "[]")))
+                links[key]["link_sources"] = json.dumps(sorted(sources), separators=(",", ":"))
+            else:
+                links[key] = dict(link)
+            links_by_polygon[polygon_id].append(links[key])
+
+    for polygon_id, polygon in polygons.items():
+        rows = links_by_polygon.get(polygon_id, [])
+        languages = sorted({str(row.get("language", "")) for row in rows if row.get("language")})
+        polygon["has_wikipedia"] = bool(rows)
+        polygon["wikipedia_language_count"] = len(languages)
+        polygon["wikipedia_languages"] = json.dumps(languages, separators=(",", ":"))
+        polygon["wikipedia_article_count"] = len(rows)
+        polygon["has_english_wikipedia"] = "en" in languages
+        polygon["has_french_wikipedia"] = "fr" in languages
+        polygon["text_available"] = any(
+            bool(documents.get(str(row["document_id"]), {}).get("full_text")) for row in rows
+        )
+        if languages and not polygon.get("best_language"):
+            polygon["best_language"] = languages[0]
+
+    copy_v1_sidecars(data_root, stem, data_root.processed_v2)
+    write_v2_region(
+        data_root.processed_v2,
+        stem,
+        polygons=sorted(polygons.values(), key=lambda row: str(row["polygon_id"])),
+        documents=sorted(documents.values(), key=lambda row: str(row["document_id"])),
+        links=sorted(links.values(), key=lambda row: _link_key(row)),
+    )
+    return tuple(polygons.values())
+
+
+def _link_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(row.get("polygon_id", "")),
+        str(row.get("project", "")),
+        str(row.get("document_id", "")),
+    )
+
+
+__all__ = [
+    "SIDECAR_SUBDIRS",
+    "V1RegionData",
+    "copy_v1_sidecars",
+    "load_v1_region",
+    "merge_v2_region",
+]
