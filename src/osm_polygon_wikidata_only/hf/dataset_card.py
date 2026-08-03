@@ -36,6 +36,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     WIKIPEDIA_DOCUMENT_COLUMNS,
     WIKIPEDIA_DOCUMENT_DESCRIPTIONS,
 )
+from osm_polygon_wikidata_only.hf._trackio.rendering import render_snapshot_markdown
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_COVERAGE_MAP_FILE,
     REMOTE_DATASET_HERO_FILE,
@@ -103,6 +104,7 @@ def render_dataset_card(
     )
 
     stats_block = stats_section if stats_section is not None else ""
+    trackio_block = render_snapshot_markdown()
     rejections_block = rejections_section if rejections_section is not None else ""
 
     body = (
@@ -149,6 +151,7 @@ def render_dataset_card(
         "documents qualify. Colour uses a logarithmic purple-to-yellow scale; this is "
         "an absolute density count, not a proportion of all polygons.\n\n"
         f"{stats_block}\n"
+        f"{trackio_block}\n"
         f"{schema_section}\n"
         "## Data sources & licenses\n\n"
         "- **OpenStreetMap** polygons: (c) OpenStreetMap contributors, "

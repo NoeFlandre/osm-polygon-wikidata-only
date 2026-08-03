@@ -13,6 +13,31 @@ Face dataset.
 * **Documentation**: <https://noeflandre.github.io/osm-polygon-wikidata-only/>
 * **Maintainer**: Noé Flandre
 
+## Trackio snapshot
+
+The finished dataset is recorded in the single public Trackio run
+[`final-dataset-snapshot`](https://huggingface.co/spaces/NoeFlandre/osm-polygon-wikidata-only-trackio).
+It contains exactly three plots: a text-coverage funnel, the top ten Wikipedia
+languages plus `Other languages`, and dataset composition on a logarithmic scale.
+The run is a static snapshot with no pipeline timeline.
+
+| Snapshot metric | Value |
+| --- | ---: |
+| Polygons | 1,184,110 |
+| Wikipedia + Wikivoyage documents | 2,288,170 |
+| Document words | 801,528,334 |
+| Languages | 351 |
+| Geographic regions | 375 |
+
+| Small snapshot table | Value |
+| --- | ---: |
+| Wikipedia polygon-document links | 2,468,604 |
+| Polygon/link-table storage | 9.9 GB |
+| Total Parquet storage | 19.2 GB |
+
+The funnel's language thresholds use the canonical Wikipedia polygon fields.
+Wikivoyage is included in the combined document, word, and dataset-composition totals.
+
 Documentation: [architecture](docs/architecture.md) ·
 [supported Python API](docs/api.md) · [development](docs/development.md) ·
 [contributing](CONTRIBUTING.md) · [security](SECURITY.md)
@@ -43,6 +68,7 @@ Documentation: [architecture](docs/architecture.md) ·
    * `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents.
    * `wikivoyage/sections/<stem>.parquet` — section-level Wikivoyage text.
    * `wikidata/facts/<stem>.parquet` — structured claims for polygon entities.
+7. Publishes one frozen Trackio run with static dataset metrics and three plots.
 
 The generated dataset is published on Hugging Face. Local processing inputs,
 intermediate files, and caches use a configurable data root outside the source
@@ -158,6 +184,7 @@ uv run osm-polygon-wikidata-only process-pbf <input.pbf> [--options]
 uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 uv run osm-polygon-wikidata-only augment-region <stem>  [--options]
 uv run osm-polygon-wikidata-only augment-dir             [--options]
+uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 ```
 
 ### Common options

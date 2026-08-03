@@ -12,6 +12,8 @@ are also supported:
   and `extract_pbf`
 - `pipeline.orchestrator.orchestrate`
 - `hf.dataset_card.render_dataset_card`
+- `hf.trackio_snapshot.publish_trackio_snapshot` for the single frozen
+  `final-dataset-snapshot` run and its three public plots
 - `hf.uploader` public upload helpers
 - `hf.coverage_map.generate_coverage_map`, `ensure_world_land`,
   and `load_centroids_from_parquet`

@@ -28,12 +28,14 @@ dependencies = [
     "typer>=0.27.0",
     "rich>=15.0.0",
     "tqdm>=4.68.4",
+    "trackio>=0.21,<1",
 ]
 
 [project.scripts]
 osm-polygon-wikidata-only = "osm_polygon_wikidata_only.cli.app:run"
 osm-polygon-wikidata-only-enforce-integrity = "osm_polygon_wikidata_only.cli.enforce_integrity:run"
 osm-polygon-wikidata-only-audit-remote = "osm_polygon_wikidata_only.cli.audit_remote:run"
+osm-polygon-wikidata-only-trackio = "osm_polygon_wikidata_only.hf.trackio_snapshot:run"
 
 [project.urls]
 Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"

@@ -90,6 +90,26 @@ Each point represents one dataset polygon carrying an OSM `wikidata=*` tag, whet
 Each H3 cell contains the raw number of polygons with non-empty Wikipedia or Wikivoyage text. A polygon is counted once even when both projects or several documents qualify. Colour uses a logarithmic purple-to-yellow scale; this is an absolute density count, not a proportion of all polygons.
 
 
+## Trackio snapshot
+
+The finished dataset is recorded in the single public Trackio run [`final-dataset-snapshot`](https://huggingface.co/spaces/NoeFlandre/osm-polygon-wikidata-only-trackio). It contains exactly three plots: a text-coverage funnel, the top ten Wikipedia languages plus `Other languages`, and dataset composition on a logarithmic scale. The run is a static snapshot with no pipeline timeline.
+
+| Snapshot metric | Value |
+| --- | ---: |
+| Polygons | 1,184,110 |
+| Wikipedia + Wikivoyage documents | 2,288,170 |
+| Document words | 801,528,334 |
+| Languages | 351 |
+| Geographic regions | 375 |
+
+| Small snapshot table | Value |
+| --- | ---: |
+| Wikipedia polygon-document links | 2,468,604 |
+| Polygon/link-table storage | 9.9 GB |
+| Total Parquet storage | 19.2 GB |
+
+The funnel's language thresholds use the canonical Wikipedia polygon fields. Wikivoyage is included in the combined document, word, and dataset-composition totals.
+
 ## Schema
 
 ### `polygons`

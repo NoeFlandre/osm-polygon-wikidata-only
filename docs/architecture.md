@@ -255,6 +255,18 @@ from polygon centroids and the bundled Natural Earth Admin-0 continent
 classification. All three images are embedded in the generated Hugging
 Face dataset card.
 
+## Final Trackio snapshot
+
+The project publishes one static Trackio run named
+`final-dataset-snapshot`. It contains the finished dataset's headline scale,
+corpus, language, and regional metrics, a small storage/link table, and exactly
+three plots: the text-coverage funnel, the top ten Wikipedia languages plus
+`Other languages`, and dataset composition on a logarithmic scale. Automatic
+CPU/GPU metrics, API calls, retries, cache counters, throughput, and processing
+timeline data are disabled. Local Trackio state is written under the configured
+data-root cache, and the static dashboard is published at
+`https://huggingface.co/spaces/NoeFlandre/osm-polygon-wikidata-only-trackio`.
+
 ## Exception boundary policy
 
 The codebase deliberately retains broad `except Exception` boundaries at

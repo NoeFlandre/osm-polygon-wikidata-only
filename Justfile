@@ -30,5 +30,8 @@ build:
 docs:
     uv run mkdocs build --strict --site-dir /tmp/osm-polygon-wikidata-only-site
 
+trackio:
+    uv run osm-polygon-wikidata-only-trackio
+
 check: sync coverage lint format-check typecheck build docs
     git diff --check

@@ -52,11 +52,15 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
         for dependency in config["dependency-groups"]["dev"]
     }
 
-    assert {"typer", "rich", "tqdm"} <= runtime_names
+    assert {"typer", "rich", "tqdm", "trackio"} <= runtime_names
     assert {"pytest", "pytest-cov", "ruff", "ty", "pre-commit"} <= development_names
     assert (
         config["project"]["scripts"]["osm-polygon-wikidata-only-audit-remote"]
         == "osm_polygon_wikidata_only.cli.audit_remote:run"
+    )
+    assert (
+        config["project"]["scripts"]["osm-polygon-wikidata-only-trackio"]
+        == "osm_polygon_wikidata_only.hf.trackio_snapshot:run"
     )
 
 
@@ -74,6 +78,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "typecheck:",
         "build:",
         "docs:",
+        "trackio:",
         "check:",
     ):
         assert recipe in justfile
