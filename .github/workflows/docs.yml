@@ -38,6 +38,7 @@ jobs:
         run: |
           mkdir -p site/presentations/assets
           cp presentations/dataset.html site/presentations/dataset.html
+          cp presentations/codebase.html site/presentations/codebase.html
           cp presentations/assets/coverage_map.png site/presentations/assets/coverage_map.png
           cp presentations/assets/text_density.png site/presentations/assets/text_density.png
           cp presentations/assets/text_presence.png site/presentations/assets/text_presence.png

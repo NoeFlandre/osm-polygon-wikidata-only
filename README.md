@@ -17,6 +17,8 @@ Face dataset.
 
 [View the dataset presentation](https://noeflandre.github.io/osm-polygon-wikidata-only/presentations/dataset.html)
 for a visual overview of the published tables and geographic coverage.
+[View the codebase presentation](https://noeflandre.github.io/osm-polygon-wikidata-only/presentations/codebase.html)
+for a visual overview of the architecture and implementation.
 
 The finished dataset is recorded in the single public Trackio run
 [`final-dataset-snapshot`](https://huggingface.co/spaces/NoeFlandre/osm-polygon-wikidata-only-trackio).

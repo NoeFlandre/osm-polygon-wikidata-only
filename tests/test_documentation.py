@@ -108,6 +108,7 @@ def test_pages_workflow_publishes_dataset_presentation() -> None:
     workflow = (REPOSITORY / ".github/workflows/docs.yml").read_text(encoding="utf-8")
     for path in (
         "presentations/dataset.html",
+        "presentations/codebase.html",
         "presentations/assets/coverage_map.png",
         "presentations/assets/text_density.png",
         "presentations/assets/text_presence.png",
@@ -134,8 +135,12 @@ def test_readme_places_trackio_snapshot_after_hero_and_intro() -> None:
     hero = "![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)"
     intro = "Extract polygonal OpenStreetMap features"
     trackio = "## Trackio snapshot"
+    codebase_presentation = (
+        "https://noeflandre.github.io/osm-polygon-wikidata-only/presentations/codebase.html"
+    )
     project = "## What this project does"
     assert readme.index(hero) < readme.index(intro) < readme.index(trackio) < readme.index(project)
+    assert codebase_presentation in readme
 
 
 def test_readme_documents_regenerated_dataset_card() -> None:
