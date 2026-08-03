@@ -6,6 +6,10 @@ caller-supplied callback for every way/relation that:
 * carries a non-empty ``wikidata`` tag, **and**
 * is a polygonal candidate (closed way, or relation of ``type=multipolygon``).
 
+Callers building the V2 Wikipedia-tag dataset may opt in to retaining
+polygonal elements that have no Wikidata tag but do have a Wikipedia tag.
+The default remains the V1 Wikidata-only filter.
+
 Nodes and non-polygonal elements never reach the callback, so memory
 stays bounded even for planet-sized files.
 
@@ -55,8 +59,14 @@ def region_from_filename(pbf_path: str | Path) -> str:
 class PBFReader:
     """Streaming polygonal-element reader backed by osmium."""
 
-    def __init__(self, pbf_path: str | Path) -> None:
+    def __init__(
+        self,
+        pbf_path: str | Path,
+        *,
+        include_wikipedia_tagged: bool = False,
+    ) -> None:
         self.pbf_path = Path(pbf_path)
+        self.include_wikipedia_tagged = include_wikipedia_tagged
         if not self.pbf_path.exists():
             raise PBFReadError(f"PBF file does not exist: {self.pbf_path}")
         if not self.pbf_path.is_file():
@@ -74,7 +84,10 @@ class PBFReader:
         not retain any state between calls: memory is bounded.
         """
         try:
-            handler = _PolygonHandler(callback)
+            handler = _PolygonHandler(
+                callback,
+                include_wikipedia_tagged=self.include_wikipedia_tagged,
+            )
             # ``locations=True`` attaches the NodeLocationsForWays indexer
             # so the Areas assembler can resolve way node coordinates.
             handler.apply_file(str(self.pbf_path), locations=True)
@@ -105,9 +118,10 @@ class _PolygonHandler(osmium.SimpleHandler):
     needs them.
     """
 
-    def __init__(self, callback: Callback) -> None:
+    def __init__(self, callback: Callback, *, include_wikipedia_tagged: bool = False) -> None:
         super().__init__()
         self._callback = callback
+        self._include_wikipedia_tagged = include_wikipedia_tagged
         self._factory = osmium.geom.GeoJSONFactory()
 
     @staticmethod
@@ -117,7 +131,11 @@ class _PolygonHandler(osmium.SimpleHandler):
     def area(self, a: osmium.osm.Area) -> None:
         tags = self._tags(a.tags)
         wd = tags.get("wikidata", "").strip()
-        if not wd:
+        has_wikipedia = bool(
+            tags.get("wikipedia", "").strip()
+            or any(key.startswith("wikipedia:") and value.strip() for key, value in tags.items())
+        )
+        if not wd and not (self._include_wikipedia_tagged and has_wikipedia):
             return
         if a.is_multipolygon():
             osm_type = "relation"
