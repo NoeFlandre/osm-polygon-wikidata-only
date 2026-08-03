@@ -130,6 +130,18 @@ def test_readme_documents_five_augmentation_sidecars() -> None:
         assert path in readme, f"missing augmentation path {path} in README"
 
 
+def test_readme_image_references_have_repository_assets() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    for path in (
+        "assets/dataset_hero.png",
+        "assets/geographic_text_presence.png",
+        "assets/coverage_map.png",
+        "assets/geographic_text_density.png",
+    ):
+        assert path in readme
+        assert (REPOSITORY / path).is_file(), f"missing README asset {path}"
+
+
 def test_readme_places_trackio_snapshot_after_hero_and_intro() -> None:
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
     hero = "![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)"
