@@ -81,7 +81,7 @@ def test_index_rejects_wrong_schema(tmp_path: Path) -> None:
         build_v1_reuse_index(tmp_path)
 
 
-def test_index_rejects_duplicate_page_identity(tmp_path: Path) -> None:
+def test_index_allows_shared_page_revision_for_distinct_qids(tmp_path: Path) -> None:
     _write_documents(
         tmp_path,
         [
@@ -93,8 +93,12 @@ def test_index_rejects_duplicate_page_identity(tmp_path: Path) -> None:
             ),
         ],
     )
-    with pytest.raises(ValueError, match="duplicate"):
-        build_v1_reuse_index(tmp_path)
+    index = build_v1_reuse_index(tmp_path)
+    assert [row["document_id"] for row in index.by_page("en", 1)] == [
+        "Q42:wikipedia:en:1:2",
+        "Q43:wikipedia:en:1:2",
+    ]
+    assert index.by_title("en", "Douglas Adams") == index.by_page("en", 1)
 
 
 def test_index_reuses_legacy_articles_when_canonical_documents_are_absent(

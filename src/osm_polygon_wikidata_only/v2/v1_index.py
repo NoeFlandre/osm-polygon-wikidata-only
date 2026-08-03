@@ -18,7 +18,6 @@ from osm_polygon_wikidata_only.domain.schema import article_schema
 
 DocumentRow = dict[str, object]
 PageKey = tuple[str, int]
-RevisionKey = tuple[str, int, int]
 IndexKey = TypeVar("IndexKey")
 
 
@@ -34,7 +33,12 @@ def _required_int(value: object, field: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class V1ReuseIndex:
-    """Immutable lookup maps built from V1 Wikipedia document shards."""
+    """Immutable lookup maps built from V1 Wikipedia document shards.
+
+    A single Wikipedia page revision may appear under multiple Wikidata QIDs
+    because V1 stores each polygon relationship's QID-backed document row.
+    Lookup values therefore remain tuples and are sorted deterministically.
+    """
 
     by_page_index: Mapping[PageKey, tuple[DocumentRow, ...]]
     by_title_index: Mapping[tuple[str, str], tuple[DocumentRow, ...]]
@@ -84,7 +88,6 @@ def build_v1_reuse_index(processed_dir: Path) -> V1ReuseIndex:
     by_page: dict[PageKey, list[DocumentRow]] = {}
     by_title: dict[tuple[str, str], list[DocumentRow]] = {}
     by_qid: dict[str, list[DocumentRow]] = {}
-    seen_revisions: dict[RevisionKey, str] = {}
     seen_documents: set[str] = set()
     row_count = 0
 
@@ -93,14 +96,9 @@ def build_v1_reuse_index(processed_dir: Path) -> V1ReuseIndex:
             document_id = str(row["document_id"])
             language = str(row["language"])
             page_id = _required_int(row["page_id"], "page_id")
-            revision_id = _required_int(row["revision_id"], "revision_id")
-            revision_key = (language.casefold(), page_id, revision_id)
-            prior_id = seen_revisions.get(revision_key)
-            if prior_id is not None and prior_id != document_id:
-                raise ValueError(f"duplicate V1 page revision identity: {revision_key!r}")
+            _required_int(row["revision_id"], "revision_id")
             if document_id in seen_documents:
                 continue
-            seen_revisions[revision_key] = document_id
             seen_documents.add(document_id)
             row_count += 1
             by_page.setdefault((language.casefold(), page_id), []).append(row)
