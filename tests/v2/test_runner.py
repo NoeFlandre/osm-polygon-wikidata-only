@@ -63,6 +63,7 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
                 {
                     "polygons/region-latest.parquet",
                     "wikipedia/documents/region-latest.parquet",
+                    "wikipedia/sections/region-latest.parquet",
                     "polygon_document_links/region-latest.parquet",
                 }
             ),

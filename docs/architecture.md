@@ -102,7 +102,11 @@ tag references, structured rejections, and discovery-source provenance. Its
 `polygon_document_links` is the single V2 relationship table for Wikipedia
 and Wikivoyage, with `link_sources` identifying Wikidata sitelinks versus
 direct Wikipedia tags. Existing V1 sidecars are copied by content and are
-never deleted or rewritten in V1 storage.
+never deleted or rewritten in V1 storage. The V2
+`wikipedia/sections/<stem>.parquet` artifact is required and uses the exact V1
+22-column section schema. Existing section rows are reused; only Wikipedia
+documents without a persisted section are fetched at their exact revision and
+parsed with the shared V1 section parser.
 
 Each region is written through staged Parquet files and a journal-free
 replacement transaction, then the V2 manifest is updated atomically. A

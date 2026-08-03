@@ -27,7 +27,7 @@ from osm_polygon_wikidata_only.v2.publication import (
     metadata_publication_ops,
     region_publication_ops,
 )
-from osm_polygon_wikidata_only.v2.reuse import merge_v2_region
+from osm_polygon_wikidata_only.v2.reuse import SectionClient, merge_v2_region
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
 
@@ -43,6 +43,8 @@ def run_v2_sync(
     data_root: DataRoot,
     settings: Settings,
     wikipedia_client: WikipediaClient,
+    section_client: SectionClient | None = None,
+    section_workers: int = 8,
     cache: JsonFileCache | None = None,
     push: bool = False,
     upload: Upload | None = None,
@@ -90,6 +92,8 @@ def run_v2_sync(
             extracted,
             index=index,
             wikipedia_client=wikipedia_client,
+            section_client=section_client,
+            section_workers=section_workers,
             cache=v2_cache,
             fetch_full_text=settings.fetch_full_text,
         )
@@ -123,6 +127,7 @@ def _region_is_current(
     expected = {
         "polygons_path": f"polygons/{stem}.parquet",
         "documents_path": f"wikipedia/documents/{stem}.parquet",
+        "sections_path": f"wikipedia/sections/{stem}.parquet",
         "links_path": f"polygon_document_links/{stem}.parquet",
     }
     if any(entry.get(field) != value for field, value in expected.items()):

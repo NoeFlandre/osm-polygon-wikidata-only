@@ -80,8 +80,10 @@ V2 is an explicit, isolated workflow. It starts from finalized V1 artifacts,
 scans each source PBF for direct Wikipedia tags, reuses matching V1 documents,
 fetches only missing direct pages, and writes under `processed_v2/`. It uses a
 unified `polygon_document_links/` table with `link_sources` provenance and
-publishes to the separate V2 dataset above. V1 files and the default workflow
-are never rewritten by a V2 run.
+publishes to the separate V2 dataset above. V2 also writes
+`wikipedia/sections/<stem>.parquet` with the exact V1 section schema, reusing
+existing V1 rows and fetching only missing Wikipedia revisions. V1 files and
+the default workflow are never rewritten by a V2 run.
 
 The generated dataset is published on Hugging Face. Local processing inputs,
 intermediate files, and caches use a configurable data root outside the source

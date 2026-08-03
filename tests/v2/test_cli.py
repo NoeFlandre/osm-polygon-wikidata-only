@@ -42,7 +42,9 @@ def test_v2_executor_honors_an_explicit_repository_override(tmp_path: Path, monk
     monkeypatch.setattr(
         v2_cli,
         "build_wikimedia_runtime",
-        lambda *_args, **_kwargs: SimpleNamespace(wikipedia=object()),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            wikipedia=object(), scheduler=object(), session=object()
+        ),
     )
     monkeypatch.setattr(
         v2_cli.RemoteInventory,

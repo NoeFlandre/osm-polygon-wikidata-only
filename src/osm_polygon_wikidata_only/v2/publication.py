@@ -13,9 +13,14 @@ def region_publication_ops(processed_v2: Path, stem: str) -> list[PublicationOp]
     required_paths = [
         Path("polygons") / f"{stem}.parquet",
         Path("wikipedia/documents") / f"{stem}.parquet",
+        Path("wikipedia/sections") / f"{stem}.parquet",
         Path("polygon_document_links") / f"{stem}.parquet",
     ]
-    optional_paths = [Path(subdir) / f"{stem}.parquet" for subdir in SIDECAR_SUBDIRS]
+    optional_paths = [
+        Path(subdir) / f"{stem}.parquet"
+        for subdir in SIDECAR_SUBDIRS
+        if subdir != "wikipedia/sections"
+    ]
     return _add_existing(
         processed_v2,
         required_paths + [path for path in optional_paths if (processed_v2 / path).is_file()],

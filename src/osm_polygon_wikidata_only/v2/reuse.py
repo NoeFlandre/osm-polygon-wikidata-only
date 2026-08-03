@@ -12,12 +12,15 @@ import hashlib
 import json
 import shutil
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.models import Document
+from osm_polygon_wikidata_only.augmentation.sections import parse_sections
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_from_article_row,
 )
@@ -44,6 +47,13 @@ class V1RegionData:
     documents: tuple[dict[str, Any], ...]
     links: tuple[dict[str, Any], ...]
     sidecars: tuple[Path, ...]
+
+
+class SectionClient(Protocol):
+    """Minimal exact-revision HTML client needed by the V2 section builder."""
+
+    def parse_html(self, project: str, language: str, revision_id: int) -> str:
+        """Return rendered HTML for one immutable Wikimedia revision."""
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
@@ -159,6 +169,78 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _section_document(row: dict[str, Any]) -> Document:
+    """Adapt a V2 document row to the existing V1 section parser model."""
+    return Document(
+        document_id=str(row["document_id"]),
+        article_id=str(row.get("article_id") or ""),
+        wikidata=str(row.get("wikidata") or ""),
+        project=str(row.get("project") or "wikipedia"),
+        language=str(row.get("language") or ""),
+        site=str(row.get("site") or ""),
+        title=str(row.get("title") or ""),
+        url=str(row.get("url") or ""),
+        page_id=int(row.get("page_id") or 0),
+        revision_id=int(row.get("revision_id") or 0),
+        revision_timestamp=str(row.get("revision_timestamp") or ""),
+        retrieved_at=str(row.get("retrieved_at") or ""),
+        full_text=str(row.get("full_text") or ""),
+        full_text_format=str(row.get("full_text_format") or ""),
+        article_length_chars=int(row.get("article_length_chars") or 0),
+        article_length_words=int(row.get("article_length_words") or 0),
+        article_length_tokens_estimate=int(row.get("article_length_tokens_estimate") or 0),
+        license=str(row.get("license") or ""),
+        attribution=str(row.get("attribution") or ""),
+        source_api=str(row.get("source_api") or ""),
+        fetch_status=str(row.get("fetch_status") or ""),
+        fetch_error=str(row.get("fetch_error") or ""),
+        content_hash=str(row.get("content_hash") or ""),
+    )
+
+
+def _build_missing_sections(
+    documents: list[dict[str, Any]],
+    existing_sections: list[dict[str, Any]],
+    *,
+    section_client: SectionClient | None,
+    section_workers: int,
+) -> list[dict[str, Any]]:
+    """Fetch and parse only Wikipedia documents without persisted sections."""
+    covered = {str(row.get("document_id")) for row in existing_sections if row.get("document_id")}
+    missing = [
+        row
+        for row in sorted(documents, key=lambda item: str(item.get("document_id", "")))
+        if row.get("project") == "wikipedia" and str(row.get("document_id")) not in covered
+    ]
+    if not missing:
+        return existing_sections
+    if section_client is None:
+        raise ValueError("V2 section client is required to build missing Wikipedia sections")
+
+    def fetch_one(row: dict[str, Any]) -> list[dict[str, Any]]:
+        document = _section_document(row)
+        html = section_client.parse_html(
+            document.project,
+            document.language,
+            document.revision_id,
+        )
+        return [section.to_dict() for section in parse_sections(document, html)]
+
+    with ThreadPoolExecutor(max_workers=max(1, section_workers)) as executor:
+        fetched = executor.map(fetch_one, missing)
+        new_sections = [row for group in fetched for row in group]
+    by_id = {str(row["section_id"]): row for row in existing_sections}
+    by_id.update({str(row["section_id"]): row for row in new_sections})
+    return sorted(
+        by_id.values(),
+        key=lambda row: (
+            str(row.get("document_id", "")),
+            int(row.get("section_index", 0)),
+            str(row.get("section_id", "")),
+        ),
+    )
+
+
 def merge_v2_region(
     data_root: DataRoot,
     extracted: V2ExtractedPbf,
@@ -167,6 +249,8 @@ def merge_v2_region(
     wikipedia_client: Any,
     cache: Any = None,
     fetch_full_text: bool = True,
+    section_client: SectionClient | None = None,
+    section_workers: int = 8,
 ) -> tuple[dict[str, Any], ...]:
     """Merge V1 rows with V2 discoveries and persist one canonical region."""
     stem = extracted.stem.stem
@@ -255,12 +339,21 @@ def merge_v2_region(
             polygon["best_language"] = languages[0]
 
     copy_v1_sidecars(data_root, stem, data_root.processed_v2)
+    sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
+    sections = _rows(sections_path)
+    sections = _build_missing_sections(
+        list(documents.values()),
+        sections,
+        section_client=section_client,
+        section_workers=section_workers,
+    )
     write_v2_region(
         data_root.processed_v2,
         stem,
         polygons=sorted(polygons.values(), key=lambda row: str(row["polygon_id"])),
         documents=sorted(documents.values(), key=lambda row: str(row["document_id"])),
         links=sorted(links.values(), key=lambda row: _link_key(row)),
+        sections=sections,
     )
     return tuple(polygons.values())
 
@@ -275,6 +368,7 @@ def _link_key(row: dict[str, Any]) -> tuple[str, str, str]:
 
 __all__ = [
     "SIDECAR_SUBDIRS",
+    "SectionClient",
     "V1RegionData",
     "copy_v1_sidecars",
     "load_v1_region",

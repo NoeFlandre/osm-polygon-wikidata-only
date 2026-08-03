@@ -4,6 +4,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.models import Section
+from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
@@ -58,6 +60,35 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
         root.processed / "wikipedia/documents" / f"{stem}.parquet",
         wikipedia_document_schema(),
         [document],
+    )
+    existing_section = Section(
+        "existing-section",
+        document["document_id"],
+        document["article_id"],
+        document["wikidata"],
+        "wikipedia",
+        "en",
+        "enwiki",
+        1,
+        2,
+        0,
+        "",
+        "",
+        0,
+        "",
+        "[]",
+        "Existing section",
+        16,
+        2,
+        3,
+        "section-hash",
+        "CC BY-SA",
+        "",
+    ).to_dict()
+    _write(
+        root.processed / "wikipedia/sections" / f"{stem}.parquet",
+        section_schema(),
+        [existing_section],
     )
     link = empty_row(tuple(field.name for field in polygon_document_link_schema()))
     link.update(
@@ -120,12 +151,20 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
             self.calls += 1
             return super().fetch_article(*args, **kwargs)  # type: ignore[arg-type]
 
+    class SectionClient:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            assert project == "wikipedia"
+            assert language == "en"
+            assert revision_id == 20
+            return "<p>Direct section text</p><h2>Heading</h2><p>More text</p>"
+
     client = CountingClient({("enwiki", "New page"): FetchResult("ok", _article("New page"))})
     merge_v2_region(
         root,
         extracted,
         index=build_v1_reuse_index(root.processed),
         wikipedia_client=client,
+        section_client=SectionClient(),
     )
 
     assert client.calls == 1
@@ -140,6 +179,36 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
     direct_document = next(row for row in documents if row["wikidata"] is None)
     assert direct_document["title"] == "New page"
     assert any(row["document_id"] == direct_document["document_id"] for row in links)
+    sections = pq.read_table(root.processed_v2 / "wikipedia/sections" / f"{stem}.parquet")
+    assert tuple(sections.schema.names) == (
+        "section_id",
+        "document_id",
+        "article_id",
+        "wikidata",
+        "project",
+        "language",
+        "site",
+        "page_id",
+        "revision_id",
+        "section_index",
+        "heading",
+        "anchor",
+        "level",
+        "parent_section_id",
+        "section_path",
+        "text",
+        "text_length_chars",
+        "text_length_words",
+        "text_length_tokens_estimate",
+        "content_hash",
+        "license",
+        "attribution",
+    )
+    assert sections.num_rows > 0
+    assert {row["document_id"] for row in sections.to_pylist()} == {
+        document["document_id"],
+        direct_document["document_id"],
+    }
     polygon_rows = pq.read_table(root.processed_v2 / "polygons" / f"{stem}.parquet").to_pylist()
     voyage_row = next(
         row for row in polygon_rows if row["polygon_id"] == voyage_polygon["polygon_id"]

@@ -12,6 +12,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -29,6 +30,7 @@ class V2RegionArtifacts:
 
     polygons_path: Path
     documents_path: Path
+    sections_path: Path
     links_path: Path
     manifest_path: Path
     manifest_entry: dict[str, Any]
@@ -103,21 +105,29 @@ def write_v2_region(
     polygons: list[dict[str, Any]],
     documents: list[dict[str, Any]],
     links: list[dict[str, Any]],
+    sections: list[dict[str, Any]] | None = None,
 ) -> V2RegionArtifacts:
-    """Atomically persist V2 core tables and update the manifest last."""
+    """Atomically persist V2 core tables and update the manifest last.
+
+    Wikipedia sections use the exact V1 section schema.  An empty section
+    table is still written so every V2 region has the same required artifact
+    set, including regions with no Wikipedia documents.
+    """
     if not stem or "/" in stem or "\\" in stem or stem in {".", ".."}:
         raise ValueError(f"Invalid V2 stem: {stem!r}")
     polygons_path = processed_v2 / "polygons" / f"{stem}.parquet"
     documents_path = processed_v2 / "wikipedia" / "documents" / f"{stem}.parquet"
+    sections_path = processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
     links_path = processed_v2 / "polygon_document_links" / f"{stem}.parquet"
     manifest_path = processed_v2 / "manifests" / "processed_pbfs.json"
-    final_paths = (polygons_path, documents_path, links_path)
+    final_paths = (polygons_path, documents_path, sections_path, links_path)
     schemas = (
         polygon_v2_schema(),
         wikipedia_document_v2_schema(),
+        section_schema(),
         polygon_document_link_v2_schema(),
     )
-    rows = (polygons, documents, links)
+    rows = (polygons, documents, sections or [], links)
     staged: dict[Path, Path] = {}
     try:
         for final, region_rows, schema in zip(final_paths, rows, schemas, strict=True):
@@ -140,10 +150,12 @@ def write_v2_region(
         "region": stem.removesuffix("-latest"),
         "polygons_path": str(polygons_path.relative_to(processed_v2)),
         "documents_path": str(documents_path.relative_to(processed_v2)),
+        "sections_path": str(sections_path.relative_to(processed_v2)),
         "links_path": str(links_path.relative_to(processed_v2)),
         "row_counts": {
             "polygons": len(polygons),
             "documents": len(documents),
+            "sections": len(sections or []),
             "links": len(links),
         },
         "file_hashes": dict(sorted(file_hashes.items())),
@@ -161,6 +173,7 @@ def write_v2_region(
     return V2RegionArtifacts(
         polygons_path=polygons_path,
         documents_path=documents_path,
+        sections_path=sections_path,
         links_path=links_path,
         manifest_path=manifest_path,
         manifest_entry=entry,
