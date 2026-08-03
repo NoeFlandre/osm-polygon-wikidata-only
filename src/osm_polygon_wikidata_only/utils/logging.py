@@ -20,15 +20,21 @@ def configure_logging(level: str | int = "INFO") -> None:
     useful in a CI runner and on a developer terminal.
     """
     global _CONFIGURED
-    if _CONFIGURED:
-        return
     if isinstance(level, str):
         level = level.upper()
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stderr,
-        force=True,
-    )
+    root = logging.getLogger()
+    if _CONFIGURED:
+        return
+    if root.handlers:
+        # Embedded callers and test runners may already own the root
+        # handlers. Keep them so log capture and application logging are
+        # not silently disconnected by the CLI's first invocation.
+        root.setLevel(level)
+    else:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+            datefmt="%H:%M:%S",
+            stream=sys.stderr,
+        )
     _CONFIGURED = True

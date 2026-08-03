@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,13 +19,14 @@ def _module() -> Any:
 def test_audit_help_is_public_and_focused() -> None:
     module = _module()
     result = CliRunner().invoke(module.app, ["--help"])
+    plain_stdout = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
 
     assert result.exit_code == 0
-    assert "Audit remote versus local canonical dataset files" in result.stdout
-    assert "--data-root" in result.stdout
-    assert "--repo-id" in result.stdout
-    assert "--hf-token" in result.stdout
-    assert "sync-dir" not in result.stdout
+    assert "Audit remote versus local canonical dataset files" in plain_stdout
+    assert "--data-root" in plain_stdout
+    assert "--repo-id" in plain_stdout
+    assert "--hf-token" in plain_stdout
+    assert "sync-dir" not in plain_stdout
 
 
 def test_audit_uses_sorted_progress_and_renders_reconciliation(
