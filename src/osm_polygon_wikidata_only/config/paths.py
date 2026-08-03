@@ -26,9 +26,11 @@ ENV_VAR = "OSM_POLYGON_DATA_ROOT"
 # Conventional top-level sub-directories under the data root.
 SUBDIR_RAW = "raw"
 SUBDIR_PROCESSED = "processed"
+SUBDIR_PROCESSED_V2 = "processed_v2"
 SUBDIR_LOGS = "logs"
 SUBDIR_HF_CACHE = "hf_cache"
 SUBDIR_CACHE = "cache"
+SUBDIR_CACHE_V2 = "v2"
 
 # Sub-sub-directories under ``processed/``.
 PROCESSED_POLYGONS = "polygons"
@@ -64,6 +66,11 @@ class DataRoot:
         return self.sub(SUBDIR_PROCESSED)
 
     @property
+    def processed_v2(self) -> Path:
+        """Return the isolated V2 artifact directory."""
+        return self.sub(SUBDIR_PROCESSED_V2)
+
+    @property
     def logs(self) -> Path:
         return self.sub(SUBDIR_LOGS)
 
@@ -74,6 +81,11 @@ class DataRoot:
     @property
     def cache(self) -> Path:
         return self.sub(SUBDIR_CACHE)
+
+    @property
+    def v2_cache(self) -> Path:
+        """Return the isolated V2 cache directory."""
+        return self.cache / SUBDIR_CACHE_V2
 
     @property
     def processed_polygons(self) -> Path:
@@ -105,9 +117,11 @@ class DataRoot:
         subdirs = (
             self.raw,
             self.processed,
+            self.processed_v2,
             self.logs,
             self.hf_cache,
             self.cache,
+            self.v2_cache,
             self.processed_polygons,
             self.processed_articles,
             self.processed_links,
