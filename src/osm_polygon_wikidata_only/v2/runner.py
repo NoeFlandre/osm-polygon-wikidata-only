@@ -7,6 +7,7 @@ Wikipedia pages absent from V1, and commits each completed region atomically.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -20,7 +21,7 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
 from osm_polygon_wikidata_only.v2.card import write_v2_card
-from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
+from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION, V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.extractor import extract_v2_pbf
 from osm_polygon_wikidata_only.v2.publication import (
     metadata_publication_ops,
@@ -117,14 +118,31 @@ def _region_is_current(
     manifest: dict[str, dict[str, Any]],
 ) -> bool:
     entry = manifest.get(stem)
-    if entry is None or entry.get("contract_version") != "wikipedia-tags-v2":
+    if entry is None or entry.get("contract_version") != V2_CONTRACT_VERSION:
         return False
-    required = (
-        processed_v2 / "polygons" / f"{stem}.parquet",
-        processed_v2 / "wikipedia/documents" / f"{stem}.parquet",
-        processed_v2 / "polygon_document_links" / f"{stem}.parquet",
-    )
-    return all(path.is_file() for path in required)
+    expected = {
+        "polygons_path": f"polygons/{stem}.parquet",
+        "documents_path": f"wikipedia/documents/{stem}.parquet",
+        "links_path": f"polygon_document_links/{stem}.parquet",
+    }
+    if any(entry.get(field) != value for field, value in expected.items()):
+        return False
+    hashes = entry.get("file_hashes")
+    if not isinstance(hashes, dict):
+        return False
+    for relative in expected.values():
+        path = processed_v2 / relative
+        if not path.is_file() or hashes.get(relative) != _sha256(path):
+            return False
+    return True
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 __all__ = ["run_v2_sync"]

@@ -10,7 +10,11 @@ from typing import TypeVar
 
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+    wikipedia_document_from_article_row,
+    wikipedia_document_schema,
+)
+from osm_polygon_wikidata_only.domain.schema import article_schema
 
 DocumentRow = dict[str, object]
 PageKey = tuple[str, int]
@@ -48,20 +52,35 @@ class V1ReuseIndex:
         return self.by_qid_index.get(qid, ())
 
 
-def _read_rows(path: Path) -> list[DocumentRow]:
+def _read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow]:
     try:
         table = pq.read_table(path)  # type: ignore[no-untyped-call]
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
-    if not table.schema.equals(wikipedia_document_schema(), check_metadata=True):
-        raise ValueError(f"V1 document shard has an invalid schema: {path}")
+    expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
+    if not table.schema.equals(expected_schema, check_metadata=True):
+        label = "legacy article" if legacy_articles else "V1 document"
+        raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
+    if legacy_articles:
+        try:
+            return [wikipedia_document_from_article_row(row).to_dict() for row in table.to_pylist()]
+        except Exception as exc:
+            raise ValueError(f"V1 legacy article shard is invalid: {path}: {exc}") from exc
     return [dict(row) for row in table.to_pylist()]
 
 
 def build_v1_reuse_index(processed_dir: Path) -> V1ReuseIndex:
     """Read and validate all V1 Wikipedia document shards without writing."""
     document_dir = processed_dir / "wikipedia" / "documents"
-    files = tuple(sorted(document_dir.glob("*.parquet")))
+    article_dir = processed_dir / "articles"
+    canonical_paths = {path.stem: path for path in document_dir.glob("*.parquet")}
+    # V1 releases before the canonical-document migration stored Wikipedia
+    # rows under ``articles/``. Prefer canonical shards when both exist, but
+    # keep the legacy fallback so V2 never refetches an already-finalized page.
+    effective_paths = dict(canonical_paths)
+    for path in article_dir.glob("*.parquet"):
+        effective_paths.setdefault(path.stem, path)
+    files = tuple(sorted(effective_paths.values(), key=lambda path: path.name))
     by_page: dict[PageKey, list[DocumentRow]] = {}
     by_title: dict[tuple[str, str], list[DocumentRow]] = {}
     by_qid: dict[str, list[DocumentRow]] = {}
@@ -70,7 +89,7 @@ def build_v1_reuse_index(processed_dir: Path) -> V1ReuseIndex:
     row_count = 0
 
     for path in files:
-        for row in _read_rows(path):
+        for row in _read_rows(path, legacy_articles=path.parent == article_dir):
             document_id = str(row["document_id"])
             language = str(row["language"])
             page_id = _required_int(row["page_id"], "page_id")

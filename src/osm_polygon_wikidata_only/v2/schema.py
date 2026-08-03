@@ -33,6 +33,7 @@ V2_POLYGON_DESCRIPTIONS = {
     **POLYGON_DESCRIPTIONS,
     "wikidata": "Nullable Wikidata QID value from the OSM wikidata=* tag.",
     "has_wikidata": "True when the polygon has a valid Wikidata tag.",
+    "has_wikipedia": "True when at least one linked Wikipedia document exists.",
     "wikipedia_tag_refs": "Deterministic JSON list of normalized direct Wikipedia tag references.",
     "wikipedia_tag_rejections": "Deterministic JSON list of malformed Wikipedia tag records.",
     "discovery_sources": "Deterministic JSON list containing wikidata and/or wikipedia_tag.",
@@ -40,6 +41,7 @@ V2_POLYGON_DESCRIPTIONS = {
 V2_DOCUMENT_DESCRIPTIONS = {
     **WIKIPEDIA_DOCUMENT_DESCRIPTIONS,
     "document_id": "Stable V2 identity based on Wikidata when available, otherwise the Wikipedia page.",
+    "article_id": "Stable V2 article identity based on Wikidata when available, otherwise the Wikipedia page.",
     "wikidata": "Nullable Wikidata QID resolved from V1 reuse or the direct page.",
 }
 V2_LINK_DESCRIPTIONS = {

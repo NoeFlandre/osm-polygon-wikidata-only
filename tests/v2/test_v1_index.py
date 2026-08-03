@@ -5,6 +5,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
+from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
 from osm_polygon_wikidata_only.v2.v1_index import V1ReuseIndex, build_v1_reuse_index
 
 
@@ -54,6 +55,14 @@ def _write_documents(root: Path, rows: list[dict[str, object]]) -> Path:
     return path
 
 
+def _write_legacy_articles(root: Path, rows: list[dict[str, object]]) -> Path:
+    path = root / "articles" / "region.parquet"
+    path.parent.mkdir(parents=True)
+    legacy_rows = [{column: row[column] for column in ARTICLE_COLUMNS} for row in rows]
+    pq.write_table(pa.Table.from_pylist(legacy_rows, schema=article_schema()), path)
+    return path
+
+
 def test_index_lookup_by_title_page_and_qid(tmp_path: Path) -> None:
     path = _write_documents(tmp_path, [_document()])
     index = build_v1_reuse_index(tmp_path)
@@ -86,3 +95,12 @@ def test_index_rejects_duplicate_page_identity(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="duplicate"):
         build_v1_reuse_index(tmp_path)
+
+
+def test_index_reuses_legacy_articles_when_canonical_documents_are_absent(
+    tmp_path: Path,
+) -> None:
+    path = _write_legacy_articles(tmp_path, [_document()])
+    index = build_v1_reuse_index(tmp_path)
+    assert index.files == (path,)
+    assert index.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"

@@ -14,7 +14,11 @@ def render_v2_card(processed_v2: Path) -> str:
     """Render a concise, factual card from the V2 files on disk."""
     manifest = load_v2_manifest(processed_v2)
     polygon_count = _rows(processed_v2 / "polygons", manifest)
-    document_count = _rows(processed_v2 / "wikipedia/documents", manifest)
+    wikipedia_document_count = _rows(processed_v2 / "wikipedia/documents", manifest)
+    wikipedia_section_count = _rows(processed_v2 / "wikipedia/sections", manifest)
+    wikivoyage_document_count = _rows(processed_v2 / "wikivoyage/documents", manifest)
+    wikivoyage_section_count = _rows(processed_v2 / "wikivoyage/sections", manifest)
+    wikidata_fact_count = _rows(processed_v2 / "wikidata/facts", manifest)
     link_count = _rows(processed_v2 / "polygon_document_links", manifest)
     wikipedia_only = sum(
         _wikipedia_only_count(processed_v2 / "polygons" / f"{stem}.parquet")
@@ -37,7 +41,11 @@ def render_v2_card(processed_v2: Path) -> str:
             f"- **Hugging Face dataset:** [{V2_REPO_ID}](https://huggingface.co/datasets/{V2_REPO_ID})",
             f"- **Regions:** {len(manifest):,}",
             f"- **Polygons:** {polygon_count:,}",
-            f"- **Wikipedia documents:** {document_count:,}",
+            f"- **Wikipedia documents:** {wikipedia_document_count:,}",
+            f"- **Wikipedia sections:** {wikipedia_section_count:,}",
+            f"- **Wikivoyage documents:** {wikivoyage_document_count:,}",
+            f"- **Wikivoyage sections:** {wikivoyage_section_count:,}",
+            f"- **Wikidata facts:** {wikidata_fact_count:,}",
             f"- **Polygon-document links:** {link_count:,}",
             f"- **Wikipedia-tag-only polygons:** {wikipedia_only:,}",
             "",

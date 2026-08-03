@@ -8,6 +8,7 @@ by a V1 document are fetched.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from collections import defaultdict
@@ -142,12 +143,20 @@ def copy_v1_sidecars(data_root: DataRoot, stem: str, destination: Path) -> tuple
             continue
         target = destination / source_root.relative_to(data_root.processed) / source.name
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.is_file() or target.stat().st_size != source.stat().st_size:
+        if not target.is_file() or _sha256(source) != _sha256(target):
             temporary = target.with_suffix(target.suffix + ".tmp")
             shutil.copy2(source, temporary)
             temporary.replace(target)
         copied.append(target)
     return tuple(copied)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def merge_v2_region(
@@ -225,15 +234,22 @@ def merge_v2_region(
 
     for polygon_id, polygon in polygons.items():
         rows = links_by_polygon.get(polygon_id, [])
-        languages = sorted({str(row.get("language", "")) for row in rows if row.get("language")})
-        polygon["has_wikipedia"] = bool(rows)
+        wikipedia_rows = [row for row in rows if row.get("project") == "wikipedia"]
+        languages = sorted(
+            {str(row.get("language", "")) for row in wikipedia_rows if row.get("language")}
+        )
+        # Keep the V1 field semantics: Wikivoyage relationships are part of
+        # the unified link table, but do not make a polygon look like it has
+        # a Wikipedia document.
+        polygon["has_wikipedia"] = bool(wikipedia_rows)
         polygon["wikipedia_language_count"] = len(languages)
         polygon["wikipedia_languages"] = json.dumps(languages, separators=(",", ":"))
-        polygon["wikipedia_article_count"] = len(rows)
+        polygon["wikipedia_article_count"] = len(wikipedia_rows)
         polygon["has_english_wikipedia"] = "en" in languages
         polygon["has_french_wikipedia"] = "fr" in languages
         polygon["text_available"] = any(
-            bool(documents.get(str(row["document_id"]), {}).get("full_text")) for row in rows
+            bool(documents.get(str(row["document_id"]), {}).get("full_text"))
+            for row in wikipedia_rows
         )
         if languages and not polygon.get("best_language"):
             polygon["best_language"] = languages[0]
