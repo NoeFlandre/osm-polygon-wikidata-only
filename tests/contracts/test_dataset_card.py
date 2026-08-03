@@ -55,6 +55,15 @@ def test_card_starts_with_the_dataset_hero() -> None:
     assert md.index(hero) < md.index("OSM polygons tagged with")
 
 
+def test_card_places_trackio_snapshot_after_intro_before_coverage() -> None:
+    md = _render()
+    hero = "![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)"
+    intro = "OSM polygons tagged with"
+    trackio = "## Trackio snapshot"
+    coverage = "## Coverage"
+    assert md.index(hero) < md.index(intro) < md.index(trackio) < md.index(coverage)
+
+
 def test_card_embeds_geographic_assets() -> None:
     md = _render()
     assert "assets/geographic_text_density.png" in md

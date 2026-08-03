@@ -118,6 +118,15 @@ def test_readme_documents_five_augmentation_sidecars() -> None:
         assert path in readme, f"missing augmentation path {path} in README"
 
 
+def test_readme_places_trackio_snapshot_after_hero_and_intro() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    hero = "![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)"
+    intro = "Extract polygonal OpenStreetMap features"
+    trackio = "## Trackio snapshot"
+    project = "## What this project does"
+    assert readme.index(hero) < readme.index(intro) < readme.index(trackio) < readme.index(project)
+
+
 def test_readme_documents_regenerated_dataset_card() -> None:
     """The source README must explain that the published dataset card is
     regenerated automatically and reports factual statistics derived from
