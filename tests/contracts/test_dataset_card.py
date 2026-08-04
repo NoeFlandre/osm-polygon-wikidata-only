@@ -89,6 +89,17 @@ def test_card_links_to_source_repository() -> None:
     assert "[GitHub repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only)" in md
 
 
+def test_card_identifies_the_v1_github_contract() -> None:
+    md = _render()
+    assert "This is the V1 dataset" in md
+    assert (
+        "[V1 code on GitHub](https://github.com/NoeFlandre/"
+        "osm-polygon-wikidata-only/tree/v1.0.0)" in md
+    )
+    assert "Wikidata-first" in md
+    assert "The separate V2 dataset" in md
+
+
 def test_card_includes_loader_snippet() -> None:
     md = _render()
     assert "load_dataset" in md

@@ -14,6 +14,15 @@ multilingual `wikipedia=*` tags, including polygons without a Wikidata QID.
 * **Documentation**: <https://noeflandre.github.io/osm-polygon-wikidata-only/>
 * **Maintainer**: Noé Flandre
 
+## Dataset versions
+
+The Hugging Face dataset linked above is **V1**. It is produced by the
+Wikidata-first V1 contract in the [`v1.0.0` GitHub code](https://github.com/NoeFlandre/osm-polygon-wikidata-only/tree/v1.0.0):
+the default V1 workflow selects polygons with a valid `wikidata=*` reference.
+The separate [V2 dataset](https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia)
+uses the V2 workflow to add polygons discovered through multilingual
+`wikipedia=*` tags without changing V1.
+
 ## Trackio snapshot
 
 [View the dataset presentation](https://noeflandre.github.io/osm-polygon-wikidata-only/presentations/dataset.html)
