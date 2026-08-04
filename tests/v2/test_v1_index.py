@@ -209,6 +209,43 @@ def test_persistent_lookup_closes_parquet_handles_after_materialization(
     index.close()
 
 
+def test_index_close_does_not_close_sqlite_while_worker_is_alive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupted run must not close SQLite under an active index worker."""
+    _write_documents(tmp_path, [_document()])
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_sync(_store: object, _files: tuple[Path, ...]) -> bool:
+        started.set()
+        release.wait(timeout=2)
+        return True
+
+    monkeypatch.setattr(v1_index._PersistentV1Index, "_sync", blocked_sync)
+    monkeypatch.setattr(v1_index, "_INDEX_SHUTDOWN_TIMEOUT_S", 0.01)
+    index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+    store = index._store
+    assert store is not None
+    assert started.wait(timeout=2)
+    connection = store._connection
+    assert connection is not None
+
+    index.close()
+
+    assert store._thread is not None and store._thread.is_alive()
+    assert store._connection is connection
+    release.set()
+    store._thread.join(timeout=2)
+    assert not store._thread.is_alive()
+
+    index.close()
+    assert store._connection is None
+
+
 def test_persistent_index_does_not_write_for_unchanged_shards(
     tmp_path: Path,
     monkeypatch,

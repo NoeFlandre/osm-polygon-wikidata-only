@@ -34,6 +34,7 @@ DocumentRow = dict[str, object]
 PageKey = tuple[str, int]
 _INDEX_SCHEMA_VERSION = 2
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
+_INDEX_SHUTDOWN_TIMEOUT_S = 5.0
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
 
 
@@ -250,17 +251,26 @@ class _PersistentV1Index:
             raise RuntimeError("V2 V1 reuse index stopped before completion")
 
     def cancel(self) -> None:
-        """Stop after the current row-group transaction, preserving checkpoints."""
+        """Request stop after the current row-group transaction."""
         self._stop.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=30)
+            thread.join(timeout=_INDEX_SHUTDOWN_TIMEOUT_S)
         if thread is not None and thread.is_alive():
-            LOGGER.warning("V2 V1 reuse index did not stop within 30 seconds")
+            LOGGER.warning(
+                "V2 V1 reuse index is still finishing a row group after %.1fs; "
+                "committed checkpoints remain safe",
+                _INDEX_SHUTDOWN_TIMEOUT_S,
+            )
 
     def close(self) -> None:
-        """Stop indexing if needed and close the writer connection."""
+        """Stop indexing and close connections only after the worker exits."""
         self.cancel()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            # The daemon worker owns the writer while it finishes its current
+            # row group.  Closing it here could corrupt the active transaction.
+            return
         with self._reader_lock:
             for connection in self._reader_connections:
                 connection.close()
