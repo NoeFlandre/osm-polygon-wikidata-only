@@ -51,6 +51,18 @@ def test_second_identical_write_is_byte_stable(tmp_path: Path) -> None:
     assert second.file_hashes == hashes_before
 
 
+def test_provisional_write_is_marked_until_v1_reconciliation(tmp_path: Path) -> None:
+    write_v2_region(
+        tmp_path,
+        "region-latest",
+        polygons=[],
+        documents=[],
+        links=[],
+        v1_index_reconciled=False,
+    )
+    assert load_v2_manifest(tmp_path)["region-latest"]["v1_index_reconciled"] is False
+
+
 def test_sections_use_the_exact_v1_section_schema(tmp_path: Path) -> None:
     write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
     import pyarrow.parquet as pq

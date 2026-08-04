@@ -8,6 +8,7 @@ Wikipedia pages absent from V1, and commits each completed region atomically.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -29,7 +30,11 @@ from osm_polygon_wikidata_only.v2.publication import (
     metadata_publication_ops,
     region_publication_ops,
 )
-from osm_polygon_wikidata_only.v2.reuse import SectionClient, merge_v2_region
+from osm_polygon_wikidata_only.v2.reuse import (
+    SectionClient,
+    merge_v2_region,
+    reconcile_v2_region,
+)
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 from osm_polygon_wikidata_only.v2.v1_index import start_v1_reuse_index
 
@@ -132,6 +137,8 @@ def run_v2_sync(
     )
     extraction_future: Future[Any] | None = None
     extraction_index: int | None = None
+    provisional_stems: list[str] = []
+    extracted_stems: list[str] = []
 
     def schedule_next(after_index: int) -> None:
         nonlocal extraction_future, extraction_index
@@ -189,20 +196,49 @@ def run_v2_sync(
                 cache=v2_cache,
                 fetch_full_text=settings.fetch_full_text,
                 direct_workers=settings.enrichment_site_workers,
+                wait_for_index=False,
             )
-            manifest = load_v2_manifest(data_root.processed_v2)
             completed += 1
-            if push:
-                if upload is None:
-                    raise RuntimeError("V2 publication requested without an upload callback")
+            extracted_stems.append(stem)
+            if _has_wikipedia_refs(extracted):
+                provisional_stems.append(stem)
+                LOGGER.info(
+                    "Prepared V2 region %s while the V1 reuse index continues; final reconciliation is deferred",
+                    stem,
+                )
+            else:
+                LOGGER.info("Prepared V2 region %s (%d/%d)", stem, completed, len(pbfs))
+
+        # Finalize every speculative region only after every V1 shard has been
+        # checked.  All extraction, direct page fetching, and section parsing
+        # above can therefore advance while this shared index is building.
+        LOGGER.info(
+            "V2 prepared %d region(s) while the V1 reuse index was building; finalizing index and reconciling %d provisional region(s)",
+            len(extracted_stems),
+            len(provisional_stems),
+        )
+        index.wait_until_ready()
+        for stem in provisional_stems:
+            reconcile_v2_region(
+                data_root,
+                stem,
+                index=index,
+                wikipedia_client=wikipedia_client,
+                cache=v2_cache,
+                fetch_full_text=settings.fetch_full_text,
+                section_client=section_client,
+                section_workers=section_workers,
+            )
+        if push:
+            if upload is None:
+                raise RuntimeError("V2 publication requested without an upload callback")
+            for stem in extracted_stems:
                 upload(
                     region_publication_ops(data_root.processed_v2, stem),
                     f"Add V2 region {stem}",
                 )
-            LOGGER.info("Completed V2 region %s (%d/%d)", stem, completed, len(pbfs))
-
-        # A miss is only safe to fetch after every V1 shard has been checked.
-        index.wait_until_ready()
+        for stem in extracted_stems:
+            LOGGER.info("Completed V2 region %s", stem)
         card = write_v2_card(data_root.processed_v2)
         if push:
             if upload is None:
@@ -220,6 +256,18 @@ def run_v2_sync(
         index.close()
 
 
+def _has_wikipedia_refs(extracted: Any) -> bool:
+    """Return whether an extracted region needs final V1 title reconciliation."""
+    for polygon in extracted.polygons:
+        try:
+            refs = json.loads(str(polygon.get("wikipedia_tag_refs", "[]")))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(refs, list) and refs:
+            return True
+    return False
+
+
 def _region_is_current(
     processed_v2: Path,
     stem: str,
@@ -227,6 +275,8 @@ def _region_is_current(
 ) -> bool:
     entry = manifest.get(stem)
     if entry is None or entry.get("contract_version") != V2_CONTRACT_VERSION:
+        return False
+    if entry.get("v1_index_reconciled", True) is not True:
         return False
     expected = {
         "polygons_path": f"polygons/{stem}.parquet",

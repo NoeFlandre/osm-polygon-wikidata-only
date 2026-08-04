@@ -106,6 +106,7 @@ def write_v2_region(
     documents: list[dict[str, Any]],
     links: list[dict[str, Any]],
     sections: list[dict[str, Any]] | None = None,
+    v1_index_reconciled: bool = True,
 ) -> V2RegionArtifacts:
     """Atomically persist V2 core tables and update the manifest last.
 
@@ -152,6 +153,7 @@ def write_v2_region(
         "documents_path": str(documents_path.relative_to(processed_v2)),
         "sections_path": str(sections_path.relative_to(processed_v2)),
         "links_path": str(links_path.relative_to(processed_v2)),
+        "v1_index_reconciled": v1_index_reconciled,
         "row_counts": {
             "polygons": len(polygons),
             "documents": len(documents),

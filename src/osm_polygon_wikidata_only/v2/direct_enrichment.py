@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,7 @@ class DirectEnrichmentResult:
     documents: tuple[dict[str, Any], ...]
     links: tuple[dict[str, Any], ...]
     statuses: tuple[DirectWikipediaStatus, ...]
+    deferred_errors: tuple[tuple[int, Exception], ...] = ()
 
 
 def _link_row(
@@ -123,8 +125,15 @@ def enrich_wikipedia_refs(
     polygon_context: Mapping[str, Any] | None = None,
     cache: JsonFileCache | None = None,
     fetch_full_text: bool = True,
+    wait_for_index: bool = True,
 ) -> DirectEnrichmentResult:
-    """Resolve direct references, reusing V1 before making HTTP calls."""
+    """Resolve direct references, optionally without waiting for V1 indexing.
+
+    The speculative mode is used by the V2 merger while the persistent V1
+    reuse index is still scanning.  Its results must be reconciled with the
+    completed index before they are persisted because an index miss is not
+    authoritative until every V1 shard has been checked.
+    """
     context = polygon_context or {}
     client = _cached_client(wikipedia_client, cache)
     documents: dict[str, dict[str, Any]] = {}
@@ -132,6 +141,7 @@ def enrich_wikipedia_refs(
     statuses: dict[int, DirectWikipediaStatus] = {}
     pending: list[tuple[int, WikipediaTagRef]] = []
     speculative: dict[int, FetchResult | Exception] = {}
+    deferred_errors: dict[int, Exception] = {}
 
     def reuse(position: int, ref: WikipediaTagRef, document: Mapping[str, Any]) -> None:
         row = dict(document)
@@ -176,12 +186,13 @@ def enrich_wikipedia_refs(
                 # later V1 shard.  If it remains absent after the final index
                 # check, re-raise the original exception below.
                 speculative[position] = exc
-        LOGGER.info(
-            "V2 direct enrichment waiting for final V1 index state after %d speculative fetch(es)",
-            len(speculative),
-        )
-        index.wait_until_ready()
-        LOGGER.info("V2 direct enrichment resumed after V1 reuse index completion")
+        if wait_for_index:
+            LOGGER.info(
+                "V2 direct enrichment waiting for final V1 index state after %d speculative fetch(es)",
+                len(speculative),
+            )
+            index.wait_until_ready()
+            LOGGER.info("V2 direct enrichment resumed after V1 reuse index completion")
 
     for position, ref in pending:
         existing = index.by_title(ref.language, ref.title)
@@ -190,7 +201,15 @@ def enrich_wikipedia_refs(
             continue
         result_or_error = speculative.get(position)
         if isinstance(result_or_error, Exception):
-            raise result_or_error
+            if wait_for_index:
+                raise result_or_error
+            deferred_errors[position] = result_or_error
+            statuses[position] = DirectWikipediaStatus(
+                ref,
+                "deferred_error",
+                str(result_or_error),
+            )
+            continue
         result = result_or_error
         if result is None:
             result = client.fetch_article(
@@ -220,6 +239,78 @@ def enrich_wikipedia_refs(
         documents=tuple(documents.values()),
         links=tuple(links.values()),
         statuses=tuple(statuses[position] for position in range(len(refs))),
+        deferred_errors=tuple(sorted(deferred_errors.items())),
+    )
+
+
+def _title_key(language: str, title: str) -> tuple[str, str]:
+    return language.casefold(), title.replace("_", " ").casefold()
+
+
+def reconcile_wikipedia_refs(
+    polygon_id: str,
+    refs: Sequence[WikipediaTagRef],
+    result: DirectEnrichmentResult,
+    *,
+    index: V1ReuseIndex,
+    polygon_context: Mapping[str, Any] | None = None,
+) -> DirectEnrichmentResult:
+    """Prefer final V1 rows over speculative direct results.
+
+    ``result`` must have been produced with ``wait_for_index=False`` and the
+    caller must wait for the index before invoking this function.  Any
+    deferred fetch error is raised only when the completed index confirms
+    that the requested page is not available for reuse.
+    """
+    context = polygon_context or {}
+    direct_by_title: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for document in result.documents:
+        direct_by_title.setdefault(
+            _title_key(str(document.get("language", "")), str(document.get("title", ""))),
+            [],
+        ).append(document)
+    for documents in direct_by_title.values():
+        documents.sort(key=lambda row: str(row.get("document_id", "")))
+    deferred_errors = dict(result.deferred_errors)
+    documents: dict[str, dict[str, Any]] = {}
+    links: dict[str, dict[str, Any]] = {}
+    statuses: list[DirectWikipediaStatus] = []
+    for position, ref in enumerate(refs):
+        existing = index.by_title(ref.language, ref.title)
+        if existing:
+            row = dict(existing[0])
+            key = str(row["document_id"])
+            documents[key] = row
+            links[key] = _link_row(
+                polygon_id,
+                row,
+                polygon_context=context,
+                sources=("osm_wikipedia_tag",),
+            )
+            statuses.append(DirectWikipediaStatus(ref, "reused_v1", reused_v1=True))
+            continue
+        error = deferred_errors.get(position)
+        if error is not None:
+            raise error
+        candidates = direct_by_title.get(_title_key(ref.language, ref.title), [])
+        if not candidates:
+            prior = result.statuses[position]
+            statuses.append(prior)
+            continue
+        row = dict(candidates[0])
+        key = str(row["document_id"])
+        documents[key] = row
+        links[key] = _link_row(
+            polygon_id,
+            row,
+            polygon_context=context,
+            sources=("osm_wikipedia_tag",),
+        )
+        statuses.append(result.statuses[position])
+    return DirectEnrichmentResult(
+        documents=tuple(documents.values()),
+        links=tuple(links.values()),
+        statuses=tuple(statuses),
     )
 
 
@@ -227,4 +318,5 @@ __all__ = [
     "DirectEnrichmentResult",
     "DirectWikipediaStatus",
     "enrich_wikipedia_refs",
+    "reconcile_wikipedia_refs",
 ]

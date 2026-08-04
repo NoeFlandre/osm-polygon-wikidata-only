@@ -234,6 +234,76 @@ def test_v2_runner_prefetches_next_extraction_before_current_merge(
     assert merge_finished.is_set()
 
 
+def test_v2_runner_processes_regions_before_final_index_reconciliation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    first = root.raw / "first-latest.osm.pbf"
+    second = root.raw / "second-latest.osm.pbf"
+    first.touch()
+    second.touch()
+    first_extracted = V2ExtractedPbf(
+        V2PbfStem(first, "first-latest", "first"),
+        ({"polygon_id": "first", "wikipedia_tag_refs": '[{"language":"en"}]'},),
+        0.0,
+    )
+    second_extracted = V2ExtractedPbf(
+        V2PbfStem(second, "second-latest", "second"),
+        ({"polygon_id": "second", "wikipedia_tag_refs": '[{"language":"en"}]'},),
+        0.0,
+    )
+    merged: list[str] = []
+    reconciled: list[str] = []
+
+    class InFlightIndex:
+        is_ready = False
+
+        def wait_until_ready(self) -> None:
+            assert merged == ["first-latest", "second-latest"]
+            self.is_ready = True
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: InFlightIndex(),
+    )
+
+    def extract(path: Path, **_kwargs: object) -> V2ExtractedPbf:
+        return first_extracted if path == first else second_extracted
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.extract_v2_pbf", extract)
+
+    def merge(data_root: DataRoot, extracted: V2ExtractedPbf, **_kwargs: object) -> None:
+        merged.append(extracted.stem.stem)
+        write_v2_region(
+            data_root.processed_v2,
+            extracted.stem.stem,
+            polygons=[],
+            documents=[],
+            links=[],
+        )
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.merge_v2_region", merge)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.reconcile_v2_region",
+        lambda _data_root, stem, **_kwargs: reconciled.append(stem),
+    )
+    assert (
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=InMemoryWikipediaClient({}),
+        )
+        == 0
+    )
+    assert reconciled == ["first-latest", "second-latest"]
+
+
 def test_v2_runner_does_not_start_later_extraction_after_failure(
     tmp_path: Path,
     monkeypatch,

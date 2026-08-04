@@ -14,7 +14,8 @@ from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
-from osm_polygon_wikidata_only.v2.reuse import merge_v2_region
+from osm_polygon_wikidata_only.v2.reuse import merge_v2_region, reconcile_v2_region
+from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
 from tests.v2.test_direct_enrichment import _article, _v1_row
 
@@ -292,3 +293,130 @@ def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically
         root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet"
     ).to_pylist()
     assert [row["title"] for row in documents] == ["First page", "Second page"]
+
+
+def test_merge_fetches_sections_before_waiting_for_final_index(tmp_path: Path) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    stem = "region-latest"
+    direct = candidate_to_v2_row(
+        (
+            "way",
+            1,
+            {"wikipedia": "en:Speculative page"},
+            '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}',
+        ),
+        source_pbf_stem=stem,
+        region="region",
+        source_pbf=f"{stem}.osm.pbf",
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    assert direct is not None
+    extracted = V2ExtractedPbf(
+        V2PbfStem(tmp_path / f"{stem}.osm.pbf", stem, "region"),
+        (direct,),
+        0.0,
+    )
+    sections_started = threading.Event()
+
+    class InFlightIndex:
+        is_ready = False
+
+        def by_title(self, _language: str, _title: str) -> tuple[dict[str, object], ...]:
+            return ()
+
+        def wait_until_ready(self) -> None:
+            raise AssertionError("speculative merge must not wait for the index")
+
+    class WikipediaClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+            return FetchResult("ok", _article("Speculative page"))
+
+    class SectionClient:
+        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+            sections_started.set()
+            return "<p>speculative section</p>"
+
+    merge_v2_region(
+        root,
+        extracted,
+        index=InFlightIndex(),  # type: ignore[arg-type]
+        wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
+        section_client=SectionClient(),
+        wait_for_index=False,
+    )
+    assert sections_started.is_set()
+    documents = pq.read_table(
+        root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet"
+    ).to_pylist()
+    assert len(documents) == 1
+    assert documents[0]["title"] == "Speculative page"
+    assert load_v2_manifest(root.processed_v2)[stem]["v1_index_reconciled"] is False
+
+
+def test_reconcile_v2_region_discards_speculative_duplicate_after_index_scan(
+    tmp_path: Path,
+) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    stem = "region-latest"
+    _write(
+        root.processed / "wikipedia/documents" / f"{stem}.parquet",
+        wikipedia_document_schema(),
+        [_v1_row(title="Speculative page")],
+    )
+    direct = candidate_to_v2_row(
+        (
+            "way",
+            1,
+            {"wikipedia": "en:Speculative page"},
+            '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}',
+        ),
+        source_pbf_stem=stem,
+        region="region",
+        source_pbf=f"{stem}.osm.pbf",
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    assert direct is not None
+    extracted = V2ExtractedPbf(
+        V2PbfStem(tmp_path / f"{stem}.osm.pbf", stem, "region"),
+        (direct,),
+        0.0,
+    )
+
+    class PartialIndex:
+        is_ready = False
+
+        def by_title(self, _language: str, _title: str) -> tuple[dict[str, object], ...]:
+            return ()
+
+        def wait_until_ready(self) -> None:
+            raise AssertionError("provisional merge must not wait")
+
+    class WikipediaClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+            return FetchResult("ok", _article("Speculative page", page_id=10))
+
+    class SectionClient:
+        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+            return "<p>speculative section</p>"
+
+    merge_v2_region(
+        root,
+        extracted,
+        index=PartialIndex(),  # type: ignore[arg-type]
+        wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
+        section_client=SectionClient(),
+        wait_for_index=False,
+    )
+    reconcile_v2_region(
+        root,
+        stem,
+        index=build_v1_reuse_index(root.processed),
+        section_client=SectionClient(),
+    )
+    documents = pq.read_table(
+        root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet"
+    ).to_pylist()
+    assert [row["document_id"] for row in documents] == ["Q42:wikipedia:en:1:2"]
+    assert load_v2_manifest(root.processed_v2)[stem]["v1_index_reconciled"] is True

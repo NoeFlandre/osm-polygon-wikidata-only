@@ -9,7 +9,10 @@ from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, W
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
-from osm_polygon_wikidata_only.v2.direct_enrichment import enrich_wikipedia_refs
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    enrich_wikipedia_refs,
+    reconcile_wikipedia_refs,
+)
 from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
 
@@ -221,6 +224,58 @@ def test_direct_enrichment_fetches_pending_title_while_index_builds() -> None:
     assert client.calls == ["New page"]
     assert result.statuses[0].status == "ok"
     assert not result.statuses[0].reused_v1
+
+
+def test_speculative_enrichment_returns_before_index_and_reconciles_afterward() -> None:
+    class BackgroundIndex:
+        is_ready = False
+
+        def __init__(self) -> None:
+            self.waited = False
+
+        def by_title(self, language: str, title: str) -> tuple[dict[str, object], ...]:
+            if self.waited:
+                return (
+                    {
+                        "document_id": "Q42:wikipedia:en:1:2",
+                        "wikidata": "Q42",
+                        "language": language,
+                        "title": title,
+                        "page_id": 1,
+                        "revision_id": 2,
+                    },
+                )
+            return ()
+
+        def wait_until_ready(self) -> None:
+            raise AssertionError("speculative phase must not wait for the index")
+
+    class RecordingClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+            return FetchResult("ok", _article("Douglas Adams"))
+
+    index = BackgroundIndex()
+    ref = WikipediaTagRef("en", "Douglas Adams", "wikipedia:en", "Douglas Adams")
+    speculative = enrich_wikipedia_refs(
+        "region:relation:1",
+        (ref,),
+        index=index,  # type: ignore[arg-type]
+        wikipedia_client=RecordingClient(),  # type: ignore[arg-type]
+        wait_for_index=False,
+    )
+    assert speculative.statuses[0].status == "ok"
+    assert speculative.documents[0]["wikidata"] is None
+
+    index.waited = True
+    reconciled = reconcile_wikipedia_refs(
+        "region:relation:1",
+        (ref,),
+        speculative,
+        index=index,  # type: ignore[arg-type]
+    )
+    assert reconciled.statuses[0].status == "reused_v1"
+    assert reconciled.statuses[0].reused_v1
+    assert reconciled.documents[0]["document_id"] == "Q42:wikipedia:en:1:2"
 
 
 def test_direct_enrichment_preserves_operator_interrupts() -> None:

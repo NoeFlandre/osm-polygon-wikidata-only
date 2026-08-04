@@ -31,7 +31,9 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_CO
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
     _cached_client,
+    _link_row,
     enrich_wikipedia_refs,
+    reconcile_wikipedia_refs,
 )
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
@@ -249,6 +251,63 @@ def _build_missing_sections(
     )
 
 
+def _polygon_refs(polygon: dict[str, Any]) -> tuple[WikipediaTagRef, ...]:
+    try:
+        raw_refs = json.loads(str(polygon.get("wikipedia_tag_refs", "[]")))
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(raw_refs, list):
+        return ()
+    refs: list[WikipediaTagRef] = []
+    for item in raw_refs:
+        if not isinstance(item, dict):
+            continue
+        parsed, _ = parse_wikipedia_tags(
+            {str(item.get("raw_key", "")): str(item.get("raw_value", ""))}
+        )
+        refs.extend(parsed)
+    return tuple(refs)
+
+
+def _link_sources(row: dict[str, Any]) -> set[str]:
+    try:
+        raw = json.loads(str(row.get("link_sources", "[]")))
+    except json.JSONDecodeError:
+        return set()
+    return {str(source) for source in raw} if isinstance(raw, list) else set()
+
+
+def _update_polygon_text_fields(
+    polygons: dict[str, dict[str, Any]],
+    links: dict[tuple[str, str, str], dict[str, Any]],
+    documents: dict[str, dict[str, Any]],
+) -> None:
+    links_by_polygon: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in links.values():
+        links_by_polygon[str(row["polygon_id"])].append(row)
+    for polygon_id, polygon in polygons.items():
+        rows = links_by_polygon.get(polygon_id, [])
+        wikipedia_rows = [row for row in rows if row.get("project") == "wikipedia"]
+        languages = sorted(
+            {str(row.get("language", "")) for row in wikipedia_rows if row.get("language")}
+        )
+        # Keep the V1 field semantics: Wikivoyage relationships are part of
+        # the unified link table, but do not make a polygon look like it has
+        # a Wikipedia document.
+        polygon["has_wikipedia"] = bool(wikipedia_rows)
+        polygon["wikipedia_language_count"] = len(languages)
+        polygon["wikipedia_languages"] = json.dumps(languages, separators=(",", ":"))
+        polygon["wikipedia_article_count"] = len(wikipedia_rows)
+        polygon["has_english_wikipedia"] = "en" in languages
+        polygon["has_french_wikipedia"] = "fr" in languages
+        polygon["text_available"] = any(
+            bool(documents.get(str(row["document_id"]), {}).get("full_text"))
+            for row in wikipedia_rows
+        )
+        if languages and not polygon.get("best_language"):
+            polygon["best_language"] = languages[0]
+
+
 def merge_v2_region(
     data_root: DataRoot,
     extracted: V2ExtractedPbf,
@@ -260,8 +319,15 @@ def merge_v2_region(
     section_client: SectionClient | None = None,
     section_workers: int = 8,
     direct_workers: int = 1,
+    wait_for_index: bool = True,
 ) -> tuple[dict[str, Any], ...]:
-    """Merge V1 rows with V2 discoveries and persist one canonical region."""
+    """Merge V1 rows with V2 discoveries and persist one canonical region.
+
+    With ``wait_for_index=False``, direct pages and their sections are fetched
+    speculatively and the region is written with a pending reconciliation
+    marker.  The runner reconciles those regions after the shared V1 index is
+    complete, so no provisional artifact is published as final data.
+    """
     stem = extracted.stem.stem
     v1 = load_v1_region(data_root, stem)
     polygons = {str(row["polygon_id"]): dict(row) for row in v1.polygons}
@@ -290,17 +356,14 @@ def merge_v2_region(
             )
         else:
             polygons[key] = dict(discovered)
-    documents = {str(row["document_id"]): dict(row) for row in v1.documents}
-    links = {(_link_key(row)): dict(row) for row in v1.links}
+    base_documents = {str(row["document_id"]): dict(row) for row in v1.documents}
+    base_links = {(_link_key(row)): dict(row) for row in v1.links}
+    documents = dict(base_documents)
+    links = dict(base_links)
     direct_client = _cached_client(wikipedia_client, cache)
     direct_inputs: list[tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]]] = []
     for polygon_id, polygon in sorted(polygons.items()):
-        raw_refs = json.loads(str(polygon.get("wikipedia_tag_refs", "[]")))
-        refs = tuple(
-            parse_wikipedia_tags({str(item.get("raw_key", "")): str(item.get("raw_value", ""))})[0]
-            for item in raw_refs
-        )
-        refs = tuple(ref for group in refs for ref in group)
+        refs = _polygon_refs(polygon)
         if not refs:
             continue
         direct_inputs.append((polygon_id, polygon, refs))
@@ -317,6 +380,7 @@ def merge_v2_region(
             polygon_context=polygon,
             cache=None,
             fetch_full_text=fetch_full_text,
+            wait_for_index=False,
         )
 
     if direct_inputs and direct_workers > 1:
@@ -334,15 +398,15 @@ def merge_v2_region(
                     pending.append(executor.submit(enrich_one, next(inputs)))
                 except StopIteration:
                     break
-            enriched = []
+            speculative_results = []
             while pending:
-                enriched.append(pending.popleft().result())
+                speculative_results.append(pending.popleft().result())
                 with contextlib.suppress(StopIteration):
                     pending.append(executor.submit(enrich_one, next(inputs)))
     else:
-        enriched = [enrich_one(item) for item in direct_inputs]
+        speculative_results = [enrich_one(item) for item in direct_inputs]
 
-    for direct in enriched:
+    def add_direct_result(direct: DirectEnrichmentResult) -> None:
         for document in direct.documents:
             documents[str(document["document_id"])] = dict(document)
         for link in direct.links:
@@ -354,32 +418,17 @@ def merge_v2_region(
             else:
                 links[key] = dict(link)
 
-    links_by_polygon: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in links.values():
-        links_by_polygon[str(row["polygon_id"])].append(row)
+    for direct in speculative_results:
+        add_direct_result(direct)
 
-    for polygon_id, polygon in polygons.items():
-        rows = links_by_polygon.get(polygon_id, [])
-        wikipedia_rows = [row for row in rows if row.get("project") == "wikipedia"]
-        languages = sorted(
-            {str(row.get("language", "")) for row in wikipedia_rows if row.get("language")}
+    # Build direct pages' sections while the V1 index is still scanning.  They
+    # may be discarded below if the completed index proves that a page already
+    # existed in V1, but the network and parsing work is then already finished.
+    if direct_inputs:
+        LOGGER.info(
+            "V2 %s: building sections for speculative pages before V1 index completion",
+            stem,
         )
-        # Keep the V1 field semantics: Wikivoyage relationships are part of
-        # the unified link table, but do not make a polygon look like it has
-        # a Wikipedia document.
-        polygon["has_wikipedia"] = bool(wikipedia_rows)
-        polygon["wikipedia_language_count"] = len(languages)
-        polygon["wikipedia_languages"] = json.dumps(languages, separators=(",", ":"))
-        polygon["wikipedia_article_count"] = len(wikipedia_rows)
-        polygon["has_english_wikipedia"] = "en" in languages
-        polygon["has_french_wikipedia"] = "fr" in languages
-        polygon["text_available"] = any(
-            bool(documents.get(str(row["document_id"]), {}).get("full_text"))
-            for row in wikipedia_rows
-        )
-        if languages and not polygon.get("best_language"):
-            polygon["best_language"] = languages[0]
-
     copy_v1_sidecars(data_root, stem, data_root.processed_v2)
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
     sections = _rows(sections_path)
@@ -389,6 +438,33 @@ def merge_v2_region(
         section_client=section_client,
         section_workers=section_workers,
     )
+
+    # A miss is authoritative only after every V1 shard has been checked.  We
+    # wait once, then rebuild the in-memory relationship set from the stable
+    # V1 base and reconciled direct results before the atomic write.  Regions
+    # with no direct references need no reconciliation barrier.
+    if direct_inputs and wait_for_index:
+        LOGGER.info("V2 %s: waiting once for final V1 reuse-index reconciliation", stem)
+        index.wait_until_ready()
+        LOGGER.info("V2 %s: final V1 reuse-index reconciliation started", stem)
+        documents = dict(base_documents)
+        links = dict(base_links)
+        for item, speculative in zip(direct_inputs, speculative_results, strict=True):
+            polygon_id, polygon, refs = item
+            add_direct_result(
+                reconcile_wikipedia_refs(
+                    polygon_id,
+                    refs,
+                    speculative,
+                    index=index,
+                    polygon_context=polygon,
+                )
+            )
+
+    _update_polygon_text_fields(polygons, links, documents)
+
+    final_document_ids = set(documents)
+    sections = [row for row in sections if str(row.get("document_id", "")) in final_document_ids]
     write_v2_region(
         data_root.processed_v2,
         stem,
@@ -396,7 +472,132 @@ def merge_v2_region(
         documents=sorted(documents.values(), key=lambda row: str(row["document_id"])),
         links=sorted(links.values(), key=lambda row: _link_key(row)),
         sections=sections,
+        v1_index_reconciled=wait_for_index or not direct_inputs,
     )
+    return tuple(polygons.values())
+
+
+def reconcile_v2_region(
+    data_root: DataRoot,
+    stem: str,
+    *,
+    index: Any,
+    wikipedia_client: Any | None = None,
+    cache: Any = None,
+    fetch_full_text: bool = True,
+    section_client: SectionClient | None = None,
+    section_workers: int = 8,
+) -> tuple[dict[str, Any], ...]:
+    """Finalize one provisionally written region after V1 indexing.
+
+    Direct Wikipedia-tag pages are retained unless the completed V1 index
+    proves that the exact title already has a canonical V1 document.  In that
+    case the direct document and its sections are discarded and the V1 row is
+    linked instead.  The final region is written atomically with its
+    reconciliation marker set.
+    """
+    polygons_rows = _rows(data_root.processed_v2 / "polygons" / f"{stem}.parquet")
+    documents = {
+        str(row["document_id"]): dict(row)
+        for row in _rows(data_root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet")
+    }
+    links = {
+        _link_key(row): dict(row)
+        for row in _rows(data_root.processed_v2 / "polygon_document_links" / f"{stem}.parquet")
+    }
+    polygons = {str(row["polygon_id"]): dict(row) for row in polygons_rows}
+    direct_document_ids: set[str] = set()
+    current_by_title: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in documents.values():
+        current_by_title.setdefault(
+            (
+                str(row.get("language", "")).casefold(),
+                str(row.get("title", "")).replace("_", " ").casefold(),
+            ),
+            [],
+        ).append(row)
+    for candidates in current_by_title.values():
+        candidates.sort(key=lambda row: str(row.get("document_id", "")))
+
+    # Remove the speculative source from existing links.  A link that also
+    # came from the V1 sitelink remains in the table and can receive the
+    # source again below if the final lookup selects the same document.
+    for key, row in list(links.items()):
+        sources = _link_sources(row)
+        if "osm_wikipedia_tag" not in sources:
+            continue
+        document_id = str(row.get("document_id", ""))
+        if row.get("project") == "wikipedia" and not row.get("wikidata"):
+            direct_document_ids.add(document_id)
+        sources.discard("osm_wikipedia_tag")
+        if sources:
+            row["link_sources"] = json.dumps(sorted(sources), separators=(",", ":"))
+        else:
+            del links[key]
+
+    for polygon_id, polygon in sorted(polygons.items()):
+        for ref in _polygon_refs(polygon):
+            existing = index.by_title(ref.language, ref.title)
+            candidates = existing or current_by_title.get(
+                (
+                    ref.language.casefold(),
+                    ref.title.replace("_", " ").casefold(),
+                ),
+                (),
+            )
+            if not candidates and wikipedia_client is not None:
+                recovered = enrich_wikipedia_refs(
+                    polygon_id,
+                    (ref,),
+                    index=index,
+                    wikipedia_client=wikipedia_client,
+                    polygon_context=polygon,
+                    cache=cache,
+                    fetch_full_text=fetch_full_text,
+                    wait_for_index=True,
+                )
+                candidates = recovered.documents
+            if not candidates:
+                continue
+            document = dict(candidates[0])
+            document_id = str(document["document_id"])
+            documents[document_id] = document
+            link = _link_row(
+                polygon_id,
+                document,
+                polygon_context=polygon,
+                sources=("osm_wikipedia_tag",),
+            )
+            key = _link_key(link)
+            if key in links:
+                sources = _link_sources(links[key])
+                sources.update(_link_sources(link))
+                links[key]["link_sources"] = json.dumps(sorted(sources), separators=(",", ":"))
+            else:
+                links[key] = link
+
+    referenced = {str(row.get("document_id", "")) for row in links.values()}
+    for document_id in direct_document_ids - referenced:
+        documents.pop(document_id, None)
+    sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
+    sections = [row for row in _rows(sections_path) if str(row.get("document_id", "")) in documents]
+    sections = _build_missing_sections(
+        list(documents.values()),
+        sections,
+        section_client=section_client,
+        section_workers=section_workers,
+    )
+    _update_polygon_text_fields(polygons, links, documents)
+    write_v2_region(
+        data_root.processed_v2,
+        stem,
+        polygons=sorted(polygons.values(), key=lambda row: str(row["polygon_id"])),
+        documents=sorted(documents.values(), key=lambda row: str(row["document_id"])),
+        links=sorted(links.values(), key=_link_key),
+        sections=sections,
+        v1_index_reconciled=True,
+    )
+    LOGGER.info("V2 %s: provisional direct pages reconciled against the completed V1 index", stem)
     return tuple(polygons.values())
 
 
@@ -415,4 +616,5 @@ __all__ = [
     "copy_v1_sidecars",
     "load_v1_region",
     "merge_v2_region",
+    "reconcile_v2_region",
 ]
