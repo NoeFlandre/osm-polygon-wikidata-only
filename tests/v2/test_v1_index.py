@@ -182,21 +182,21 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
 
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
-    original = v1_index._scan_index_rows
+    original = v1_index._scan_index_row_group
     scanned: list[str] = []
 
-    def fail_on_second(path: Path, *, legacy_articles: bool):
+    def fail_on_second(path: Path, *, legacy_articles: bool, row_group: int):
         scanned.append(path.name)
         if path.name == second_path.name:
             raise OSError("interrupted index build")
-        return original(path, legacy_articles=legacy_articles)
+        return original(path, legacy_articles=legacy_articles, row_group=row_group)
 
-    monkeypatch.setattr(v1_index, "_scan_index_rows", fail_on_second)
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", fail_on_second)
     with pytest.raises(OSError, match="interrupted index build"):
         build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert scanned == [second_path.name]
 
-    monkeypatch.setattr(v1_index, "_scan_index_rows", original)
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", original)
     index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
 
@@ -225,15 +225,15 @@ def test_background_index_exposes_committed_rows_before_final_shard(
     release_second = threading.Event()
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
-    original = v1_index._scan_index_rows
+    original = v1_index._scan_index_row_group
 
-    def scan(path: Path, *, legacy_articles: bool):
+    def scan(path: Path, *, legacy_articles: bool, row_group: int):
         if path == second:
             second_started.set()
             assert release_second.wait(timeout=2)
-        return original(path, legacy_articles=legacy_articles)
+        return original(path, legacy_articles=legacy_articles, row_group=row_group)
 
-    monkeypatch.setattr(v1_index, "_scan_index_rows", scan)
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
     index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
     assert second_started.wait(timeout=2)
     assert index.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
@@ -242,3 +242,57 @@ def test_background_index_exposes_committed_rows_before_final_shard(
     index.wait_until_ready()
     assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
     index.close()
+
+
+def test_persistent_index_resumes_inside_an_interrupted_shard(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "wikipedia" / "documents" / "region.parquet"
+    path.parent.mkdir(parents=True)
+    rows = [
+        _document(),
+        _document(
+            document_id="Q43:wikipedia:en:2:3",
+            article_id="Q43:en:2:3",
+            wikidata="Q43",
+            title="Second page",
+            page_id=2,
+            revision_id=3,
+        ),
+    ]
+    pq.write_table(
+        pa.Table.from_pylist(rows, schema=wikipedia_document_schema()),
+        path,
+        row_group_size=1,
+    )
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index._scan_index_row_group
+    calls: list[int] = []
+
+    def scan(path_arg: Path, *, legacy_articles: bool, row_group: int):
+        calls.append(row_group)
+        if row_group == 1 and len(calls) == 2:
+            raise OSError("interrupted row group")
+        return original(path_arg, legacy_articles=legacy_articles, row_group=row_group)
+
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
+    with pytest.raises(OSError, match="interrupted row group"):
+        build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert calls == [0, 1]
+
+    connection = __import__("sqlite3").connect(cache_dir / "v1_reuse_index.sqlite3")
+    progress = connection.execute(
+        "SELECT next_row_group FROM scan_progress WHERE path=?",
+        (str(path.resolve()),),
+    ).fetchone()
+    assert progress == (1,)
+    connection.close()
+
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", original)
+    resumed = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert resumed.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
+    assert resumed.by_title("en", "Second page")[0]["document_id"] == "Q43:wikipedia:en:2:3"

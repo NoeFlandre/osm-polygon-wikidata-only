@@ -84,7 +84,7 @@ publishes to the separate V2 dataset above. V2 also writes
 `wikipedia/sections/<stem>.parquet` with the exact V1 section schema, reusing
 existing V1 rows and fetching only missing Wikipedia revisions. V1 files and
 the default workflow are never rewritten by a V2 run. V2 keeps a resumable
-per-shard reuse index in `cache/v2/v1-index/`, so completed V1 scans are reused
+reuse index in `cache/v2/v1-index/`; completed Parquet row groups are reused
 after an interruption or later restart.
 
 The generated dataset is published on Hugging Face. Local processing inputs,
@@ -266,10 +266,11 @@ uv run osm-polygon-wikidata-only sync-dir \
 
 V2 local artifacts are written below `processed_v2/`; its request cache and
 resumable V1 reuse index are below `cache/v2/`. The index is built one shard at
-a time while PBF extraction starts, and completed shards are kept across
-restarts. A direct page is fetched only after the index has confirmed that it
-is absent, so the overlap does not create duplicate requests. Both locations
-use the configured data root, so stopping and restarting the command is safe.
+a time while PBF extraction starts, and each Parquet row group is checkpointed
+across restarts. A direct page that is not yet found may be fetched while the
+index continues. Once indexing finishes, a V1 match is preferred; only a page
+still absent from V1 keeps the fetched result. Both locations use the
+configured data root, so stopping and restarting the command is safe.
 Use `--force` only when deliberately rebuilding a V2 region.
 
 ### Wikimedia Bot Password authentication

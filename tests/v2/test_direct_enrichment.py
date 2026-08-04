@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
@@ -139,7 +140,7 @@ def test_successful_direct_fetch_is_cached_for_the_next_run(tmp_path: Path) -> N
     assert client.calls == 1
 
 
-def test_direct_enrichment_waits_for_background_index_before_fetching_missing_title() -> None:
+def test_direct_enrichment_prefers_v1_after_speculative_fetch() -> None:
     class BackgroundIndex:
         is_ready = False
 
@@ -164,16 +165,82 @@ def test_direct_enrichment_waits_for_background_index_before_fetching_missing_ti
             self.waited = True
             self.is_ready = True
 
-    class FailingClient:
-        def fetch_article(self, *_args: object, **_kwargs: object) -> None:
-            raise AssertionError("a missing title was fetched before index completion")
+    class RecordingClient:
+        calls = 0
+
+        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+            self.calls += 1
+            return FetchResult("ok", _article("Douglas Adams"))
 
     index = BackgroundIndex()
     result = enrich_wikipedia_refs(
         "region:relation:1",
         (WikipediaTagRef("en", "Douglas Adams", "wikipedia:en", "Douglas Adams"),),
         index=index,  # type: ignore[arg-type]
-        wikipedia_client=FailingClient(),  # type: ignore[arg-type]
+        wikipedia_client=RecordingClient(),  # type: ignore[arg-type]
     )
     assert result.statuses[0].status == "reused_v1"
     assert result.statuses[0].reused_v1
+
+
+def test_direct_enrichment_fetches_pending_title_while_index_builds() -> None:
+    class BackgroundIndex:
+        is_ready = False
+
+        def __init__(self) -> None:
+            self.waited = False
+
+        def by_title(self, _language: str, _title: str) -> tuple[dict[str, object], ...]:
+            if self.waited:
+                return ()
+            return ()
+
+        def wait_until_ready(self) -> None:
+            self.waited = True
+            self.is_ready = True
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def fetch_article(
+            self, _language: str, _site: str, title: str, **_kwargs: object
+        ) -> FetchResult:
+            self.calls.append(title)
+            return FetchResult("ok", _article(title))
+
+    index = BackgroundIndex()
+    client = RecordingClient()
+    result = enrich_wikipedia_refs(
+        "region:relation:1",
+        (WikipediaTagRef("en", "New page", "wikipedia:en", "New page"),),
+        index=index,  # type: ignore[arg-type]
+        wikipedia_client=client,  # type: ignore[arg-type]
+    )
+
+    assert client.calls == ["New page"]
+    assert result.statuses[0].status == "ok"
+    assert not result.statuses[0].reused_v1
+
+
+def test_direct_enrichment_preserves_operator_interrupts() -> None:
+    class BackgroundIndex:
+        is_ready = False
+
+        def wait_until_ready(self) -> None:
+            raise AssertionError("an operator interrupt must not wait for index completion")
+
+        def by_title(self, _language: str, _title: str) -> tuple[dict[str, object], ...]:
+            return ()
+
+    class InterruptingClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        enrich_wikipedia_refs(
+            "region:relation:1",
+            (WikipediaTagRef("en", "New page", "wikipedia:en", "New page"),),
+            index=BackgroundIndex(),  # type: ignore[arg-type]
+            wikipedia_client=InterruptingClient(),  # type: ignore[arg-type]
+        )

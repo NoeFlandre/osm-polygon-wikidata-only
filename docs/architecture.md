@@ -98,13 +98,14 @@ V1 corpus while avoiding duplicate HTTP work.
 
 The V1 reuse index is persisted in `cache/v2/v1-index/`. It validates and
 commits one V1 Parquet shard at a time, keeps only identity metadata in SQLite,
-and loads matching document rows on demand. Restarting therefore resumes from
-the last completed shard without rebuilding the full in-memory corpus. The
-runner builds this index in the background while it extracts the next PBF.
-Rows from committed shards can be reused immediately, while a missing title is
-held until the index is complete before a network fetch is allowed. This
-overlap improves startup time without turning a partially built index into a
-false cache miss.
+and loads matching document rows on demand. Each Parquet row group is a
+separate transaction, so restarting resumes inside an interrupted shard rather
+than rebuilding completed row groups. The runner builds this index in the
+background while it extracts the next PBF. Rows from committed shards can be
+reused immediately. A title not found yet may be fetched speculatively while
+the index continues; after indexing completes, a later V1 match always wins,
+and only a title still absent from V1 keeps the fetched result. This removes
+idle waiting without turning a partial index miss into the final decision.
 
 V2 writes an isolated `processed_v2/` tree. Its `polygons` schema adds direct
 tag references, structured rejections, and discovery-source provenance. Its

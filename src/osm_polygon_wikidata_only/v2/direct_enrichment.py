@@ -131,6 +131,7 @@ def enrich_wikipedia_refs(
     links: dict[str, dict[str, Any]] = {}
     statuses: dict[int, DirectWikipediaStatus] = {}
     pending: list[tuple[int, WikipediaTagRef]] = []
+    speculative: dict[int, FetchResult | Exception] = {}
 
     def reuse(position: int, ref: WikipediaTagRef, document: Mapping[str, Any]) -> None:
         row = dict(document)
@@ -151,12 +152,33 @@ def enrich_wikipedia_refs(
         pending.append((position, ref))
 
     # A miss is not authoritative until the background index has finished.
-    # Waiting here prevents a transient, partially-built index from causing a
-    # duplicate network fetch for a page that exists in a later shard.
+    # Fetch unresolved direct pages speculatively while the index continues so
+    # this region does not sit idle.  The final lookup below always wins, so a
+    # page discovered in a later V1 shard is still reused and the speculative
+    # response is discarded.
     if pending and not index.is_ready:
         LOGGER.info(
-            "V2 direct enrichment waiting for V1 reuse index before resolving %d title(s)",
+            "V2 direct enrichment fetching %d unresolved title(s) while the V1 index continues",
             len(pending),
+        )
+        for position, ref in pending:
+            if index.is_ready:
+                break
+            try:
+                speculative[position] = client.fetch_article(
+                    ref.language,
+                    f"{ref.language}wiki",
+                    ref.title,
+                    fetch_full_text=fetch_full_text,
+                )
+            except Exception as exc:
+                # Do not fail early for a page that may still be found in a
+                # later V1 shard.  If it remains absent after the final index
+                # check, re-raise the original exception below.
+                speculative[position] = exc
+        LOGGER.info(
+            "V2 direct enrichment waiting for final V1 index state after %d speculative fetch(es)",
+            len(speculative),
         )
         index.wait_until_ready()
         LOGGER.info("V2 direct enrichment resumed after V1 reuse index completion")
@@ -166,12 +188,17 @@ def enrich_wikipedia_refs(
         if existing:
             reuse(position, ref, existing[0])
             continue
-        result: FetchResult = client.fetch_article(
-            ref.language,
-            f"{ref.language}wiki",
-            ref.title,
-            fetch_full_text=fetch_full_text,
-        )
+        result_or_error = speculative.get(position)
+        if isinstance(result_or_error, Exception):
+            raise result_or_error
+        result = result_or_error
+        if result is None:
+            result = client.fetch_article(
+                ref.language,
+                f"{ref.language}wiki",
+                ref.title,
+                fetch_full_text=fetch_full_text,
+            )
         if result.article is None:
             statuses[position] = DirectWikipediaStatus(ref, result.status, result.error)
             continue

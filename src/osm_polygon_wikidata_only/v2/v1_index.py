@@ -3,8 +3,8 @@
 The V2 runner uses a disk-backed SQLite index by default.  It validates and
 indexes one V1 shard at a time under the external V2 cache, so the full V1
 document corpus is never held in memory and an interrupted build resumes from
-the last committed shard.  Small callers and tests can omit ``cache_dir`` to
-use the original in-memory index.
+the last committed Parquet row group.  Small callers and tests can omit
+``cache_dir`` to use the original in-memory index.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ LOGGER = logging.getLogger(__name__)
 
 DocumentRow = dict[str, object]
 PageKey = tuple[str, int]
-_INDEX_SCHEMA_VERSION = 1
+_INDEX_SCHEMA_VERSION = 2
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
 
@@ -75,51 +75,86 @@ def _read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow
     return [dict(row) for row in table.to_pylist()]
 
 
-def _scan_index_rows(
-    path: Path, *, legacy_articles: bool
-) -> list[tuple[str, str, str, int, int, str, int, int]]:
-    """Read only identity columns and row positions for one V1 shard."""
+def _index_columns(legacy_articles: bool) -> tuple[str, ...]:
+    return tuple(
+        column for column in _INDEX_PROJECTION if not legacy_articles or column != "document_id"
+    )
+
+
+def _validated_parquet_file(path: Path, *, legacy_articles: bool):
+    """Open and schema-check one V1 shard before reading its row groups."""
     try:
         parquet_file = pq.ParquetFile(path)
         expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
         if not parquet_file.schema_arrow.equals(expected_schema, check_metadata=True):
             label = "legacy article" if legacy_articles else "V1 document"
             raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
-        columns = tuple(
-            column for column in _INDEX_PROJECTION if not legacy_articles or column != "document_id"
+        return parquet_file
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+
+
+def _scan_index_row_group(
+    path: Path,
+    *,
+    legacy_articles: bool,
+    row_group: int,
+) -> list[tuple[str, str, str, int, int, str, int, int]]:
+    """Read identity columns and row positions for one committed row group."""
+    try:
+        parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
+        table = parquet_file.read_row_group(
+            row_group,
+            columns=list(_index_columns(legacy_articles)),
         )
         indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
-        seen_documents: set[str] = set()
-        for row_group in range(parquet_file.num_row_groups):
-            table = parquet_file.read_row_group(row_group, columns=list(columns))
-            for row_index, row in enumerate(table.to_pylist()):
-                language = str(row["language"])
-                page_id = _required_int(row["page_id"], "page_id")
-                revision_id = _required_int(row["revision_id"], "revision_id")
-                if legacy_articles:
-                    document_id = f"{row['wikidata']}:wikipedia:{language}:{page_id}:{revision_id}"
-                else:
-                    document_id = str(row["document_id"])
-                if document_id in seen_documents:
-                    continue
-                seen_documents.add(document_id)
-                indexed.append(
-                    (
-                        document_id,
-                        language,
-                        str(row["title"]),
-                        page_id,
-                        revision_id,
-                        str(row.get("wikidata") or ""),
-                        row_group,
-                        row_index,
-                    )
+        for row_index, row in enumerate(table.to_pylist()):
+            language = str(row["language"])
+            page_id = _required_int(row["page_id"], "page_id")
+            revision_id = _required_int(row["revision_id"], "revision_id")
+            if legacy_articles:
+                document_id = f"{row['wikidata']}:wikipedia:{language}:{page_id}:{revision_id}"
+            else:
+                document_id = str(row["document_id"])
+            indexed.append(
+                (
+                    document_id,
+                    language,
+                    str(row["title"]),
+                    page_id,
+                    revision_id,
+                    str(row.get("wikidata") or ""),
+                    row_group,
+                    row_index,
                 )
+            )
         return indexed
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+
+
+def _scan_index_rows(
+    path: Path, *, legacy_articles: bool
+) -> list[tuple[str, str, str, int, int, str, int, int]]:
+    """Read identity columns and row positions for one V1 shard."""
+    parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
+    indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
+    seen_documents: set[str] = set()
+    for row_group in range(parquet_file.num_row_groups):
+        for row in _scan_index_row_group(
+            path,
+            legacy_articles=legacy_articles,
+            row_group=row_group,
+        ):
+            if row[0] in seen_documents:
+                continue
+            seen_documents.add(row[0])
+            indexed.append(row)
+    return indexed
 
 
 class _PersistentV1Index:
@@ -143,6 +178,7 @@ class _PersistentV1Index:
         self._row_cache_limit = 10_000
         self._files = files
         self._ready = threading.Event()
+        self._complete = threading.Event()
         self._stop = threading.Event()
         self._error: BaseException | None = None
         self._thread: threading.Thread | None = None
@@ -164,15 +200,17 @@ class _PersistentV1Index:
     @property
     def is_ready(self) -> bool:
         """Return whether the current file set has been fully indexed."""
-        return self._ready.is_set() and self._error is None
+        return self._ready.is_set() and self._complete.is_set() and self._error is None
 
     def wait_until_ready(self) -> None:
         """Wait for indexing and propagate a background indexing failure."""
         self._ready.wait()
         self._raise_error()
+        if not self._complete.is_set():
+            raise RuntimeError("V2 V1 reuse index stopped before completion")
 
     def cancel(self) -> None:
-        """Stop after the current shard transaction, preserving completed work."""
+        """Stop after the current row-group transaction, preserving checkpoints."""
         self._stop.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
@@ -224,7 +262,8 @@ class _PersistentV1Index:
 
     def _run_sync(self) -> None:
         try:
-            self._sync(self._files)
+            if self._sync(self._files):
+                self._complete.set()
         except BaseException as exc:
             self._error = exc
             LOGGER.exception("V2 V1 reuse index failed")
@@ -233,10 +272,11 @@ class _PersistentV1Index:
 
     def _initialize_schema(self) -> None:
         version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, _INDEX_SCHEMA_VERSION):
+        if version not in (0, 1, _INDEX_SCHEMA_VERSION):
             with self._connection:
                 self._connection.executescript(
-                    "DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS file_state;"
+                    "DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS file_state; "
+                    "DROP TABLE IF EXISTS scan_progress;"
                 )
         with self._connection:
             self._connection.executescript(
@@ -268,6 +308,16 @@ class _PersistentV1Index:
                     ON documents(language, page_id, document_id);
                 CREATE INDEX IF NOT EXISTS documents_qid
                     ON documents(qid, document_id);
+                CREATE TABLE IF NOT EXISTS scan_progress (
+                    path TEXT PRIMARY KEY,
+                    size INTEGER NOT NULL,
+                    mtime_ns INTEGER NOT NULL,
+                    ctime_ns INTEGER NOT NULL,
+                    inode INTEGER NOT NULL,
+                    legacy INTEGER NOT NULL,
+                    total_row_groups INTEGER NOT NULL,
+                    next_row_group INTEGER NOT NULL
+                );
                 """
             )
             self._connection.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
@@ -277,7 +327,7 @@ class _PersistentV1Index:
         stat = path.stat()
         return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino
 
-    def _sync(self, files: tuple[Path, ...]) -> None:
+    def _sync(self, files: tuple[Path, ...]) -> bool:
         current = {str(path.resolve()): (path, path.parent.name == "articles") for path in files}
         known = {
             str(row["path"]): (
@@ -289,12 +339,25 @@ class _PersistentV1Index:
             )
             for row in self._connection.execute("SELECT * FROM file_state")
         }
+        progress = {
+            str(row["path"]): (
+                int(row["size"]),
+                int(row["mtime_ns"]),
+                int(row["ctime_ns"]),
+                int(row["inode"]),
+                bool(row["legacy"]),
+                int(row["total_row_groups"]),
+                int(row["next_row_group"]),
+            )
+            for row in self._connection.execute("SELECT * FROM scan_progress")
+        }
         stale = set(known) - set(current)
         if stale:
             with self._connection:
                 for path in stale:
                     self._connection.execute("DELETE FROM documents WHERE source_path=?", (path,))
                     self._connection.execute("DELETE FROM file_state WHERE path=?", (path,))
+                    self._connection.execute("DELETE FROM scan_progress WHERE path=?", (path,))
             self._row_cache.clear()
 
         changed = 0
@@ -305,49 +368,110 @@ class _PersistentV1Index:
                     position - 1,
                     len(files),
                 )
-                return
+                return False
             resolved = str(path.resolve())
             fingerprint = (*self._fingerprint(path), path.parent.name == "articles")
             if known.get(resolved) == fingerprint:
+                with self._connection:
+                    self._connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
                 continue
             LOGGER.info(
                 "V2 V1 reuse index: scanning shard %d/%d (%s)", position, len(files), path.name
             )
-            indexed = _scan_index_rows(path, legacy_articles=bool(fingerprint[-1]))
-            with self._connection:
-                self._connection.execute("DELETE FROM documents WHERE source_path=?", (resolved,))
-                self._connection.executemany(
-                    """
-                    INSERT OR REPLACE INTO documents(
-                        document_id, source_path, legacy, language, title_key,
-                        page_id, revision_id, qid, row_group, row_index
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            str(document_id),
-                            resolved,
-                            int(bool(fingerprint[-1])),
-                            str(language).casefold(),
-                            _title_key(str(language), str(title))[1],
-                            int(page_id),
-                            int(revision_id),
-                            str(qid),
-                            int(row_group),
-                            int(row_index),
-                        )
-                        for (
-                            document_id,
-                            language,
-                            title,
-                            page_id,
-                            revision_id,
-                            qid,
-                            row_group,
-                            row_index,
-                        ) in indexed
-                    ],
+            legacy_articles = bool(fingerprint[-1])
+            parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
+            total_row_groups = parquet_file.num_row_groups
+            previous = progress.get(resolved)
+            matching_progress = (
+                previous is not None
+                and previous[:5] == fingerprint
+                and previous[5] == total_row_groups
+                and 0 <= previous[6] <= total_row_groups
+            )
+            start_row_group = previous[6] if matching_progress and previous is not None else 0
+            if start_row_group == 0:
+                with self._connection:
+                    self._connection.execute(
+                        "DELETE FROM documents WHERE source_path=?", (resolved,)
+                    )
+                    self._connection.execute("DELETE FROM file_state WHERE path=?", (resolved,))
+                    self._connection.execute(
+                        """
+                        INSERT OR REPLACE INTO scan_progress(
+                            path, size, mtime_ns, ctime_ns, inode, legacy,
+                            total_row_groups, next_row_group
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                        """,
+                        (resolved, *fingerprint, total_row_groups),
+                    )
+                self._row_cache.clear()
+            for row_group in range(start_row_group, total_row_groups):
+                if self._stop.is_set():
+                    LOGGER.info(
+                        "V2 V1 reuse index stopped in shard %d/%d at row group %d/%d; "
+                        "completed work is resumable",
+                        position,
+                        len(files),
+                        row_group,
+                        total_row_groups,
+                    )
+                    return False
+                indexed = _scan_index_row_group(
+                    path,
+                    legacy_articles=legacy_articles,
+                    row_group=row_group,
                 )
+                with self._connection:
+                    self._connection.executemany(
+                        """
+                        INSERT OR IGNORE INTO documents(
+                            document_id, source_path, legacy, language, title_key,
+                            page_id, revision_id, qid, row_group, row_index
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                str(document_id),
+                                resolved,
+                                int(legacy_articles),
+                                str(language).casefold(),
+                                _title_key(str(language), str(title))[1],
+                                int(page_id),
+                                int(revision_id),
+                                str(qid),
+                                int(indexed_row_group),
+                                int(row_index),
+                            )
+                            for (
+                                document_id,
+                                language,
+                                title,
+                                page_id,
+                                revision_id,
+                                qid,
+                                indexed_row_group,
+                                row_index,
+                            ) in indexed
+                        ],
+                    )
+                    self._connection.execute(
+                        """
+                        INSERT OR REPLACE INTO scan_progress(
+                            path, size, mtime_ns, ctime_ns, inode, legacy,
+                            total_row_groups, next_row_group
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (resolved, *fingerprint, total_row_groups, row_group + 1),
+                    )
+                LOGGER.info(
+                    "V2 V1 reuse index: shard %d/%d row group %d/%d ready (%d identities)",
+                    position,
+                    len(files),
+                    row_group + 1,
+                    total_row_groups,
+                    len(indexed),
+                )
+            with self._connection:
                 self._connection.execute(
                     """
                     INSERT OR REPLACE INTO file_state(path, size, mtime_ns, ctime_ns, inode, legacy)
@@ -355,13 +479,13 @@ class _PersistentV1Index:
                     """,
                     (resolved, *fingerprint),
                 )
+                self._connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
             self._row_cache.clear()
             changed += 1
             LOGGER.info(
-                "V2 V1 reuse index: shard ready %d/%d (%d document identities)",
+                "V2 V1 reuse index: shard ready %d/%d",
                 position,
                 len(files),
-                len(indexed),
             )
 
         row_count = self._connection.execute(
@@ -382,6 +506,7 @@ class _PersistentV1Index:
                 row_count,
                 self._db_path,
             )
+        return True
 
     def _query(self, query_name: str, parameters: tuple[object, ...]) -> tuple[DocumentRow, ...]:
         queries = {
@@ -576,8 +701,9 @@ def start_v1_reuse_index(
 
     The builder commits one shard at a time on a daemon thread.  Lookups can
     reuse rows from committed shards while the remaining shards are scanned.
-    Callers must wait for readiness before treating a miss as absent; the V2
-    direct-enrichment layer does this before making a network request.
+    Callers must wait for readiness before treating a miss as absent.  The V2
+    direct-enrichment layer may fetch a miss speculatively while indexing, then
+    performs this final lookup before accepting the network result.
     """
     files = _effective_paths(processed_dir)
     store = _PersistentV1Index(cache_dir, files, background=True)
