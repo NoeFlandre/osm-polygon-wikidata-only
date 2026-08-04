@@ -101,11 +101,12 @@ def _scan_index_row_group(
     *,
     legacy_articles: bool,
     row_group: int,
+    parquet_file: pq.ParquetFile | None = None,
 ) -> list[tuple[str, str, str, int, int, str, int, int]]:
     """Read identity columns and row positions for one committed row group."""
     try:
-        parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
-        table = parquet_file.read_row_group(
+        validated = parquet_file or _validated_parquet_file(path, legacy_articles=legacy_articles)
+        table = validated.read_row_group(
             row_group,
             columns=list(_index_columns(legacy_articles)),
         )
@@ -172,12 +173,16 @@ class _PersistentV1Index:
         self._connection = sqlite3.connect(self._db_path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA busy_timeout=30000")
-        self._connection.execute("PRAGMA journal_mode=DELETE")
+        self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
+        self._connection.execute("PRAGMA temp_store=MEMORY")
+        self._connection.execute("PRAGMA cache_size=-65536")
+        self._connection.execute("PRAGMA wal_autocheckpoint=10000")
         self._row_cache: OrderedDict[str, DocumentRow] = OrderedDict()
         self._row_cache_limit = 10_000
         self._files = files
         self._ready = threading.Event()
+        self._initialized = threading.Event()
         self._complete = threading.Event()
         self._stop = threading.Event()
         self._error: BaseException | None = None
@@ -185,7 +190,6 @@ class _PersistentV1Index:
         self._reader_local = threading.local()
         self._reader_connections: list[sqlite3.Connection] = []
         self._reader_lock = threading.Lock()
-        self._initialize_schema()
         if background:
             self._thread = threading.Thread(
                 target=self._run_sync,
@@ -194,6 +198,8 @@ class _PersistentV1Index:
             )
             self._thread.start()
         else:
+            self._initialize_schema()
+            self._initialized.set()
             self._run_sync()
             self._raise_error()
 
@@ -235,6 +241,7 @@ class _PersistentV1Index:
         """Return the number of identities committed so far."""
         connection = sqlite3.connect(self._db_path, timeout=30)
         connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA query_only=ON")
         try:
             return int(
                 connection.execute("SELECT COUNT(DISTINCT document_id) FROM documents").fetchone()[
@@ -255,6 +262,7 @@ class _PersistentV1Index:
             )
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA busy_timeout=30000")
+            connection.execute("PRAGMA query_only=ON")
             self._reader_local.connection = connection
             with self._reader_lock:
                 self._reader_connections.append(connection)
@@ -262,12 +270,17 @@ class _PersistentV1Index:
 
     def _run_sync(self) -> None:
         try:
+            if not self._initialized.is_set():
+                self._initialize_schema()
+                self._initialized.set()
+                LOGGER.info("V2 V1 reuse index storage initialized; scanning in background")
             if self._sync(self._files):
                 self._complete.set()
         except BaseException as exc:
             self._error = exc
             LOGGER.exception("V2 V1 reuse index failed")
         finally:
+            self._initialized.set()
             self._ready.set()
 
     def _initialize_schema(self) -> None:
@@ -420,6 +433,7 @@ class _PersistentV1Index:
                     path,
                     legacy_articles=legacy_articles,
                     row_group=row_group,
+                    parquet_file=parquet_file,
                 )
                 with self._connection:
                     self._connection.executemany(
@@ -509,6 +523,9 @@ class _PersistentV1Index:
         return True
 
     def _query(self, query_name: str, parameters: tuple[object, ...]) -> tuple[DocumentRow, ...]:
+        if not self._initialized.is_set():
+            return ()
+        self._raise_error()
         queries = {
             "page": """
                 SELECT document_id, source_path, legacy, row_group, row_index

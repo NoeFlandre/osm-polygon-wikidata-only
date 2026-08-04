@@ -185,11 +185,22 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
     original = v1_index._scan_index_row_group
     scanned: list[str] = []
 
-    def fail_on_second(path: Path, *, legacy_articles: bool, row_group: int):
+    def fail_on_second(
+        path: Path,
+        *,
+        legacy_articles: bool,
+        row_group: int,
+        parquet_file: object = None,
+    ):
         scanned.append(path.name)
         if path.name == second_path.name:
             raise OSError("interrupted index build")
-        return original(path, legacy_articles=legacy_articles, row_group=row_group)
+        return original(
+            path,
+            legacy_articles=legacy_articles,
+            row_group=row_group,
+            parquet_file=parquet_file,  # type: ignore[arg-type]
+        )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", fail_on_second)
     with pytest.raises(OSError, match="interrupted index build"):
@@ -227,11 +238,22 @@ def test_background_index_exposes_committed_rows_before_final_shard(
 
     original = v1_index._scan_index_row_group
 
-    def scan(path: Path, *, legacy_articles: bool, row_group: int):
+    def scan(
+        path: Path,
+        *,
+        legacy_articles: bool,
+        row_group: int,
+        parquet_file: object = None,
+    ):
         if path == second:
             second_started.set()
             assert release_second.wait(timeout=2)
-        return original(path, legacy_articles=legacy_articles, row_group=row_group)
+        return original(
+            path,
+            legacy_articles=legacy_articles,
+            row_group=row_group,
+            parquet_file=parquet_file,  # type: ignore[arg-type]
+        )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
     index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
@@ -241,6 +263,35 @@ def test_background_index_exposes_committed_rows_before_final_shard(
     release_second.set()
     index.wait_until_ready()
     assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
+    index.close()
+
+
+def test_background_index_handle_returns_before_storage_initialization(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_documents(tmp_path, [_document()])
+    import threading
+
+    initialized = threading.Event()
+    release = threading.Event()
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index._PersistentV1Index._initialize_schema
+
+    def initialize_slow(store: object) -> None:
+        initialized.set()
+        assert release.wait(timeout=2)
+        original(store)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(v1_index._PersistentV1Index, "_initialize_schema", initialize_slow)
+    index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+    assert initialized.wait(timeout=2)
+    assert not index.is_ready
+    assert index.by_title("en", "Douglas Adams") == ()
+    release.set()
+    index.wait_until_ready()
+    assert index.by_title("en", "Douglas Adams")
     index.close()
 
 
@@ -273,11 +324,22 @@ def test_persistent_index_resumes_inside_an_interrupted_shard(
     original = v1_index._scan_index_row_group
     calls: list[int] = []
 
-    def scan(path_arg: Path, *, legacy_articles: bool, row_group: int):
+    def scan(
+        path_arg: Path,
+        *,
+        legacy_articles: bool,
+        row_group: int,
+        parquet_file: object = None,
+    ):
         calls.append(row_group)
         if row_group == 1 and len(calls) == 2:
             raise OSError("interrupted row group")
-        return original(path_arg, legacy_articles=legacy_articles, row_group=row_group)
+        return original(
+            path_arg,
+            legacy_articles=legacy_articles,
+            row_group=row_group,
+            parquet_file=parquet_file,  # type: ignore[arg-type]
+        )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
     with pytest.raises(OSError, match="interrupted row group"):

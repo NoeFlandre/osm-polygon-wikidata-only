@@ -267,10 +267,11 @@ uv run osm-polygon-wikidata-only sync-dir \
 V2 local artifacts are written below `processed_v2/`; its request cache and
 resumable V1 reuse index are below `cache/v2/`. The index is built one shard at
 a time while PBF extraction starts, and each Parquet row group is checkpointed
-across restarts. A direct page that is not yet found may be fetched while the
-index continues. Once indexing finishes, a V1 match is preferred; only a page
-still absent from V1 keeps the fetched result. Both locations use the
-configured data root, so stopping and restarting the command is safe.
+across restarts. Its SQLite storage setup also runs in the background, so it
+does not delay extraction. A direct page that is not yet found may be fetched
+while the index continues. Once indexing finishes, a V1 match is preferred;
+only a page still absent from V1 keeps the fetched result. Both locations use
+the configured data root, so stopping and restarting the command is safe.
 Use `--force` only when deliberately rebuilding a V2 region.
 
 ### Wikimedia Bot Password authentication
