@@ -29,7 +29,7 @@ from osm_polygon_wikidata_only.v2.publication import (
 )
 from osm_polygon_wikidata_only.v2.reuse import SectionClient, merge_v2_region
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
-from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
+from osm_polygon_wikidata_only.v2.v1_index import start_v1_reuse_index
 
 LOGGER = logging.getLogger(__name__)
 
@@ -56,9 +56,12 @@ def run_v2_sync(
         LOGGER.warning("No PBF inputs to process for V2")
         return 0
     data_root.processed_v2.mkdir(parents=True, exist_ok=True)
-    index = build_v1_reuse_index(
+    index = start_v1_reuse_index(
         data_root.processed,
         cache_dir=data_root.v2_cache / "v1-index",
+    )
+    LOGGER.info(
+        "V2 V1 reuse index started in background; extraction and indexed-page reuse can overlap"
     )
     v2_cache = cache or JsonFileCache(
         data_root.v2_cache / "wikipedia",
@@ -66,57 +69,66 @@ def run_v2_sync(
     )
     manifest = load_v2_manifest(data_root.processed_v2)
     completed = 0
-    for pbf in pbfs:
-        stem = pbf.name.removesuffix(".osm.pbf")
-        current = (
-            settings.skip_existing
-            and not settings.force
-            and _region_is_current(data_root.processed_v2, stem, manifest)
-        )
-        if current:
-            region_ops = region_publication_ops(data_root.processed_v2, stem)
-            remote_complete = remote_inventory is not None and all(
-                remote_inventory.contains(op.path_in_repo) for op in region_ops
+    try:
+        for pbf in pbfs:
+            stem = pbf.name.removesuffix(".osm.pbf")
+            current = (
+                settings.skip_existing
+                and not settings.force
+                and _region_is_current(data_root.processed_v2, stem, manifest)
             )
-            if not push or remote_complete:
-                LOGGER.info("Skipping V2 %s (already current)", stem)
+            if current:
+                region_ops = region_publication_ops(data_root.processed_v2, stem)
+                remote_complete = remote_inventory is not None and all(
+                    remote_inventory.contains(op.path_in_repo) for op in region_ops
+                )
+                if not push or remote_complete:
+                    LOGGER.info("Skipping V2 %s (already current)", stem)
+                    completed += 1
+                    continue
+                if upload is None:
+                    raise RuntimeError("V2 publication requested without an upload callback")
+                LOGGER.info("Publishing existing V2 %s (remote artifacts are incomplete)", stem)
+                upload(region_ops, f"Repair V2 region {stem}")
                 completed += 1
                 continue
-            if upload is None:
-                raise RuntimeError("V2 publication requested without an upload callback")
-            LOGGER.info("Publishing existing V2 %s (remote artifacts are incomplete)", stem)
-            upload(region_ops, f"Repair V2 region {stem}")
+            LOGGER.info("Starting V2 region %s", stem)
+            extracted = extract_v2_pbf(pbf, settings=settings)
+            merge_v2_region(
+                data_root,
+                extracted,
+                index=index,
+                wikipedia_client=wikipedia_client,
+                section_client=section_client,
+                section_workers=section_workers,
+                cache=v2_cache,
+                fetch_full_text=settings.fetch_full_text,
+            )
+            manifest = load_v2_manifest(data_root.processed_v2)
             completed += 1
-            continue
-        LOGGER.info("Starting V2 region %s", stem)
-        extracted = extract_v2_pbf(pbf, settings=settings)
-        merge_v2_region(
-            data_root,
-            extracted,
-            index=index,
-            wikipedia_client=wikipedia_client,
-            section_client=section_client,
-            section_workers=section_workers,
-            cache=v2_cache,
-            fetch_full_text=settings.fetch_full_text,
-        )
-        manifest = load_v2_manifest(data_root.processed_v2)
-        completed += 1
+            if push:
+                if upload is None:
+                    raise RuntimeError("V2 publication requested without an upload callback")
+                upload(
+                    region_publication_ops(data_root.processed_v2, stem),
+                    f"Add V2 region {stem}",
+                )
+            LOGGER.info("Completed V2 region %s (%d/%d)", stem, completed, len(pbfs))
+
+        # A miss is only safe to fetch after every V1 shard has been checked.
+        index.wait_until_ready()
+        card = write_v2_card(data_root.processed_v2)
         if push:
             if upload is None:
                 raise RuntimeError("V2 publication requested without an upload callback")
-            upload(region_publication_ops(data_root.processed_v2, stem), f"Add V2 region {stem}")
-        LOGGER.info("Completed V2 region %s (%d/%d)", stem, completed, len(pbfs))
-
-    card = write_v2_card(data_root.processed_v2)
-    if push:
-        if upload is None:
-            raise RuntimeError("V2 publication requested without an upload callback")
-        upload(
-            metadata_publication_ops(data_root.processed_v2), "Update V2 dataset card and manifest"
-        )
-    LOGGER.info("V2 sync complete: %d region(s); card=%s", completed, card)
-    return 0
+            upload(
+                metadata_publication_ops(data_root.processed_v2),
+                "Update V2 dataset card and manifest",
+            )
+        LOGGER.info("V2 sync complete: %d region(s); card=%s", completed, card)
+        return 0
+    finally:
+        index.close()
 
 
 def _region_is_current(

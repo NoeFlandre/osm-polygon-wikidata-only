@@ -137,3 +137,43 @@ def test_successful_direct_fetch_is_cached_for_the_next_run(tmp_path: Path) -> N
     enrich_wikipedia_refs("polygon-1", (ref,), index=index, wikipedia_client=client, cache=cache)
     enrich_wikipedia_refs("polygon-1", (ref,), index=index, wikipedia_client=client, cache=cache)
     assert client.calls == 1
+
+
+def test_direct_enrichment_waits_for_background_index_before_fetching_missing_title() -> None:
+    class BackgroundIndex:
+        is_ready = False
+
+        def __init__(self) -> None:
+            self.waited = False
+
+        def by_title(self, language: str, title: str) -> tuple[dict[str, object], ...]:
+            if self.waited:
+                return (
+                    {
+                        "document_id": "Q42:wikipedia:en:1:2",
+                        "wikidata": "Q42",
+                        "language": language,
+                        "title": title,
+                        "page_id": 1,
+                        "revision_id": 2,
+                    },
+                )
+            return ()
+
+        def wait_until_ready(self) -> None:
+            self.waited = True
+            self.is_ready = True
+
+    class FailingClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("a missing title was fetched before index completion")
+
+    index = BackgroundIndex()
+    result = enrich_wikipedia_refs(
+        "region:relation:1",
+        (WikipediaTagRef("en", "Douglas Adams", "wikipedia:en", "Douglas Adams"),),
+        index=index,  # type: ignore[arg-type]
+        wikipedia_client=FailingClient(),  # type: ignore[arg-type]
+    )
+    assert result.statuses[0].status == "reused_v1"
+    assert result.statuses[0].reused_v1

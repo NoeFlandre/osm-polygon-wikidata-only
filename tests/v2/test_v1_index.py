@@ -6,7 +6,11 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
-from osm_polygon_wikidata_only.v2.v1_index import V1ReuseIndex, build_v1_reuse_index
+from osm_polygon_wikidata_only.v2.v1_index import (
+    V1ReuseIndex,
+    build_v1_reuse_index,
+    start_v1_reuse_index,
+)
 
 
 def _document(**overrides: object) -> dict[str, object]:
@@ -195,3 +199,46 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
     monkeypatch.setattr(v1_index, "_scan_index_rows", original)
     index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
+
+
+def test_background_index_exposes_committed_rows_before_final_shard(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_documents(tmp_path, [_document()])
+    second = tmp_path / "wikipedia" / "documents" / "second.parquet"
+    second_row = _document(
+        document_id="Q43:wikipedia:fr:2:3",
+        article_id="Q43:fr:2:3",
+        wikidata="Q43",
+        language="fr",
+        site="frwiki",
+        title="Douglas Adams FR",
+        page_id=2,
+        revision_id=3,
+    )
+    pq.write_table(pa.Table.from_pylist([second_row], schema=wikipedia_document_schema()), second)
+
+    import threading
+
+    second_started = threading.Event()
+    release_second = threading.Event()
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index._scan_index_rows
+
+    def scan(path: Path, *, legacy_articles: bool):
+        if path == second:
+            second_started.set()
+            assert release_second.wait(timeout=2)
+        return original(path, legacy_articles=legacy_articles)
+
+    monkeypatch.setattr(v1_index, "_scan_index_rows", scan)
+    index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+    assert second_started.wait(timeout=2)
+    assert index.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
+    assert not index.is_ready
+    release_second.set()
+    index.wait_until_ready()
+    assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
+    index.close()

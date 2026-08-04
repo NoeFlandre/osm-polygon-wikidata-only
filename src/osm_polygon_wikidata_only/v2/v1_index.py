@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -124,18 +125,111 @@ def _scan_index_rows(
 class _PersistentV1Index:
     """Incremental SQLite metadata index with bounded Parquet row loading."""
 
-    def __init__(self, cache_dir: Path, files: tuple[Path, ...]) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        files: tuple[Path, ...],
+        *,
+        background: bool = False,
+    ) -> None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = cache_dir / _INDEX_FILENAME
-        self._connection = sqlite3.connect(self._db_path)
+        self._connection = sqlite3.connect(self._db_path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA busy_timeout=30000")
         self._connection.execute("PRAGMA journal_mode=DELETE")
         self._connection.execute("PRAGMA synchronous=NORMAL")
         self._row_cache: OrderedDict[str, DocumentRow] = OrderedDict()
         self._row_cache_limit = 10_000
+        self._files = files
+        self._ready = threading.Event()
+        self._stop = threading.Event()
+        self._error: BaseException | None = None
+        self._thread: threading.Thread | None = None
+        self._reader_local = threading.local()
+        self._reader_connections: list[sqlite3.Connection] = []
+        self._reader_lock = threading.Lock()
         self._initialize_schema()
-        self._sync(files)
+        if background:
+            self._thread = threading.Thread(
+                target=self._run_sync,
+                name="v2-v1-index",
+                daemon=True,
+            )
+            self._thread.start()
+        else:
+            self._run_sync()
+            self._raise_error()
+
+    @property
+    def is_ready(self) -> bool:
+        """Return whether the current file set has been fully indexed."""
+        return self._ready.is_set() and self._error is None
+
+    def wait_until_ready(self) -> None:
+        """Wait for indexing and propagate a background indexing failure."""
+        self._ready.wait()
+        self._raise_error()
+
+    def cancel(self) -> None:
+        """Stop after the current shard transaction, preserving completed work."""
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=30)
+        if thread is not None and thread.is_alive():
+            LOGGER.warning("V2 V1 reuse index did not stop within 30 seconds")
+
+    def close(self) -> None:
+        """Stop indexing if needed and close the writer connection."""
+        self.cancel()
+        with self._reader_lock:
+            for connection in self._reader_connections:
+                connection.close()
+            self._reader_connections.clear()
+        self._connection.close()
+
+    def _raise_error(self) -> None:
+        if self._error is not None:
+            raise self._error
+
+    def row_count(self) -> int:
+        """Return the number of identities committed so far."""
+        connection = sqlite3.connect(self._db_path, timeout=30)
+        connection.execute("PRAGMA busy_timeout=30000")
+        try:
+            return int(
+                connection.execute("SELECT COUNT(DISTINCT document_id) FROM documents").fetchone()[
+                    0
+                ]
+            )
+        finally:
+            connection.close()
+
+    def _reader(self) -> sqlite3.Connection:
+        connection = getattr(self._reader_local, "connection", None)
+        if connection is None:
+            connection = sqlite3.connect(
+                self._db_path,
+                timeout=30,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout=30000")
+            self._reader_local.connection = connection
+            with self._reader_lock:
+                self._reader_connections.append(connection)
+        return connection
+
+    def _run_sync(self) -> None:
+        try:
+            self._sync(self._files)
+        except BaseException as exc:
+            self._error = exc
+            LOGGER.exception("V2 V1 reuse index failed")
+        finally:
+            self._ready.set()
 
     def _initialize_schema(self) -> None:
         version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
@@ -205,6 +299,13 @@ class _PersistentV1Index:
 
         changed = 0
         for position, path in enumerate(files, start=1):
+            if self._stop.is_set():
+                LOGGER.info(
+                    "V2 V1 reuse index stopped after %d/%d shards; completed work is resumable",
+                    position - 1,
+                    len(files),
+                )
+                return
             resolved = str(path.resolve())
             fingerprint = (*self._fingerprint(path), path.parent.name == "articles")
             if known.get(resolved) == fingerprint:
@@ -300,7 +401,7 @@ class _PersistentV1Index:
                 ORDER BY document_id, source_path
             """,
         }
-        rows = list(self._connection.execute(queries[query_name], parameters))
+        rows = list(self._reader().execute(queries[query_name], parameters))
         if not rows:
             return ()
         by_document: dict[str, sqlite3.Row] = {}
@@ -372,6 +473,21 @@ class V1ReuseIndex:
     files: tuple[Path, ...]
     row_count: int
     _store: _PersistentV1Index | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def is_ready(self) -> bool:
+        """Return whether all configured V1 shards have been indexed."""
+        return self._store is None or self._store.is_ready
+
+    def wait_until_ready(self) -> None:
+        """Wait for a background index build, if this is a persistent index."""
+        if self._store is not None:
+            self._store.wait_until_ready()
+
+    def close(self) -> None:
+        """Close a persistent index and preserve its committed checkpoints."""
+        if self._store is not None:
+            self._store.close()
 
     def by_page(self, language: str, page_id: int) -> tuple[DocumentRow, ...]:
         if self._store is not None:
@@ -448,9 +564,34 @@ def build_v1_reuse_index(
     if cache_dir is None:
         return _build_in_memory_index(files, processed_dir / "articles")
     store = _PersistentV1Index(cache_dir, files)
-    row_count = int(
-        store._connection.execute("SELECT COUNT(DISTINCT document_id) FROM documents").fetchone()[0]
-    )
+    return _persistent_index(store, files)
+
+
+def start_v1_reuse_index(
+    processed_dir: Path,
+    *,
+    cache_dir: Path,
+) -> V1ReuseIndex:
+    """Start a resumable V1 index build and return its live lookup handle.
+
+    The builder commits one shard at a time on a daemon thread.  Lookups can
+    reuse rows from committed shards while the remaining shards are scanned.
+    Callers must wait for readiness before treating a miss as absent; the V2
+    direct-enrichment layer does this before making a network request.
+    """
+    files = _effective_paths(processed_dir)
+    store = _PersistentV1Index(cache_dir, files, background=True)
+    return _persistent_index(store, files, row_count=0)
+
+
+def _persistent_index(
+    store: _PersistentV1Index,
+    files: tuple[Path, ...],
+    *,
+    row_count: int | None = None,
+) -> V1ReuseIndex:
+    if row_count is None:
+        row_count = store.row_count()
     return V1ReuseIndex(
         by_page_index=MappingProxyType({}),
         by_title_index=MappingProxyType({}),
@@ -461,4 +602,4 @@ def build_v1_reuse_index(
     )
 
 
-__all__ = ["V1ReuseIndex", "build_v1_reuse_index"]
+__all__ = ["V1ReuseIndex", "build_v1_reuse_index", "start_v1_reuse_index"]

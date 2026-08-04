@@ -264,10 +264,13 @@ uv run osm-polygon-wikidata-only sync-dir \
     --push
 ```
 
-V2 local artifacts are written below `processed_v2/`; its request cache is
-below `cache/v2/`. Both locations use the configured data root, so stopping
-and restarting the command is safe. Use `--force` only when deliberately
-rebuilding a V2 region.
+V2 local artifacts are written below `processed_v2/`; its request cache and
+resumable V1 reuse index are below `cache/v2/`. The index is built one shard at
+a time while PBF extraction starts, and completed shards are kept across
+restarts. A direct page is fetched only after the index has confirmed that it
+is absent, so the overlap does not create duplicate requests. Both locations
+use the configured data root, so stopping and restarting the command is safe.
+Use `--force` only when deliberately rebuilding a V2 region.
 
 ### Wikimedia Bot Password authentication
 

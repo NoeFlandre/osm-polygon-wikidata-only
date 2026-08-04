@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,8 @@ from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.models import article_id, document_id
 from osm_polygon_wikidata_only.v2.v1_index import V1ReuseIndex
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,22 +129,43 @@ def enrich_wikipedia_refs(
     client = _cached_client(wikipedia_client, cache)
     documents: dict[str, dict[str, Any]] = {}
     links: dict[str, dict[str, Any]] = {}
-    statuses: list[DirectWikipediaStatus] = []
+    statuses: dict[int, DirectWikipediaStatus] = {}
+    pending: list[tuple[int, WikipediaTagRef]] = []
 
-    for ref in refs:
+    def reuse(position: int, ref: WikipediaTagRef, document: Mapping[str, Any]) -> None:
+        row = dict(document)
+        documents[str(row["document_id"])] = row
+        links[str(row["document_id"])] = _link_row(
+            polygon_id,
+            row,
+            polygon_context=context,
+            sources=("osm_wikipedia_tag",),
+        )
+        statuses[position] = DirectWikipediaStatus(ref, "reused_v1", reused_v1=True)
+
+    for position, ref in enumerate(refs):
         existing = index.by_title(ref.language, ref.title)
         if existing:
-            document = dict(existing[0])
-            documents[str(document["document_id"])] = document
-            links[str(document["document_id"])] = _link_row(
-                polygon_id,
-                document,
-                polygon_context=context,
-                sources=("osm_wikipedia_tag",),
-            )
-            statuses.append(DirectWikipediaStatus(ref, "reused_v1", reused_v1=True))
+            reuse(position, ref, existing[0])
             continue
+        pending.append((position, ref))
 
+    # A miss is not authoritative until the background index has finished.
+    # Waiting here prevents a transient, partially-built index from causing a
+    # duplicate network fetch for a page that exists in a later shard.
+    if pending and not index.is_ready:
+        LOGGER.info(
+            "V2 direct enrichment waiting for V1 reuse index before resolving %d title(s)",
+            len(pending),
+        )
+        index.wait_until_ready()
+        LOGGER.info("V2 direct enrichment resumed after V1 reuse index completion")
+
+    for position, ref in pending:
+        existing = index.by_title(ref.language, ref.title)
+        if existing:
+            reuse(position, ref, existing[0])
+            continue
         result: FetchResult = client.fetch_article(
             ref.language,
             f"{ref.language}wiki",
@@ -149,7 +173,7 @@ def enrich_wikipedia_refs(
             fetch_full_text=fetch_full_text,
         )
         if result.article is None:
-            statuses.append(DirectWikipediaStatus(ref, result.status, result.error))
+            statuses[position] = DirectWikipediaStatus(ref, result.status, result.error)
             continue
         document = _article_document(result.article)
         if result.status != "ok":
@@ -163,12 +187,12 @@ def enrich_wikipedia_refs(
             polygon_context=context,
             sources=("osm_wikipedia_tag",),
         )
-        statuses.append(DirectWikipediaStatus(ref, result.status, result.error))
+        statuses[position] = DirectWikipediaStatus(ref, result.status, result.error)
 
     return DirectEnrichmentResult(
         documents=tuple(documents.values()),
         links=tuple(links.values()),
-        statuses=tuple(statuses),
+        statuses=tuple(statuses[position] for position in range(len(refs))),
     )
 
 

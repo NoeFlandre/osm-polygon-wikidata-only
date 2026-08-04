@@ -112,3 +112,58 @@ def test_v2_runner_rebuilds_a_region_when_a_manifest_file_is_tampered(
             path = root.processed_v2 / "polygons" / "region-latest.parquet"
             path.write_bytes(path.read_bytes() + b"tampered")
     assert calls == 2
+
+
+def test_v2_runner_extracts_while_v1_index_is_still_building(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    pbf = root.raw / "region-latest.osm.pbf"
+    pbf.touch()
+    events: list[str] = []
+
+    class InFlightIndex:
+        is_ready = False
+
+        def wait_until_ready(self) -> None:
+            events.append("index-ready")
+            self.is_ready = True
+
+        def close(self) -> None:
+            events.append("index-closed")
+
+    index = InFlightIndex()
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: events.append("index-started") or index,
+    )
+
+    def extract(*_args: object, **_kwargs: object) -> V2ExtractedPbf:
+        events.append("extracted")
+        assert not index.is_ready
+        return V2ExtractedPbf(V2PbfStem(pbf, "region-latest", "region"), (), 0.0)
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.extract_v2_pbf", extract)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.merge_v2_region",
+        lambda data_root, extracted, **_kwargs: write_v2_region(
+            data_root.processed_v2,
+            extracted.stem.stem,
+            polygons=[],
+            documents=[],
+            links=[],
+        ),
+    )
+
+    assert (
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=InMemoryWikipediaClient({}),
+        )
+        == 0
+    )
+    assert events == ["index-started", "extracted", "index-ready", "index-closed"]
