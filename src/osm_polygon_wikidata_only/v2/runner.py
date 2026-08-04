@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
 from osm_polygon_wikidata_only.v2.card import write_v2_card
+from osm_polygon_wikidata_only.v2.checkpoints import clear_v2_checkpoints
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION, V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.extractor import extract_v2_pbf
 from osm_polygon_wikidata_only.v2.publication import (
@@ -156,6 +157,7 @@ def run_v2_sync(
                 extract_v2_pbf,
                 candidate.pbf,
                 settings=settings,
+                checkpoint_dir=data_root.v2_cache / "checkpoints",
             )
             extraction_index = candidate_index
             return
@@ -197,6 +199,7 @@ def run_v2_sync(
                 fetch_full_text=settings.fetch_full_text,
                 direct_workers=settings.enrichment_site_workers,
                 wait_for_index=False,
+                checkpoint_dir=data_root.v2_cache / "checkpoints",
             )
             completed += 1
             extracted_stems.append(stem)
@@ -208,6 +211,7 @@ def run_v2_sync(
                 )
             else:
                 LOGGER.info("Prepared V2 region %s (%d/%d)", stem, completed, len(pbfs))
+                clear_v2_checkpoints(data_root.v2_cache / "checkpoints", stem)
 
         # Finalize every speculative region only after every V1 shard has been
         # checked.  All extraction, direct page fetching, and section parsing
@@ -228,7 +232,9 @@ def run_v2_sync(
                 fetch_full_text=settings.fetch_full_text,
                 section_client=section_client,
                 section_workers=section_workers,
+                checkpoint_dir=data_root.v2_cache / "checkpoints",
             )
+            clear_v2_checkpoints(data_root.v2_cache / "checkpoints", stem)
         if push:
             if upload is None:
                 raise RuntimeError("V2 publication requested without an upload callback")

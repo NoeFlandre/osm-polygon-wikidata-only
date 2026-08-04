@@ -121,6 +121,17 @@ never deleted or rewritten in V1 storage. The V2
 documents without a persisted section are fetched at their exact revision and
 parsed with the shared V1 section parser.
 
+Extraction and fetch progress is durable under
+`<data-root>/cache/v2/checkpoints/`. Extraction writes schema-checked Parquet
+chunks periodically and records the source PBF fingerprint, so an interrupted
+scan reuses valid chunks and invalidates them if the input changes. Direct page
+results are saved after each completed polygon, and section results are saved
+after each completed document, including explicit empty-section markers. The
+checkpoint contract also records the input references and full-text mode;
+corrupt, stale, or mismatched state is discarded and retried. Checkpoints are
+cleared only after the final region files are written and reconciled, so a
+stopped run never exposes partial data as a completed region.
+
 Each region is written through staged Parquet files and a journal-free
 replacement transaction, then the V2 manifest is updated atomically. A
 completed local region is skipped on a non-publishing rerun; when publishing,

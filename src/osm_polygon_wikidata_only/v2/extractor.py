@@ -30,6 +30,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_
 from osm_polygon_wikidata_only.io.pbf_reader import PBFReader, PolygonCandidate
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
+from osm_polygon_wikidata_only.v2.checkpoints import ExtractionCheckpoint
 from osm_polygon_wikidata_only.v2.wikipedia_tags import parse_wikipedia_tags
 
 LOGGER = logging.getLogger(__name__)
@@ -160,16 +161,48 @@ def candidate_to_v2_row(
     return row
 
 
-def extract_v2_pbf(pbf_path: Path, *, settings: Settings) -> V2ExtractedPbf:
-    """Stream one PBF while retaining Wikidata and Wikipedia-tag candidates."""
+def extract_v2_pbf(
+    pbf_path: Path,
+    *,
+    settings: Settings,
+    checkpoint_dir: Path | None = None,
+    checkpoint_every: int = 500,
+) -> V2ExtractedPbf:
+    """Stream one PBF while retaining candidates and checkpointing progress.
+
+    When a checkpoint directory is provided, completed row batches are stored
+    under the external data root.  A resumed scan reuses those rows and only
+    converts newly seen polygon identities.  The PBF is still scanned from
+    the beginning because libosmium does not provide a portable byte offset,
+    but already completed extraction work is never written twice.
+    """
     stem = V2PbfStem.from_path(pbf_path)
     started = time.perf_counter()
     extracted_at = utc_now_iso()
-    rows: list[dict[str, Any]] = []
+    checkpoint = (
+        ExtractionCheckpoint(
+            checkpoint_dir,
+            pbf_path,
+            limit=getattr(settings, "limit", None),
+        )
+        if checkpoint_dir is not None
+        else None
+    )
+    rows = checkpoint.load_rows() if checkpoint is not None else []
+    seen = {str(row.get("polygon_id", "")) for row in rows}
+    pending_checkpoint: list[dict[str, Any]] = []
+    limit = getattr(settings, "limit", None)
+    if checkpoint is not None and checkpoint.complete:
+        LOGGER.info(
+            "V2 extraction resumed from completed checkpoint for %s (%d polygons)",
+            pbf_path.name,
+            len(rows),
+        )
+        return V2ExtractedPbf(stem, tuple(rows), time.perf_counter() - started)
     reader = PBFReader(pbf_path, include_wikipedia_tagged=True)
 
     def add(candidate: PolygonCandidate) -> None:
-        if settings.limit is not None and len(rows) >= settings.limit:
+        if limit is not None and len(rows) >= limit:
             return
         row = candidate_to_v2_row(
             candidate,
@@ -178,16 +211,35 @@ def extract_v2_pbf(pbf_path: Path, *, settings: Settings) -> V2ExtractedPbf:
             source_pbf=pbf_path.name,
             extracted_at=extracted_at,
         )
-        if row is not None:
-            rows.append(row)
+        if row is None or str(row["polygon_id"]) in seen:
+            return
+        rows.append(row)
+        seen.add(str(row["polygon_id"]))
+        pending_checkpoint.append(row)
+        if checkpoint is not None and len(pending_checkpoint) >= max(1, checkpoint_every):
+            checkpoint.append(pending_checkpoint)
+            LOGGER.info(
+                "V2 extraction checkpoint %s: %d polygons saved",
+                pbf_path.name,
+                len(rows),
+            )
+            pending_checkpoint.clear()
 
-    stream = getattr(reader, "iter_polygon_candidates", None)
-    if callable(stream):
-        typed = cast(Callable[[Callable[[PolygonCandidate], None]], None], stream)
-        typed(add)
-    else:
-        for candidate in reader.collect_polygon_candidates():
-            add(candidate)
+    try:
+        stream = getattr(reader, "iter_polygon_candidates", None)
+        if callable(stream):
+            typed = cast(Callable[[Callable[[PolygonCandidate], None]], None], stream)
+            typed(add)
+        else:
+            for candidate in reader.collect_polygon_candidates():
+                add(candidate)
+    except BaseException:
+        if checkpoint is not None:
+            checkpoint.append(pending_checkpoint)
+        raise
+    if checkpoint is not None:
+        checkpoint.append(pending_checkpoint)
+        checkpoint.mark_complete()
     LOGGER.info("V2 extracted %d polygons from %s", len(rows), pbf_path.name)
     return V2ExtractedPbf(stem, tuple(rows), time.perf_counter() - started)
 

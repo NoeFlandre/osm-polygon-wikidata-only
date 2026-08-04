@@ -85,7 +85,12 @@ publishes to the separate V2 dataset above. V2 also writes
 existing V1 rows and fetching only missing Wikipedia revisions. V1 files and
 the default workflow are never rewritten by a V2 run. V2 keeps a resumable
 reuse index in `cache/v2/v1-index/`; completed Parquet row groups are reused
-after an interruption or later restart.
+after an interruption or later restart. Extraction batches and completed direct
+Wikipedia results and section parses are checkpointed under
+`cache/v2/checkpoints/` and removed only after the region reaches its final
+local commit. A restart rescans at most the source PBF because libosmium does
+not expose a portable byte offset, while already saved extraction and fetch
+work is reused and never published until final reconciliation.
 
 The generated dataset is published on Hugging Face. Local processing inputs,
 intermediate files, and caches use a configurable data root outside the source
@@ -264,8 +269,8 @@ uv run osm-polygon-wikidata-only sync-dir \
     --push
 ```
 
-V2 local artifacts are written below `processed_v2/`; its request cache and
-resumable V1 reuse index are below `cache/v2/`. The index is built one shard at
+V2 local artifacts are written below `processed_v2/`; its request cache,
+resumable V1 reuse index, and restart checkpoints are below `cache/v2/`. The index is built one shard at
 a time while PBF extraction starts, and each Parquet row group is checkpointed
 across restarts. Its SQLite storage setup also runs in the background, so it
 does not delay extraction. A direct page that is not yet found may be fetched

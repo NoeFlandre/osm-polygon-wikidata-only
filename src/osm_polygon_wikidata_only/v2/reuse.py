@@ -14,7 +14,7 @@ import json
 import logging
 import shutil
 from collections import defaultdict, deque
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -28,6 +28,10 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_COLUMNS
+from osm_polygon_wikidata_only.v2.checkpoints import (
+    RegionFetchCheckpoint,
+    region_input_fingerprint,
+)
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
     _cached_client,
@@ -214,9 +218,12 @@ def _build_missing_sections(
     *,
     section_client: SectionClient | None,
     section_workers: int,
+    on_document: Any | None = None,
+    completed_document_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch and parse only Wikipedia documents without persisted sections."""
     covered = {str(row.get("document_id")) for row in existing_sections if row.get("document_id")}
+    covered.update(completed_document_ids or ())
     missing = [
         row
         for row in sorted(documents, key=lambda item: str(item.get("document_id", "")))
@@ -237,8 +244,20 @@ def _build_missing_sections(
         return [section.to_dict() for section in parse_sections(document, html)]
 
     with ThreadPoolExecutor(max_workers=max(1, section_workers)) as executor:
-        fetched = executor.map(fetch_one, missing)
-        new_sections = [row for group in fetched for row in group]
+        futures = {executor.submit(fetch_one, row): row for row in missing}
+        new_sections: list[dict[str, Any]] = []
+        first_error: Exception | None = None
+        for future in as_completed(futures):
+            try:
+                fetched = future.result()
+            except Exception as error:
+                first_error = first_error or error
+                continue
+            if on_document is not None:
+                on_document(str(futures[future]["document_id"]), fetched)
+            new_sections.extend(fetched)
+        if first_error is not None:
+            raise first_error
     by_id = {str(row["section_id"]): row for row in existing_sections}
     by_id.update({str(row["section_id"]): row for row in new_sections})
     return sorted(
@@ -320,6 +339,7 @@ def merge_v2_region(
     section_workers: int = 8,
     direct_workers: int = 1,
     wait_for_index: bool = True,
+    checkpoint_dir: Path | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Merge V1 rows with V2 discoveries and persist one canonical region.
 
@@ -329,6 +349,16 @@ def merge_v2_region(
     complete, so no provisional artifact is published as final data.
     """
     stem = extracted.stem.stem
+    fetch_checkpoint = (
+        RegionFetchCheckpoint(
+            checkpoint_dir,
+            stem,
+            input_fingerprint=region_input_fingerprint(extracted.polygons),
+            fetch_full_text=fetch_full_text,
+        )
+        if checkpoint_dir is not None
+        else None
+    )
     v1 = load_v1_region(data_root, stem)
     polygons = {str(row["polygon_id"]): dict(row) for row in v1.polygons}
     for discovered in extracted.polygons:
@@ -383,28 +413,73 @@ def merge_v2_region(
             wait_for_index=False,
         )
 
-    if direct_inputs and direct_workers > 1:
+    results_by_polygon: dict[str, DirectEnrichmentResult] = {}
+    pending_inputs: list[tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]]] = []
+    direct_checkpoints_saved = 0
+    for item in direct_inputs:
+        polygon_id, _polygon, refs = item
+        cached_result = (
+            fetch_checkpoint.load_direct(polygon_id, refs) if fetch_checkpoint is not None else None
+        )
+        if cached_result is None:
+            pending_inputs.append(item)
+        else:
+            results_by_polygon[polygon_id] = cached_result
+            LOGGER.info("V2 %s: reused checkpointed Wikipedia fetch for %s", stem, polygon_id)
+
+    def record_result(
+        item: tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]],
+        result: DirectEnrichmentResult,
+    ) -> None:
+        nonlocal direct_checkpoints_saved
+        polygon_id, _polygon, refs = item
+        results_by_polygon[polygon_id] = result
+        if fetch_checkpoint is not None:
+            fetch_checkpoint.save_direct(polygon_id, refs, result)
+            if not result.deferred_errors:
+                direct_checkpoints_saved += 1
+                if direct_checkpoints_saved == 1 or direct_checkpoints_saved % 100 == 0:
+                    LOGGER.info(
+                        "V2 %s: direct Wikipedia checkpoints saved %d/%d polygons",
+                        stem,
+                        direct_checkpoints_saved,
+                        len(direct_inputs),
+                    )
+
+    if pending_inputs and direct_workers > 1:
         LOGGER.info(
             "V2 direct Wikipedia enrichment: %d polygon(s) with up to %d workers",
-            len(direct_inputs),
+            len(pending_inputs),
             direct_workers,
         )
-        workers = min(direct_workers, len(direct_inputs))
+        workers = min(direct_workers, len(pending_inputs))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            pending: deque[Future[DirectEnrichmentResult]] = deque()
-            inputs = iter(direct_inputs)
+            pending: deque[
+                tuple[
+                    tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]],
+                    Future[DirectEnrichmentResult],
+                ]
+            ] = deque()
+            inputs = iter(pending_inputs)
             for _ in range(workers):
                 try:
-                    pending.append(executor.submit(enrich_one, next(inputs)))
+                    item = next(inputs)
+                    pending.append((item, executor.submit(enrich_one, item)))
                 except StopIteration:
                     break
-            speculative_results = []
             while pending:
-                speculative_results.append(pending.popleft().result())
+                item, future = pending.popleft()
+                record_result(item, future.result())
                 with contextlib.suppress(StopIteration):
-                    pending.append(executor.submit(enrich_one, next(inputs)))
+                    next_item = next(inputs)
+                    pending.append((next_item, executor.submit(enrich_one, next_item)))
     else:
-        speculative_results = [enrich_one(item) for item in direct_inputs]
+        for item in pending_inputs:
+            record_result(item, enrich_one(item))
+
+    speculative_results = [
+        results_by_polygon[polygon_id] for polygon_id, _polygon, _refs in direct_inputs
+    ]
 
     def add_direct_result(direct: DirectEnrichmentResult) -> None:
         for document in direct.documents:
@@ -432,11 +507,33 @@ def merge_v2_region(
     copy_v1_sidecars(data_root, stem, data_root.processed_v2)
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
     sections = _rows(sections_path)
+    if fetch_checkpoint is not None:
+        sections.extend(fetch_checkpoint.load_sections())
+        sections = list({str(row.get("section_id", "")): row for row in sections}.values())
+    section_checkpoints_saved = 0
+
+    def save_section_checkpoint(document_id: str, rows: list[dict[str, Any]]) -> None:
+        nonlocal section_checkpoints_saved
+        if fetch_checkpoint is None:
+            return
+        fetch_checkpoint.save_sections(document_id, rows)
+        section_checkpoints_saved += 1
+        if section_checkpoints_saved == 1 or section_checkpoints_saved % 100 == 0:
+            LOGGER.info(
+                "V2 %s: Wikipedia section checkpoints saved %d documents",
+                stem,
+                section_checkpoints_saved,
+            )
+
     sections = _build_missing_sections(
         list(documents.values()),
         sections,
         section_client=section_client,
         section_workers=section_workers,
+        on_document=(save_section_checkpoint if fetch_checkpoint is not None else None),
+        completed_document_ids=(
+            fetch_checkpoint.section_document_ids() if fetch_checkpoint is not None else None
+        ),
     )
 
     # A miss is authoritative only after every V1 shard has been checked.  We
@@ -487,6 +584,7 @@ def reconcile_v2_region(
     fetch_full_text: bool = True,
     section_client: SectionClient | None = None,
     section_workers: int = 8,
+    checkpoint_dir: Path | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Finalize one provisionally written region after V1 indexing.
 
@@ -497,6 +595,16 @@ def reconcile_v2_region(
     reconciliation marker set.
     """
     polygons_rows = _rows(data_root.processed_v2 / "polygons" / f"{stem}.parquet")
+    fetch_checkpoint = (
+        RegionFetchCheckpoint(
+            checkpoint_dir,
+            stem,
+            input_fingerprint=region_input_fingerprint(polygons_rows),
+            fetch_full_text=fetch_full_text,
+        )
+        if checkpoint_dir is not None
+        else None
+    )
     documents = {
         str(row["document_id"]): dict(row)
         for row in _rows(data_root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet")
@@ -581,11 +689,37 @@ def reconcile_v2_region(
         documents.pop(document_id, None)
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
     sections = [row for row in _rows(sections_path) if str(row.get("document_id", "")) in documents]
+    if fetch_checkpoint is not None:
+        sections.extend(
+            row
+            for row in fetch_checkpoint.load_sections()
+            if str(row.get("document_id", "")) in documents
+        )
+        sections = list({str(row.get("section_id", "")): row for row in sections}.values())
+    section_checkpoints_saved = 0
+
+    def save_section_checkpoint(document_id: str, rows: list[dict[str, Any]]) -> None:
+        nonlocal section_checkpoints_saved
+        if fetch_checkpoint is None:
+            return
+        fetch_checkpoint.save_sections(document_id, rows)
+        section_checkpoints_saved += 1
+        if section_checkpoints_saved == 1 or section_checkpoints_saved % 100 == 0:
+            LOGGER.info(
+                "V2 %s: Wikipedia section checkpoints saved %d documents",
+                stem,
+                section_checkpoints_saved,
+            )
+
     sections = _build_missing_sections(
         list(documents.values()),
         sections,
         section_client=section_client,
         section_workers=section_workers,
+        on_document=(save_section_checkpoint if fetch_checkpoint is not None else None),
+        completed_document_ids=(
+            fetch_checkpoint.section_document_ids() if fetch_checkpoint is not None else None
+        ),
     )
     _update_polygon_text_fields(polygons, links, documents)
     write_v2_region(
