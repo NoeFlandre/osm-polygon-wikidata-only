@@ -49,6 +49,11 @@ _TRANSIENT_API_ERROR_CODES = frozenset({"maxlag", "ratelimited", "readonly", "re
 class MediaWikiApiError(RuntimeError):
     """A structured error returned by a Wikimedia API."""
 
+    def __init__(self, message: str, *, code: str | None = None, info: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.info = info
+
 
 class _TransientMediaWikiApiError(MediaWikiApiError):
     """A retryable structured Wikimedia API error."""
@@ -65,7 +70,7 @@ def _raise_for_api_error(data: dict[str, Any]) -> None:
         if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_")
         else MediaWikiApiError
     )
-    raise exception(f"Wikimedia API error {code}: {info}")
+    raise exception(f"Wikimedia API error {code}: {info}", code=code, info=info)
 
 
 class AugmentationWikimediaClient:
@@ -235,10 +240,20 @@ class AugmentationWikimediaClient:
                 "maxlag": "5",
             }
         )
-        data = self.get_json(
-            f"https://{host}/w/api.php?{params}",
-            key=f"sections/{project}/{language}/{revision_id}.json",
-        )
+        try:
+            data = self.get_json(
+                f"https://{host}/w/api.php?{params}",
+                key=f"sections/{project}/{language}/{revision_id}.json",
+            )
+        except MediaWikiApiError as error:
+            if error.code != "nosuchrevid":
+                raise
+            LOGGER.warning(
+                "Wikimedia revision %d is unavailable on %s; continuing without sections",
+                revision_id,
+                host,
+            )
+            return ""
         parsed = data.get("parse", {})
         text = parsed.get("text", "") if isinstance(parsed, dict) else ""
         if isinstance(text, dict):

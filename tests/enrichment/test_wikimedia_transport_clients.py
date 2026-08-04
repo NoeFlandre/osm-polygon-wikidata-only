@@ -619,6 +619,66 @@ def test_augmentation_non_object_error_message_is_exact() -> None:
     assert exc_info.value.__suppress_context__ is True
 
 
+def test_augmentation_missing_revision_returns_empty_html_and_continues(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A deleted historical revision is a permanent empty-section result."""
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+        MediaWikiApiError,
+    )
+
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+
+    def missing_revision(_url: str, *, key: str) -> dict[str, object]:
+        raise MediaWikiApiError(
+            "Wikimedia API error nosuchrevid: There is no revision",
+            code="nosuchrevid",
+        )
+
+    client.get_json = missing_revision  # type: ignore[method-assign]
+
+    with caplog.at_level(
+        logging.WARNING, logger="osm_polygon_wikidata_only.augmentation.mediawiki"
+    ):
+        assert client.parse_html("wikipedia", "en", 1146058) == ""
+
+    assert "revision 1146058 is unavailable" in caplog.text
+
+
+def test_augmentation_missing_revision_api_payload_returns_empty_html() -> None:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+    )
+
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client._settings = _make_settings()
+    client._scheduler = _RecordingScheduler()
+    client._session = _StubSession(
+        [(b'{"error":{"code":"nosuchrevid","info":"revision deleted"}}', "identity")]
+    )
+    client._cache = _NoHitCache()
+
+    assert client.parse_html("wikipedia", "en", 1146058) == ""
+
+
+def test_augmentation_non_missing_revision_error_still_propagates() -> None:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+        MediaWikiApiError,
+    )
+
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+
+    def api_error(_url: str, *, key: str) -> dict[str, object]:
+        raise MediaWikiApiError("server error", code="internal_error")
+
+    client.get_json = api_error  # type: ignore[method-assign]
+
+    with pytest.raises(MediaWikiApiError, match="server error"):
+        client.parse_html("wikipedia", "en", 1146058)
+
+
 # ---------------------------------------------------------------------------
 # Cache + scheduler fakes
 # ---------------------------------------------------------------------------
