@@ -14,9 +14,11 @@ import sqlite3
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 import pyarrow.parquet as pq
 
@@ -110,32 +112,44 @@ def _scan_index_row_group(
             row_group,
             columns=list(_index_columns(legacy_articles)),
         )
-        indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
-        for row_index, row in enumerate(table.to_pylist()):
-            language = str(row["language"])
-            page_id = _required_int(row["page_id"], "page_id")
-            revision_id = _required_int(row["revision_id"], "revision_id")
-            if legacy_articles:
-                document_id = f"{row['wikidata']}:wikipedia:{language}:{page_id}:{revision_id}"
-            else:
-                document_id = str(row["document_id"])
-            indexed.append(
-                (
-                    document_id,
-                    language,
-                    str(row["title"]),
-                    page_id,
-                    revision_id,
-                    str(row.get("wikidata") or ""),
-                    row_group,
-                    row_index,
-                )
-            )
-        return indexed
+        return _index_rows_from_table(table, legacy_articles=legacy_articles, row_group=row_group)
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+
+
+def _index_rows_from_table(
+    table: Any,
+    *,
+    legacy_articles: bool,
+    row_group: int,
+) -> list[tuple[str, str, str, int, int, str, int, int]]:
+    """Extract index fields column-wise, avoiding one Python dict per row."""
+    columns = {name: table.column(name).to_pylist() for name in _index_columns(legacy_articles)}
+    indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
+    for row_index in range(table.num_rows):
+        language = str(columns["language"][row_index])
+        page_id = _required_int(columns["page_id"][row_index], "page_id")
+        revision_id = _required_int(columns["revision_id"][row_index], "revision_id")
+        wikidata = columns["wikidata"][row_index]
+        if legacy_articles:
+            document_id = f"{wikidata}:wikipedia:{language}:{page_id}:{revision_id}"
+        else:
+            document_id = str(columns["document_id"][row_index])
+        indexed.append(
+            (
+                document_id,
+                language,
+                str(columns["title"][row_index]),
+                page_id,
+                revision_id,
+                str(wikidata or ""),
+                row_group,
+                row_index,
+            )
+        )
+    return indexed
 
 
 def _scan_index_rows(
@@ -359,6 +373,59 @@ class _PersistentV1Index:
         stat = path.stat()
         return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino
 
+    def _commit_indexed_row_group(
+        self,
+        connection: sqlite3.Connection,
+        indexed: list[tuple[str, str, str, int, int, str, int, int]],
+        *,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        total_row_groups: int,
+        row_group: int,
+    ) -> None:
+        with connection:
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO documents(
+                    document_id, source_path, legacy, language, title_key,
+                    page_id, revision_id, qid, row_group, row_index
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        str(document_id),
+                        resolved,
+                        int(fingerprint[-1]),
+                        str(language).casefold(),
+                        _title_key(str(language), str(title))[1],
+                        int(page_id),
+                        int(revision_id),
+                        str(qid),
+                        int(indexed_row_group),
+                        int(row_index),
+                    )
+                    for (
+                        document_id,
+                        language,
+                        title,
+                        page_id,
+                        revision_id,
+                        qid,
+                        indexed_row_group,
+                        row_index,
+                    ) in indexed
+                ],
+            )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO scan_progress(
+                    path, size, mtime_ns, ctime_ns, inode, legacy,
+                    total_row_groups, next_row_group
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (resolved, *fingerprint, total_row_groups, row_group + 1),
+            )
+
     def _sync(self, files: tuple[Path, ...]) -> bool:
         connection = self._writer_connection
         current = {str(path.resolve()): (path, path.parent.name == "articles") for path in files}
@@ -405,8 +472,9 @@ class _PersistentV1Index:
             resolved = str(path.resolve())
             fingerprint = (*self._fingerprint(path), path.parent.name == "articles")
             if known.get(resolved) == fingerprint:
-                with connection:
-                    connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
+                if resolved in progress:
+                    with connection:
+                        connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
                 continue
             LOGGER.info(
                 "V2 V1 reuse index: scanning shard %d/%d (%s)", position, len(files), path.name
@@ -436,73 +504,62 @@ class _PersistentV1Index:
                         (resolved, *fingerprint, total_row_groups),
                     )
                 self._row_cache.clear()
-            for row_group in range(start_row_group, total_row_groups):
-                if self._stop.is_set():
+            reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="v2-index-reader")
+            next_group: Future[list[tuple[str, str, str, int, int, str, int, int]]] | None = None
+            try:
+                if start_row_group < total_row_groups:
+                    next_group = reader.submit(
+                        _scan_index_row_group,
+                        path,
+                        legacy_articles=legacy_articles,
+                        row_group=start_row_group,
+                        parquet_file=parquet_file,
+                    )
+                for row_group in range(start_row_group, total_row_groups):
+                    if self._stop.is_set():
+                        if next_group is not None:
+                            next_group.cancel()
+                        LOGGER.info(
+                            "V2 V1 reuse index stopped in shard %d/%d at row group %d/%d; "
+                            "completed work is resumable",
+                            position,
+                            len(files),
+                            row_group,
+                            total_row_groups,
+                        )
+                        return False
+                    if next_group is None:  # pragma: no cover - loop invariant
+                        raise RuntimeError("V2 index reader lost the next row group")
+                    indexed = next_group.result()
+                    next_group = None
+                    if row_group + 1 < total_row_groups and not self._stop.is_set():
+                        next_group = reader.submit(
+                            _scan_index_row_group,
+                            path,
+                            legacy_articles=legacy_articles,
+                            row_group=row_group + 1,
+                            parquet_file=parquet_file,
+                        )
+                    self._commit_indexed_row_group(
+                        connection,
+                        indexed,
+                        resolved=resolved,
+                        fingerprint=fingerprint,
+                        total_row_groups=total_row_groups,
+                        row_group=row_group,
+                    )
                     LOGGER.info(
-                        "V2 V1 reuse index stopped in shard %d/%d at row group %d/%d; "
-                        "completed work is resumable",
+                        "V2 V1 reuse index: shard %d/%d row group %d/%d ready (%d identities)",
                         position,
                         len(files),
-                        row_group,
+                        row_group + 1,
                         total_row_groups,
+                        len(indexed),
                     )
-                    return False
-                indexed = _scan_index_row_group(
-                    path,
-                    legacy_articles=legacy_articles,
-                    row_group=row_group,
-                    parquet_file=parquet_file,
-                )
-                with connection:
-                    connection.executemany(
-                        """
-                        INSERT OR IGNORE INTO documents(
-                            document_id, source_path, legacy, language, title_key,
-                            page_id, revision_id, qid, row_group, row_index
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        [
-                            (
-                                str(document_id),
-                                resolved,
-                                int(legacy_articles),
-                                str(language).casefold(),
-                                _title_key(str(language), str(title))[1],
-                                int(page_id),
-                                int(revision_id),
-                                str(qid),
-                                int(indexed_row_group),
-                                int(row_index),
-                            )
-                            for (
-                                document_id,
-                                language,
-                                title,
-                                page_id,
-                                revision_id,
-                                qid,
-                                indexed_row_group,
-                                row_index,
-                            ) in indexed
-                        ],
-                    )
-                    connection.execute(
-                        """
-                        INSERT OR REPLACE INTO scan_progress(
-                            path, size, mtime_ns, ctime_ns, inode, legacy,
-                            total_row_groups, next_row_group
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (resolved, *fingerprint, total_row_groups, row_group + 1),
-                    )
-                LOGGER.info(
-                    "V2 V1 reuse index: shard %d/%d row group %d/%d ready (%d identities)",
-                    position,
-                    len(files),
-                    row_group + 1,
-                    total_row_groups,
-                    len(indexed),
-                )
+            finally:
+                if next_group is not None:
+                    next_group.cancel()
+                reader.shutdown(wait=True, cancel_futures=True)
             with connection:
                 connection.execute(
                     """

@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 import pyarrow as pa
@@ -105,6 +106,40 @@ def test_index_allows_shared_page_revision_for_distinct_qids(tmp_path: Path) -> 
     assert index.by_title("en", "Douglas Adams") == index.by_page("en", 1)
 
 
+def test_index_row_group_builder_uses_columnar_values_without_row_dicts() -> None:
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    class Column:
+        def __init__(self, values: list[object]) -> None:
+            self._values = values
+
+        def to_pylist(self) -> list[object]:
+            return self._values
+
+    class ColumnarTable:
+        num_rows = 1
+
+        def __init__(self) -> None:
+            self._columns = {
+                "document_id": Column(["Q42:wikipedia:en:1:2"]),
+                "language": Column(["en"]),
+                "title": Column(["Douglas Adams"]),
+                "page_id": Column([1]),
+                "revision_id": Column([2]),
+                "wikidata": Column(["Q42"]),
+            }
+
+        def column(self, name: str) -> Column:
+            return self._columns[name]
+
+        def to_pylist(self) -> list[dict[str, object]]:
+            raise AssertionError("row dictionaries must not be materialized")
+
+    assert v1_index._index_rows_from_table(ColumnarTable(), legacy_articles=False, row_group=4) == [
+        ("Q42:wikipedia:en:1:2", "en", "Douglas Adams", 1, 2, "Q42", 4, 0)
+    ]
+
+
 def test_index_reuses_legacy_articles_when_canonical_documents_are_absent(
     tmp_path: Path,
 ) -> None:
@@ -132,6 +167,85 @@ def test_persistent_index_reuses_completed_shards_without_rescanning(
     monkeypatch.setattr(v1_index, "_scan_index_rows", fail_if_scanned)
     second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert second.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
+
+
+def test_persistent_index_does_not_write_for_unchanged_shards(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    statements: list[str] = []
+    original = v1_index._PersistentV1Index._open_connection
+
+    def open_traced(store: object):
+        connection = original(store)  # type: ignore[arg-type]
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(v1_index._PersistentV1Index, "_open_connection", open_traced)
+    build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert not any("DELETE FROM scan_progress" in statement for statement in statements)
+
+
+def test_persistent_index_reads_next_row_group_during_current_commit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "wikipedia" / "documents" / "region.parquet"
+    path.parent.mkdir(parents=True)
+    rows = [
+        _document(),
+        _document(
+            document_id="Q43:wikipedia:en:2:3",
+            article_id="Q43:en:2:3",
+            wikidata="Q43",
+            title="Second page",
+            page_id=2,
+            revision_id=3,
+        ),
+    ]
+    pq.write_table(
+        pa.Table.from_pylist(rows, schema=wikipedia_document_schema()),
+        path,
+        row_group_size=1,
+    )
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    second_scanned = threading.Event()
+    original_scan = v1_index._scan_index_row_group
+
+    def scan(
+        path_arg: Path,
+        *,
+        legacy_articles: bool,
+        row_group: int,
+        parquet_file: object = None,
+    ):
+        if row_group == 1:
+            second_scanned.set()
+        return original_scan(
+            path_arg,
+            legacy_articles=legacy_articles,
+            row_group=row_group,
+            parquet_file=parquet_file,  # type: ignore[arg-type]
+        )
+
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
+    original_commit = v1_index._PersistentV1Index._commit_indexed_row_group
+
+    def commit(store: object, *args: object, **kwargs: object) -> None:
+        if kwargs["row_group"] == 0:
+            assert second_scanned.wait(timeout=2)
+        original_commit(store, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(v1_index._PersistentV1Index, "_commit_indexed_row_group", commit)
+    index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "cache")
+    assert index.by_title("en", "Second page")[0]["document_id"] == "Q43:wikipedia:en:2:3"
 
 
 def test_persistent_index_adds_new_shards_incrementally(tmp_path: Path) -> None:
