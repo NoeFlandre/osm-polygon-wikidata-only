@@ -295,6 +295,48 @@ def test_background_index_handle_returns_before_storage_initialization(
     index.close()
 
 
+def test_background_index_opens_sqlite_on_worker_thread(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The caller must not wait for SQLite WAL setup on the external disk."""
+    _write_documents(tmp_path, [_document()])
+    import threading
+
+    opened = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+    result: dict[str, V1ReuseIndex] = {}
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index._PersistentV1Index._open_connection
+
+    def open_slow(store: object):
+        opened.set()
+        assert release.wait(timeout=2)
+        return original(store)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(v1_index._PersistentV1Index, "_open_connection", open_slow)
+
+    def launch() -> None:
+        result["index"] = start_v1_reuse_index(
+            tmp_path,
+            cache_dir=tmp_path / "v2-cache" / "v1-index",
+        )
+        returned.set()
+
+    thread = threading.Thread(target=launch)
+    thread.start()
+    assert opened.wait(timeout=2)
+    assert returned.wait(timeout=0.2)
+    release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    index = result["index"]
+    index.wait_until_ready()
+    index.close()
+
+
 def test_persistent_index_resumes_inside_an_interrupted_shard(
     tmp_path: Path,
     monkeypatch,

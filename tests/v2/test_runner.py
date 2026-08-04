@@ -1,4 +1,7 @@
+import threading
 from pathlib import Path
+
+import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
@@ -167,3 +170,108 @@ def test_v2_runner_extracts_while_v1_index_is_still_building(
         == 0
     )
     assert events == ["index-started", "extracted", "index-ready", "index-closed"]
+
+
+def test_v2_runner_prefetches_next_extraction_before_current_merge(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    first = root.raw / "first-latest.osm.pbf"
+    second = root.raw / "second-latest.osm.pbf"
+    first.touch()
+    second.touch()
+    first_extracted = V2ExtractedPbf(V2PbfStem(first, "first-latest", "first"), (), 0.0)
+    second_extracted = V2ExtractedPbf(V2PbfStem(second, "second-latest", "second"), (), 0.0)
+    second_started = threading.Event()
+    merge_finished = threading.Event()
+
+    class ReadyIndex:
+        is_ready = True
+
+        def wait_until_ready(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: ReadyIndex(),
+    )
+
+    def extract(path: Path, **_kwargs: object) -> V2ExtractedPbf:
+        if path == second:
+            second_started.set()
+            return second_extracted
+        return first_extracted
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.extract_v2_pbf", extract)
+
+    def merge(data_root: DataRoot, extracted: V2ExtractedPbf, **_kwargs: object) -> None:
+        if extracted.stem.stem == "first-latest":
+            assert second_started.wait(timeout=2)
+            merge_finished.set()
+        write_v2_region(
+            data_root.processed_v2,
+            extracted.stem.stem,
+            polygons=[],
+            documents=[],
+            links=[],
+        )
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.merge_v2_region", merge)
+    assert (
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=InMemoryWikipediaClient({}),
+        )
+        == 0
+    )
+    assert merge_finished.is_set()
+
+
+def test_v2_runner_does_not_start_later_extraction_after_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    first = root.raw / "first-latest.osm.pbf"
+    second = root.raw / "second-latest.osm.pbf"
+    first.touch()
+    second.touch()
+    calls: list[str] = []
+
+    class ReadyIndex:
+        is_ready = True
+
+        def wait_until_ready(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: ReadyIndex(),
+    )
+
+    def extract(path: Path, **_kwargs: object) -> V2ExtractedPbf:
+        calls.append(path.name)
+        if path == first:
+            raise RuntimeError("first extraction failed")
+        raise AssertionError("later extraction started after a failure")
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.extract_v2_pbf", extract)
+    with pytest.raises(RuntimeError, match="first extraction failed"):
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=InMemoryWikipediaClient({}),
+        )
+    assert calls == [first.name]

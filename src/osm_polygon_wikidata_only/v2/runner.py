@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,53 @@ LOGGER = logging.getLogger(__name__)
 
 
 Upload = Callable[[list[PublicationOp], str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _RegionPlan:
+    pbf: Path
+    stem: str
+    action: str
+
+
+def _plan_regions(
+    pbfs: Sequence[Path],
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+    manifest: dict[str, dict[str, Any]],
+    push: bool,
+    remote_inventory: RemoteInventory | None,
+) -> tuple[_RegionPlan, ...]:
+    plans: list[_RegionPlan] = []
+    for pbf in pbfs:
+        stem = pbf.name.removesuffix(".osm.pbf")
+        current = (
+            settings.skip_existing
+            and not settings.force
+            and _region_is_current(data_root.processed_v2, stem, manifest)
+        )
+        if not current:
+            action = "extract"
+        elif not push or _remote_region_complete(remote_inventory, data_root, stem):
+            action = "skip"
+        else:
+            action = "publish"
+        plans.append(_RegionPlan(pbf, stem, action))
+    return tuple(plans)
+
+
+def _remote_region_complete(
+    remote_inventory: RemoteInventory | None,
+    data_root: DataRoot,
+    stem: str,
+) -> bool:
+    if remote_inventory is None:
+        return False
+    return all(
+        remote_inventory.contains(operation.path_in_repo)
+        for operation in region_publication_ops(data_root.processed_v2, stem)
+    )
 
 
 def run_v2_sync(
@@ -68,32 +117,68 @@ def run_v2_sync(
         contract_version=V2_CACHE_CONTRACT_VERSION,
     )
     manifest = load_v2_manifest(data_root.processed_v2)
+    plans = _plan_regions(
+        pbfs,
+        data_root=data_root,
+        settings=settings,
+        manifest=manifest,
+        push=push,
+        remote_inventory=remote_inventory,
+    )
     completed = 0
-    try:
-        for pbf in pbfs:
-            stem = pbf.name.removesuffix(".osm.pbf")
-            current = (
-                settings.skip_existing
-                and not settings.force
-                and _region_is_current(data_root.processed_v2, stem, manifest)
+    extraction_executor = ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="v2-extraction",
+    )
+    extraction_future: Future[Any] | None = None
+    extraction_index: int | None = None
+
+    def schedule_next(after_index: int) -> None:
+        nonlocal extraction_future, extraction_index
+        if extraction_future is not None:
+            return
+        for candidate_index in range(after_index + 1, len(plans)):
+            candidate = plans[candidate_index]
+            if candidate.action != "extract":
+                continue
+            LOGGER.info(
+                "Starting V2 region %s (extraction scheduled; one-region prefetch)",
+                candidate.stem,
             )
-            if current:
-                region_ops = region_publication_ops(data_root.processed_v2, stem)
-                remote_complete = remote_inventory is not None and all(
-                    remote_inventory.contains(op.path_in_repo) for op in region_ops
-                )
-                if not push or remote_complete:
-                    LOGGER.info("Skipping V2 %s (already current)", stem)
-                    completed += 1
-                    continue
+            extraction_future = extraction_executor.submit(
+                extract_v2_pbf,
+                candidate.pbf,
+                settings=settings,
+            )
+            extraction_index = candidate_index
+            return
+
+    try:
+        schedule_next(-1)
+        for position, plan in enumerate(plans):
+            stem = plan.stem
+            if plan.action == "skip":
+                LOGGER.info("Skipping V2 %s (already current)", stem)
+                completed += 1
+                continue
+            if plan.action == "publish":
                 if upload is None:
                     raise RuntimeError("V2 publication requested without an upload callback")
                 LOGGER.info("Publishing existing V2 %s (remote artifacts are incomplete)", stem)
-                upload(region_ops, f"Repair V2 region {stem}")
+                upload(
+                    region_publication_ops(data_root.processed_v2, stem),
+                    f"Repair V2 region {stem}",
+                )
                 completed += 1
                 continue
-            LOGGER.info("Starting V2 region %s", stem)
-            extracted = extract_v2_pbf(pbf, settings=settings)
+
+            if extraction_future is None or extraction_index != position:
+                raise RuntimeError(f"V2 extraction prefetch lost region {stem}")
+            future = extraction_future
+            extraction_future = None
+            extraction_index = None
+            extracted = future.result()
+            schedule_next(position)
             merge_v2_region(
                 data_root,
                 extracted,
@@ -103,6 +188,7 @@ def run_v2_sync(
                 section_workers=section_workers,
                 cache=v2_cache,
                 fetch_full_text=settings.fetch_full_text,
+                direct_workers=settings.enrichment_site_workers,
             )
             manifest = load_v2_manifest(data_root.processed_v2)
             completed += 1
@@ -128,6 +214,9 @@ def run_v2_sync(
         LOGGER.info("V2 sync complete: %d region(s); card=%s", completed, card)
         return 0
     finally:
+        if extraction_future is not None:
+            extraction_future.cancel()
+        extraction_executor.shutdown(wait=True, cancel_futures=True)
         index.close()
 
 

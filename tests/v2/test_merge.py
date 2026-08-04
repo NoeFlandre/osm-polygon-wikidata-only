@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 import pyarrow as pa
@@ -214,3 +215,80 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
         row for row in polygon_rows if row["polygon_id"] == voyage_polygon["polygon_id"]
     )
     assert voyage_row["has_wikipedia"] is False
+
+
+def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically(
+    tmp_path: Path,
+) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    stem = "region-latest"
+    first = candidate_to_v2_row(
+        (
+            "way",
+            1,
+            {"wikipedia": "en:First page"},
+            '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}',
+        ),
+        source_pbf_stem=stem,
+        region="region",
+        source_pbf=f"{stem}.osm.pbf",
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    second = candidate_to_v2_row(
+        (
+            "way",
+            2,
+            {"wikipedia": "en:Second page"},
+            '{"type":"Polygon","coordinates":[[[2,0],[3,0],[3,1],[2,0]]]}',
+        ),
+        source_pbf_stem=stem,
+        region="region",
+        source_pbf=f"{stem}.osm.pbf",
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    assert first is not None and second is not None
+    extracted = V2ExtractedPbf(
+        V2PbfStem(tmp_path / f"{stem}.osm.pbf", stem, "region"),
+        (first, second),
+        0.0,
+    )
+
+    class ConcurrentClient:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self._barrier = threading.Barrier(2)
+            self.active = 0
+            self.max_active = 0
+
+        def fetch_article(self, _language: str, _site: str, title: str, **_kwargs: object):
+            with self._lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                self._barrier.wait(timeout=2)
+                page_id = 1 if title == "First page" else 2
+                return FetchResult("ok", _article(title, page_id=page_id))
+            finally:
+                with self._lock:
+                    self.active -= 1
+
+    class SectionClient:
+        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+            return "<p>text</p>"
+
+    client = ConcurrentClient()
+    merge_v2_region(
+        root,
+        extracted,
+        index=build_v1_reuse_index(root.processed),
+        wikipedia_client=client,
+        section_client=SectionClient(),
+        direct_workers=2,
+    )
+
+    assert client.max_active == 2
+    documents = pq.read_table(
+        root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet"
+    ).to_pylist()
+    assert [row["title"] for row in documents] == ["First page", "Second page"]

@@ -8,11 +8,13 @@ by a V1 document are fetched.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
 import shutil
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict, deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -26,10 +28,16 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_COLUMNS
-from osm_polygon_wikidata_only.v2.direct_enrichment import enrich_wikipedia_refs
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    DirectEnrichmentResult,
+    _cached_client,
+    enrich_wikipedia_refs,
+)
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
-from osm_polygon_wikidata_only.v2.wikipedia_tags import parse_wikipedia_tags
+from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef, parse_wikipedia_tags
+
+LOGGER = logging.getLogger(__name__)
 
 SIDECAR_SUBDIRS: tuple[str, ...] = (
     "wikipedia/sections",
@@ -251,6 +259,7 @@ def merge_v2_region(
     fetch_full_text: bool = True,
     section_client: SectionClient | None = None,
     section_workers: int = 8,
+    direct_workers: int = 1,
 ) -> tuple[dict[str, Any], ...]:
     """Merge V1 rows with V2 discoveries and persist one canonical region."""
     stem = extracted.stem.stem
@@ -283,6 +292,8 @@ def merge_v2_region(
             polygons[key] = dict(discovered)
     documents = {str(row["document_id"]): dict(row) for row in v1.documents}
     links = {(_link_key(row)): dict(row) for row in v1.links}
+    direct_client = _cached_client(wikipedia_client, cache)
+    direct_inputs: list[tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]]] = []
     for polygon_id, polygon in sorted(polygons.items()):
         raw_refs = json.loads(str(polygon.get("wikipedia_tag_refs", "[]")))
         refs = tuple(
@@ -292,15 +303,46 @@ def merge_v2_region(
         refs = tuple(ref for group in refs for ref in group)
         if not refs:
             continue
-        direct = enrich_wikipedia_refs(
+        direct_inputs.append((polygon_id, polygon, refs))
+
+    def enrich_one(
+        item: tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]],
+    ) -> DirectEnrichmentResult:
+        polygon_id, polygon, refs = item
+        return enrich_wikipedia_refs(
             polygon_id,
             refs,
             index=index,
-            wikipedia_client=wikipedia_client,
+            wikipedia_client=direct_client,
             polygon_context=polygon,
-            cache=cache,
+            cache=None,
             fetch_full_text=fetch_full_text,
         )
+
+    if direct_inputs and direct_workers > 1:
+        LOGGER.info(
+            "V2 direct Wikipedia enrichment: %d polygon(s) with up to %d workers",
+            len(direct_inputs),
+            direct_workers,
+        )
+        workers = min(direct_workers, len(direct_inputs))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending: deque[Future[DirectEnrichmentResult]] = deque()
+            inputs = iter(direct_inputs)
+            for _ in range(workers):
+                try:
+                    pending.append(executor.submit(enrich_one, next(inputs)))
+                except StopIteration:
+                    break
+            enriched = []
+            while pending:
+                enriched.append(pending.popleft().result())
+                with contextlib.suppress(StopIteration):
+                    pending.append(executor.submit(enrich_one, next(inputs)))
+    else:
+        enriched = [enrich_one(item) for item in direct_inputs]
+
+    for direct in enriched:
         for document in direct.documents:
             documents[str(document["document_id"])] = dict(document)
         for link in direct.links:

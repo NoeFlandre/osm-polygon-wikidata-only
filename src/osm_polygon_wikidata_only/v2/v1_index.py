@@ -170,14 +170,7 @@ class _PersistentV1Index:
     ) -> None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = cache_dir / _INDEX_FILENAME
-        self._connection = sqlite3.connect(self._db_path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA busy_timeout=30000")
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA synchronous=NORMAL")
-        self._connection.execute("PRAGMA temp_store=MEMORY")
-        self._connection.execute("PRAGMA cache_size=-65536")
-        self._connection.execute("PRAGMA wal_autocheckpoint=10000")
+        self._connection: sqlite3.Connection | None = None
         self._row_cache: OrderedDict[str, DocumentRow] = OrderedDict()
         self._row_cache_limit = 10_000
         self._files = files
@@ -190,6 +183,7 @@ class _PersistentV1Index:
         self._reader_local = threading.local()
         self._reader_connections: list[sqlite3.Connection] = []
         self._reader_lock = threading.Lock()
+        self._materialize_lock = threading.Lock()
         if background:
             self._thread = threading.Thread(
                 target=self._run_sync,
@@ -198,10 +192,30 @@ class _PersistentV1Index:
             )
             self._thread.start()
         else:
+            self._connection = self._open_connection()
             self._initialize_schema()
             self._initialized.set()
             self._run_sync()
             self._raise_error()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open and tune the writer connection on the indexing worker."""
+        connection = sqlite3.connect(self._db_path, check_same_thread=False)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA temp_store=MEMORY")
+        connection.execute("PRAGMA cache_size=-65536")
+        connection.execute("PRAGMA wal_autocheckpoint=10000")
+        return connection
+
+    @property
+    def _writer_connection(self) -> sqlite3.Connection:
+        connection = self._connection
+        if connection is None:
+            raise RuntimeError("V2 V1 reuse index writer is not initialized")
+        return connection
 
     @property
     def is_ready(self) -> bool:
@@ -231,7 +245,10 @@ class _PersistentV1Index:
             for connection in self._reader_connections:
                 connection.close()
             self._reader_connections.clear()
-        self._connection.close()
+        connection = self._connection
+        if connection is not None:
+            connection.close()
+            self._connection = None
 
     def _raise_error(self) -> None:
         if self._error is not None:
@@ -271,6 +288,7 @@ class _PersistentV1Index:
     def _run_sync(self) -> None:
         try:
             if not self._initialized.is_set():
+                self._connection = self._open_connection()
                 self._initialize_schema()
                 self._initialized.set()
                 LOGGER.info("V2 V1 reuse index storage initialized; scanning in background")
@@ -284,15 +302,16 @@ class _PersistentV1Index:
             self._ready.set()
 
     def _initialize_schema(self) -> None:
-        version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+        connection = self._writer_connection
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version not in (0, 1, _INDEX_SCHEMA_VERSION):
-            with self._connection:
-                self._connection.executescript(
+            with connection:
+                connection.executescript(
                     "DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS file_state; "
                     "DROP TABLE IF EXISTS scan_progress;"
                 )
-        with self._connection:
-            self._connection.executescript(
+        with connection:
+            connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS file_state (
                     path TEXT PRIMARY KEY,
@@ -333,7 +352,7 @@ class _PersistentV1Index:
                 );
                 """
             )
-            self._connection.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
+            connection.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
 
     @staticmethod
     def _fingerprint(path: Path) -> tuple[int, int, int, int]:
@@ -341,6 +360,7 @@ class _PersistentV1Index:
         return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino
 
     def _sync(self, files: tuple[Path, ...]) -> bool:
+        connection = self._writer_connection
         current = {str(path.resolve()): (path, path.parent.name == "articles") for path in files}
         known = {
             str(row["path"]): (
@@ -350,7 +370,7 @@ class _PersistentV1Index:
                 int(row["inode"]),
                 bool(row["legacy"]),
             )
-            for row in self._connection.execute("SELECT * FROM file_state")
+            for row in connection.execute("SELECT * FROM file_state")
         }
         progress = {
             str(row["path"]): (
@@ -362,15 +382,15 @@ class _PersistentV1Index:
                 int(row["total_row_groups"]),
                 int(row["next_row_group"]),
             )
-            for row in self._connection.execute("SELECT * FROM scan_progress")
+            for row in connection.execute("SELECT * FROM scan_progress")
         }
         stale = set(known) - set(current)
         if stale:
-            with self._connection:
+            with connection:
                 for path in stale:
-                    self._connection.execute("DELETE FROM documents WHERE source_path=?", (path,))
-                    self._connection.execute("DELETE FROM file_state WHERE path=?", (path,))
-                    self._connection.execute("DELETE FROM scan_progress WHERE path=?", (path,))
+                    connection.execute("DELETE FROM documents WHERE source_path=?", (path,))
+                    connection.execute("DELETE FROM file_state WHERE path=?", (path,))
+                    connection.execute("DELETE FROM scan_progress WHERE path=?", (path,))
             self._row_cache.clear()
 
         changed = 0
@@ -385,8 +405,8 @@ class _PersistentV1Index:
             resolved = str(path.resolve())
             fingerprint = (*self._fingerprint(path), path.parent.name == "articles")
             if known.get(resolved) == fingerprint:
-                with self._connection:
-                    self._connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
+                with connection:
+                    connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
                 continue
             LOGGER.info(
                 "V2 V1 reuse index: scanning shard %d/%d (%s)", position, len(files), path.name
@@ -403,12 +423,10 @@ class _PersistentV1Index:
             )
             start_row_group = previous[6] if matching_progress and previous is not None else 0
             if start_row_group == 0:
-                with self._connection:
-                    self._connection.execute(
-                        "DELETE FROM documents WHERE source_path=?", (resolved,)
-                    )
-                    self._connection.execute("DELETE FROM file_state WHERE path=?", (resolved,))
-                    self._connection.execute(
+                with connection:
+                    connection.execute("DELETE FROM documents WHERE source_path=?", (resolved,))
+                    connection.execute("DELETE FROM file_state WHERE path=?", (resolved,))
+                    connection.execute(
                         """
                         INSERT OR REPLACE INTO scan_progress(
                             path, size, mtime_ns, ctime_ns, inode, legacy,
@@ -435,8 +453,8 @@ class _PersistentV1Index:
                     row_group=row_group,
                     parquet_file=parquet_file,
                 )
-                with self._connection:
-                    self._connection.executemany(
+                with connection:
+                    connection.executemany(
                         """
                         INSERT OR IGNORE INTO documents(
                             document_id, source_path, legacy, language, title_key,
@@ -468,7 +486,7 @@ class _PersistentV1Index:
                             ) in indexed
                         ],
                     )
-                    self._connection.execute(
+                    connection.execute(
                         """
                         INSERT OR REPLACE INTO scan_progress(
                             path, size, mtime_ns, ctime_ns, inode, legacy,
@@ -485,15 +503,15 @@ class _PersistentV1Index:
                     total_row_groups,
                     len(indexed),
                 )
-            with self._connection:
-                self._connection.execute(
+            with connection:
+                connection.execute(
                     """
                     INSERT OR REPLACE INTO file_state(path, size, mtime_ns, ctime_ns, inode, legacy)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (resolved, *fingerprint),
                 )
-                self._connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
+                connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
             self._row_cache.clear()
             changed += 1
             LOGGER.info(
@@ -502,7 +520,7 @@ class _PersistentV1Index:
                 len(files),
             )
 
-        row_count = self._connection.execute(
+        row_count = connection.execute(
             "SELECT COUNT(DISTINCT document_id) FROM documents"
         ).fetchone()[0]
         if changed or stale:
@@ -549,7 +567,8 @@ class _PersistentV1Index:
         by_document: dict[str, sqlite3.Row] = {}
         for row in rows:
             by_document.setdefault(str(row["document_id"]), row)
-        materialized = self._materialize(tuple(by_document.values()))
+        with self._materialize_lock:
+            materialized = self._materialize(tuple(by_document.values()))
         return tuple(materialized[document_id] for document_id in sorted(materialized))
 
     def _materialize(self, references: tuple[sqlite3.Row, ...]) -> dict[str, DocumentRow]:

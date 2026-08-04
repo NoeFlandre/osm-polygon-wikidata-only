@@ -16,6 +16,7 @@ Out of scope (intentionally retained elsewhere):
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable
 from typing import Any
 
@@ -38,6 +39,16 @@ class CachedWikipediaClient(WikipediaClient):
         self._inner = inner
         self._cache = cache
         self._failed_ttl_s = failed_ttl_s
+        self._key_locks: dict[str, threading.Lock] = {}
+        self._key_locks_guard = threading.Lock()
+
+    def _lock_for(self, key: str) -> threading.Lock:
+        with self._key_locks_guard:
+            lock = self._key_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._key_locks[key] = lock
+            return lock
 
     def fetch_article(
         self,
@@ -51,20 +62,21 @@ class CachedWikipediaClient(WikipediaClient):
         fetch_full_text: bool = True,
     ) -> FetchResult:
         key = self._cache_key(site, title, fetch_full_text)
-        cached = self._cached_result(key)
-        if cached is not None:
-            return cached
-        result = self._inner.fetch_article(
-            language,
-            site,
-            title,
-            wikidata_label=wikidata_label,
-            wikidata_description=wikidata_description,
-            wikidata_aliases=wikidata_aliases,
-            fetch_full_text=fetch_full_text,
-        )
-        self._store_result(key, result, language, site, title, fetch_full_text)
-        return result
+        with self._lock_for(key):
+            cached = self._cached_result(key)
+            if cached is not None:
+                return cached
+            result = self._inner.fetch_article(
+                language,
+                site,
+                title,
+                wikidata_label=wikidata_label,
+                wikidata_description=wikidata_description,
+                wikidata_aliases=wikidata_aliases,
+                fetch_full_text=fetch_full_text,
+            )
+            self._store_result(key, result, language, site, title, fetch_full_text)
+            return result
 
     def fetch_articles(
         self,
