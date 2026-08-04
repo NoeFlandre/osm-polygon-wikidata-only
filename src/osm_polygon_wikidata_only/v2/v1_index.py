@@ -106,6 +106,8 @@ def _scan_index_row_group(
     parquet_file: pq.ParquetFile | None = None,
 ) -> list[tuple[str, str, str, int, int, str, int, int]]:
     """Read identity columns and row positions for one committed row group."""
+    owns_parquet_file = parquet_file is None
+    validated: pq.ParquetFile | None = None
     try:
         validated = parquet_file or _validated_parquet_file(path, legacy_articles=legacy_articles)
         table = validated.read_row_group(
@@ -117,6 +119,9 @@ def _scan_index_row_group(
         raise
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+    finally:
+        if owns_parquet_file and validated is not None:
+            validated.close()
 
 
 def _index_rows_from_table(
@@ -156,20 +161,21 @@ def _scan_index_rows(
     path: Path, *, legacy_articles: bool
 ) -> list[tuple[str, str, str, int, int, str, int, int]]:
     """Read identity columns and row positions for one V1 shard."""
-    parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
-    indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
-    seen_documents: set[str] = set()
-    for row_group in range(parquet_file.num_row_groups):
-        for row in _scan_index_row_group(
-            path,
-            legacy_articles=legacy_articles,
-            row_group=row_group,
-        ):
-            if row[0] in seen_documents:
-                continue
-            seen_documents.add(row[0])
-            indexed.append(row)
-    return indexed
+    with _validated_parquet_file(path, legacy_articles=legacy_articles) as parquet_file:
+        indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
+        seen_documents: set[str] = set()
+        for row_group in range(parquet_file.num_row_groups):
+            for row in _scan_index_row_group(
+                path,
+                legacy_articles=legacy_articles,
+                row_group=row_group,
+                parquet_file=parquet_file,
+            ):
+                if row[0] in seen_documents:
+                    continue
+                seen_documents.add(row[0])
+                indexed.append(row)
+        return indexed
 
 
 class _PersistentV1Index:
@@ -560,6 +566,7 @@ class _PersistentV1Index:
                 if next_group is not None:
                     next_group.cancel()
                 reader.shutdown(wait=True, cancel_futures=True)
+                parquet_file.close()
             with connection:
                 connection.execute(
                     """
@@ -646,9 +653,9 @@ class _PersistentV1Index:
             grouped.setdefault(group, []).append(reference)
 
         for (source_path, legacy, row_group), group_references in grouped.items():
-            parquet_file = pq.ParquetFile(source_path)
-            table = parquet_file.read_row_group(row_group)
-            raw_rows = table.to_pylist()
+            with pq.ParquetFile(source_path) as parquet_file:
+                table = parquet_file.read_row_group(row_group)
+                raw_rows = table.to_pylist()
             for reference in group_references:
                 document_id = str(reference["document_id"])
                 row = raw_rows[int(reference["row_index"])]

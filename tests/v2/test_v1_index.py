@@ -169,6 +169,46 @@ def test_persistent_index_reuses_completed_shards_without_rescanning(
     assert second.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
 
 
+def test_persistent_lookup_closes_parquet_handles_after_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated V1 lookups must not consume one file descriptor per query."""
+    _write_documents(tmp_path, [_document()])
+    index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index.pq.ParquetFile
+    opened: list[object] = []
+    closed: list[object] = []
+
+    class TrackedParquetFile:
+        def __init__(self, path: Path) -> None:
+            self._inner = original(path)
+            opened.append(self)
+
+        def __enter__(self) -> "TrackedParquetFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.close()
+
+        def close(self) -> None:
+            if self not in closed:
+                self._inner.close()
+                closed.append(self)
+
+        def read_row_group(self, row_group: int):
+            return self._inner.read_row_group(row_group)
+
+    monkeypatch.setattr(v1_index.pq, "ParquetFile", TrackedParquetFile)
+    assert index.by_title("en", "Douglas Adams")
+    assert opened
+    assert closed == opened
+    index.close()
+
+
 def test_persistent_index_does_not_write_for_unchanged_shards(
     tmp_path: Path,
     monkeypatch,
