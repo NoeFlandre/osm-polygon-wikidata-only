@@ -91,13 +91,11 @@ def test_card_links_to_source_repository() -> None:
 
 def test_card_identifies_the_v1_github_contract() -> None:
     md = _render()
-    assert "This is the V1 dataset" in md
+    assert "This Hugging Face dataset is **V1**" in md
     assert (
-        "[V1 code on GitHub](https://github.com/NoeFlandre/"
+        "[V1.0.0 GitHub code](https://github.com/NoeFlandre/"
         "osm-polygon-wikidata-only/tree/v1.0.0)" in md
     )
-    assert "Wikidata-first" in md
-    assert "The separate V2 dataset" in md
 
 
 def test_card_includes_loader_snippet() -> None:
