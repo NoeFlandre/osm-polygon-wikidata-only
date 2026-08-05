@@ -101,6 +101,51 @@ def test_matching_v1_page_is_reused_without_fetch(tmp_path: Path) -> None:
     assert result.links[0]["link_sources"] == '["osm_wikipedia_tag"]'
 
 
+def test_direct_enrichment_batches_v1_title_lookups() -> None:
+    class BatchIndex:
+        is_ready = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def by_titles(
+            self,
+            keys: tuple[tuple[str, str], ...],
+        ) -> dict[tuple[str, str], tuple[dict[str, object], ...]]:
+            self.calls += 1
+            return {
+                (language, title.replace("_", " ").casefold()): (
+                    {
+                        "document_id": f"Q{position}:wikipedia:{language}:{position}:2",
+                        "wikidata": f"Q{position}",
+                        "language": language,
+                        "title": title,
+                        "page_id": position,
+                        "revision_id": 2,
+                    },
+                )
+                for position, (language, title) in enumerate(keys, start=1)
+            }
+
+        def by_title(self, *_args: object) -> tuple[dict[str, object], ...]:
+            raise AssertionError("scalar V1 title lookup should not be used")
+
+    index = BatchIndex()
+    refs = (
+        WikipediaTagRef("en", "One", "wikipedia:en", "One"),
+        WikipediaTagRef("fr", "Deux", "wikipedia:fr", "Deux"),
+    )
+    result = enrich_wikipedia_refs(
+        "polygon-1",
+        refs,
+        index=index,  # type: ignore[arg-type]
+        wikipedia_client=InMemoryWikipediaClient({}),
+    )
+
+    assert index.calls == 1
+    assert [status.status for status in result.statuses] == ["reused_v1", "reused_v1"]
+
+
 def test_missing_page_is_fetched_and_retained_without_qid() -> None:
     article = _article("New page")
     client = InMemoryWikipediaClient({("enwiki", "New page"): FetchResult("ok", article)})

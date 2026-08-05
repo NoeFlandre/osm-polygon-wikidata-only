@@ -317,6 +317,30 @@ def test_persistent_index_caches_completed_title_lookups(
     index.close()
 
 
+def test_persistent_index_batches_title_lookups(
+    tmp_path: Path,
+) -> None:
+    """A group of title lookups uses one bounded SQLite query."""
+    rows = [
+        _document(document_id="Q42:wikipedia:en:1:2", title="Douglas Adams", page_id=1),
+        _document(document_id="Q43:wikipedia:en:2:3", title="Douglas Noel", page_id=2),
+    ]
+    _write_documents(tmp_path, rows)
+    index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+    store = index._store
+    assert store is not None
+    reader = store._reader()
+    statements: list[str] = []
+    reader.set_trace_callback(statements.append)
+
+    matches = index.by_titles((("en", "Douglas Adams"), ("en", "Douglas Noel")))
+
+    assert matches[("en", "douglas adams")][0]["document_id"] == "Q42:wikipedia:en:1:2"
+    assert matches[("en", "douglas noel")][0]["document_id"] == "Q43:wikipedia:en:2:3"
+    assert sum("FROM documents" in statement for statement in statements) == 1
+    index.close()
+
+
 def test_persistent_lookup_closes_parquet_handles_after_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

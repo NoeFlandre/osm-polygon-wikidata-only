@@ -36,6 +36,8 @@ from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
     _cached_client,
     _link_row,
+    _lookup_titles,
+    _title_key,
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
 )
@@ -44,6 +46,7 @@ from osm_polygon_wikidata_only.v2.storage import write_v2_region
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef, parse_wikipedia_tags
 
 LOGGER = logging.getLogger(__name__)
+_RECONCILIATION_LOOKUP_BATCH_SIZE = 256
 
 SIDECAR_SUBDIRS: tuple[str, ...] = (
     "wikipedia/sections",
@@ -644,9 +647,16 @@ def reconcile_v2_region(
         else:
             del links[key]
 
-    for polygon_id, polygon in sorted(polygons.items()):
-        for ref in _polygon_refs(polygon):
-            existing = index.by_title(ref.language, ref.title)
+    ref_items = [
+        (polygon_id, polygon, ref)
+        for polygon_id, polygon in sorted(polygons.items())
+        for ref in _polygon_refs(polygon)
+    ]
+    for offset in range(0, len(ref_items), _RECONCILIATION_LOOKUP_BATCH_SIZE):
+        chunk = ref_items[offset : offset + _RECONCILIATION_LOOKUP_BATCH_SIZE]
+        matches = _lookup_titles(index, [ref for _polygon_id, _polygon, ref in chunk])
+        for polygon_id, polygon, ref in chunk:
+            existing = matches.get(_title_key(ref.language, ref.title), ())
             candidates = existing or current_by_title.get(
                 (
                     ref.language.casefold(),

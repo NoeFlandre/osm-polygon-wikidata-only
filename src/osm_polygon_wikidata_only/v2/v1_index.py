@@ -16,7 +16,7 @@ import logging
 import sqlite3
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +40,7 @@ _INDEX_SCHEMA_VERSION = 3
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
 _INDEX_SHUTDOWN_TIMEOUT_S = 5.0
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
+_TITLE_QUERY_BATCH_SIZE = 256
 _SECONDARY_INDEX_SQL = {
     "page": (
         "documents_page",
@@ -715,6 +716,67 @@ class _PersistentV1Index:
                     self._query_cache.popitem(last=False)
         return result
 
+    def by_titles(
+        self,
+        keys: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], tuple[DocumentRow, ...]]:
+        """Resolve title keys in bounded batches without changing row order."""
+        normalized = tuple(dict.fromkeys((_title_key(language, title) for language, title in keys)))
+        results: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
+        if not self._initialized.is_set():
+            return {key: () for key in normalized}
+        self._raise_error()
+
+        missing: list[tuple[str, str]] = []
+        if self._complete.is_set():
+            with self._query_cache_lock:
+                for key in normalized:
+                    cache_key = ("title", key)
+                    cached = self._query_cache.get(cache_key)
+                    if cached is None:
+                        missing.append(key)
+                    else:
+                        self._query_cache.move_to_end(cache_key)
+                        results[key] = cached
+        else:
+            missing.extend(normalized)
+
+        for offset in range(0, len(missing), _TITLE_QUERY_BATCH_SIZE):
+            chunk = tuple(missing[offset : offset + _TITLE_QUERY_BATCH_SIZE])
+            predicates = " OR ".join("(language=? AND title_key=?)" for _ in chunk)
+            parameters = tuple(value for key in chunk for value in key)
+            # The predicate is composed only from generated ``?`` placeholders;
+            # all title values remain bound parameters.
+            rows = self._reader().execute(
+                f"""
+                SELECT language, title_key, document_id, source_path, legacy, row_group, row_index
+                FROM documents
+                WHERE {predicates}
+                ORDER BY language, title_key, document_id, source_path
+                """,  # noqa: S608
+                parameters,
+            )
+            grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+            references_by_document: dict[str, sqlite3.Row] = {}
+            for row in rows:
+                key = (str(row["language"]), str(row["title_key"]))
+                grouped.setdefault(key, []).append(row)
+                references_by_document.setdefault(str(row["document_id"]), row)
+            with self._materialize_lock:
+                materialized = self._materialize(tuple(references_by_document.values()))
+            for key in chunk:
+                references = {str(row["document_id"]): row for row in grouped.get(key, ())}
+                result = tuple(materialized[document_id] for document_id in sorted(references))
+                results[key] = result
+                if self._complete.is_set():
+                    cache_key = ("title", key)
+                    with self._query_cache_lock:
+                        self._query_cache[cache_key] = result
+                        self._query_cache.move_to_end(cache_key)
+                        while len(self._query_cache) > self._query_cache_limit:
+                            self._query_cache.popitem(last=False)
+        return results
+
     def _materialize(self, references: tuple[sqlite3.Row, ...]) -> dict[str, DocumentRow]:
         result: dict[str, DocumentRow] = {}
         grouped: dict[tuple[str, bool, int], list[sqlite3.Row]] = {}
@@ -803,6 +865,17 @@ class V1ReuseIndex:
         if self._store is not None:
             return self._store.by_title(language, title)
         return self.by_title_index.get(_title_key(language, title), ())
+
+    def by_titles(
+        self,
+        keys: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], tuple[DocumentRow, ...]]:
+        """Resolve several titles and return canonicalized lookup keys."""
+        if self._store is not None:
+            return self._store.by_titles(keys)
+        return {
+            _title_key(language, title): self.by_title(language, title) for language, title in keys
+        }
 
     def by_qid(self, qid: str) -> tuple[DocumentRow, ...]:
         if self._store is not None:

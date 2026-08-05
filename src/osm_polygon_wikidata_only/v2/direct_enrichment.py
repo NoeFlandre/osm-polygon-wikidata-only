@@ -154,8 +154,9 @@ def enrich_wikipedia_refs(
         )
         statuses[position] = DirectWikipediaStatus(ref, "reused_v1", reused_v1=True)
 
+    initial_matches = _lookup_titles(index, refs)
     for position, ref in enumerate(refs):
-        existing = index.by_title(ref.language, ref.title)
+        existing = initial_matches.get(_title_key(ref.language, ref.title), ())
         if existing:
             reuse(position, ref, existing[0])
             continue
@@ -194,8 +195,9 @@ def enrich_wikipedia_refs(
             index.wait_until_ready()
             LOGGER.info("V2 direct enrichment resumed after V1 reuse index completion")
 
+    final_matches = _lookup_titles(index, [ref for _position, ref in pending])
     for position, ref in pending:
-        existing = index.by_title(ref.language, ref.title)
+        existing = final_matches.get(_title_key(ref.language, ref.title), ())
         if existing:
             reuse(position, ref, existing[0])
             continue
@@ -247,6 +249,22 @@ def _title_key(language: str, title: str) -> tuple[str, str]:
     return language.casefold(), title.replace("_", " ").casefold()
 
 
+def _lookup_titles(
+    index: Any,
+    refs: Sequence[WikipediaTagRef],
+) -> dict[tuple[str, str], tuple[Mapping[str, Any], ...]]:
+    """Resolve references in one batch when the index supports it."""
+    keys = tuple(dict.fromkeys((ref.language, ref.title) for ref in refs))
+    if not keys:
+        return {}
+    batch_lookup = getattr(index, "by_titles", None)
+    if callable(batch_lookup):
+        return batch_lookup(keys)
+    return {
+        _title_key(language, title): index.by_title(language, title) for language, title in keys
+    }
+
+
 def reconcile_wikipedia_refs(
     polygon_id: str,
     refs: Sequence[WikipediaTagRef],
@@ -275,8 +293,9 @@ def reconcile_wikipedia_refs(
     documents: dict[str, dict[str, Any]] = {}
     links: dict[str, dict[str, Any]] = {}
     statuses: list[DirectWikipediaStatus] = []
+    final_matches = _lookup_titles(index, refs)
     for position, ref in enumerate(refs):
-        existing = index.by_title(ref.language, ref.title)
+        existing = final_matches.get(_title_key(ref.language, ref.title), ())
         if existing:
             row = dict(existing[0])
             key = str(row["document_id"])
