@@ -295,6 +295,64 @@ def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically
     assert [row["title"] for row in documents] == ["First page", "Second page"]
 
 
+def test_merge_batches_v1_title_lookups_across_region(tmp_path: Path) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    stem = "region-latest"
+    extracted_rows = []
+    for position in range(3):
+        row = candidate_to_v2_row(
+            (
+                "way",
+                position + 1,
+                {"wikipedia": f"en:Page {position}"},
+                '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}',
+            ),
+            source_pbf_stem=stem,
+            region="region",
+            source_pbf=f"{stem}.osm.pbf",
+            extracted_at="2026-01-01T00:00:00Z",
+        )
+        assert row is not None
+        extracted_rows.append(row)
+    extracted = V2ExtractedPbf(
+        V2PbfStem(tmp_path / f"{stem}.osm.pbf", stem, "region"),
+        tuple(extracted_rows),
+        0.0,
+    )
+
+    class CountingIndex:
+        is_ready = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def by_titles(self, keys: tuple[tuple[str, str], ...]):
+            self.calls += 1
+            return {key: () for key in keys}
+
+    class WikipediaClient:
+        def fetch_article(self, _language: str, _site: str, title: str, **_kwargs: object):
+            return FetchResult("ok", _article(title))
+
+    class SectionClient:
+        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+            return "<p>text</p>"
+
+    index = CountingIndex()
+    merge_v2_region(
+        root,
+        extracted,
+        index=index,  # type: ignore[arg-type]
+        wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
+        section_client=SectionClient(),
+        direct_workers=1,
+        wait_for_index=False,
+    )
+
+    assert index.calls == 2
+
+
 def test_merge_fetches_sections_before_waiting_for_final_index(tmp_path: Path) -> None:
     root = DataRoot(tmp_path)
     root.ensure()

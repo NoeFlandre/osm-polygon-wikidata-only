@@ -402,6 +402,9 @@ def merge_v2_region(
             continue
         direct_inputs.append((polygon_id, polygon, refs))
 
+    all_refs = tuple(ref for _polygon_id, _polygon, refs in direct_inputs for ref in refs)
+    initial_matches = _lookup_titles(index, all_refs)
+
     def enrich_one(
         item: tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]],
     ) -> DirectEnrichmentResult:
@@ -415,6 +418,8 @@ def merge_v2_region(
             cache=None,
             fetch_full_text=fetch_full_text,
             wait_for_index=False,
+            initial_matches=initial_matches,
+            defer_final_lookup=True,
         )
 
     results_by_polygon: dict[str, DirectEnrichmentResult] = {}
@@ -483,6 +488,21 @@ def merge_v2_region(
 
     speculative_results = [
         results_by_polygon[polygon_id] for polygon_id, _polygon, _refs in direct_inputs
+    ]
+
+    provisional_matches = _lookup_titles(index, all_refs)
+    speculative_results = [
+        reconcile_wikipedia_refs(
+            polygon_id,
+            refs,
+            result,
+            index=index,
+            polygon_context=polygon,
+            title_matches=provisional_matches,
+        )
+        for (polygon_id, polygon, refs), result in zip(
+            direct_inputs, speculative_results, strict=True
+        )
     ]
 
     def add_direct_result(direct: DirectEnrichmentResult) -> None:

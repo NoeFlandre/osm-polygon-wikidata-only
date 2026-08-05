@@ -126,6 +126,8 @@ def enrich_wikipedia_refs(
     cache: JsonFileCache | None = None,
     fetch_full_text: bool = True,
     wait_for_index: bool = True,
+    initial_matches: Mapping[tuple[str, str], tuple[Mapping[str, Any], ...]] | None = None,
+    defer_final_lookup: bool = False,
 ) -> DirectEnrichmentResult:
     """Resolve direct references, optionally without waiting for V1 indexing.
 
@@ -154,7 +156,7 @@ def enrich_wikipedia_refs(
         )
         statuses[position] = DirectWikipediaStatus(ref, "reused_v1", reused_v1=True)
 
-    initial_matches = _lookup_titles(index, refs)
+    initial_matches = _lookup_titles(index, refs) if initial_matches is None else initial_matches
     for position, ref in enumerate(refs):
         existing = initial_matches.get(_title_key(ref.language, ref.title), ())
         if existing:
@@ -195,7 +197,9 @@ def enrich_wikipedia_refs(
             index.wait_until_ready()
             LOGGER.info("V2 direct enrichment resumed after V1 reuse index completion")
 
-    final_matches = _lookup_titles(index, [ref for _position, ref in pending])
+    final_matches = (
+        {} if defer_final_lookup else _lookup_titles(index, [ref for _position, ref in pending])
+    )
     for position, ref in pending:
         existing = final_matches.get(_title_key(ref.language, ref.title), ())
         if existing:
@@ -272,6 +276,7 @@ def reconcile_wikipedia_refs(
     *,
     index: V1ReuseIndex,
     polygon_context: Mapping[str, Any] | None = None,
+    title_matches: Mapping[tuple[str, str], tuple[Mapping[str, Any], ...]] | None = None,
 ) -> DirectEnrichmentResult:
     """Prefer final V1 rows over speculative direct results.
 
@@ -293,7 +298,7 @@ def reconcile_wikipedia_refs(
     documents: dict[str, dict[str, Any]] = {}
     links: dict[str, dict[str, Any]] = {}
     statuses: list[DirectWikipediaStatus] = []
-    final_matches = _lookup_titles(index, refs)
+    final_matches = _lookup_titles(index, refs) if title_matches is None else title_matches
     for position, ref in enumerate(refs):
         existing = final_matches.get(_title_key(ref.language, ref.title), ())
         if existing:

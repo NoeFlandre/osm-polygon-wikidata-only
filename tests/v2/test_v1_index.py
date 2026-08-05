@@ -255,6 +255,26 @@ def test_persistent_index_defers_unused_secondary_indexes_until_lookup(
     index.close()
 
 
+def test_persistent_title_index_contains_only_lookup_columns(tmp_path: Path) -> None:
+    """The persistent title index should avoid maintaining an unused sort key."""
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    try:
+        import sqlite3
+
+        connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
+        try:
+            columns = [
+                str(row[2]) for row in connection.execute("PRAGMA index_info(documents_title)")
+            ]
+        finally:
+            connection.close()
+        assert columns == ["language", "title_key"]
+    finally:
+        index.close()
+
+
 def test_persistent_index_migrates_existing_secondary_indexes_to_lazy_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -270,11 +290,15 @@ def test_persistent_index_migrates_existing_secondary_indexes_to_lazy_mode(
     connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
     try:
         with connection:
+            connection.execute("DROP INDEX documents_title")
+            connection.execute(
+                "CREATE INDEX documents_title ON documents(language, title_key, document_id)"
+            )
             connection.execute(
                 "CREATE INDEX documents_page ON documents(language, page_id, document_id)"
             )
             connection.execute("CREATE INDEX documents_qid ON documents(qid, document_id)")
-            connection.execute("PRAGMA user_version=2")
+            connection.execute("PRAGMA user_version=3")
     finally:
         connection.close()
 
@@ -289,10 +313,14 @@ def test_persistent_index_migrates_existing_secondary_indexes_to_lazy_mode(
         connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
         try:
             indexes = {str(row[1]) for row in connection.execute("PRAGMA index_list(documents)")}
+            title_columns = [
+                str(row[2]) for row in connection.execute("PRAGMA index_info(documents_title)")
+            ]
         finally:
             connection.close()
         assert "documents_page" not in indexes
         assert "documents_qid" not in indexes
+        assert title_columns == ["language", "title_key"]
         assert reopened.by_qid("Q42")[0]["document_id"] == "Q42:wikipedia:en:1:2"
     finally:
         reopened.close()

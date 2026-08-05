@@ -36,7 +36,7 @@ LOGGER = logging.getLogger(__name__)
 
 DocumentRow = dict[str, object]
 PageKey = tuple[str, int]
-_INDEX_SCHEMA_VERSION = 3
+_INDEX_SCHEMA_VERSION = 4
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
 _INDEX_SHUTDOWN_TIMEOUT_S = 5.0
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
@@ -369,7 +369,7 @@ class _PersistentV1Index:
     def _initialize_schema(self) -> None:
         connection = self._writer_connection
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, 1, 2, _INDEX_SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, _INDEX_SCHEMA_VERSION):
             with connection:
                 connection.executescript(
                     "DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS file_state; "
@@ -399,8 +399,6 @@ class _PersistentV1Index:
                     row_index INTEGER NOT NULL,
                     PRIMARY KEY (document_id, source_path)
                 );
-                CREATE INDEX IF NOT EXISTS documents_title
-                    ON documents(language, title_key, document_id);
                 CREATE TABLE IF NOT EXISTS scan_progress (
                     path TEXT PRIMARY KEY,
                     size INTEGER NOT NULL,
@@ -419,6 +417,14 @@ class _PersistentV1Index:
             # them until a caller actually requests one after the scan is
             # complete.  Dropping them here also migrates existing caches to
             # the cheaper write path without discarding indexed rows.
+            title_columns = tuple(
+                str(row[2]) for row in connection.execute("PRAGMA index_info(documents_title)")
+            )
+            if title_columns != ("language", "title_key"):
+                connection.execute("DROP INDEX IF EXISTS documents_title")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS documents_title ON documents(language, title_key)"
+            )
             connection.execute("DROP INDEX IF EXISTS documents_page")
             connection.execute("DROP INDEX IF EXISTS documents_qid")
             connection.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
