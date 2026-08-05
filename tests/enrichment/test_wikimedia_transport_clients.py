@@ -646,6 +646,33 @@ def test_augmentation_missing_revision_returns_empty_html_and_continues(
     assert "revision 1146058 is unavailable" in caplog.text
 
 
+def test_augmentation_deleted_revision_permission_denied_returns_empty_html_and_continues(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A private/deleted revision must not abort section enrichment."""
+    from osm_polygon_wikidata_only.augmentation.mediawiki import (
+        AugmentationWikimediaClient,
+        MediaWikiApiError,
+    )
+
+    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+
+    def permission_denied(_url: str, *, key: str) -> dict[str, object]:
+        raise MediaWikiApiError(
+            "Wikimedia API error permissiondenied: deleted revision",
+            code="permissiondenied",
+        )
+
+    client.get_json = permission_denied  # type: ignore[method-assign]
+
+    with caplog.at_level(
+        logging.WARNING, logger="osm_polygon_wikidata_only.augmentation.mediawiki"
+    ):
+        assert client.parse_html("wikipedia", "en", 1146058) == ""
+
+    assert "revision 1146058 is unavailable" in caplog.text
+
+
 def test_augmentation_missing_revision_api_payload_returns_empty_html() -> None:
     from osm_polygon_wikidata_only.augmentation.mediawiki import (
         AugmentationWikimediaClient,

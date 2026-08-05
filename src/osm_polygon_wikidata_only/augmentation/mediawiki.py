@@ -246,7 +246,7 @@ class AugmentationWikimediaClient:
                 key=f"sections/{project}/{language}/{revision_id}.json",
             )
         except MediaWikiApiError as error:
-            if error.code != "nosuchrevid":
+            if error.code not in {"nosuchrevid", "permissiondenied"}:
                 raise
             LOGGER.warning(
                 "Wikimedia revision %d is unavailable on %s; continuing without sections",
