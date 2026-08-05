@@ -86,6 +86,60 @@ def test_index_rejects_wrong_schema(tmp_path: Path) -> None:
         build_v1_reuse_index(tmp_path)
 
 
+def test_validated_parquet_file_closes_handle_when_schema_is_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A schema mismatch must not leak the opened ParquetFile handle.
+
+    ``_validated_parquet_file`` opens the shard before checking its schema.
+    When the schema check fails it must close the handle it opened rather
+    than relying on callers (which observe the function raising and so never
+    receive a handle to close).
+    """
+    path = tmp_path / "wikipedia" / "documents" / "region.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"title": ["bad"]}), path)
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original = v1_index.pq.ParquetFile
+    opened: list[object] = []
+    closed: list[object] = []
+
+    class _TrackedParquetFile:
+        def __init__(self, source: Path) -> None:
+            self._inner = original(source)
+            opened.append(self)
+
+        @property
+        def schema_arrow(self):
+            return self._inner.schema_arrow
+
+        @property
+        def num_row_groups(self):
+            return self._inner.num_row_groups
+
+        def read_row_group(self, row_group: int, columns=None):
+            return self._inner.read_row_group(row_group, columns=columns)
+
+        def read(self):
+            return self._inner.read()
+
+        def close(self) -> None:
+            if self not in closed:
+                self._inner.close()
+                closed.append(self)
+
+    monkeypatch.setattr(v1_index.pq, "ParquetFile", _TrackedParquetFile)
+
+    with pytest.raises(ValueError, match="schema"):
+        v1_index._validated_parquet_file(path, legacy_articles=False)
+
+    assert opened, "_validated_parquet_file must open a ParquetFile"
+    assert closed == opened, "ParquetFile handle leaked on schema validation failure"
+
+
 def test_index_allows_shared_page_revision_for_distinct_qids(tmp_path: Path) -> None:
     _write_documents(
         tmp_path,

@@ -8,7 +8,8 @@ and the reader can both be schema-driven.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pyarrow as pa
@@ -69,6 +70,28 @@ def read_table(path: Path) -> pa.Table:
     """Read a parquet file at ``path`` and return a :class:`pa.Table`."""
     result: pa.Table = pq.read_table(path)  # type: ignore[no-untyped-call]
     return result
+
+
+@contextmanager
+def _open_parquet_file(path: Path) -> Iterator[pq.ParquetFile]:
+    """Own the lifecycle of a :class:`pyarrow.parquet.ParquetFile` for ``path``.
+
+    The parquet module's readers that need a long-lived handle (row-group
+    iteration, metadata inspection) go through this context manager so the
+    underlying file descriptor is closed on every exit path: a successful
+    read, an exception raised inside the ``with`` body, and a failure raised
+    by the read itself. Callers must not retain the yielded object beyond
+    the ``with`` block.
+
+    This helper is internal to :mod:`io.parquet` and is intentionally kept
+    out of :data:`__all__`; external callers should reach for :func:`read_table`
+    for eager whole-file reads.
+    """
+    parquet_file: pq.ParquetFile = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
+    try:
+        yield parquet_file
+    finally:
+        parquet_file.close()  # type: ignore[no-untyped-call]
 
 
 def write_polygons(path: Path, rows: Iterable[dict[str, object]]) -> int:

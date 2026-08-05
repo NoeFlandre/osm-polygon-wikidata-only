@@ -27,6 +27,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import article_schema
+from osm_polygon_wikidata_only.io.parquet import _open_parquet_file
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ def _effective_paths(processed_dir: Path) -> tuple[Path, ...]:
 
 def _read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow]:
     try:
-        with pq.ParquetFile(path) as parquet_file:
+        with _open_parquet_file(path) as parquet_file:
             table = parquet_file.read()
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
@@ -86,18 +87,30 @@ def _index_columns(legacy_articles: bool) -> tuple[str, ...]:
 
 
 def _validated_parquet_file(path: Path, *, legacy_articles: bool):
-    """Open and schema-check one V1 shard before reading its row groups."""
+    """Open and schema-check one V1 shard before reading its row groups.
+
+    Owns the freshly opened handle: on success ownership is transferred to the
+    caller (an open, validated handle is returned), and on every failure path
+    (unreadable shard or schema mismatch) the handle is closed here so callers
+    never observe a leaked descriptor from a function that raised.
+    """
+    parquet_file: pq.ParquetFile | None = None
     try:
-        parquet_file = pq.ParquetFile(path)
+        parquet_file = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
         expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
         if not parquet_file.schema_arrow.equals(expected_schema, check_metadata=True):
             label = "legacy article" if legacy_articles else "V1 document"
             raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
-        return parquet_file
+        opened = parquet_file
+        parquet_file = None
+        return opened
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+    finally:
+        if parquet_file is not None:
+            parquet_file.close()  # type: ignore[no-untyped-call]
 
 
 def _scan_index_row_group(
