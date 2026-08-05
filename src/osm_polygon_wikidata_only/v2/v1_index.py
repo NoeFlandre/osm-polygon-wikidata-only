@@ -229,9 +229,9 @@ class _PersistentV1Index:
         self._stop = threading.Event()
         self._error: BaseException | None = None
         self._thread: threading.Thread | None = None
-        self._reader_local = threading.local()
         self._reader_connections: list[sqlite3.Connection] = []
         self._reader_lock = threading.Lock()
+        self._reader_query_lock = threading.Lock()
         self._materialize_lock = threading.Lock()
         self._secondary_index_lock = threading.Lock()
         self._secondary_indexes: set[str] = set()
@@ -306,7 +306,7 @@ class _PersistentV1Index:
             # The daemon worker owns the writer while it finishes its current
             # row group.  Closing it here could corrupt the active transaction.
             return
-        with self._reader_lock:
+        with self._reader_query_lock, self._reader_lock:
             for connection in self._reader_connections:
                 connection.close()
             self._reader_connections.clear()
@@ -334,8 +334,9 @@ class _PersistentV1Index:
             connection.close()
 
     def _reader(self) -> sqlite3.Connection:
-        connection = getattr(self._reader_local, "connection", None)
-        if connection is None:
+        with self._reader_lock:
+            if self._reader_connections:
+                return self._reader_connections[0]
             connection = sqlite3.connect(
                 self._db_path,
                 timeout=30,
@@ -345,10 +346,8 @@ class _PersistentV1Index:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA busy_timeout=30000")
             connection.execute("PRAGMA query_only=ON")
-            self._reader_local.connection = connection
-            with self._reader_lock:
-                self._reader_connections.append(connection)
-        return connection
+            self._reader_connections.append(connection)
+            return connection
 
     def _run_sync(self) -> None:
         try:
@@ -699,7 +698,8 @@ class _PersistentV1Index:
             """,
         }
         self._ensure_secondary_index(query_name)
-        rows = list(self._reader().execute(queries[query_name], parameters))
+        with self._reader_query_lock:
+            rows = list(self._reader().execute(queries[query_name], parameters))
         if not rows:
             if self._complete.is_set():
                 with self._query_cache_lock:
@@ -753,15 +753,18 @@ class _PersistentV1Index:
             parameters = tuple(value for key in chunk for value in key)
             # The predicate is composed only from generated ``?`` placeholders;
             # all title values remain bound parameters.
-            rows = self._reader().execute(
-                f"""
-                SELECT language, title_key, document_id, source_path, legacy, row_group, row_index
-                FROM documents
-                WHERE {predicates}
-                ORDER BY language, title_key, document_id, source_path
-                """,  # noqa: S608
-                parameters,
-            )
+            with self._reader_query_lock:
+                rows = list(
+                    self._reader().execute(
+                        f"""
+                        SELECT language, title_key, document_id, source_path, legacy, row_group, row_index
+                        FROM documents
+                        WHERE {predicates}
+                        ORDER BY language, title_key, document_id, source_path
+                        """,  # noqa: S608
+                        parameters,
+                    )
+                )
             grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
             references_by_document: dict[str, sqlite3.Row] = {}
             for row in rows:

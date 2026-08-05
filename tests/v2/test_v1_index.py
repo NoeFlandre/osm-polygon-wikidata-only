@@ -1,4 +1,5 @@
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pyarrow as pa
@@ -406,6 +407,36 @@ def test_persistent_lookup_closes_parquet_handles_after_materialization(
     assert index.by_title("en", "Douglas Adams")
     assert opened
     assert closed == opened
+    index.close()
+
+
+def test_persistent_index_reuses_one_reader_connection_across_worker_pools(
+    tmp_path: Path,
+) -> None:
+    """Transient region workers must not accumulate SQLite file descriptors."""
+    rows = [
+        _document(
+            document_id=f"Q{position}:wikipedia:en:{position}:2",
+            title=f"Page {position}",
+            page_id=position,
+        )
+        for position in range(8)
+    ]
+    _write_documents(tmp_path, rows)
+    index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+    store = index._store
+    assert store is not None
+
+    for _ in range(4):
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            list(
+                executor.map(
+                    lambda position: index.by_title("en", f"Page {position}"),
+                    range(8),
+                )
+            )
+
+    assert len(store._reader_connections) == 1
     index.close()
 
 
