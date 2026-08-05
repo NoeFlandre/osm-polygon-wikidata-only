@@ -42,3 +42,7 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# Local presentation build outputs
+/presentations/captures/
+/presentations/output/

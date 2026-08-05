@@ -24,6 +24,14 @@ def test_readme_documents_complete_wikimedia_bot_password_workflow() -> None:
         assert text in readme
 
 
+def test_local_presentation_build_outputs_are_ignored() -> None:
+    """Generated slide captures must not pollute a contributor worktree."""
+    gitignore = (REPOSITORY / ".gitignore").read_text(encoding="utf-8")
+
+    assert "/presentations/captures/" in gitignore
+    assert "/presentations/output/" in gitignore
+
+
 def test_security_and_development_docs_cover_bot_password_handling() -> None:
     security = (REPOSITORY / "SECURITY.md").read_text(encoding="utf-8")
     development = (REPOSITORY / "docs/development.md").read_text(encoding="utf-8")
@@ -239,7 +247,7 @@ def test_current_documentation_uses_uv_ruff_and_ty_quality_gate() -> None:
     )
     combined = "\n".join(document.read_text(encoding="utf-8") for document in documents)
 
-    assert "uv run ruff check ." in combined
+    assert "uv run ruff check src tests scripts" in combined
     assert "uv run ty check src scripts" in combined
     assert "mypy" not in combined.lower()
 

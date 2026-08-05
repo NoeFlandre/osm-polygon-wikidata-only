@@ -20,15 +20,5 @@ jobs:
       - uses: taiki-e/install-action@just
       - name: Install Python
         run: uv python install 3.12
-      - name: Install locked dependencies
-        run: uv sync --frozen
-      - name: Test with coverage
-        run: just coverage
-      - name: Lint
-        run: just lint
-      - name: Check formatting
-        run: just format-check
-      - name: Type check
-        run: just typecheck
-      - name: Build distributions
-        run: just build
+      - name: Run the complete quality gate
+        run: just check

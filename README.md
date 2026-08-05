@@ -687,8 +687,9 @@ just typecheck
 ```
 
 Run `just --list` for every available recipe. All Python commands are executed
-through uv; GitHub Actions uses the same coverage, lint, format-check,
-type-check, and build recipes.
+through uv; GitHub Actions runs the same complete `just check` gate, including
+tests, coverage, lint, formatting, typing, documentation, package build, and
+the whitespace check.
 
 ---
 

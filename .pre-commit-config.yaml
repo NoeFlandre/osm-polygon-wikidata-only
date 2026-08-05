@@ -3,12 +3,12 @@ repos:
     hooks:
       - id: ruff-check
         name: Ruff lint
-        entry: uv run ruff check .
+        entry: uv run ruff check src tests scripts
         language: system
         pass_filenames: false
       - id: ruff-format-check
         name: Ruff format check
-        entry: uv run ruff format --check .
+        entry: uv run ruff format --check src tests scripts
         language: system
         pass_filenames: false
       - id: ty-check

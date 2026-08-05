@@ -35,7 +35,7 @@ def test_project_uses_ty_as_its_only_static_type_checker() -> None:
 
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     justfile = (root / "Justfile").read_text(encoding="utf-8")
-    assert "run: just typecheck" in workflow
+    assert "run: just check" in workflow
     assert "uv run ty check src scripts" in justfile
     assert "uv run mypy" not in workflow
 
@@ -85,8 +85,8 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
     for command in (
         "uv sync --frozen",
         "uv run pytest",
-        "uv run ruff check .",
-        "uv run ruff format --check .",
+        "uv run ruff check src tests scripts",
+        "uv run ruff format --check src tests scripts",
         "uv run ty check src scripts",
         "uv build",
         "uv run mkdocs build --strict",
@@ -101,8 +101,8 @@ def test_pre_commit_runs_fast_uv_managed_quality_hooks() -> None:
     config = (root / ".pre-commit-config.yaml").read_text(encoding="utf-8")
 
     assert "repo: local" in config
-    assert "uv run ruff check ." in config
-    assert "uv run ruff format --check ." in config
+    assert "uv run ruff check src tests scripts" in config
+    assert "uv run ruff format --check src tests scripts" in config
     assert "uv run ty check src scripts" in config
     assert "mypy" not in config
 
@@ -112,6 +112,7 @@ def test_github_actions_delegates_quality_commands_to_just() -> None:
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "taiki-e/install-action@just" in workflow
+    assert "run: just check" in workflow
     for recipe in ("coverage", "lint", "format-check", "typecheck", "build"):
-        assert f"run: just {recipe}" in workflow
-    assert "uv sync --frozen" in workflow
+        assert f"run: just {recipe}" not in workflow
+    assert "uv sync --frozen" not in workflow

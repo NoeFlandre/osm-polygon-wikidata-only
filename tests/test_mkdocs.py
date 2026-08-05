@@ -35,6 +35,15 @@ def test_pages_workflow_builds_strictly_and_deploys_with_least_privilege() -> No
     assert "path: site" in workflow
 
 
+def test_ci_runs_the_canonical_full_quality_gate() -> None:
+    """CI must execute the same complete gate documented for contributors."""
+    workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "run: just check" in workflow
+    assert "run: just coverage" not in workflow
+    assert "run: just build" not in workflow
+
+
 def test_docs_landing_page_is_public_and_points_to_project_sources() -> None:
     landing = (REPOSITORY / "docs/index.md").read_text(encoding="utf-8")
 

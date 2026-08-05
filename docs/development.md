@@ -65,8 +65,8 @@ over `src` and maintained `scripts`, the strict MkDocs build, the package build,
 and the whitespace gate. GitHub Actions invokes the same quality recipes and
 publishes the documentation site from `main`. Pre-commit intentionally runs
 only the fast Ruff and ty subset; `just check` remains the complete gate.
-Concretely, the gate owns `uv run ruff check .`,
-`uv run ruff format --check .`, `uv run ty check src scripts`, `uv build`, and
+Concretely, the gate owns `uv run ruff check src tests scripts`,
+`uv run ruff format --check src tests scripts`, `uv run ty check src scripts`, `uv build`, and
 `git diff --check`; contributors do not need to maintain a separate command
 sequence.
 
