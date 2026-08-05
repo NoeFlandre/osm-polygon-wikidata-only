@@ -191,7 +191,8 @@ def test_readme_describes_current_public_workflow_without_migration_language() -
     assert "at most eight requests in flight" in readme
     assert "groups of 25 QIDs" in readme
     assert "cache/wikidata_recovery/checkpoints" in readme
-    assert "1,300+ tracked tests" in readme
+    assert "The tracked test suite is deterministic and requires no live network" in readme
+    assert "1,300+ tracked tests" not in readme
     assert "lossless" not in readme.lower()
     assert "at most three requests in flight" not in readme
     assert "suite is fast (< 2 s)" not in readme

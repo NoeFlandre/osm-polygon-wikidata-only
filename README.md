@@ -669,7 +669,7 @@ remains available when neither credential environment variable is set.
 just test
 ```
 
-The 1,300+ tracked tests are deterministic and require no live network;
+The tracked test suite is deterministic and requires no live network;
 HTTP clients come in three flavors (`Http…`, `InMemory…`,
 `Cached…`) and the tests use the in-memory flavors.
 
