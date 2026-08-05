@@ -223,6 +223,100 @@ def test_persistent_index_reuses_completed_shards_without_rescanning(
     assert second.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
 
 
+def test_persistent_index_defers_unused_secondary_indexes_until_lookup(
+    tmp_path: Path,
+) -> None:
+    """V2 title reuse must not build page/QID indexes it never queries."""
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+
+    import sqlite3
+
+    connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
+    try:
+        indexes = {str(row[1]) for row in connection.execute("PRAGMA index_list(documents)")}
+    finally:
+        connection.close()
+    assert "documents_title" in indexes
+    assert "documents_page" not in indexes
+    assert "documents_qid" not in indexes
+
+    assert index.by_page("en", 1)[0]["document_id"] == "Q42:wikipedia:en:1:2"
+
+    connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
+    try:
+        indexes_after_lookup = {
+            str(row[1]) for row in connection.execute("PRAGMA index_list(documents)")
+        }
+    finally:
+        connection.close()
+    assert "documents_page" in indexes_after_lookup
+    index.close()
+
+
+def test_persistent_index_migrates_existing_secondary_indexes_to_lazy_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reopening an older cache removes write-only indexes before rescanning."""
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    first = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    first.close()
+
+    import sqlite3
+
+    connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
+    try:
+        with connection:
+            connection.execute(
+                "CREATE INDEX documents_page ON documents(language, page_id, document_id)"
+            )
+            connection.execute("CREATE INDEX documents_qid ON documents(qid, document_id)")
+            connection.execute("PRAGMA user_version=2")
+    finally:
+        connection.close()
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    def fail_scan(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
+        raise AssertionError("unchanged shard was rescanned during cache migration")
+
+    monkeypatch.setattr(v1_index, "_scan_index_row_group", fail_scan)
+    reopened = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    try:
+        connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
+        try:
+            indexes = {str(row[1]) for row in connection.execute("PRAGMA index_list(documents)")}
+        finally:
+            connection.close()
+        assert "documents_page" not in indexes
+        assert "documents_qid" not in indexes
+        assert reopened.by_qid("Q42")[0]["document_id"] == "Q42:wikipedia:en:1:2"
+    finally:
+        reopened.close()
+
+
+def test_persistent_index_caches_completed_title_lookups(
+    tmp_path: Path,
+) -> None:
+    """Repeated title reuse should not rerun the same SQLite query."""
+    _write_documents(tmp_path, [_document()])
+    index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
+    store = index._store
+    assert store is not None
+    reader = store._reader()
+    statements: list[str] = []
+    reader.set_trace_callback(statements.append)
+
+    assert index.by_title("en", "Douglas Adams")
+    assert index.by_title("en", "Douglas Adams")
+
+    assert sum("FROM documents" in statement for statement in statements) == 1
+    index.close()
+
+
 def test_persistent_lookup_closes_parquet_handles_after_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

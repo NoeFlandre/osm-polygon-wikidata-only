@@ -3,8 +3,11 @@
 The V2 runner uses a disk-backed SQLite index by default.  It validates and
 indexes one V1 shard at a time under the external V2 cache, so the full V1
 document corpus is never held in memory and an interrupted build resumes from
-the last committed Parquet row group.  Small callers and tests can omit
-``cache_dir`` to use the original in-memory index.
+the last committed Parquet row group.  The persistent store maintains the
+title index needed by V2 during the scan; compatibility page and QID indexes
+are created lazily only if those lookups are requested after completion.
+Small callers and tests can omit ``cache_dir`` to use the original in-memory
+index.
 """
 
 from __future__ import annotations
@@ -33,10 +36,20 @@ LOGGER = logging.getLogger(__name__)
 
 DocumentRow = dict[str, object]
 PageKey = tuple[str, int]
-_INDEX_SCHEMA_VERSION = 2
+_INDEX_SCHEMA_VERSION = 3
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
 _INDEX_SHUTDOWN_TIMEOUT_S = 5.0
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
+_SECONDARY_INDEX_SQL = {
+    "page": (
+        "documents_page",
+        "CREATE INDEX IF NOT EXISTS documents_page ON documents(language, page_id, document_id)",
+    ),
+    "qid": (
+        "documents_qid",
+        "CREATE INDEX IF NOT EXISTS documents_qid ON documents(qid, document_id)",
+    ),
+}
 
 
 def _title_key(language: str, title: str) -> tuple[str, str]:
@@ -219,6 +232,13 @@ class _PersistentV1Index:
         self._reader_connections: list[sqlite3.Connection] = []
         self._reader_lock = threading.Lock()
         self._materialize_lock = threading.Lock()
+        self._secondary_index_lock = threading.Lock()
+        self._secondary_indexes: set[str] = set()
+        self._query_cache_lock = threading.Lock()
+        self._query_cache: OrderedDict[tuple[str, tuple[object, ...]], tuple[DocumentRow, ...]] = (
+            OrderedDict()
+        )
+        self._query_cache_limit = 4096
         if background:
             self._thread = threading.Thread(
                 target=self._run_sync,
@@ -348,7 +368,7 @@ class _PersistentV1Index:
     def _initialize_schema(self) -> None:
         connection = self._writer_connection
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, 1, _INDEX_SCHEMA_VERSION):
+        if version not in (0, 1, 2, _INDEX_SCHEMA_VERSION):
             with connection:
                 connection.executescript(
                     "DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS file_state; "
@@ -380,10 +400,6 @@ class _PersistentV1Index:
                 );
                 CREATE INDEX IF NOT EXISTS documents_title
                     ON documents(language, title_key, document_id);
-                CREATE INDEX IF NOT EXISTS documents_page
-                    ON documents(language, page_id, document_id);
-                CREATE INDEX IF NOT EXISTS documents_qid
-                    ON documents(qid, document_id);
                 CREATE TABLE IF NOT EXISTS scan_progress (
                     path TEXT PRIMARY KEY,
                     size INTEGER NOT NULL,
@@ -396,7 +412,26 @@ class _PersistentV1Index:
                 );
                 """
             )
+            # Page and QID lookups are compatibility APIs, but V2 only uses
+            # title lookups.  Building both secondary indexes while inserting
+            # every document dominates the persistent index build, so defer
+            # them until a caller actually requests one after the scan is
+            # complete.  Dropping them here also migrates existing caches to
+            # the cheaper write path without discarding indexed rows.
+            connection.execute("DROP INDEX IF EXISTS documents_page")
+            connection.execute("DROP INDEX IF EXISTS documents_qid")
             connection.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
+
+    def _ensure_secondary_index(self, query_name: str) -> None:
+        if query_name not in _SECONDARY_INDEX_SQL or not self._complete.is_set():
+            return
+        index_name, statement = _SECONDARY_INDEX_SQL[query_name]
+        with self._secondary_index_lock:
+            if index_name in self._secondary_indexes:
+                return
+            with self._writer_connection:
+                self._writer_connection.execute(statement)
+            self._secondary_indexes.add(index_name)
 
     @staticmethod
     def _fingerprint(path: Path) -> tuple[int, int, int, int]:
@@ -632,6 +667,13 @@ class _PersistentV1Index:
         if not self._initialized.is_set():
             return ()
         self._raise_error()
+        cache_key = (query_name, parameters)
+        if self._complete.is_set():
+            with self._query_cache_lock:
+                if cache_key in self._query_cache:
+                    cached = self._query_cache[cache_key]
+                    self._query_cache.move_to_end(cache_key)
+                    return cached
         queries = {
             "page": """
                 SELECT document_id, source_path, legacy, row_group, row_index
@@ -649,15 +691,29 @@ class _PersistentV1Index:
                 ORDER BY document_id, source_path
             """,
         }
+        self._ensure_secondary_index(query_name)
         rows = list(self._reader().execute(queries[query_name], parameters))
         if not rows:
+            if self._complete.is_set():
+                with self._query_cache_lock:
+                    self._query_cache[cache_key] = ()
+                    self._query_cache.move_to_end(cache_key)
+                    while len(self._query_cache) > self._query_cache_limit:
+                        self._query_cache.popitem(last=False)
             return ()
         by_document: dict[str, sqlite3.Row] = {}
         for row in rows:
             by_document.setdefault(str(row["document_id"]), row)
         with self._materialize_lock:
             materialized = self._materialize(tuple(by_document.values()))
-        return tuple(materialized[document_id] for document_id in sorted(materialized))
+        result = tuple(materialized[document_id] for document_id in sorted(materialized))
+        if self._complete.is_set():
+            with self._query_cache_lock:
+                self._query_cache[cache_key] = result
+                self._query_cache.move_to_end(cache_key)
+                while len(self._query_cache) > self._query_cache_limit:
+                    self._query_cache.popitem(last=False)
+        return result
 
     def _materialize(self, references: tuple[sqlite3.Row, ...]) -> dict[str, DocumentRow]:
         result: dict[str, DocumentRow] = {}
