@@ -155,7 +155,8 @@ class ExtractionCheckpoint:
             if indices != list(range(len(indices))):
                 raise ValueError("Extraction checkpoint chunks are not contiguous")
             for path in chunks:
-                table = pq.read_table(path)  # type: ignore[no-untyped-call]
+                with pq.ParquetFile(path) as parquet_file:
+                    table = parquet_file.read()
                 if not table.schema.equals(schema, check_metadata=True):
                     raise ValueError(f"Invalid extraction checkpoint schema: {path}")
                 rows.extend(table.to_pylist())

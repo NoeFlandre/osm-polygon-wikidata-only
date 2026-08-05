@@ -73,7 +73,8 @@ class SectionClient(Protocol):
 def _rows(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    return pq.read_table(path).to_pylist()
+    with pq.ParquetFile(path) as parquet_file:
+        return parquet_file.read().to_pylist()
 
 
 def load_v1_region(data_root: DataRoot, stem: str) -> V1RegionData:

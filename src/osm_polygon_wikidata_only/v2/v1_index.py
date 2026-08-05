@@ -63,7 +63,8 @@ def _effective_paths(processed_dir: Path) -> tuple[Path, ...]:
 
 def _read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow]:
     try:
-        table = pq.read_table(path)  # type: ignore[no-untyped-call]
+        with pq.ParquetFile(path) as parquet_file:
+            table = parquet_file.read()
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
     expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()

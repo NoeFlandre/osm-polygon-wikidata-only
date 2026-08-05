@@ -90,7 +90,8 @@ def _rows(directory: Path, manifest: dict[str, dict]) -> int:
 
 
 def _wikipedia_only_count(path: Path) -> int:
-    table = pq.read_table(path, columns=["has_wikidata"])
+    with pq.ParquetFile(path) as parquet_file:
+        table = parquet_file.read(columns=["has_wikidata"])
     return sum(1 for value in table.column("has_wikidata").to_pylist() if not value)
 
 

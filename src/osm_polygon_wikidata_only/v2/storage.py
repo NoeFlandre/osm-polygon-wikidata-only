@@ -136,7 +136,8 @@ def write_v2_region(
             temporary = _stage_path(final)
             staged[final] = temporary
             _write_table(temporary, region_rows, schema)
-            written = pq.read_table(temporary)  # type: ignore[no-untyped-call]
+            with pq.ParquetFile(temporary) as parquet_file:
+                written = parquet_file.read()
             if not written.schema.equals(schema, check_metadata=True):
                 raise ValueError(f"V2 table schema validation failed: {final}")
         _replace_transaction(staged)
