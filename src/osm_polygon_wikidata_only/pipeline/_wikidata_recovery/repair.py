@@ -1,3 +1,5 @@
+"""Repair Wikidata enrichment artifacts for a region."""
+
 from __future__ import annotations
 
 import json

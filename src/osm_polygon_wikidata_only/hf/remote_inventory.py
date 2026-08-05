@@ -1,3 +1,5 @@
+"""Provide read-only inventory helpers for Hugging Face repositories."""
+
 from __future__ import annotations
 
 from typing import Any

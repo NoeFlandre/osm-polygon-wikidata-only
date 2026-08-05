@@ -1,3 +1,5 @@
+"""Audit Wikidata-backed polygon data and classify recovery state."""
+
 from __future__ import annotations
 
 import logging

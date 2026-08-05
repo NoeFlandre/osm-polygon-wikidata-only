@@ -1,3 +1,5 @@
+"""Define data models for Wikidata recovery audits and repairs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

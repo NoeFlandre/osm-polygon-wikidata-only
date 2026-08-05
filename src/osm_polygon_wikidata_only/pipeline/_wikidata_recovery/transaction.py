@@ -1,3 +1,5 @@
+"""Provide transactional filesystem recovery for Wikidata repairs."""
+
 from __future__ import annotations
 
 import os

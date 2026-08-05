@@ -1,3 +1,5 @@
+"""Reconcile local dataset state with the canonical remote inventory."""
+
 from __future__ import annotations
 
 import json

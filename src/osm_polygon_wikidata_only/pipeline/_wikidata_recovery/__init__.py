@@ -1,3 +1,5 @@
+"""Audit and repair helpers for Wikidata enrichment recovery."""
+
 from .audit import RECOVERY_CONTRACT_VERSION, audit_wikidata_integrity
 from .models import (
     QidAuditResult,
