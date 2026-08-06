@@ -218,6 +218,81 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
     assert voyage_row["has_wikipedia"] is False
 
 
+def test_merge_uses_current_pbf_wikidata_and_drops_stale_v1_links(tmp_path: Path) -> None:
+    """A changed OSM tag must replace stale V1 identity data, not abort V2."""
+    root = DataRoot(tmp_path)
+    root.ensure()
+    stem = "region-latest"
+    polygon_id = f"{stem}:way:130311194"
+
+    old_polygon = empty_row(tuple(field.name for field in polygon_schema()))
+    old_polygon.update(
+        {
+            "polygon_id": polygon_id,
+            "region": "region",
+            "source_pbf": f"{stem}.osm.pbf",
+            "osm_type": "way",
+            "osm_id": 130311194,
+            "wikidata": "Q42",
+            "tags": "{}",
+        }
+    )
+    _write(root.processed_polygons / f"{stem}.parquet", polygon_schema(), [old_polygon])
+
+    stale_link = empty_row(tuple(field.name for field in polygon_document_link_schema()))
+    stale_link.update(
+        {
+            "polygon_id": polygon_id,
+            "document_id": "Q42:wikipedia:en:1:2",
+            "project": "wikipedia",
+            "wikidata": "Q42",
+            "language": "en",
+            "source_pbf": f"{stem}.osm.pbf",
+            "region": "region",
+            "osm_type": "way",
+            "osm_id": 130311194,
+            "page_id": 1,
+            "revision_id": 2,
+        }
+    )
+    _write(root.processed_links / f"{stem}.parquet", polygon_document_link_schema(), [stale_link])
+
+    current = candidate_to_v2_row(
+        (
+            "way",
+            130311194,
+            {"wikidata": "Q43", "name": "Current name"},
+            '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}',
+        ),
+        source_pbf_stem=stem,
+        region="region",
+        source_pbf=f"{stem}.osm.pbf",
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    assert current is not None
+    index = build_v1_reuse_index(root.processed)
+    try:
+        merge_v2_region(
+            root,
+            V2ExtractedPbf(
+                V2PbfStem(tmp_path / f"{stem}.osm.pbf", stem, "region"),
+                (current,),
+                0.0,
+            ),
+            index=index,
+            wikipedia_client=None,
+        )
+    finally:
+        index.close()
+
+    polygons = pq.read_table(root.processed_v2 / "polygons" / f"{stem}.parquet").to_pylist()
+    links = pq.read_table(
+        root.processed_v2 / "polygon_document_links" / f"{stem}.parquet"
+    ).to_pylist()
+    assert polygons[0]["wikidata"] == "Q43"
+    assert links == []
+
+
 def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically(
     tmp_path: Path,
 ) -> None:

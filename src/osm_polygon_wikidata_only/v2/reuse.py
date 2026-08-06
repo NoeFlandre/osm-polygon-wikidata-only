@@ -28,6 +28,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_COLUMNS
+from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.v2.checkpoints import (
     RegionFetchCheckpoint,
     region_input_fingerprint,
@@ -300,6 +301,33 @@ def _link_sources(row: dict[str, Any]) -> set[str]:
     return {str(source) for source in raw} if isinstance(raw, list) else set()
 
 
+def _wikidata_qids(value: Any) -> frozenset[str]:
+    """Normalize one polygon Wikidata tag for set-based merge comparison."""
+    return frozenset(qids_from_osm_tag(str(value or "")))
+
+
+def _drop_stale_v1_links(
+    links: dict[tuple[str, str, str], dict[str, Any]],
+    current_wikidata: dict[str, frozenset[str]],
+) -> int:
+    """Drop V1 links whose QID is absent from the current PBF tag.
+
+    V1 links are historical snapshots. A changed OSM Wikidata tag makes a
+    QID link stale, while direct Wikipedia-tag links (which have no QID) stay
+    eligible for the V2 enrichment pass.
+    """
+    stale_keys = [
+        key
+        for key, row in links.items()
+        if str(row.get("polygon_id", "")) in current_wikidata
+        and (qid := str(row.get("wikidata") or ""))
+        and qid not in current_wikidata[str(row["polygon_id"])]
+    ]
+    for key in stale_keys:
+        del links[key]
+    return len(stale_keys)
+
+
 def _update_polygon_text_fields(
     polygons: dict[str, dict[str, Any]],
     links: dict[tuple[str, str, str], dict[str, Any]],
@@ -365,35 +393,33 @@ def merge_v2_region(
     )
     v1 = load_v1_region(data_root, stem)
     polygons = {str(row["polygon_id"]): dict(row) for row in v1.polygons}
+    current_wikidata: dict[str, frozenset[str]] = {}
     for discovered in extracted.polygons:
         key = str(discovered["polygon_id"])
+        discovered_qids = _wikidata_qids(discovered.get("wikidata"))
+        current_wikidata[key] = discovered_qids
         existing = polygons.get(key)
         if existing is not None:
-            if (
-                existing.get("wikidata")
-                and discovered.get("wikidata")
-                and existing["wikidata"] != discovered["wikidata"]
-            ):
-                raise ValueError(f"Conflicting Wikidata values for polygon {key}")
-            existing.update(
-                {
-                    name: discovered[name]
-                    for name in (
-                        "tags",
-                        "tag_keys",
-                        "tag_count",
-                        "wikipedia_tag_refs",
-                        "wikipedia_tag_rejections",
-                        "discovery_sources",
-                    )
-                }
-            )
+            previous_qids = _wikidata_qids(existing.get("wikidata"))
+            if previous_qids != discovered_qids:
+                LOGGER.warning(
+                    "V2 %s: current PBF Wikidata tag changed for %s (%s -> %s); "
+                    "using the current value and dropping stale V1 links",
+                    stem,
+                    key,
+                    ";".join(sorted(previous_qids)) or "none",
+                    ";".join(sorted(discovered_qids)) or "none",
+                )
+            existing.update(discovered)
         else:
             polygons[key] = dict(discovered)
     base_documents = {str(row["document_id"]): dict(row) for row in v1.documents}
     base_links = {(_link_key(row)): dict(row) for row in v1.links}
     documents = dict(base_documents)
     links = dict(base_links)
+    stale_link_count = _drop_stale_v1_links(links, current_wikidata)
+    if stale_link_count:
+        LOGGER.info("V2 %s: dropped %d stale V1 polygon-document link(s)", stem, stale_link_count)
     direct_client = _cached_client(wikipedia_client, cache)
     direct_inputs: list[tuple[str, dict[str, Any], tuple[WikipediaTagRef, ...]]] = []
     for polygon_id, polygon in sorted(polygons.items()):
