@@ -21,25 +21,30 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_from_article_row,
-    wikipedia_document_schema,
 )
-from osm_polygon_wikidata_only.domain.schema import article_schema
-from osm_polygon_wikidata_only.io.parquet import _open_parquet_file
+from osm_polygon_wikidata_only.v2 import index_scanning
 
 LOGGER = logging.getLogger(__name__)
 
-DocumentRow = dict[str, object]
+DocumentRow = index_scanning.DocumentRow
+_effective_paths = index_scanning.effective_paths
+_index_columns = index_scanning._index_columns
+_index_rows_from_table = index_scanning.index_rows_from_table
+_read_rows = index_scanning.read_rows
+_required_int = index_scanning.required_int
+_scan_index_row_group = index_scanning.scan_index_row_group
+_scan_index_rows = index_scanning.scan_index_rows
+_validated_parquet_file = index_scanning.validated_parquet_file
+
 PageKey = tuple[str, int]
 _INDEX_SCHEMA_VERSION = 4
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
 _INDEX_SHUTDOWN_TIMEOUT_S = 5.0
-_INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
 _TITLE_QUERY_BATCH_SIZE = 256
 _SECONDARY_INDEX_SQL = {
     "page": (
@@ -55,156 +60,6 @@ _SECONDARY_INDEX_SQL = {
 
 def _title_key(language: str, title: str) -> tuple[str, str]:
     return language.casefold(), " ".join(title.replace("_", " ").split()).casefold()
-
-
-def _required_int(value: object, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"V1 document field {field!r} is not an integer")
-    return value
-
-
-def _effective_paths(processed_dir: Path) -> tuple[Path, ...]:
-    document_dir = processed_dir / "wikipedia" / "documents"
-    article_dir = processed_dir / "articles"
-    canonical_paths = {path.stem: path for path in document_dir.glob("*.parquet")}
-    # V1 releases before the canonical-document migration stored Wikipedia
-    # rows under ``articles/``. Prefer canonical shards when both exist, but
-    # keep the legacy fallback so V2 never refetches an already-finalized page.
-    effective_paths = dict(canonical_paths)
-    for path in article_dir.glob("*.parquet"):
-        effective_paths.setdefault(path.stem, path)
-    return tuple(sorted(effective_paths.values(), key=lambda path: path.name))
-
-
-def _read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow]:
-    try:
-        with _open_parquet_file(path) as parquet_file:
-            table = parquet_file.read()
-    except Exception as exc:
-        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
-    expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
-    if not table.schema.equals(expected_schema, check_metadata=True):
-        label = "legacy article" if legacy_articles else "V1 document"
-        raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
-    if legacy_articles:
-        try:
-            return [wikipedia_document_from_article_row(row).to_dict() for row in table.to_pylist()]
-        except Exception as exc:
-            raise ValueError(f"V1 legacy article shard is invalid: {path}: {exc}") from exc
-    return [dict(row) for row in table.to_pylist()]
-
-
-def _index_columns(legacy_articles: bool) -> tuple[str, ...]:
-    return tuple(
-        column for column in _INDEX_PROJECTION if not legacy_articles or column != "document_id"
-    )
-
-
-def _validated_parquet_file(path: Path, *, legacy_articles: bool):
-    """Open and schema-check one V1 shard before reading its row groups.
-
-    Owns the freshly opened handle: on success ownership is transferred to the
-    caller (an open, validated handle is returned), and on every failure path
-    (unreadable shard or schema mismatch) the handle is closed here so callers
-    never observe a leaked descriptor from a function that raised.
-    """
-    parquet_file: pq.ParquetFile | None = None
-    try:
-        parquet_file = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
-        expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
-        if not parquet_file.schema_arrow.equals(expected_schema, check_metadata=True):
-            label = "legacy article" if legacy_articles else "V1 document"
-            raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
-        opened = parquet_file
-        parquet_file = None
-        return opened
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
-    finally:
-        if parquet_file is not None:
-            parquet_file.close()  # type: ignore[no-untyped-call]
-
-
-def _scan_index_row_group(
-    path: Path,
-    *,
-    legacy_articles: bool,
-    row_group: int,
-    parquet_file: pq.ParquetFile | None = None,
-) -> list[tuple[str, str, str, int, int, str, int, int]]:
-    """Read identity columns and row positions for one committed row group."""
-    owns_parquet_file = parquet_file is None
-    validated: pq.ParquetFile | None = None
-    try:
-        validated = parquet_file or _validated_parquet_file(path, legacy_articles=legacy_articles)
-        table = validated.read_row_group(
-            row_group,
-            columns=list(_index_columns(legacy_articles)),
-        )
-        return _index_rows_from_table(table, legacy_articles=legacy_articles, row_group=row_group)
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
-    finally:
-        if owns_parquet_file and validated is not None:
-            validated.close()
-
-
-def _index_rows_from_table(
-    table: Any,
-    *,
-    legacy_articles: bool,
-    row_group: int,
-) -> list[tuple[str, str, str, int, int, str, int, int]]:
-    """Extract index fields column-wise, avoiding one Python dict per row."""
-    columns = {name: table.column(name).to_pylist() for name in _index_columns(legacy_articles)}
-    indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
-    for row_index in range(table.num_rows):
-        language = str(columns["language"][row_index])
-        page_id = _required_int(columns["page_id"][row_index], "page_id")
-        revision_id = _required_int(columns["revision_id"][row_index], "revision_id")
-        wikidata = columns["wikidata"][row_index]
-        if legacy_articles:
-            document_id = f"{wikidata}:wikipedia:{language}:{page_id}:{revision_id}"
-        else:
-            document_id = str(columns["document_id"][row_index])
-        indexed.append(
-            (
-                document_id,
-                language,
-                str(columns["title"][row_index]),
-                page_id,
-                revision_id,
-                str(wikidata or ""),
-                row_group,
-                row_index,
-            )
-        )
-    return indexed
-
-
-def _scan_index_rows(
-    path: Path, *, legacy_articles: bool
-) -> list[tuple[str, str, str, int, int, str, int, int]]:
-    """Read identity columns and row positions for one V1 shard."""
-    with _validated_parquet_file(path, legacy_articles=legacy_articles) as parquet_file:
-        indexed: list[tuple[str, str, str, int, int, str, int, int]] = []
-        seen_documents: set[str] = set()
-        for row_group in range(parquet_file.num_row_groups):
-            for row in _scan_index_row_group(
-                path,
-                legacy_articles=legacy_articles,
-                row_group=row_group,
-                parquet_file=parquet_file,
-            ):
-                if row[0] in seen_documents:
-                    continue
-                seen_documents.add(row[0])
-                indexed.append(row)
-        return indexed
 
 
 class _PersistentV1Index:
