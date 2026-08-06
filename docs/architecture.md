@@ -108,6 +108,9 @@ immediately. A title not found yet may be fetched speculatively while the
 index continues; after indexing completes, a later V1 match always wins, and
 only a title still absent from V1 keeps the fetched result. This removes idle
 waiting without turning a partial index miss into the final decision.
+On restart, unchanged shards are checked by fingerprint only, and a persisted
+row-count summary avoids a full SQLite distinct-count scan when no shard
+changed.
 
 V2 writes an isolated `processed_v2/` tree. Its `polygons` schema adds direct
 tag references, structured rejections, and discovery-source provenance. Its

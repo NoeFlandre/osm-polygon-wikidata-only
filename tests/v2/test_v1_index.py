@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -239,6 +240,7 @@ def test_persistent_index_defers_unused_secondary_indexes_until_lookup(
         indexes = {str(row[1]) for row in connection.execute("PRAGMA index_list(documents)")}
     finally:
         connection.close()
+
     assert "documents_title" in indexes
     assert "documents_page" not in indexes
     assert "documents_qid" not in indexes
@@ -254,6 +256,66 @@ def test_persistent_index_defers_unused_secondary_indexes_until_lookup(
         connection.close()
     assert "documents_page" in indexes_after_lookup
     index.close()
+
+
+def test_persistent_index_reuses_cached_row_count_without_full_distinct_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    def fail_if_counted(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("an unchanged index must reuse its cached row count")
+
+    monkeypatch.setattr(v1_index, "_count_distinct_documents", fail_if_counted)
+    second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert second.row_count == 1
+
+
+def test_persistent_index_recounts_after_a_shard_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "v2-cache" / "v1-index"
+    first = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    first.close()
+
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                _document(),
+                _document(
+                    document_id="Q43:wikipedia:en:3:4",
+                    article_id="Q43:en:3:4",
+                    wikidata="Q43",
+                    page_id=3,
+                    revision_id=4,
+                ),
+            ],
+            schema=wikipedia_document_schema(),
+        ),
+        path,
+    )
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    counted = 0
+    original = v1_index._count_distinct_documents
+
+    def count_and_record(connection: sqlite3.Connection) -> int:
+        nonlocal counted
+        counted += 1
+        return original(connection)
+
+    monkeypatch.setattr(v1_index, "_count_distinct_documents", count_and_record)
+    second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert counted == 1
+    assert second.row_count == 2
 
 
 def test_persistent_title_index_contains_only_lookup_columns(tmp_path: Path) -> None:

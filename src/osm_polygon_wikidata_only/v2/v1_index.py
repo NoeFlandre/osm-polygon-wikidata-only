@@ -62,6 +62,31 @@ def _title_key(language: str, title: str) -> tuple[str, str]:
     return language.casefold(), " ".join(title.replace("_", " ").split()).casefold()
 
 
+def _count_distinct_documents(connection: sqlite3.Connection) -> int:
+    """Count indexed document identities for a newly changed index."""
+    return int(
+        connection.execute("SELECT COUNT(DISTINCT document_id) FROM documents").fetchone()[0]
+    )
+
+
+def _read_cached_row_count(connection: sqlite3.Connection) -> int | None:
+    row = connection.execute("SELECT value FROM index_metadata WHERE key='row_count'").fetchone()
+    if row is None:
+        return None
+    try:
+        value = int(row[0])
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _store_cached_row_count(connection: sqlite3.Connection, row_count: int) -> None:
+    connection.execute(
+        "INSERT OR REPLACE INTO index_metadata(key, value) VALUES ('row_count', ?)",
+        (str(row_count),),
+    )
+
+
 class _PersistentV1Index:
     """Incremental SQLite metadata index with bounded Parquet row loading."""
 
@@ -180,11 +205,10 @@ class _PersistentV1Index:
         connection.execute("PRAGMA busy_timeout=30000")
         connection.execute("PRAGMA query_only=ON")
         try:
-            return int(
-                connection.execute("SELECT COUNT(DISTINCT document_id) FROM documents").fetchone()[
-                    0
-                ]
-            )
+            cached = _read_cached_row_count(connection)
+            if cached is not None:
+                return cached
+            return _count_distinct_documents(connection)
         finally:
             connection.close()
 
@@ -227,7 +251,7 @@ class _PersistentV1Index:
             with connection:
                 connection.executescript(
                     "DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS file_state; "
-                    "DROP TABLE IF EXISTS scan_progress;"
+                    "DROP TABLE IF EXISTS scan_progress; DROP TABLE IF EXISTS index_metadata;"
                 )
         with connection:
             connection.executescript(
@@ -262,6 +286,10 @@ class _PersistentV1Index:
                     legacy INTEGER NOT NULL,
                     total_row_groups INTEGER NOT NULL,
                     next_row_group INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS index_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );
                 """
             )
@@ -378,12 +406,14 @@ class _PersistentV1Index:
             for row in connection.execute("SELECT * FROM scan_progress")
         }
         stale = set(known) - set(current)
+        row_count_invalidated = bool(stale)
         if stale:
             with connection:
                 for path in stale:
                     connection.execute("DELETE FROM documents WHERE source_path=?", (path,))
                     connection.execute("DELETE FROM file_state WHERE path=?", (path,))
                     connection.execute("DELETE FROM scan_progress WHERE path=?", (path,))
+                connection.execute("DELETE FROM index_metadata WHERE key='row_count'")
             self._row_cache.clear()
 
         changed = 0
@@ -402,6 +432,10 @@ class _PersistentV1Index:
                     with connection:
                         connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
                 continue
+            if not row_count_invalidated:
+                with connection:
+                    connection.execute("DELETE FROM index_metadata WHERE key='row_count'")
+                row_count_invalidated = True
             LOGGER.info(
                 "V2 V1 reuse index: scanning shard %d/%d (%s)", position, len(files), path.name
             )
@@ -504,9 +538,11 @@ class _PersistentV1Index:
                 len(files),
             )
 
-        row_count = connection.execute(
-            "SELECT COUNT(DISTINCT document_id) FROM documents"
-        ).fetchone()[0]
+        row_count = _read_cached_row_count(connection)
+        if row_count is None:
+            row_count = _count_distinct_documents(connection)
+            with connection:
+                _store_cached_row_count(connection, row_count)
         if changed or stale:
             LOGGER.info(
                 "V2 V1 reuse index ready: %d/%d shards; %d document identities; cache=%s",
