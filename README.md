@@ -280,6 +280,9 @@ does not delay extraction. A direct page that is not yet found may be fetched
 while the index continues. Once indexing finishes, a V1 match is preferred;
 only a page still absent from V1 keeps the fetched result. Both locations use
 the configured data root, so stopping and restarting the command is safe.
+Completed-region checks also keep a small fingerprint-backed digest cache at
+`cache/v2/resume-hashes.json`; unchanged artifacts are validated without
+rereading their bytes, while any changed file is hashed again before reuse.
 Use `--force` only when deliberately rebuilding a V2 region.
 
 ### Wikimedia Bot Password authentication

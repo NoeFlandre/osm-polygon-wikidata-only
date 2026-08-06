@@ -31,6 +31,7 @@ from osm_polygon_wikidata_only.v2.publication import (
     metadata_publication_ops,
     region_publication_ops,
 )
+from osm_polygon_wikidata_only.v2.resume import V2FileHashCache
 from osm_polygon_wikidata_only.v2.reuse import (
     SectionClient,
     merge_v2_region,
@@ -60,6 +61,7 @@ def _plan_regions(
     manifest: dict[str, dict[str, Any]],
     push: bool,
     remote_inventory: RemoteInventory | None,
+    hash_cache: V2FileHashCache | None = None,
 ) -> tuple[_RegionPlan, ...]:
     plans: list[_RegionPlan] = []
     for pbf in pbfs:
@@ -67,7 +69,12 @@ def _plan_regions(
         current = (
             settings.skip_existing
             and not settings.force
-            and _region_is_current(data_root.processed_v2, stem, manifest)
+            and _region_is_current(
+                data_root.processed_v2,
+                stem,
+                manifest,
+                hash_cache=hash_cache,
+            )
         )
         if not current:
             action = "extract"
@@ -122,6 +129,7 @@ def run_v2_sync(
         data_root.v2_cache / "wikipedia",
         contract_version=V2_CACHE_CONTRACT_VERSION,
     )
+    hash_cache = V2FileHashCache(data_root.v2_cache / "resume-hashes.json")
     manifest = load_v2_manifest(data_root.processed_v2)
     plans = _plan_regions(
         pbfs,
@@ -130,6 +138,7 @@ def run_v2_sync(
         manifest=manifest,
         push=push,
         remote_inventory=remote_inventory,
+        hash_cache=hash_cache,
     )
     completed = 0
     extraction_executor = ThreadPoolExecutor(
@@ -259,6 +268,10 @@ def run_v2_sync(
         if extraction_future is not None:
             extraction_future.cancel()
         extraction_executor.shutdown(wait=True, cancel_futures=True)
+        try:
+            hash_cache.flush()
+        except OSError:
+            LOGGER.warning("V2 resume hash cache could not be saved; next run will rehash files")
         index.close()
 
 
@@ -278,6 +291,8 @@ def _region_is_current(
     processed_v2: Path,
     stem: str,
     manifest: dict[str, dict[str, Any]],
+    *,
+    hash_cache: V2FileHashCache | None = None,
 ) -> bool:
     entry = manifest.get(stem)
     if entry is None or entry.get("contract_version") != V2_CONTRACT_VERSION:
@@ -297,7 +312,10 @@ def _region_is_current(
         return False
     for relative in expected.values():
         path = processed_v2 / relative
-        if not path.is_file() or hashes.get(relative) != _sha256(path):
+        if not path.is_file():
+            return False
+        current_hash = hash_cache.digest(path) if hash_cache is not None else _sha256(path)
+        if hashes.get(relative) != current_hash:
             return False
     return True
 

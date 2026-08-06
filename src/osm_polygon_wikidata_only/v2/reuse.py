@@ -467,8 +467,10 @@ def merge_v2_region(
     copy_v1_sidecars(data_root, stem, data_root.processed_v2)
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
     sections = _rows(sections_path)
+    completed_section_ids: set[str] = set()
     if fetch_checkpoint is not None:
-        sections.extend(fetch_checkpoint.load_sections())
+        checkpoint_sections, completed_section_ids = fetch_checkpoint.load_section_state()
+        sections.extend(checkpoint_sections)
         sections = list({str(row.get("section_id", "")): row for row in sections}.values())
     section_checkpoints_saved = 0
 
@@ -491,9 +493,7 @@ def merge_v2_region(
         section_client=section_client,
         section_workers=section_workers,
         on_document=(save_section_checkpoint if fetch_checkpoint is not None else None),
-        completed_document_ids=(
-            fetch_checkpoint.section_document_ids() if fetch_checkpoint is not None else None
-        ),
+        completed_document_ids=completed_section_ids,
     )
 
     # A miss is authoritative only after every V1 shard has been checked.  We
@@ -656,11 +656,11 @@ def reconcile_v2_region(
         documents.pop(document_id, None)
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
     sections = [row for row in _rows(sections_path) if str(row.get("document_id", "")) in documents]
+    completed_section_ids: set[str] = set()
     if fetch_checkpoint is not None:
+        checkpoint_sections, completed_section_ids = fetch_checkpoint.load_section_state()
         sections.extend(
-            row
-            for row in fetch_checkpoint.load_sections()
-            if str(row.get("document_id", "")) in documents
+            row for row in checkpoint_sections if str(row.get("document_id", "")) in documents
         )
         sections = list({str(row.get("section_id", "")): row for row in sections}.values())
     section_checkpoints_saved = 0
@@ -684,9 +684,7 @@ def reconcile_v2_region(
         section_client=section_client,
         section_workers=section_workers,
         on_document=(save_section_checkpoint if fetch_checkpoint is not None else None),
-        completed_document_ids=(
-            fetch_checkpoint.section_document_ids() if fetch_checkpoint is not None else None
-        ),
+        completed_document_ids=completed_section_ids,
     )
     _update_polygon_text_fields(polygons, links, documents)
     write_v2_region(

@@ -162,6 +162,33 @@ def test_fetch_checkpoint_records_empty_section_results(tmp_path: Path) -> None:
     assert checkpoint.section_document_ids() == {"document-1"}
 
 
+def test_fetch_checkpoint_loads_section_state_in_one_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = RegionFetchCheckpoint(tmp_path / "checkpoints", "region-latest")
+    checkpoint.save_sections("document-1", [])
+    checkpoint.save_sections(
+        "document-2",
+        [{"document_id": "document-2", "section_id": "section-2"}],
+    )
+    calls = 0
+    original = checkpoint._load_section_payload
+
+    def counted(path: Path) -> dict[str, object] | None:
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(checkpoint, "_load_section_payload", counted)
+
+    rows, completed = checkpoint.load_section_state()
+
+    assert rows == [{"document_id": "document-2", "section_id": "section-2"}]
+    assert completed == {"document-1", "document-2"}
+    assert calls == 2
+
+
 def test_fetch_checkpoint_invalid_section_payload_is_not_marked_complete(tmp_path: Path) -> None:
     checkpoint = RegionFetchCheckpoint(tmp_path / "checkpoints", "region-latest")
     checkpoint.save_sections("document-1", [])

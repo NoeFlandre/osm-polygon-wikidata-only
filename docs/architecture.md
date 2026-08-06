@@ -131,6 +131,11 @@ checkpoint contract also records the input references and full-text mode;
 corrupt, stale, or mismatched state is discarded and retried. Checkpoints are
 cleared only after the final region files are written and reconciled, so a
 stopped run never exposes partial data as a completed region.
+The runner also stores exact artifact digests with local file fingerprints in
+`cache/v2/resume-hashes.json`.  A restart reuses a digest only when the file's
+size, timestamps, inode, device, and birth time are unchanged; a changed
+fingerprint forces a fresh content hash, so the cache only removes repeated
+reads during resume checks.
 
 Each region is written through staged Parquet files and a journal-free
 replacement transaction, then the V2 manifest is updated atomically. A

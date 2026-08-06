@@ -396,23 +396,31 @@ class RegionFetchCheckpoint:
             {"document_id": document_id, "rows": rows},
         )
 
-    def load_sections(self) -> list[dict[str, Any]]:
+    def load_section_state(self) -> tuple[list[dict[str, Any]], set[str]]:
+        """Load section rows and completed document IDs in one directory pass.
+
+        Empty section results are represented by a checkpoint file with no
+        rows, so callers need both the rows and the set of completed document
+        IDs.  Returning both together avoids parsing every checkpoint file
+        twice during a resumed region.
+        """
         rows: list[dict[str, Any]] = []
+        completed: set[str] = set()
         for path in sorted(self.sections_root.glob("*.json")):
             payload = self._load_section_payload(path)
             if payload is None:
                 continue
+            completed.add(payload["document_id"])
             rows.extend(row for row in payload["rows"] if isinstance(row, dict))
-        return rows
+        return rows, completed
+
+    def load_sections(self) -> list[dict[str, Any]]:
+        """Load all valid section rows from the checkpoint directory."""
+        return self.load_section_state()[0]
 
     def section_document_ids(self) -> set[str]:
         """Return documents whose section fetch completed, including empty results."""
-        completed: set[str] = set()
-        for path in sorted(self.sections_root.glob("*.json")):
-            payload = self._load_section_payload(path)
-            if payload is not None:
-                completed.add(payload["document_id"])
-        return completed
+        return self.load_section_state()[1]
 
     @staticmethod
     def _load_section_payload(path: Path) -> dict[str, Any] | None:
