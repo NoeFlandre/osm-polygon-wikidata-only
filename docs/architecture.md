@@ -173,6 +173,9 @@ Underscore-prefixed (private) packages:
 Other focused modules (not underscore-prefixed but still implementation
 details behind facades):
 
+- `osm_polygon_wikidata_only.v2.sections` — exact-revision Wikipedia HTML
+  adaptation, deterministic section ordering, and per-document checkpoint
+  callbacks used by the V2 merge coordinator.
 - `osm_polygon_wikidata_only.enrichment.wikimedia.transport` — shared
   Wikimedia transport (per-host throttle, JSON read).
 - `osm_polygon_wikidata_only.enrichment.wikidata.{models,cache,transport,parsing}`
