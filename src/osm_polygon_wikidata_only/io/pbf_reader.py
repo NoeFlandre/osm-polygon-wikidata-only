@@ -128,7 +128,32 @@ class _PolygonHandler(osmium.SimpleHandler):
     def _tags(tags: Any) -> dict[str, str]:
         return {tag.k: tag.v for tag in tags}
 
+    @staticmethod
+    def _has_relevant_tag(tags: Any, *, include_wikipedia_tagged: bool) -> bool:
+        """Return whether the final values contain a retained OSM reference.
+
+        ``osmium`` normally exposes unique keys, but keeping the last value
+        here matches the existing ``dict`` conversion if a malformed input
+        contains duplicate keys.  This cheap pass avoids allocating a full
+        tag dictionary for the many areas that cannot reach the callback.
+        """
+        wikidata = ""
+        wikipedia_values: dict[str, str] = {}
+        for tag in tags:
+            key = tag.k
+            value = tag.v
+            if key == "wikidata":
+                wikidata = value
+            elif include_wikipedia_tagged and (key == "wikipedia" or key.startswith("wikipedia:")):
+                wikipedia_values[key] = value
+        return bool(wikidata.strip()) or any(value.strip() for value in wikipedia_values.values())
+
     def area(self, a: osmium.osm.Area) -> None:
+        if not self._has_relevant_tag(
+            a.tags,
+            include_wikipedia_tagged=self._include_wikipedia_tagged,
+        ):
+            return
         tags = self._tags(a.tags)
         wd = tags.get("wikidata", "").strip()
         has_wikipedia = bool(

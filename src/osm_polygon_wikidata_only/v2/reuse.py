@@ -426,7 +426,12 @@ def merge_v2_region(
         results_by_polygon[polygon_id] for polygon_id, _polygon, _refs in direct_inputs
     ]
 
-    provisional_matches = _lookup_titles(index, all_refs)
+    provisional_matches = dict(initial_matches)
+    unresolved_refs = tuple(
+        ref for ref in all_refs if not initial_matches.get(_title_key(ref.language, ref.title))
+    )
+    if unresolved_refs:
+        provisional_matches.update(_lookup_titles(index, unresolved_refs))
     speculative_results = [
         reconcile_wikipedia_refs(
             polygon_id,
