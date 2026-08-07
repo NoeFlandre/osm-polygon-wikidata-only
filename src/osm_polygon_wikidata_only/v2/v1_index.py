@@ -109,6 +109,7 @@ class _PersistentV1Index:
         self._stop = threading.Event()
         self._error: BaseException | None = None
         self._thread: threading.Thread | None = None
+        self._index_reader_executor: ThreadPoolExecutor | None = None
         self._reader_connections: list[sqlite3.Connection] = []
         self._reader_lock = threading.Lock()
         self._reader_query_lock = threading.Lock()
@@ -241,6 +242,10 @@ class _PersistentV1Index:
             self._error = exc
             LOGGER.exception("V2 V1 reuse index failed")
         finally:
+            reader = self._index_reader_executor
+            if reader is not None:
+                reader.shutdown(wait=True, cancel_futures=True)
+                self._index_reader_executor = None
             self._initialized.set()
             self._ready.set()
 
@@ -464,7 +469,10 @@ class _PersistentV1Index:
                         (resolved, *fingerprint, total_row_groups),
                     )
                 self._row_cache.clear()
-            reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="v2-index-reader")
+            reader = self._index_reader_executor
+            if reader is None:
+                reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="v2-index-reader")
+                self._index_reader_executor = reader
             next_group: Future[list[tuple[str, str, str, int, int, str, int, int]]] | None = None
             try:
                 if start_row_group < total_row_groups:
@@ -519,7 +527,6 @@ class _PersistentV1Index:
             finally:
                 if next_group is not None:
                     next_group.cancel()
-                reader.shutdown(wait=True, cancel_futures=True)
                 parquet_file.close()
             with connection:
                 connection.execute(

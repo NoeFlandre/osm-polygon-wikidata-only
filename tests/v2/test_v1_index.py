@@ -618,6 +618,40 @@ def test_persistent_index_reads_next_row_group_during_current_commit(
     assert index.by_title("en", "Second page")[0]["document_id"] == "Q43:wikipedia:en:2:3"
 
 
+def test_persistent_index_reuses_one_reader_executor_for_multiple_shards(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bounded reader worker is reused across the complete shard scan."""
+    _write_documents(tmp_path, [_document()])
+    second = tmp_path / "wikipedia" / "documents" / "second.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [_document(document_id="Q43:wikipedia:en:2:3", wikidata="Q43", page_id=2)],
+            schema=wikipedia_document_schema(),
+        ),
+        second,
+    )
+
+    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+
+    original_executor = v1_index.ThreadPoolExecutor
+    created: list[object] = []
+
+    def record_executor(*args: object, **kwargs: object) -> ThreadPoolExecutor:
+        executor = original_executor(*args, **kwargs)
+        created.append(executor)
+        return executor
+
+    monkeypatch.setattr(v1_index, "ThreadPoolExecutor", record_executor)
+    index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "cache")
+    try:
+        assert index.row_count == 2
+        assert len(created) == 1
+    finally:
+        index.close()
+
+
 def test_persistent_index_adds_new_shards_incrementally(tmp_path: Path) -> None:
     _write_documents(tmp_path, [_document()])
     cache_dir = tmp_path / "v2-cache" / "v1-index"
