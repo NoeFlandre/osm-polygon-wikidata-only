@@ -76,7 +76,8 @@ class JsonFileCache:
         """Return the entry for ``key`` if present and fresh.
 
         Returns ``None`` on miss, on stale entries, or on parse errors.
-        A corrupted entry (non-UTF-8 bytes, invalid JSON) is treated as
+        A corrupted entry (non-UTF-8 bytes, invalid JSON, or an invalid JSON
+        shape) is treated as
         a miss, logged at WARNING so the operator notices, and removed
         so subsequent runs do not re-hit the same file.
         """
@@ -99,18 +100,31 @@ class JsonFileCache:
             with contextlib.suppress(OSError):
                 path.unlink()
             return None
-        expires_at = float(raw.get("meta", {}).get("expires_at", 0))
-        if raw.get("meta", {}).get("contract_version", "v1") != self.contract_version:
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("cache root must be a JSON object")
+            meta = raw.get("meta", {})
+            if not isinstance(meta, dict):
+                raise ValueError("cache metadata must be a JSON object")
+            expires_at = float(meta.get("expires_at", 0))
+            response_metadata = meta.get("response_metadata", {})
+            if not isinstance(response_metadata, dict):
+                raise ValueError("cache response metadata must be a JSON object")
+        except (TypeError, ValueError) as error:
+            LOGGER.warning("Cache entry %s has an invalid shape (%s); removing it.", path, error)
+            with contextlib.suppress(OSError):
+                path.unlink()
+            return None
+        if meta.get("contract_version", "v1") != self.contract_version:
             return None
         if expires_at and (now or time.time()) > expires_at:
             return None
-        meta = raw.get("meta", {})
         return CacheEntry(
             key=key,
             retrieved_at=meta.get("retrieved_at", ""),
             status=meta.get("status", "ok"),
             request_url=meta.get("request_url", ""),
-            response_metadata=meta.get("response_metadata", {}),
+            response_metadata=response_metadata,
             parsed_result=raw.get("payload"),
         )
 

@@ -108,6 +108,20 @@ def test_get_returns_none_on_invalid_json_cache_file(
     assert cache.get("foo") is None
 
 
+def test_get_returns_none_on_malformed_json_cache_shape(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cache = JsonFileCache(tmp_path)
+    cache.set("foo", {"a": 1})
+    path = next(tmp_path.glob("*.json"))
+    path.write_text("[]", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="osm_polygon_wikidata_only.io.cache")
+    assert cache.get("foo") is None
+    assert not path.exists()
+    assert any("cache entry" in record.getMessage().lower() for record in caplog.records)
+
+
 def test_get_removes_corrupted_cache_file_so_subsequent_runs_dont_re_hit_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
