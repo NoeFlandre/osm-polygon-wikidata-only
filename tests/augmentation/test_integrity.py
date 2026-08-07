@@ -553,6 +553,26 @@ def test_enforce_all_regions_writes_deterministic_audit_json(tmp_path: Path):
     assert sorted(audit["totals"]["shards_with_rejections"]) == sorted([stem_chile, stem_italy])
 
 
+def test_enforce_all_regions_preserves_previous_audit_on_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The aggregate audit must replace its JSON atomically."""
+    data_root = _make_data_root(tmp_path)
+    audit_path = data_root.processed / "integrity" / "rejection_audit.json"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text('{"previous": true}\n', encoding="utf-8")
+    before = audit_path.read_bytes()
+
+    def fail(*args, **kwargs) -> None:
+        raise OSError("simulated interrupted audit write")
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.augmentation.integrity.atomic_write_text", fail)
+    with pytest.raises(OSError, match="simulated interrupted audit write"):
+        enforce_all_regions(data_root)
+
+    assert audit_path.read_bytes() == before
+
+
 def test_enforce_all_regions_skips_shards_without_sidecars(tmp_path: Path):
     data_root = _make_data_root(tmp_path)
     stem = "italy-latest"

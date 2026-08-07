@@ -67,6 +67,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import POLYGON_ARTICLE_COLUMNS
+from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.parquet import write_polygon_articles
 
 INTEGRITY_CONTRACT_VERSION = "join-integrity-v1"
@@ -548,9 +549,7 @@ def enforce_all_regions(
             ),
         },
     }
-    report.audit_path.write_text(
-        json.dumps(audit_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    atomic_write_text(report.audit_path, json.dumps(audit_payload, indent=2, sort_keys=True) + "\n")
     return report
 
 
