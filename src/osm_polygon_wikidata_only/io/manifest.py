@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.domain.models import ManifestStats
+from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps, loads
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
@@ -47,7 +48,7 @@ def save_manifest(path: Path, entries: dict[str, dict[str, Any]]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     sorted_entries = dict(sorted(entries.items()))
-    path.write_text(dumps(sorted_entries) + "\n", encoding="utf-8")
+    atomic_write_text(path, dumps(sorted_entries) + "\n")
     LOGGER.info("Saved manifest with %d entries to %s", len(sorted_entries), path)
 
 

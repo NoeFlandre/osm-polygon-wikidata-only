@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_wikidata_only.domain.models import ManifestStats
 from osm_polygon_wikidata_only.io.manifest import (
     iter_entries,
@@ -51,6 +53,41 @@ def test_save_manifest_sorts_keys(tmp_path: Path) -> None:
     )
     text = p.read_text(encoding="utf-8")
     assert text.index('"a"') < text.index('"z"')
+
+
+def test_save_manifest_uses_atomic_writer(tmp_path: Path, monkeypatch) -> None:
+    """A manifest update must go through the shared atomic writer."""
+    p = tmp_path / "manifest.json"
+    calls: list[Path] = []
+
+    def record(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+        calls.append(path)
+        p.write_text(text, encoding=encoding)
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.io.manifest.atomic_write_text", record)
+    save_manifest(p, {"a": _entry("a-latest.osm.pbf")})
+
+    assert calls == [p]
+    assert load_manifest(p)["a"]["polygon_count"] == 10
+
+
+def test_save_manifest_preserves_previous_bytes_when_atomic_write_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed replacement must not destroy the last valid manifest."""
+    p = tmp_path / "manifest.json"
+    save_manifest(p, {"old": _entry("old-latest.osm.pbf")})
+    before = p.read_bytes()
+
+    def fail(*args, **kwargs) -> None:
+        raise OSError("simulated interrupted manifest write")
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.io.manifest.atomic_write_text", fail)
+    with pytest.raises(OSError, match="simulated interrupted manifest write"):
+        save_manifest(p, {"new": _entry("new-latest.osm.pbf")})
+
+    assert p.read_bytes() == before
+    assert load_manifest(p)["old"]["polygon_count"] == 10
 
 
 def test_upsert_inserts_and_updates(tmp_path: Path) -> None:
