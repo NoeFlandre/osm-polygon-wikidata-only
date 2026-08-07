@@ -22,44 +22,20 @@ def accumulate_stats(
     articles: Iterable[Article],
     links: Iterable[PolygonArticleLink],
 ) -> ManifestStats:
-    """Compute aggregate stats from already-materialized rows.
+    """Compute aggregate stats from one-pass iterables.
 
-    Each iterable is consumed once. For very large PBFs, prefer
-    streaming stats via :class:`StreamingStats` instead.
+    This compatibility helper delegates to :class:`StreamingStats`, so it
+    retains the historical result while avoiding a second in-memory copy of
+    large polygon, article, or link collections.
     """
-    polys = list(polygons)
-    arts = list(articles)
-    links_list = list(links)
-
-    stats = ManifestStats()
-    stats.polygon_count = len(polys)
-    stats.unique_wikidata_count = len({p.wikidata for p in polys if p.wikidata})
-    stats.article_count = len(arts)
-    stats.language_count = len({a.language for a in arts})
-    stats.languages = sorted({a.language for a in arts})
-
-    polygon_with_text = {p.polygon_id for p in polys if p.text_available}
-    stats.rows_with_wikipedia = sum(1 for p in polys if p.has_wikipedia)
-    stats.rows_with_full_text = len(polygon_with_text)
-    stats.total_full_text_chars = sum(a.article_length_chars for a in arts)
-
-    stats.area_bucket_counts = dict(Counter(p.area_bucket for p in polys))
-
-    # tag_keys is a JSON list per polygon; tally individual keys.
-    import json
-
-    tag_counter: Counter[str] = Counter()
-    for p in polys:
-        try:
-            keys = json.loads(p.tag_keys)
-        except (ValueError, TypeError):
-            continue
-        tag_counter.update(keys)
-    stats.top_tag_keys = dict(tag_counter.most_common(50))
-
-    # Validate the links are consistent (defensive).
-    _ = links_list
-    return stats
+    stats = StreamingStats()
+    for polygon in polygons:
+        stats.add_polygon(polygon)
+    for article in articles:
+        stats.add_article(article)
+    for link in links:
+        stats.add_link(link)
+    return stats.finalize()
 
 
 class StreamingStats:

@@ -22,6 +22,7 @@ def test_readme_documents_complete_wikimedia_bot_password_workflow() -> None:
     )
     for text in required_text:
         assert text in readme
+    assert readme.count("| `--skip-existing` |") == 1
 
 
 def test_local_presentation_build_outputs_are_ignored() -> None:
