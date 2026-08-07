@@ -146,7 +146,7 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
     malformed shape."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     if not isinstance(raw, dict):
         return None

@@ -415,6 +415,26 @@ def test_resume_pending_rejects_malformed_envelope_before_upload(tmp_path: Path)
         queue.close_and_wait()
 
 
+def test_resume_pending_rejects_non_utf8_envelope_before_upload(tmp_path: Path) -> None:
+    """A corrupt UTF-8 state file must fail closed, not crash queue setup."""
+    BgUploadQueue = _queue()
+    state_dir = tmp_path / "queue"
+    state_dir.mkdir()
+    (state_dir / "000001.json").write_bytes(b"\xff\xfe")
+    upload_called = threading.Event()
+
+    def upload(_ops, _msg):
+        upload_called.set()
+
+    queue = BgUploadQueue(upload=upload, max_pending=2, state_dir=state_dir)
+    try:
+        with pytest.raises(ValueError, match="Malformed envelope"):
+            queue.resume_pending()
+        assert not upload_called.is_set()
+    finally:
+        queue.close_and_wait()
+
+
 # ---------------------------------------------------------------------------
 # Resume ordering is by envelope sequence, not filename
 # ---------------------------------------------------------------------------
