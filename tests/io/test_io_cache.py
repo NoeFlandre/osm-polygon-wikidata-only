@@ -32,6 +32,14 @@ def test_stale_entry_is_miss(tmp_path: Path) -> None:
     assert cache.get("foo") is None
 
 
+def test_explicit_zero_clock_is_used_for_expiry(tmp_path: Path) -> None:
+    cache = JsonFileCache(tmp_path)
+    cache.set("foo", {"a": 1}, ttl_s=1, now=0)
+
+    assert cache.get("foo", now=0) is not None
+    assert cache.get("foo", now=2) is None
+
+
 def test_keys_with_slashes_are_sanitized(tmp_path: Path) -> None:
     cache = JsonFileCache(tmp_path)
     cache.set("wikipedia/en/123_456", {"x": 1})

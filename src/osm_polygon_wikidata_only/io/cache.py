@@ -117,7 +117,8 @@ class JsonFileCache:
             return None
         if meta.get("contract_version", "v1") != self.contract_version:
             return None
-        if expires_at and (now or time.time()) > expires_at:
+        current_time = time.time() if now is None else now
+        if expires_at and current_time > expires_at:
             return None
         return CacheEntry(
             key=key,
@@ -144,7 +145,8 @@ class JsonFileCache:
         Returns the cache entry that was written.
         """
         ttl = self.default_ttl_s if ttl_s is None else ttl_s
-        expires_at = (now or time.time()) + ttl
+        current_time = time.time() if now is None else now
+        expires_at = current_time + ttl
         meta: dict[str, Any] = {
             "retrieved_at": utc_now_iso(),
             "expires_at": expires_at,
