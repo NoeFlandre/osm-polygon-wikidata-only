@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION, V2_REPO_ID
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
@@ -73,10 +74,7 @@ def render_v2_card(processed_v2: Path) -> str:
 def write_v2_card(processed_v2: Path) -> Path:
     """Write the deterministic card atomically and return its path."""
     path = processed_v2 / "README.md"
-    temporary = path.with_suffix(".md.tmp")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary.write_text(render_v2_card(processed_v2), encoding="utf-8")
-    temporary.replace(path)
+    atomic_write_text(path, render_v2_card(processed_v2))
     return path
 
 
