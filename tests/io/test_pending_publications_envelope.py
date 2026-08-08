@@ -20,6 +20,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _import_module():
     from osm_polygon_wikidata_only.pipeline import pending_publications as mod
@@ -148,3 +150,16 @@ def test_save_pending_publications_preserves_other_fields(tmp_path: Path) -> Non
     assert envelope["metadata_refresh"] == pre_existing_marker
     assert envelope.get("extra_field") == {"key": "value"}
     assert envelope["stems"] == ["beta-latest"]
+
+
+def test_non_utf8_envelope_raises_actionable_value_error(tmp_path: Path) -> None:
+    """Corrupt UTF-8 state must fail as a malformed envelope, not decode raw bytes."""
+    mod = _import_module()
+    from osm_polygon_wikidata_only.config.paths import DataRoot
+
+    dr = DataRoot(tmp_path)
+    dr.ensure()
+    (dr.processed_manifests / mod.FILENAME).write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match="Malformed pending publication manifest"):
+        mod.load_pending_publications(dr)

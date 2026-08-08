@@ -56,10 +56,10 @@ def _load_envelope(data_root: DataRoot) -> dict[str, Any]:
     path = _manifest_path(data_root)
     if not path.exists():
         return {}
-    content = path.read_text(encoding="utf-8")
     try:
+        content = path.read_text(encoding="utf-8")
         data = json.loads(content)
-    except json.JSONDecodeError as exc:
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Malformed pending publication manifest: {exc}") from exc
     if not isinstance(data, dict):
         raise TypeError("Pending publication manifest must be a JSON object")
