@@ -71,3 +71,13 @@ def test_sections_use_the_exact_v1_section_schema(tmp_path: Path) -> None:
 
     table = pq.read_table(tmp_path / "wikipedia/sections/region-latest.parquet")
     assert table.schema.equals(section_schema(), check_metadata=True)
+
+
+def test_corrupt_utf8_manifest_raises_actionable_value_error(tmp_path: Path) -> None:
+    """Corrupt V2 manifest bytes must fail as a named format error."""
+    path = tmp_path / "manifests" / "processed_pbfs.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match="Malformed V2 manifest"):
+        load_v2_manifest(tmp_path)

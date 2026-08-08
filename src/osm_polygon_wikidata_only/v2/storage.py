@@ -89,7 +89,10 @@ def load_v2_manifest(processed_v2: Path) -> dict[str, dict[str, Any]]:
     path = processed_v2 / "manifests" / "processed_pbfs.json"
     if not path.exists():
         return {}
-    raw = json_loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = json_loads(path.read_text(encoding="utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"Malformed V2 manifest: {exc}") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"V2 manifest is not an object: {path}")
     entries = raw.get("regions", raw)
