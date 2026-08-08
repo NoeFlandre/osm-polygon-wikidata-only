@@ -34,6 +34,15 @@ def test_load_manifest_returns_empty_for_missing(tmp_path: Path) -> None:
     assert load_manifest(tmp_path / "nope.json") == {}
 
 
+def test_load_manifest_rejects_corrupt_utf8_with_actionable_error(tmp_path: Path) -> None:
+    """Corrupt manifest bytes must identify the processed manifest format."""
+    path = tmp_path / "manifest.json"
+    path.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match="Malformed processed manifest"):
+        load_manifest(path)
+
+
 def test_save_then_load_round_trips(tmp_path: Path) -> None:
     p = tmp_path / "manifest.json"
     save_manifest(p, {"a": _entry("a-latest.osm.pbf")})

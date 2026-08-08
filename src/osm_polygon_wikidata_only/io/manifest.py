@@ -31,10 +31,13 @@ def load_manifest(path: Path) -> dict[str, dict[str, Any]]:
     """Read the manifest. Returns ``{}`` if the file does not exist."""
     if not path.exists():
         return {}
-    text = path.read_text(encoding="utf-8")
-    if not text.strip():
-        return {}
-    parsed: object = loads(text)
+    try:
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return {}
+        parsed: object = loads(text)
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"Malformed processed manifest: {exc}") from exc
     if not isinstance(parsed, dict):
         return {}
     return cast(dict[str, dict[str, Any]], parsed)
