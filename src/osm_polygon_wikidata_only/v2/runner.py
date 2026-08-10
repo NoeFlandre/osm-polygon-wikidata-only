@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +18,6 @@ from typing import Any
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
-from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.hashing import sha256_file
@@ -28,8 +27,11 @@ from osm_polygon_wikidata_only.v2.checkpoints import clear_v2_checkpoints
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION, V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.extractor import extract_v2_pbf
 from osm_polygon_wikidata_only.v2.publication import (
+    _REGION_UPLOAD_BATCH_SIZE,
+    Upload,
     metadata_publication_ops,
-    region_publication_ops,
+    remote_region_complete,
+    upload_region_batches,
 )
 from osm_polygon_wikidata_only.v2.resume import V2FileHashCache
 from osm_polygon_wikidata_only.v2.reuse import (
@@ -41,10 +43,6 @@ from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 from osm_polygon_wikidata_only.v2.v1_index import start_v1_reuse_index
 
 LOGGER = logging.getLogger(__name__)
-
-
-Upload = Callable[[list[PublicationOp], str], None]
-_REGION_UPLOAD_BATCH_SIZE = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,55 +79,16 @@ def _plan_regions(
             action = "extract"
         elif manifest[stem].get("v1_index_reconciled", True) is not True:
             action = "reconcile"
-        elif not push or _remote_region_complete(remote_inventory, data_root, stem):
+        elif not push or remote_region_complete(
+            remote_inventory,
+            data_root.processed_v2,
+            stem,
+        ):
             action = "skip"
         else:
             action = "publish"
         plans.append(_RegionPlan(pbf, stem, action))
     return tuple(plans)
-
-
-def _region_upload_message(stems: Sequence[str], *, repair: bool) -> str:
-    """Build a stable commit message for one bounded region batch."""
-    if len(stems) == 1:
-        prefix = "Repair" if repair else "Add"
-        return f"{prefix} V2 region {stems[0]}"
-    prefix = "Repair" if repair else "Add"
-    return f"{prefix} V2 regions {stems[0]} through {stems[-1]} ({len(stems)} regions)"
-
-
-def _upload_region_batches(
-    data_root: DataRoot,
-    stems: Sequence[str],
-    *,
-    upload: Upload,
-    repair: bool,
-) -> None:
-    """Upload regions in bounded Hub commits to stay below commit quotas."""
-    for offset in range(0, len(stems), _REGION_UPLOAD_BATCH_SIZE):
-        batch = tuple(stems[offset : offset + _REGION_UPLOAD_BATCH_SIZE])
-        operations = [
-            operation
-            for stem in batch
-            for operation in region_publication_ops(data_root.processed_v2, stem)
-        ]
-        upload(
-            operations,
-            _region_upload_message(batch, repair=repair),
-        )
-
-
-def _remote_region_complete(
-    remote_inventory: RemoteInventory | None,
-    data_root: DataRoot,
-    stem: str,
-) -> bool:
-    if remote_inventory is None:
-        return False
-    return all(
-        remote_inventory.contains(operation.path_in_repo)
-        for operation in region_publication_ops(data_root.processed_v2, stem)
-    )
 
 
 def run_v2_sync(
@@ -189,8 +148,8 @@ def run_v2_sync(
             return
         if upload is None:
             raise RuntimeError("V2 publication requested without an upload callback")
-        _upload_region_batches(
-            data_root,
+        upload_region_batches(
+            data_root.processed_v2,
             pending_publish_stems,
             upload=upload,
             repair=True,
@@ -299,8 +258,8 @@ def run_v2_sync(
         if push:
             if upload is None:
                 raise RuntimeError("V2 publication requested without an upload callback")
-            _upload_region_batches(
-                data_root,
+            upload_region_batches(
+                data_root.processed_v2,
                 extracted_stems,
                 upload=upload,
                 repair=False,
