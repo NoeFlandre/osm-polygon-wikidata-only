@@ -17,8 +17,6 @@ The engine performs no network calls and never imports from ``tests/``.
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -34,6 +32,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import article_schema
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
 
 __all__ = [
     "ApplyResult",
@@ -306,16 +305,7 @@ def _assert_canonical_preserves_legacy(
 
 def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
     """Write a Parquet file atomically via temp file and os.replace."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp_path = Path(raw_tmp)
-    os.close(fd)
-    try:
-        pq.write_table(table, tmp_path, compression="snappy")  # type: ignore[no-untyped-call]
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_parquet(path, table)
 
 
 def _validate_stem_path(stem: str, docs_dir: Path) -> Path:

@@ -65,6 +65,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
     qids_from_osm_tag as _qids_from_osm_tag,
 )
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
 from osm_polygon_wikidata_only.pipeline._link_migration.conversion import (
     build_canonical_rows as _build_canonical_rows,
 )
@@ -136,16 +137,7 @@ def _file_content_hash(path: Path) -> str:
 
 
 def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp_path = Path(raw_tmp)
-    os.close(fd)
-    try:
-        pq.write_table(table, tmp_path, compression="snappy")  # type: ignore[no-untyped-call]
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_parquet(path, table)
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

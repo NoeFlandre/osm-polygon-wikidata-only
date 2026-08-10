@@ -42,8 +42,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from concurrent.futures import Executor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,7 +78,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
 
@@ -194,16 +192,7 @@ class CoreInputs:
 
 
 def _write_atomic(path: Path, table: pa.Table) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp_path = Path(raw_tmp)
-    os.close(fd)
-    try:
-        pq.write_table(table, tmp_path, compression="snappy")  # type: ignore[no-untyped-call]
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_parquet(path, table)
 
 
 def _write_atomic_from_rows(
