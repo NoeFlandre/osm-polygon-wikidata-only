@@ -7,7 +7,6 @@ Wikipedia pages absent from V1, and commits each completed region atomically.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from collections.abc import Callable, Sequence
@@ -22,6 +21,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClien
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
 from osm_polygon_wikidata_only.v2.card import write_v2_card
 from osm_polygon_wikidata_only.v2.checkpoints import clear_v2_checkpoints
@@ -391,11 +391,7 @@ def _region_is_current(
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_file(path)
 
 
 __all__ = ["run_v2_sync"]

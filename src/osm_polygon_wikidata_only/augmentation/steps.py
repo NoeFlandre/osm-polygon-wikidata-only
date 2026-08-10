@@ -40,7 +40,6 @@ orchestrator; helpers do *not* choose worker counts.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from concurrent.futures import Executor, as_completed
 from dataclasses import dataclass
@@ -79,6 +78,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
+from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
 from osm_polygon_wikidata_only.utils.json import dumps
 
 
@@ -169,11 +169,7 @@ def sha256_file(path: Path) -> str:
     capture, the post-write drift check inside the orchestrator, and
     the resumability check in :func:`augmentation_is_current`.
     """
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return _sha256_file(path)
 
 
 @dataclass(frozen=True, slots=True)

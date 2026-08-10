@@ -9,7 +9,6 @@ by a V1 document are fetched.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import shutil
@@ -27,6 +26,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_COLUMNS
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.checkpoints import (
     RegionFetchCheckpoint,
     region_input_fingerprint,
@@ -178,11 +178,7 @@ def copy_v1_sidecars(data_root: DataRoot, stem: str, destination: Path) -> tuple
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_file(path)
 
 
 def _polygon_refs(polygon: dict[str, Any]) -> tuple[WikipediaTagRef, ...]:
