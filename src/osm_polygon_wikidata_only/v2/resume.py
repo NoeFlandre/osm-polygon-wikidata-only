@@ -9,21 +9,14 @@ from typing import Any
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
+from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 
 _CACHE_CONTRACT_VERSION = "v2-resume-file-hashes-v1"
 _HASH_LENGTH = 64
 
 
 def _fingerprint(path: Path) -> dict[str, int]:
-    stat = path.stat()
-    return {
-        "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-        "ctime_ns": stat.st_ctime_ns,
-        "inode": stat.st_ino,
-        "device": stat.st_dev,
-        "birthtime_ns": int(getattr(stat, "st_birthtime_ns", 0)),
-    }
+    return FileStatFingerprint.from_path(path).resume()
 
 
 def _sha256(path: Path) -> str:

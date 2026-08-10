@@ -28,6 +28,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_from_article_row,
 )
 from osm_polygon_wikidata_only.v2 import index_scanning
+from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 
 LOGGER = logging.getLogger(__name__)
 
@@ -329,8 +330,7 @@ class _PersistentV1Index:
 
     @staticmethod
     def _fingerprint(path: Path) -> tuple[int, int, int, int]:
-        stat = path.stat()
-        return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino
+        return FileStatFingerprint.from_path(path).index_tuple()
 
     def _commit_indexed_row_group(
         self,

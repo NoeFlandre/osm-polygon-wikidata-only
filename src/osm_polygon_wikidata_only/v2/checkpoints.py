@@ -23,6 +23,7 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
+from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 from osm_polygon_wikidata_only.v2.schema import polygon_v2_schema
 
 CHECKPOINT_CONTRACT_VERSION = "wikipedia-tags-v2-checkpoints-v2"
@@ -33,14 +34,7 @@ def _sha256_text(value: str) -> str:
 
 
 def _file_fingerprint(path: Path) -> dict[str, int | str]:
-    stat = path.stat()
-    return {
-        "name": path.name,
-        "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-        "ctime_ns": stat.st_ctime_ns,
-        "inode": stat.st_ino,
-    }
+    return FileStatFingerprint.from_path(path).checkpoint(path.name)
 
 
 def region_input_fingerprint(polygons: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> str:
