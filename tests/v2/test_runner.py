@@ -76,6 +76,120 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
     assert [message for _, message in uploads] == ["Update V2 dataset card and manifest"]
 
 
+def test_v2_runner_resumes_provisional_region_without_reextracting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A persisted provisional region is finalized from disk on restart."""
+    root = DataRoot(tmp_path)
+    root.ensure()
+    pbf = root.raw / "region-latest.osm.pbf"
+    pbf.touch()
+    write_v2_region(
+        root.processed_v2,
+        "region-latest",
+        polygons=[],
+        documents=[],
+        links=[],
+        v1_index_reconciled=False,
+    )
+    reconciled: list[str] = []
+
+    class ReadyIndex:
+        def wait_until_ready(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: ReadyIndex(),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.extract_v2_pbf",
+        lambda *_args, **_kwargs: pytest.fail("a persisted provisional region was re-extracted"),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.reconcile_v2_region",
+        lambda _data_root, stem, **_kwargs: reconciled.append(stem),
+    )
+
+    assert (
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=InMemoryWikipediaClient({}),
+        )
+        == 0
+    )
+    assert reconciled == ["region-latest"]
+
+
+def test_v2_runner_groups_region_publications_into_bounded_commits(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Many completed regions are published in batches, not one commit each."""
+    root = DataRoot(tmp_path)
+    root.ensure()
+    pbfs = []
+    for index in range(17):
+        pbf = root.raw / f"region-{index:02d}-latest.osm.pbf"
+        pbf.touch()
+        pbfs.append(pbf)
+
+    class ReadyIndex:
+        def wait_until_ready(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: ReadyIndex(),
+    )
+
+    def extract(path: Path, **_kwargs: object) -> V2ExtractedPbf:
+        return V2ExtractedPbf(
+            V2PbfStem(path, path.name.removesuffix(".osm.pbf"), "region"),
+            (),
+            0.0,
+        )
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.v2.runner.extract_v2_pbf", extract)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.merge_v2_region",
+        lambda data_root, extracted, **_kwargs: write_v2_region(
+            data_root.processed_v2,
+            extracted.stem.stem,
+            polygons=[],
+            documents=[],
+            links=[],
+        ),
+    )
+    uploads: list[tuple[list, str]] = []
+
+    assert (
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=InMemoryWikipediaClient({}),
+            push=True,
+            upload=lambda ops, message: uploads.append((ops, message)),
+        )
+        == 0
+    )
+
+    region_uploads = uploads[:-1]
+    assert len(region_uploads) == 2
+    assert [len(ops) for ops, _ in region_uploads] == [64, 4]
+    assert uploads[-1][1] == "Update V2 dataset card and manifest"
+
+
 def test_v2_runner_rebuilds_a_region_when_a_manifest_file_is_tampered(
     tmp_path: Path,
     monkeypatch,

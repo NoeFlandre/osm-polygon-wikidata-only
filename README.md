@@ -285,6 +285,9 @@ summary avoids a full SQLite distinct-count scan when the index has no changes.
 Completed-region checks also keep a small fingerprint-backed digest cache at
 `cache/v2/resume-hashes.json`; unchanged artifacts are validated without
 rereading their bytes, while any changed file is hashed again before reuse.
+When publishing, V2 groups up to 16 regions per Hub commit and publishes the
+README and manifest last. If publishing is interrupted, the next run reuses
+persisted provisional regions and skips batches already present remotely.
 Use `--force` only when deliberately rebuilding a V2 region.
 
 ### Wikimedia Bot Password authentication

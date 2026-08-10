@@ -44,6 +44,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 Upload = Callable[[list[PublicationOp], str], None]
+_REGION_UPLOAD_BATCH_SIZE = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,24 +67,56 @@ def _plan_regions(
     plans: list[_RegionPlan] = []
     for pbf in pbfs:
         stem = pbf.name.removesuffix(".osm.pbf")
-        current = (
+        local_artifacts_current = (
             settings.skip_existing
             and not settings.force
-            and _region_is_current(
+            and _region_artifacts_are_current(
                 data_root.processed_v2,
                 stem,
                 manifest,
                 hash_cache=hash_cache,
             )
         )
-        if not current:
+        if not local_artifacts_current:
             action = "extract"
+        elif manifest[stem].get("v1_index_reconciled", True) is not True:
+            action = "reconcile"
         elif not push or _remote_region_complete(remote_inventory, data_root, stem):
             action = "skip"
         else:
             action = "publish"
         plans.append(_RegionPlan(pbf, stem, action))
     return tuple(plans)
+
+
+def _region_upload_message(stems: Sequence[str], *, repair: bool) -> str:
+    """Build a stable commit message for one bounded region batch."""
+    if len(stems) == 1:
+        prefix = "Repair" if repair else "Add"
+        return f"{prefix} V2 region {stems[0]}"
+    prefix = "Repair" if repair else "Add"
+    return f"{prefix} V2 regions {stems[0]} through {stems[-1]} ({len(stems)} regions)"
+
+
+def _upload_region_batches(
+    data_root: DataRoot,
+    stems: Sequence[str],
+    *,
+    upload: Upload,
+    repair: bool,
+) -> None:
+    """Upload regions in bounded Hub commits to stay below commit quotas."""
+    for offset in range(0, len(stems), _REGION_UPLOAD_BATCH_SIZE):
+        batch = tuple(stems[offset : offset + _REGION_UPLOAD_BATCH_SIZE])
+        operations = [
+            operation
+            for stem in batch
+            for operation in region_publication_ops(data_root.processed_v2, stem)
+        ]
+        upload(
+            operations,
+            _region_upload_message(batch, repair=repair),
+        )
 
 
 def _remote_region_complete(
@@ -149,6 +182,20 @@ def run_v2_sync(
     extraction_index: int | None = None
     provisional_stems: list[str] = []
     extracted_stems: list[str] = []
+    pending_publish_stems: list[str] = []
+
+    def flush_pending_publishes() -> None:
+        if not pending_publish_stems:
+            return
+        if upload is None:
+            raise RuntimeError("V2 publication requested without an upload callback")
+        _upload_region_batches(
+            data_root,
+            pending_publish_stems,
+            upload=upload,
+            repair=True,
+        )
+        pending_publish_stems.clear()
 
     def schedule_next(after_index: int) -> None:
         nonlocal extraction_future, extraction_index
@@ -180,18 +227,22 @@ def run_v2_sync(
                 completed += 1
                 continue
             if plan.action == "publish":
-                if upload is None:
-                    raise RuntimeError("V2 publication requested without an upload callback")
-                LOGGER.info("Publishing existing V2 %s (remote artifacts are incomplete)", stem)
-                upload(
-                    region_publication_ops(data_root.processed_v2, stem),
-                    f"Repair V2 region {stem}",
-                )
+                LOGGER.info("Queueing existing V2 %s for batched publication", stem)
+                pending_publish_stems.append(stem)
+                if len(pending_publish_stems) >= _REGION_UPLOAD_BATCH_SIZE:
+                    flush_pending_publishes()
+                completed += 1
+                continue
+            if plan.action == "reconcile":
+                LOGGER.info("Resuming V2 %s from persisted provisional artifacts", stem)
+                provisional_stems.append(stem)
+                extracted_stems.append(stem)
                 completed += 1
                 continue
 
             if extraction_future is None or extraction_index != position:
                 raise RuntimeError(f"V2 extraction prefetch lost region {stem}")
+            flush_pending_publishes()
             future = extraction_future
             extraction_future = None
             extraction_index = None
@@ -230,6 +281,7 @@ def run_v2_sync(
             len(extracted_stems),
             len(provisional_stems),
         )
+        flush_pending_publishes()
         index.wait_until_ready()
         for stem in provisional_stems:
             reconcile_v2_region(
@@ -247,11 +299,12 @@ def run_v2_sync(
         if push:
             if upload is None:
                 raise RuntimeError("V2 publication requested without an upload callback")
-            for stem in extracted_stems:
-                upload(
-                    region_publication_ops(data_root.processed_v2, stem),
-                    f"Add V2 region {stem}",
-                )
+            _upload_region_batches(
+                data_root,
+                extracted_stems,
+                upload=upload,
+                repair=False,
+            )
         for stem in extracted_stems:
             LOGGER.info("Completed V2 region %s", stem)
         card = write_v2_card(data_root.processed_v2)
@@ -287,7 +340,7 @@ def _has_wikipedia_refs(extracted: Any) -> bool:
     return False
 
 
-def _region_is_current(
+def _region_artifacts_are_current(
     processed_v2: Path,
     stem: str,
     manifest: dict[str, dict[str, Any]],
@@ -296,8 +349,6 @@ def _region_is_current(
 ) -> bool:
     entry = manifest.get(stem)
     if entry is None or entry.get("contract_version") != V2_CONTRACT_VERSION:
-        return False
-    if entry.get("v1_index_reconciled", True) is not True:
         return False
     expected = {
         "polygons_path": f"polygons/{stem}.parquet",
@@ -318,6 +369,25 @@ def _region_is_current(
         if hashes.get(relative) != current_hash:
             return False
     return True
+
+
+def _region_is_current(
+    processed_v2: Path,
+    stem: str,
+    manifest: dict[str, dict[str, Any]],
+    *,
+    hash_cache: V2FileHashCache | None = None,
+) -> bool:
+    """Return whether a region has current artifacts and final reconciliation."""
+    return (
+        _region_artifacts_are_current(
+            processed_v2,
+            stem,
+            manifest,
+            hash_cache=hash_cache,
+        )
+        and manifest[stem].get("v1_index_reconciled", True) is True
+    )
 
 
 def _sha256(path: Path) -> str:

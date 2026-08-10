@@ -144,8 +144,12 @@ Each region is written through staged Parquet files and a journal-free
 replacement transaction, then the V2 manifest is updated atomically. A
 completed local region is skipped on a non-publishing rerun; when publishing,
 the runner checks the optional remote inventory and uploads an existing local
-region if the Hub is incomplete. Region commits are followed by a deterministic
-V2 README and manifest publication. A failed upload leaves local artifacts
+region if the Hub is incomplete. Regional artifacts are grouped into bounded
+multi-region Hub commits (at most 16 regions and 64 file operations), followed
+by one deterministic V2 README and manifest publication. If a run stops after
+local writing or an upload failure, the next run reconciles persisted
+provisional regions without re-extracting them and uses the remote inventory to
+skip batches already published. A failed upload leaves local artifacts
 available for retry and never causes V1 rollback.
 
 ### Focused internal modules
