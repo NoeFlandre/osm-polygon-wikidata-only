@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.v2.config import (
     V2_CONTRACT_VERSION,
+    V2_DATASET_CARD_VERSION,
     V2_GITHUB_URL,
     V2_REPO_ID,
     V2_TRACKIO_RUN_NAME,
@@ -278,10 +279,11 @@ def _render_front_matter(snapshot: V2CardStats) -> str:
     lines.extend(
         [
             "dataset_info:",
-            f"  version: {V2_CONTRACT_VERSION}",
+            f"  version: {V2_DATASET_CARD_VERSION}",
             f"  regions: {snapshot.regions}",
             f"  polygons: {snapshot.polygons}",
             f"  documents: {snapshot.documents}",
+            f"dataset_contract: {V2_CONTRACT_VERSION}",
             "---",
         ]
     )

@@ -51,6 +51,8 @@ def test_v2_card_front_matter_has_viewer_configs_for_every_table(tmp_path: Path)
 
     front_matter = yaml.safe_load(render_v2_card(tmp_path).split("---", 2)[1])
 
+    assert front_matter["dataset_info"]["version"] == "2.0.0"
+    assert front_matter["dataset_contract"] == "wikipedia-tags-v2"
     assert [config["config_name"] for config in front_matter["configs"]] == [
         "polygons",
         "polygon_document_links",
