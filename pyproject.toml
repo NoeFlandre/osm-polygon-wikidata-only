@@ -36,6 +36,7 @@ osm-polygon-wikidata-only = "osm_polygon_wikidata_only.cli.app:run"
 osm-polygon-wikidata-only-enforce-integrity = "osm_polygon_wikidata_only.cli.enforce_integrity:run"
 osm-polygon-wikidata-only-audit-remote = "osm_polygon_wikidata_only.cli.audit_remote:run"
 osm-polygon-wikidata-only-trackio = "osm_polygon_wikidata_only.hf.trackio_snapshot:run"
+osm-polygon-wikidata-and-wikipedia-trackio = "osm_polygon_wikidata_only.hf.v2_trackio_snapshot:run"
 
 [project.urls]
 Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"

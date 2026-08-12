@@ -35,15 +35,24 @@ def _non_blank(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
-    """Load exact Wikipedia and combined text coverage from canonical tables."""
+def load_text_presence(
+    processed_root: Path,
+    *,
+    links_dir: Path | None = None,
+) -> TextPresenceSnapshot:
+    """Load exact Wikipedia and combined text coverage from canonical tables.
+
+    V1 callers use the default ``polygon_articles`` directory.  Isolated
+    contracts may provide their own unified link directory.
+    """
     polygons_dir = require_directory(processed_root / "polygons", label="polygons")
     canonical_wikipedia = processed_root / "wikipedia" / "documents"
     wikipedia_dir = require_directory(
         canonical_wikipedia if canonical_wikipedia.exists() else processed_root / "articles",
         label="wikipedia/documents",
     )
-    require_directory(processed_root / "polygon_articles", label="polygon_articles")
+    source_links_dir = links_dir or processed_root / "polygon_articles"
+    require_directory(source_links_dir, label="polygon links")
     wikivoyage_dir = processed_root / "wikivoyage" / "documents"
 
     wikipedia_ids: set[str] = set()
@@ -75,7 +84,7 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
     }
     wikipedia_polygons: set[str] = set()
     combined_ids: set[str] = set()
-    links = read_document_links(processed_root)
+    links = read_document_links(processed_root, links_dir=source_links_dir)
     for link in links:
         if link.document_id not in document_ids.get(link.project, set()):
             continue
@@ -90,7 +99,7 @@ def load_text_presence(processed_root: Path) -> TextPresenceSnapshot:
         pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
             polygon_document_link_schema(), check_metadata=True
         )
-        for path in sorted_parquets(processed_root / "polygon_articles")
+        for path in sorted_parquets(source_links_dir)
     )
 
     all_polygon_ids: set[str] = set()

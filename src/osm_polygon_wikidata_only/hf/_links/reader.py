@@ -25,15 +25,25 @@ class DocumentLink:
     language: str
 
 
-def read_document_links(processed_root: Path) -> tuple[DocumentLink, ...]:
-    """Read canonical links deterministically and validate their schema."""
+def read_document_links(
+    processed_root: Path,
+    *,
+    links_dir: Path | None = None,
+) -> tuple[DocumentLink, ...]:
+    """Read canonical links deterministically and validate their schema.
+
+    ``links_dir`` is used by isolated dataset contracts such as V2.  The
+    default remains the V1 ``polygon_articles`` directory.
+    """
     rows: list[DocumentLink] = []
     expected = polygon_document_link_schema()
-    for path in sorted_parquets(processed_root / "polygon_articles"):
+    source_dir = links_dir or processed_root / "polygon_articles"
+    for path in sorted_parquets(source_dir):
         import pyarrow.parquet as pq
 
         schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
-        if schema.equals(expected, check_metadata=True):
+        is_v2_schema = set(expected.names).issubset(schema.names) and "link_sources" in schema.names
+        if schema.equals(expected, check_metadata=True) or is_v2_schema:
             source_rows = read_required_columns(
                 path,
                 ("polygon_id", "project", "document_id", "wikidata", "language"),
@@ -92,7 +102,7 @@ def read_document_links(processed_root: Path) -> tuple[DocumentLink, ...]:
                     polygon_id=str(row["polygon_id"]),
                     project=str(row["project"]),
                     document_id=str(row["document_id"]),
-                    wikidata=str(row["wikidata"]),
+                    wikidata=str(row.get("wikidata") or ""),
                     language=str(row["language"]),
                 )
             )

@@ -7,6 +7,11 @@ from pathlib import Path
 
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.repo_layout import (
+    LOCAL_DATASET_HERO_FILE,
+    REMOTE_DATASET_HERO_FILE,
+)
+from osm_polygon_wikidata_only.v2.config import V2_ASSET_PATHS
 from osm_polygon_wikidata_only.v2.reuse import SIDECAR_SUBDIRS
 
 Upload = Callable[[list[PublicationOp], str], None]
@@ -32,12 +37,25 @@ def region_publication_ops(processed_v2: Path, stem: str) -> list[PublicationOp]
     )
 
 
-def metadata_publication_ops(processed_v2: Path) -> list[PublicationOp]:
-    """Return the V2 card and manifest publication plan."""
-    return _add_existing(
+def metadata_publication_ops(
+    processed_v2: Path,
+    *,
+    hero_path: Path | None = LOCAL_DATASET_HERO_FILE,
+) -> list[PublicationOp]:
+    """Return the V2 maps, card, and manifest publication plan."""
+    operations = _add_existing(
         processed_v2,
-        [Path("README.md"), Path("manifests/processed_pbfs.json")],
+        [
+            *(Path(path) for path in V2_ASSET_PATHS),
+            Path("manifests/processed_pbfs.json"),
+            Path("README.md"),
+        ],
     )
+    if hero_path is not None:
+        if not hero_path.is_file():
+            raise FileNotFoundError(f"Dataset hero asset is missing: {hero_path}")
+        operations.insert(0, add_op(hero_path, path_in_repo=REMOTE_DATASET_HERO_FILE))
+    return operations
 
 
 def upload_region_batches(

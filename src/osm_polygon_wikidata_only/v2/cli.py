@@ -15,7 +15,11 @@ from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import UploadError, upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
+from osm_polygon_wikidata_only.v2.card import V2CardStats
+from osm_polygon_wikidata_only.v2.config import (
+    V2_CACHE_CONTRACT_VERSION,
+    V2_TRACKIO_RUN_NAME,
+)
 from osm_polygon_wikidata_only.v2.runner import run_v2_sync
 
 LOGGER = logging.getLogger(__name__)
@@ -63,6 +67,21 @@ def execute_v2(
             num_threads=args.upload_threads,
         )
 
+    trackio_publish = None
+    if args.push and not args.dry_run:
+
+        def publish_snapshot(stats: V2CardStats) -> None:
+            from osm_polygon_wikidata_only.hf.v2_trackio_snapshot import (
+                publish_v2_trackio_snapshot,
+            )
+
+            publish_v2_trackio_snapshot(
+                output_dir=data_root.cache / "trackio" / V2_TRACKIO_RUN_NAME,
+                stats=stats,
+            )
+
+        trackio_publish = publish_snapshot
+
     return run_v2_sync(
         Path(args.input),
         data_root=data_root,
@@ -73,6 +92,7 @@ def execute_v2(
         push=bool(args.push),
         upload=upload if args.push else None,
         remote_inventory=remote_inventory,
+        trackio_publish=trackio_publish,
     )
 
 

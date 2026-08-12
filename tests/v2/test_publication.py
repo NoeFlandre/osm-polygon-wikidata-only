@@ -5,6 +5,7 @@ import pytest
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.v2.publication import (
     _REGION_UPLOAD_BATCH_SIZE,
+    metadata_publication_ops,
     region_publication_ops,
     remote_region_complete,
     upload_region_batches,
@@ -90,3 +91,25 @@ def test_remote_region_complete_requires_every_planned_path(tmp_path: Path) -> N
     assert remote_region_complete(RemoteInventory(set(paths)), tmp_path, stem)
     assert not remote_region_complete(RemoteInventory(set(paths[:-1])), tmp_path, stem)
     assert not remote_region_complete(None, tmp_path, stem)
+
+
+def test_metadata_publication_includes_v2_maps_and_card(tmp_path: Path) -> None:
+    for relative in (
+        "README.md",
+        "manifests/processed_pbfs.json",
+        "assets/coverage_map.png",
+        "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    assert [op.path_in_repo for op in metadata_publication_ops(tmp_path)] == [
+        "assets/dataset_hero.png",
+        "assets/coverage_map.png",
+        "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
+        "manifests/processed_pbfs.json",
+        "README.md",
+    ]

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,13 +19,15 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.repo_layout import LOCAL_DATASET_HERO_FILE
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
-from osm_polygon_wikidata_only.v2.card import write_v2_card
+from osm_polygon_wikidata_only.v2.card import V2CardStats, compute_v2_card_stats, write_v2_card
 from osm_polygon_wikidata_only.v2.checkpoints import clear_v2_checkpoints
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION, V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.extractor import extract_v2_pbf
+from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
 from osm_polygon_wikidata_only.v2.publication import (
     _REGION_UPLOAD_BATCH_SIZE,
     Upload,
@@ -103,6 +105,7 @@ def run_v2_sync(
     push: bool = False,
     upload: Upload | None = None,
     remote_inventory: RemoteInventory | None = None,
+    trackio_publish: Callable[[V2CardStats], None] | None = None,
 ) -> int:
     """Build V2 regions and optionally publish each completed region."""
     pbfs = collect_pbfs([input_path])
@@ -266,12 +269,34 @@ def run_v2_sync(
             )
         for stem in extracted_stems:
             LOGGER.info("Completed V2 region %s", stem)
-        card = write_v2_card(data_root.processed_v2)
+        land_path = data_root.cache / "ne_110m_land.geojson"
+        generate_v2_map_assets(
+            data_root.processed_v2,
+            data_root.processed_v2 / "assets",
+            land_geojson_path=land_path if land_path.is_file() else None,
+            land_cache_dir=data_root.cache,
+        )
+        card_stats = compute_v2_card_stats(
+            data_root.processed_v2,
+            v1_processed=data_root.processed,
+        )
+        card = write_v2_card(
+            data_root.processed_v2,
+            v1_processed=data_root.processed,
+            stats=card_stats,
+        )
+        if push and trackio_publish is not None:
+            trackio_publish(card_stats)
         if push:
             if upload is None:
                 raise RuntimeError("V2 publication requested without an upload callback")
             upload(
-                metadata_publication_ops(data_root.processed_v2),
+                metadata_publication_ops(
+                    data_root.processed_v2,
+                    hero_path=LOCAL_DATASET_HERO_FILE
+                    if LOCAL_DATASET_HERO_FILE.is_file()
+                    else None,
+                ),
                 "Update V2 dataset card and manifest",
             )
         LOGGER.info("V2 sync complete: %d region(s); card=%s", completed, card)

@@ -7,19 +7,30 @@ from pathlib import Path
 from .models import (
     DATASET_PRESENTATION_URL,
     FINAL_DATASET_SNAPSHOT,
+    TRACKIO_RUN_NAME,
     TRACKIO_SPACE_URL,
     FinalDatasetSnapshot,
 )
 
 
-def render_snapshot_markdown(snapshot: FinalDatasetSnapshot = FINAL_DATASET_SNAPSHOT) -> str:
+def render_snapshot_markdown(
+    snapshot: FinalDatasetSnapshot = FINAL_DATASET_SNAPSHOT,
+    *,
+    run_name: str = TRACKIO_RUN_NAME,
+    space_url: str = TRACKIO_SPACE_URL,
+    presentation_url: str | None = DATASET_PRESENTATION_URL,
+) -> str:
     """Render the public description shared by the README and dataset card."""
     return (
         "## Trackio snapshot\n\n"
-        f"[View the dataset presentation]({DATASET_PRESENTATION_URL}) for a visual "
-        "overview of the published tables and geographic coverage.\n\n"
-        f"The finished dataset is recorded in the single public Trackio run "
-        f"[`final-dataset-snapshot`]({TRACKIO_SPACE_URL}). It contains exactly "
+        + (
+            f"[View the dataset presentation]({presentation_url}) for a visual "
+            "overview of the published tables and geographic coverage.\n\n"
+            if presentation_url
+            else ""
+        )
+        + f"The finished dataset is recorded in the single public Trackio run "
+        f"[`{run_name}`]({space_url}). It contains exactly "
         "three plots: a text-coverage funnel, the top ten Wikipedia languages "
         "plus `Other languages`, and dataset composition on a logarithmic scale. "
         "The run is a static snapshot with no pipeline timeline.\n\n"

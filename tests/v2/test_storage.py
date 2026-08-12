@@ -81,3 +81,17 @@ def test_corrupt_utf8_manifest_raises_actionable_value_error(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="Malformed V2 manifest"):
         load_v2_manifest(tmp_path)
+
+
+def test_write_region_rejects_conflicting_duplicate_documents(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Conflicting duplicate document identity"):
+        write_v2_region(
+            tmp_path,
+            "region-latest",
+            polygons=[],
+            documents=[
+                {"document_id": "d1", "title": "First"},
+                {"document_id": "d1", "title": "Changed"},
+            ],
+            links=[],
+        )

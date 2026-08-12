@@ -17,6 +17,10 @@ from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
+from osm_polygon_wikidata_only.v2.deduplication import (
+    deduplicate_documents,
+    deduplicate_links,
+)
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
     polygon_v2_schema,
@@ -115,6 +119,8 @@ def write_v2_region(
     """
     if not stem or "/" in stem or "\\" in stem or stem in {".", ".."}:
         raise ValueError(f"Invalid V2 stem: {stem!r}")
+    documents = deduplicate_documents(documents)
+    links = deduplicate_links(links)
     polygons_path = processed_v2 / "polygons" / f"{stem}.parquet"
     documents_path = processed_v2 / "wikipedia" / "documents" / f"{stem}.parquet"
     sections_path = processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
