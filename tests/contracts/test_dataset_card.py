@@ -55,6 +55,17 @@ def test_card_starts_with_the_dataset_hero() -> None:
     assert md.index(hero) < md.index("OSM polygons tagged with")
 
 
+def test_card_places_blog_post_at_the_top() -> None:
+    md = _render()
+    hero = "![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)"
+    story = "https://noeflandre.com/posts/describe-place-on-earth-part1-wikidata"
+    intro = "OSM polygons tagged with"
+    assert "Blog post:" in md
+    assert "Project story:" not in md
+    assert story in md
+    assert md.index(hero) < md.index(story) < md.index(intro)
+
+
 def test_card_places_trackio_snapshot_after_intro_before_coverage() -> None:
     md = _render()
     hero = "![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)"

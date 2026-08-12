@@ -49,6 +49,8 @@ dataset_info:
 
 ![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)
 
+Blog post: [How to describe every place on Earth with Wikidata](https://noeflandre.com/posts/describe-place-on-earth-part1-wikidata).
+
 OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and Wikivoyage text across all available languages. The published tables are:
 
 - `polygons/<stem>.parquet` — one row per polygon

@@ -112,6 +112,8 @@ def render_dataset_card(
     body = (
         f"# {repo_id}\n\n"
         f"![{repo_id} dataset overview]({REMOTE_DATASET_HERO_FILE})\n\n"
+        "Blog post: [How to describe every place on Earth with Wikidata]"
+        "(https://noeflandre.com/posts/describe-place-on-earth-part1-wikidata).\n\n"
         "OSM polygons tagged with a `wikidata=*` reference, "
         "enriched with Wikipedia and Wikivoyage text across all available languages. "
         "The published tables are:\n\n"
