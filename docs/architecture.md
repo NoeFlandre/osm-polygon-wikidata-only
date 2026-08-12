@@ -314,8 +314,9 @@ local polygons so a renderer cannot draw world-spanning closure lines:
 - `assets/geographic_text_presence.png` is the first public map and plots
   each polygon with non-empty Wikipedia or Wikivoyage text exactly once.
 - `assets/dataset_hero.png` is the static overview image shown at the top of
-  the GitHub README and Hugging Face dataset card. It is published alongside
-  each README snapshot and is separate from the generated maps below.
+  the GitHub README and the V1 Hugging Face dataset card. It is also published
+  with V2 metadata for shared asset continuity, but the V2 card intentionally
+  starts with its public description rather than embedding the hero.
 - `assets/coverage_map.png` displays the global distribution of the dataset polygons as a scatter plot of centroids.
 - `assets/geographic_text_density.png` assigns qualifying polygon centroids
   to H3 cells and colours each cell by the raw number of unique polygons

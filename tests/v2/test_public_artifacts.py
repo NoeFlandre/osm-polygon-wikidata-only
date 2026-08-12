@@ -43,6 +43,7 @@ def test_v2_card_is_viewer_ready_and_documents_v1_comparison(tmp_path: Path) -> 
     assert "assets/coverage_map.png" in card
     assert "assets/geographic_text_presence.png" in card
     assert "assets/geographic_text_density.png" in card
+    assert "assets/dataset_hero.png" not in card
     assert "**Wikipedia-tag-only polygons:** 1" in card
 
 

@@ -159,8 +159,6 @@ def render_v2_card(
             [
                 "# OSM Polygon Wikidata + Wikipedia, V2",
                 "",
-                "![V2 dataset overview](assets/dataset_hero.png)",
-                "",
                 f"V2 keeps the V1 Wikidata-derived corpus and adds valid multilingual "
                 f"OSM `wikipedia=*` references, including polygons without a Wikidata QID. "
                 f"The code is maintained in the [GitHub repository]({V2_GITHUB_URL}).",
