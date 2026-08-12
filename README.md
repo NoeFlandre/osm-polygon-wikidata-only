@@ -2,6 +2,8 @@
 
 ![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)
 
+V1 blog post: [How to describe a place on Earth with Wikidata](https://noeflandre.com/posts/describe-place-on-earth-part1-wikidata).
+
 Extract polygonal OpenStreetMap features from Geofabrik `.osm.pbf` extracts,
 enrich them with Wikidata, Wikipedia, and Wikivoyage, and publish clean,
 multi-table Hugging Face datasets. The default V1 contract is Wikidata-first;

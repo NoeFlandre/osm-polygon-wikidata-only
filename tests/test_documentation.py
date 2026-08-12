@@ -164,6 +164,15 @@ def test_readme_places_trackio_snapshot_after_hero_and_intro() -> None:
     assert codebase_presentation in readme
 
 
+def test_readme_places_v1_blog_post_after_hero() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    hero = "![OSM Polygon Wikidata dataset overview](assets/dataset_hero.png)"
+    blog = "V1 blog post: [How to describe a place on Earth with Wikidata]"
+    intro = "Extract polygonal OpenStreetMap features"
+    assert blog in readme
+    assert readme.index(hero) < readme.index(blog) < readme.index(intro)
+
+
 def test_readme_documents_regenerated_dataset_card() -> None:
     """The source README must explain that the published dataset card is
     regenerated automatically and reports factual statistics derived from
