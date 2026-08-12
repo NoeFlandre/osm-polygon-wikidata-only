@@ -60,7 +60,7 @@ def test_card_places_blog_post_at_the_top() -> None:
     hero = "![NoeFlandre/osm-polygon-wikidata-only dataset overview](assets/dataset_hero.png)"
     story = "https://noeflandre.com/posts/describe-place-on-earth-part1-wikidata"
     intro = "OSM polygons tagged with"
-    assert "Blog post:" in md
+    assert "Blog post: [How to describe a place on Earth with Wikidata]" in md
     assert "Project story:" not in md
     assert story in md
     assert md.index(hero) < md.index(story) < md.index(intro)
