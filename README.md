@@ -452,3 +452,9 @@ GitHub Actions runs the same complete `just check` gate.
 
 Any derivative dataset must preserve OSM attribution as described on
 <https://www.openstreetmap.org/copyright>.
+
+## Citation
+
+If you use this software or its datasets, please cite the repository using
+the metadata in [`CITATION.cff`](CITATION.cff). GitHub uses this file to provide
+formatted citation downloads through **Cite this repository**.
