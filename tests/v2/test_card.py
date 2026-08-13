@@ -31,6 +31,10 @@ def test_card_is_factual_and_deterministic(tmp_path: Path) -> None:
     assert "exact V1 22-column section schema" in first
     assert "--dataset-version v2" in first
     assert "external drive" not in first
+    assert first.rstrip().endswith(
+        "Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff)."
+    )
+    assert first.index("## Citation") > first.index("## Reproducibility")
     assert write_v2_card(tmp_path).read_text(encoding="utf-8") == first
 
 

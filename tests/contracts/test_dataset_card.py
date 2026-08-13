@@ -109,6 +109,14 @@ def test_card_identifies_the_v1_github_contract() -> None:
     )
 
 
+def test_card_ends_with_dataset_citation_link() -> None:
+    md = _render()
+    assert md.rstrip().endswith(
+        "Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff)."
+    )
+    assert md.index("## Citation") > md.index("## How to load")
+
+
 def test_card_includes_loader_snippet() -> None:
     md = _render()
     assert "load_dataset" in md

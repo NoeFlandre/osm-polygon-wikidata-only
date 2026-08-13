@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
@@ -183,6 +185,24 @@ def test_readme_documents_regenerated_dataset_card() -> None:
     assert "regenerated" in readme and "automatically" in readme
     assert "local finalized Parquet" in readme or "local finalized Parquet files" in readme
     assert "write_readme_snapshot" in readme
+
+
+def test_dataset_citation_files_are_valid_and_point_to_their_hubs() -> None:
+    expected = {
+        REPOSITORY
+        / "docs/citations/osm-polygon-wikidata-only.cff": "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only",
+        REPOSITORY
+        / "docs/citations/osm-polygon-wikidata-and-wikipedia.cff": "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia",
+    }
+    for path, dataset_url in expected.items():
+        citation = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert citation["cff-version"] == "1.2.0"
+        assert citation["type"] == "dataset"
+        assert citation["authors"]
+        assert citation["url"] == dataset_url
+        assert citation["repository-code"] == (
+            "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
+        )
 
 
 def test_architecture_documents_augmentation_readme_recomputation() -> None:

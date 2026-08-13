@@ -243,6 +243,10 @@ def render_v2_card(
                 "",
                 "Run V2 explicitly with `sync-dir --dataset-version v2`. V1 remains a separate contract and is not modified by V2 processing.",
                 "",
+                "## Citation",
+                "",
+                "If you use this dataset, please cite it. Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff).",
+                "",
             ]
         )
     )

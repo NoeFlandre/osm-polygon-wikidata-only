@@ -301,3 +301,6 @@ ds = load_dataset("parquet", data_files={
     "polygons": "hf://datasets/NoeFlandre/osm-polygon-wikidata-only/polygons/*.parquet",
 })
 ```
+## Citation
+
+If you use this dataset, please cite it. Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff).

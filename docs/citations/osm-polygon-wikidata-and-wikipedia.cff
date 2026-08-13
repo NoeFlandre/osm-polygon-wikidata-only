@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "OSM Polygon Wikidata and Wikipedia, V2 dataset"
+message: "If you use this dataset, please cite it using this metadata."
+type: dataset
+authors:
+  - family-names: Flandre
+    given-names: Noé
+    website: https://noeflandre.com
+version: "2.0.0"
+date-released: "2026-08-13"
+abstract: "A multilingual geospatial dataset of OpenStreetMap polygons discovered through Wikidata and Wikipedia tags, with linked Wikipedia and Wikivoyage documents, sections, and Wikidata facts."
+repository-code: https://github.com/NoeFlandre/osm-polygon-wikidata-only
+url: https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia
+keywords:
+  - OpenStreetMap
+  - Wikidata
+  - Wikipedia
+  - Wikivoyage
+  - geospatial
+  - parquet

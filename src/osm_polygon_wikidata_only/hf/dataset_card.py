@@ -177,6 +177,9 @@ def render_dataset_card(
         f'    "polygons": "hf://datasets/{repo_id}/polygons/*.parquet",\n'
         "})\n"
         "```\n"
+        "## Citation\n\n"
+        "If you use this dataset, please cite it. Download the dataset citation metadata "
+        "from [`CITATION.cff`](CITATION.cff).\n"
     )
 
     if rejections_block:
