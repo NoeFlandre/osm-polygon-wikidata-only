@@ -45,6 +45,11 @@ def test_v2_card_is_viewer_ready_and_documents_v1_comparison(tmp_path: Path) -> 
     assert "assets/geographic_text_density.png" in card
     assert "assets/dataset_hero.png" not in card
     assert "**Wikipedia-tag-only polygons:** 1" in card
+    assert "V2 builds on the [V1 Wikidata-only dataset]" in card
+    assert "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only" in card
+    assert "not entered manually" not in card
+    assert "`wikidata` means the polygon came from an OSM `wikidata=*` tag" in card
+    assert "`wikidata_sitelink` means the relationship came from a Wikidata sitelink" in card
 
 
 def test_v2_card_front_matter_has_viewer_configs_for_every_table(tmp_path: Path) -> None:

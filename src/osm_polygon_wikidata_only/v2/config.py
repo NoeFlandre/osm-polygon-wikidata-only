@@ -17,6 +17,8 @@ V2_TRACKIO_SPACE_ID = "NoeFlandre/osm-polygon-wikidata-and-wikipedia-trackio"
 V2_TRACKIO_DATASET_ID = "NoeFlandre/osm-polygon-wikidata-and-wikipedia-trackio-data"
 V2_TRACKIO_SPACE_URL = f"https://huggingface.co/spaces/{V2_TRACKIO_SPACE_ID}"
 V2_GITHUB_URL = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
+V1_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
+V1_DATASET_URL = f"https://huggingface.co/datasets/{V1_REPO_ID}"
 V2_ASSET_PATHS: tuple[str, ...] = (
     "assets/coverage_map.png",
     "assets/geographic_text_presence.png",
@@ -32,6 +34,8 @@ class DatasetVersion(StrEnum):
 
 
 __all__ = [
+    "V1_DATASET_URL",
+    "V1_REPO_ID",
     "V2_ASSET_PATHS",
     "V2_CACHE_CONTRACT_VERSION",
     "V2_CONTRACT_VERSION",

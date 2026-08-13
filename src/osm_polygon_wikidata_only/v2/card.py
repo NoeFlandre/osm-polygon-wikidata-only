@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.v2.config import (
+    V1_DATASET_URL,
     V2_CONTRACT_VERSION,
     V2_DATASET_CARD_VERSION,
     V2_GITHUB_URL,
@@ -44,6 +45,8 @@ class V2CardStats:
     top_wikipedia_languages: tuple[tuple[str, int], ...]
     polygon_link_storage_bytes: int
     total_parquet_storage_bytes: int
+    additional_document_words_vs_v1: int | None = None
+    additional_sections_vs_v1: int | None = None
 
     @property
     def documents(self) -> int:
@@ -72,6 +75,8 @@ def compute_v2_card_stats(
     wikivoyage_section_files = _manifest_files(processed_v2 / "wikivoyage/sections", stems)
     wikidata_fact_files = _manifest_files(processed_v2 / "wikidata/facts", stems)
     link_files = _manifest_files(processed_v2 / "polygon_document_links", stems)
+    wikipedia_section_count = _sum_metadata(wikipedia_section_files)
+    wikivoyage_section_count = _sum_metadata(wikivoyage_section_files)
     parquet_files = (
         polygon_files
         + wikipedia_document_files
@@ -103,27 +108,33 @@ def compute_v2_card_stats(
 
     v1_polygon_ids: set[str] | None = None
     v1_document_ids: set[str] | None = None
+    v1_document_words: int | None = None
+    v1_section_count: int | None = None
     if v1_processed is not None:
         v1_polygon_ids = set(
             _unique_values(
                 sorted(v1_processed.joinpath("polygons").glob("*.parquet")), "polygon_id"
             )
         )
-        v1_document_files = sorted((v1_processed / "wikipedia/documents").glob("*.parquet"))
-        if not v1_document_files:
-            v1_document_files = sorted((v1_processed / "articles").glob("*.parquet"))
-        v1_document_ids = set(_unique_values(v1_document_files, "document_id"))
+        v1_wikipedia_document_files = _v1_wikipedia_document_files(v1_processed)
+        v1_document_files = _v1_document_files(v1_processed)
+        v1_document_ids = set(_unique_values(v1_wikipedia_document_files, "document_id"))
         if not v1_document_ids:
-            v1_document_ids = set(_unique_values(v1_document_files, "article_id"))
+            v1_document_ids = set(_unique_values(v1_wikipedia_document_files, "article_id"))
+        v1_document_words = _sum_first_available(
+            v1_document_files,
+            ("article_length_words", "text_length_words"),
+        )
+        v1_section_count = _sum_metadata(_v1_section_files(v1_processed))
 
     return V2CardStats(
         regions=len(stems),
         polygons=_sum_metadata(polygon_files),
         unique_wikidata_entities=len(qids),
         wikipedia_documents=_sum_metadata(wikipedia_document_files),
-        wikipedia_sections=_sum_metadata(wikipedia_section_files),
+        wikipedia_sections=wikipedia_section_count,
         wikivoyage_documents=_sum_metadata(wikivoyage_document_files),
-        wikivoyage_sections=_sum_metadata(wikivoyage_section_files),
+        wikivoyage_sections=wikivoyage_section_count,
         wikidata_facts=_sum_metadata(wikidata_fact_files),
         polygon_document_links=_sum_metadata(link_files),
         wikipedia_tag_only_polygons=wikipedia_tag_only,
@@ -139,6 +150,14 @@ def compute_v2_card_stats(
         top_wikipedia_languages=top_languages,
         polygon_link_storage_bytes=sum(path.stat().st_size for path in link_files),
         total_parquet_storage_bytes=sum(path.stat().st_size for path in parquet_files),
+        additional_document_words_vs_v1=(
+            document_words - v1_document_words if v1_document_words is not None else None
+        ),
+        additional_sections_vs_v1=(
+            wikipedia_section_count + wikivoyage_section_count - v1_section_count
+            if v1_section_count is not None
+            else None
+        ),
     )
 
 
@@ -159,8 +178,10 @@ def render_v2_card(
             [
                 "# OSM Polygon Wikidata + Wikipedia, V2",
                 "",
-                f"V2 keeps the V1 Wikidata-derived corpus and adds valid multilingual "
-                f"OSM `wikipedia=*` references, including polygons without a Wikidata QID. "
+                f"V2 builds on the [V1 Wikidata-only dataset]({V1_DATASET_URL}), which retained "
+                f"OSM polygons carrying `wikidata=*` and enriched them with multilingual "
+                f"Wikipedia and Wikivoyage text; V2 adds valid multilingual `wikipedia=*` "
+                f"references, including polygons without a Wikidata QID. "
                 f"The code is maintained in the [GitHub repository]({V2_GITHUB_URL}).",
                 "",
                 f"The public V2 Trackio snapshot is [`{V2_TRACKIO_RUN_NAME}`](https://huggingface.co/spaces/{V2_TRACKIO_SPACE_ID}).",
@@ -207,7 +228,7 @@ def render_v2_card(
                 "",
                 "## Deduplication and provenance",
                 "",
-                "V2 deduplicates documents by `document_id` and polygon-document links by `(polygon_id, project, document_id)` within each region. Byte-identical repeats collapse deterministically; conflicting rows fail closed. The `discovery_sources` and `link_sources` fields distinguish Wikidata-derived and direct Wikipedia-tag relationships.",
+                "V2 deduplicates documents by `document_id` and polygon-document links by `(polygon_id, project, document_id)` within each region. Byte-identical repeats collapse deterministically; conflicting rows fail closed. `discovery_sources` explains how a polygon was included: `wikidata` means the polygon came from an OSM `wikidata=*` tag, while `wikipedia_tag` means it came from an OSM `wikipedia=*` tag. `link_sources` explains each polygon-document relationship: `wikidata_sitelink` means the relationship came from a Wikidata sitelink, while `osm_wikipedia_tag` means it came directly from an OSM `wikipedia=*` tag. A relationship can list both when both routes agree.",
                 "",
                 "## Repository layout",
                 "",
@@ -290,21 +311,50 @@ def _render_front_matter(snapshot: V2CardStats) -> str:
 
 def _render_comparison(snapshot: V2CardStats) -> str:
     lines = ["## V2 compared with V1", ""]
-    if snapshot.new_polygons_vs_v1 is None or snapshot.new_wikipedia_documents_vs_v1 is None:
+    if any(
+        value is None
+        for value in (
+            snapshot.new_polygons_vs_v1,
+            snapshot.new_wikipedia_documents_vs_v1,
+            snapshot.additional_document_words_vs_v1,
+            snapshot.additional_sections_vs_v1,
+        )
+    ):
         lines.append(
             "The local V1 artifact root was not supplied for this card render, so the delta is not estimated."
         )
     else:
         lines.extend(
             [
-                "The following deltas are computed from local V1 and V2 artifact identities, not entered manually:",
+                "The following deltas are computed from the local V1 and V2 Parquet snapshots:",
                 "",
                 f"- **Additional polygons discovered through V2 Wikipedia tags:** {snapshot.new_polygons_vs_v1:,}",
                 f"- **Additional Wikipedia document identities:** {snapshot.new_wikipedia_documents_vs_v1:,}",
+                f"- **Additional document words in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_document_words_vs_v1:,}",
+                f"- **Additional document sections in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_sections_vs_v1:,}",
                 "",
             ]
         )
     return "\n".join(lines)
+
+
+def _v1_wikipedia_document_files(processed: Path) -> list[Path]:
+    wikipedia = sorted((processed / "wikipedia/documents").glob("*.parquet"))
+    if not wikipedia:
+        wikipedia = sorted((processed / "articles").glob("*.parquet"))
+    return wikipedia
+
+
+def _v1_document_files(processed: Path) -> list[Path]:
+    return _v1_wikipedia_document_files(processed) + sorted(
+        (processed / "wikivoyage/documents").glob("*.parquet")
+    )
+
+
+def _v1_section_files(processed: Path) -> list[Path]:
+    return sorted((processed / "wikipedia/sections").glob("*.parquet")) + sorted(
+        (processed / "wikivoyage/sections").glob("*.parquet")
+    )
 
 
 def _manifest_files(directory: Path, stems: Iterable[str]) -> list[Path]:
