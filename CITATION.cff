@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+title: "osm-polygon-wikidata-only"
+message: "If you use this software or its datasets, please cite this repository."
+type: software
+authors:
+  - family-names: Flandre
+    given-names: Noé
+    website: https://noeflandre.com
+version: 0.1.0
+date-released: 2026-08-13
+abstract: >-
+  Extracts polygonal OpenStreetMap features and enriches them with Wikidata,
+  multilingual Wikipedia, and Wikivoyage data for publication as Parquet
+  datasets.
+repository-code: https://github.com/NoeFlandre/osm-polygon-wikidata-only
+repository-artifact: https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only
+url: https://github.com/NoeFlandre/osm-polygon-wikidata-only
+license: Apache-2.0
+keywords:
+  - openstreetmap
+  - wikidata
+  - wikipedia
+  - wikivoyage
+  - geospatial
+  - parquet
