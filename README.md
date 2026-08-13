@@ -97,41 +97,18 @@ local commit. A restart rescans at most the source PBF because libosmium does
 not expose a portable byte offset, while already saved extraction and fetch
 work is reused and never published until final reconciliation.
 
-The generated dataset is published on Hugging Face. Local processing inputs,
-intermediate files, and caches use a configurable data root outside the source
-checkout.
-
 ---
 
 ## Repository layout
 
-```
-.
-├── src/osm_polygon_wikidata_only/
-│   ├── __init__.py
-│   ├── augmentation/    # Wikipedia/Wikivoyage sections and Wikidata facts
-│   ├── cli/             # Argument parsing and command adapters
-│   ├── cli/_sync/       # Fail-closed sync publication/retirement helpers
-│   ├── config/          # DataRoot paths and runtime Settings
-│   ├── domain/          # Pure models, schemas, geometry, and identifiers
-│   ├── enrichment/wikidata/ # Wikidata models, parsing, cache, and transport
-│   ├── enrichment/wikipedia/ # Wikipedia models, parsing, cache, and transport
-│   ├── hf/_dataset_stats/ # Dataset-card statistics internals
-│   ├── hf/_geographic/    # Deterministic H3 visualizations
-│   ├── hf/_publication/   # Publication artifact models and validation
-│   ├── hf/_uploader/      # Hub authorization and upload operations
-│   ├── io/              # PBF, Parquet, manifests, cache, and atomic I/O
-│   ├── pipeline/_link_migration/ # Conversion and journaled migration helpers
-│   ├── pipeline/_wikidata_recovery/ # Audited, resumable repair internals
-│   ├── v2/               # Isolated Wikipedia-tag dataset contract and runner
-│   └── utils/           # JSON, logging, retries, time, and scheduling
-├── tests/               # Unit, integration, contract, and golden tests
-├── pyproject.toml       # Build, dev dependencies, Ruff/ty/pytest config
-└── README.md
-```
-
-Each top-level sub-package has its own `__init__.py` and a tightly
-focused public API. Cross-package imports go through dotted paths.
+The source is organized into focused packages: `augmentation/`, `domain/`,
+`enrichment/`, `io/`, `pipeline/`, `v2/`, `hf/`, `cli/`, and `utils/`.
+Tests are under `tests/`; package, Ruff, ty, and pytest configuration is in
+`pyproject.toml`. Focused internals include `cli/_sync/`,
+`enrichment/wikidata/`, `enrichment/wikipedia/`, `hf/_dataset_stats/`,
+`hf/_geographic/`, `hf/_publication/`, `hf/_uploader/`,
+`pipeline/_link_migration/`, and `pipeline/_wikidata_recovery/`. See [the
+architecture guide](docs/architecture.md) for ownership boundaries and data flow.
 
 ---
 
@@ -145,56 +122,18 @@ cd osm-polygon-wikidata-only
 uv sync
 ```
 
-This installs all runtime and development dependencies into a managed
-`.venv`:
-
-| Runtime | Purpose |
-|---|---|
-| `osmium` | Streaming OSM PBF parser |
-| `datasets` | Hugging Face dataset utilities |
-| `huggingface-hub` | HF Hub client |
-| `pyarrow` | Parquet serialization |
-| `typer`, `rich`, `tqdm` | Read-only operator audit CLI, structured reports, and interactive progress |
-
-| Dev | Purpose |
-|---|---|
-| `pytest`, `pytest-cov` | Tests |
-| `ruff` | Lint + format |
-| `ty` | Type-check production code and maintained scripts |
-| `pre-commit` | Fast commit-time quality checks |
-| [`just`](https://just.systems/) | Shared local and CI command runner |
+This installs the runtime and development dependencies into a managed
+`.venv`; the complete toolchain is declared in `pyproject.toml` and
+`uv.lock`.
 
 ---
 
 ## Local data root
 
-All PBF inputs, intermediate outputs, Hugging Face caches, and local
-parquet/manifest files live under one operator-selected **data root**.
-
-Resolution order:
-
-1. `--data-root <path>` CLI flag.
-2. `OSM_POLYGON_DATA_ROOT` environment variable.
-
-A data root is required, must already exist, and is rejected when it points
-inside the source checkout. There is no silent fallback.
-
-Default sub-directories under the data root:
-
-| Sub-directory | Purpose |
-|---|---|
-| `raw/` | Geofabrik `.osm.pbf` files (input) |
-| `processed/polygons/` | Written `polygons/<stem>.parquet` files |
-| `processed/articles/` | Local legacy staging files, retained only until their verified canonical publication succeeds |
-| `processed/wikipedia/documents/` | Canonical Wikipedia documents |
-| `processed/polygon_articles/` | Written `polygon_articles/<stem>.parquet` files |
-| `processed/manifests/` | `processed_pbfs.json` aggregate manifest |
-| `logs/` | Reserved for pipeline logs |
-| `hf_cache/` | Hugging Face client-side cache |
-| `cache/wikidata/`, `cache/wikipedia/` | Per-call JSON cache |
-| `cache/` | Shared cache root |
-
-Set the data root for a session:
+The CLI requires an operator-selected **data root** for PBF inputs,
+intermediate Parquet files, manifests, and caches. Set it with the
+`--data-root` option or `OSM_POLYGON_DATA_ROOT`; it must already exist and
+must not be inside the source checkout.
 
 ```bash
 export OSM_POLYGON_DATA_ROOT=/path/to/osm-polygon-data
@@ -223,7 +162,6 @@ uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 | `--repo-id <org/name>` | Target Hugging Face repo (default `NoeFlandre/osm-polygon-wikidata-only`) |
 | `--user-agent <ua>` | Override Wikimedia User-Agent (default identifies this project) |
 | `--languages en,fr,...` | Explicitly narrow the default all-language sitelink set |
-| `--all-languages` | Explicit compatibility alias for the all-language default |
 | `--no-full-text` | Fetch only the lead section, not the full article |
 | `--max-articles-per-qid <n>` | Explicitly cap articles per QID (default: no cap) |
 | `--enrichment-batch-size <n>` | Maximum QIDs/titles per API batch (default `50`) |
@@ -233,9 +171,6 @@ uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 | `--force` | Re-process even when `--skip-existing` applies |
 | `--push` | Upload produced artifacts to the Hub |
 | `--upload-threads <n>` | Concurrent transfer workers in the atomic Hub commit (default `5`) |
-| `--commit-message <msg>` | Custom git commit message for the push |
-| `--dry-run` | Use a stub HF client (records calls without uploading) |
-| `--log-level <level>` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `--dataset-version v1|v2` | Select the sync contract; V2 is opt-in and publishes to its separate Hub dataset |
 
 ### Examples
@@ -244,22 +179,6 @@ Process one PBF and write 3 parquet files + manifest locally:
 
 ```bash
 uv run osm-polygon-wikidata-only process-pbf ~/pbfs/monaco-latest.osm.pbf
-```
-
-Push the result to the Hub with a stub client (no network):
-
-```bash
-uv run osm-polygon-wikidata-only process-pbf monaco-latest.osm.pbf --push --dry-run
-```
-
-Process every PBF under `<data-root>/raw/`, fetch only English and
-French Wikipedia, skip already-processed:
-
-```bash
-uv run osm-polygon-wikidata-only process-dir \
-    ~/pbfs/ \
-    --languages en,fr \
-    --skip-existing
 ```
 
 Build the isolated V2 dataset. This keeps V1 artifacts intact, reuses their
@@ -274,23 +193,11 @@ uv run osm-polygon-wikidata-only sync-dir \
     --push
 ```
 
-V2 local artifacts are written below `processed_v2/`; its request cache,
-resumable V1 reuse index, and restart checkpoints are below `cache/v2/`. The index is built one shard at
-a time while PBF extraction starts, and each Parquet row group is checkpointed
-across restarts. Its SQLite storage setup also runs in the background, so it
-does not delay extraction. A direct page that is not yet found may be fetched
-while the index continues. Once indexing finishes, a V1 match is preferred;
-only a page still absent from V1 keeps the fetched result. Both locations use
-the configured data root, so stopping and restarting the command is safe.
-Unchanged shards are checked by fingerprint only, and a persisted row-count
-summary avoids a full SQLite distinct-count scan when the index has no changes.
-Completed-region checks also keep a small fingerprint-backed digest cache at
-`cache/v2/resume-hashes.json`; unchanged artifacts are validated without
-rereading their bytes, while any changed file is hashed again before reuse.
-When publishing, V2 groups up to 16 regions per Hub commit and publishes the
-README and manifest last. If publishing is interrupted, the next run reuses
-persisted provisional regions and skips batches already present remotely.
-Use `--force` only when deliberately rebuilding a V2 region.
+V2 writes below `processed_v2/` and keeps its reuse index and restart
+checkpoints below `cache/v2/`. It reuses finalized V1 documents and sections,
+fetches only missing direct pages, and keeps V1 files unchanged. Extraction,
+fetching, and publication are checkpointed so an interrupted run can resume;
+use `--force` only when deliberately rebuilding a region.
 
 ### Wikimedia Bot Password authentication
 
@@ -299,17 +206,9 @@ Wikimedia Bot Password. Authentication identifies the pipeline to Wikimedia
 and lets the account receive its applicable API request tier. It does not grant
 this project permission to edit Wikimedia.
 
-Create the credentials once:
-
-1. Sign in to the Wikimedia account that will operate the pipeline.
-2. Open [Meta-Wiki Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords).
-3. Enter a descriptive bot name such as `osm-polygon-pipeline`.
-4. Select **Basic rights**, which are required for API reading. Leave editing,
-   page creation, uploading, and administration grants disabled; this pipeline
-   only reads public API data.
-5. Create the Bot Password and copy both generated values immediately. The
-   username includes a suffix, for example `AccountName@osm-polygon-pipeline`;
-   use the complete generated username, not the main account username.
+Create a Bot Password with Basic rights at
+[Meta-Wiki Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords).
+Use the complete generated username, including its suffix.
 
 Export them into the current terminal session. Reading the password silently
 keeps it out of shell history:
@@ -320,9 +219,9 @@ read -rs WIKIMEDIA_BOT_PASSWORD
 export WIKIMEDIA_BOT_PASSWORD
 ```
 
-Paste the generated password at the silent prompt and press Enter. Do not commit
-the password, add it to a checked-in `.env` file, paste it into an issue, or use
-the main Wikimedia account password. The process retains it only in memory.
+Paste the generated password at the silent prompt. Do not commit it, add it to
+a checked-in `.env` file, paste it into an issue, or use the main account
+password.
 
 With both variables present, the unified pipeline uses the authenticated
 1,200-request-per-minute budget with one shared scheduler and at most eight requests in flight
@@ -332,40 +231,11 @@ With both variables present, the unified pipeline uses the authenticated
 export WIKIMEDIA_REQUESTS_PER_MINUTE=600
 ```
 
-Usually, omit this override and let the adaptive scheduler work. Wikimedia
-determines the actual tier from the account's standing: authentication alone
-does not guarantee a particular limit. The pipeline keeps at most eight requests
-in flight for authenticated runs, keeps cookies domain-scoped in one bounded persistent connection pool,
-and automatically reduces its rate when Wikimedia returns HTTP 429 with
-`Retry-After`.
-
-The startup log states either `anonymous` or `authenticated as <username>` and
-the configured ceiling. The password is never logged. Authentication itself is
-verified lazily on the first request to each Wikidata or language-Wikipedia host.
-If only one credential variable is set, configuration stops before processing;
-if Wikimedia rejects the pair, the first API request fails without silently
-falling back to anonymous access.
-
-Troubleshooting:
-
-- If the application names a missing variable, export both variables in the same
-  terminal that launches `uv run`.
-- If authentication is rejected, copy the complete generated bot username,
-  reset or recreate the Bot Password, and export the new values. Changing the
-  main account password can require resetting Bot Passwords.
-- If HTTP 429 responses continue, leave the automatic cooldown in control or
-  lower `WIKIMEDIA_REQUESTS_PER_MINUTE`; do not override the concurrency limit
-  without measuring the result.
-- To revoke access, return to
-  [Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords)
-  and revoke the named Bot Password. Then remove the variables with
-  `unset WIKIMEDIA_BOT_USERNAME WIKIMEDIA_BOT_PASSWORD`.
-
-The implementation follows Wikimedia's official
-[Bot Password](https://www.mediawiki.org/wiki/Manual:Bot_passwords),
-[API login](https://www.mediawiki.org/wiki/API:Login), and
-[API rate-limit](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)
-guidance.
+Usually omit this override and let the adaptive scheduler work. The startup log
+reports the mode and ceiling, the password is never logged, authenticated runs
+keep at most eight requests in flight, and HTTP 429 responses trigger a
+cooldown. To revoke access, remove the variables and revoke the named Bot
+Password at [Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords).
 
 ### Resumable full-dataset command
 
@@ -379,54 +249,16 @@ uv run osm-polygon-wikidata-only sync-dir "$OSM_POLYGON_DATA_ROOT/raw" \
   --push
 ```
 
-`process-dir` and `augment-dir` remain available as compatibility commands, but
-do not run them beside `sync-dir`. A data-root lock prevents duplicate unified
-runs. Each completed region is uploaded atomically with fresh manifests and the
-canonical dataset `README.md`. Internally the unified sync drains actions in
-this order: RECOVERY first for finalized shards eligible for an exhaustive
-local integrity audit (only affected QIDs are refetched and repaired transactionally),
-then AUGMENT backlog (each call performs Wikimedia sidecar work
-and may enqueue an atomic remote publication on success), then PUBLISH-only
-reconciliation repairs (Wikimedia-free -- each repair reuses the already-loaded
-local augmentation result and only enqueues a Hugging Face upload, with no
-extraction and no Wikidata / Wikipedia / Wikivoyage calls), then new core
-PROCESS work (the runner may prefetch the next PBF concurrently while
-enriching the current region), then COMPLETE / no-op states. Maps and the
-README are only reported "refreshed" after a successful core or metadata
-publication actually refreshed them and the background upload queue has
-drained.
+`process-dir` and `augment-dir` remain available, but should not run beside
+`sync-dir`. Completed regions are uploaded atomically with fresh manifests and
+the canonical dataset card. The runner prioritizes recovery, augmentation,
+publication repairs, and then new PBF processing; maps and the README are
+reported refreshed only after a successful publication.
 
-The recovery audit is resumable, content-addressed, and processed one region at
-a time. Healthy finalized regions store or reuse a receipt and continue; a
-damaged region is repaired and published immediately before the next region is
-audited. Stopping the command therefore preserves completed regional work,
-while changed inputs are checked again. A malformed or unreadable finalized
-shard fails closed instead of being silently skipped. Regions with incomplete
-sidecars are augmented first and audited immediately afterward in the same
-invocation. A repaired region is published atomically with its regional
-artifacts, manifests, and dataset card. Coverage maps are regenerated only
-when the repair changed one of their polygon, link, or document inputs.
-Legacy Wikidata fact rows whose subject is no longer present in the region's
-polygons are removed by that same transaction; all still-joinable facts are
-preserved.
-The command reports bounded local-scan and upstream-validation checkpoints with
-elapsed time. Up to three independent validation chunks overlap under the same
-shared request scheduler, while transient Wikimedia API states such as `maxlag`
-remain retryable and never become cached missing entities.
-
-Affected relationships are repaired in deterministic groups of 25 QIDs. Up to
-three independent groups run concurrently under the same shared global and
-per-host Wikimedia scheduler. Each completed group is stored immediately below
-`cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/`, so an interruption
-repeats only unfinished groups. The final regional Parquet files and manifests
-are still replaced atomically only after every group has completed.
-
-Known whole-file Geofabrik containment overlaps are retired safely during
-`sync-dir --push`: retained parents receive missing sidecar rows, contained
-child artifacts are removed remotely in one atomic commit, and local originals
-are preserved under `quarantine/containment-v1/`. A child PBF is ignored only
-after the durable retirement manifest records local preparation; a missing
-parent polygon blocks retirement rather than discarding data.
+Recovery is resumable and fail-closed. Affected relationships are repaired in
+deterministic groups of 25 QIDs, with completed groups stored under
+`cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/`. A restart repeats only
+unfinished groups and keeps completed regional work.
 
 To pause, stop the command with `Ctrl-C`. Run the identical command again to
 resume: completed PBFs remain skipped, while the interrupted PBF is retried
@@ -436,40 +268,10 @@ failed upload is always retryable on the next invocation. Stage timings are
 logged for every PBF. Tune large runs only when needed with
 `--enrichment-batch-size`, `--enrichment-site-workers`, and `--upload-threads`.
 
-The normal command fetches full text for every valid language-Wikipedia
-sitelink with no per-QID cap. If any expected article remains unresolved after
-retries, that PBF is not published; rerunning resumes from successful cache
-checkpoints. With `--push`, each locally complete PBF is queued for an atomic
-background upload while the next PBF starts processing. Shutdown waits for the
-queue, and unresolved uploads make the command exit nonzero and remain queued
-for the next invocation.
-
-Programmatic usage:
-
-```python
-from pathlib import Path
-from osm_polygon_wikidata_only.config.paths import DataRoot, resolve_data_root
-from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.enrichment.wikipedia_client import HttpWikipediaClient
-from osm_polygon_wikidata_only.enrichment.wikidata_client import HttpWikidataClient
-from osm_polygon_wikidata_only.pipeline.processor import process_pbf
-
-data_root = resolve_data_root(repo_root=Path.cwd())
-data_root.ensure()
-
-settings = Settings(languages=("en", "fr"))
-wd = HttpWikidataClient(settings)
-wiki = HttpWikipediaClient(settings)
-
-result = process_pbf(
-    Path("monaco-latest.osm.pbf"),
-    data_root=data_root,
-    wikidata_client=wd,
-    wikipedia_client=wiki,
-    settings=settings,
-)
-print(result.polygon_count, "polygons")
-```
+The normal command fetches full text for every valid language-Wikipedia sitelink
+with no per-QID cap. Unresolved articles prevent publication until a retry
+succeeds; with `--push`, completed regions are queued for atomic upload and
+failed uploads remain retryable.
 
 ## Reliability and performance behavior
 
@@ -485,9 +287,6 @@ Wikimedia traffic polite:
 * Concrete HTTP clients batch compatible Wikidata and same-language Wikipedia
   requests. The pipeline falls back to the established per-item request path
   if a batch response is incomplete or invalid.
-* If a valid page returns an empty TextExtracts result, the client parses that
-  page's exact revision through the Action API and converts the rendered HTML
-  to plain text while preserving the original revision ID.
 * Per-host pacing, retries with jitter, and a shared `429` cooldown remain in
   force when batch jobs run concurrently.
 * Long enrichment stages emit a concise two-minute heartbeat naming the active
@@ -499,9 +298,8 @@ Wikimedia traffic polite:
   one atomic Hugging Face commit. Transfers use concurrent workers; increase
   `--upload-threads` only when local bandwidth and Hub quotas allow it.
 
-For a repeatable production run, use `--skip-existing`; it consults the
-manifest and leaves previously completed PBFs untouched. Use `--force` only
-when you intentionally want to rebuild a completed PBF.
+For a repeatable production run, use `--skip-existing`; it leaves completed
+PBFs untouched. Use `--force` only when deliberately rebuilding one.
 
 ## Development quality checks
 
@@ -521,32 +319,15 @@ uv run pre-commit install
 The test suite uses in-memory clients and stub PBF readers for unit coverage.
 It does not require a real PBF, external data root, or Wikimedia request.
 
-### Read-only remote audit
-
-The separate operator command uses Typer for its CLI, Rich for its report, and
-tqdm for interactive per-region progress:
-
-```bash
-uv run osm-polygon-wikidata-only-audit-remote \
-  --data-root "$OSM_POLYGON_DATA_ROOT"
-```
-
-It compares finalized local artifacts with the Hugging Face inventory and
-prints a reconciliation plan. It does not modify local files or the remote
-dataset. The production `osm-polygon-wikidata-only` command remains a stable,
-non-interactive argparse interface; `sync-dir` keeps its low-noise log
-heartbeats instead of terminal progress bars.
+For the read-only remote audit and the full development workflow, see
+[`docs/development.md`](docs/development.md).
 
 ---
 
 ## Output schema
 
-Each PBF produces polygon and link tables plus canonical Wikipedia
-documents and the derived text/fact tables. The schema
-definitions live in `osm_polygon_wikidata_only.domain.schema` and
-`osm_polygon_wikidata_only.augmentation.schema` so the dataset
-card, the parquet writers, and the tests share a single source of
-truth.
+Each PBF produces polygon and link tables, canonical Wikipedia documents, and
+the derived text/fact tables described below.
 
 ### `polygons/<stem>.parquet`
 
@@ -592,14 +373,8 @@ removes or rewrites section content.
 - `wikidata/facts/<stem>.parquet` — structured Wikidata claims for
   polygon entities.
 
-Column lists for documents, sections, and facts live in
-`osm_polygon_wikidata_only.augmentation.schema` (`DOCUMENT_COLUMNS`,
-`SECTION_COLUMNS`, `FACT_COLUMNS`) and the documented column
-descriptions live in
-`osm_polygon_wikidata_only.augmentation.schema_descriptions`. The
-generated Hugging Face dataset card (`README.md`) embeds every
-augmentation column with its description; the dataset card renderer
-is the source of truth for what's published.
+The generated Hugging Face dataset card includes the published column
+descriptions.
 
 ## Generated dataset card
 
@@ -611,11 +386,8 @@ computed directly from the local finalized Parquet files under
 or the generated card; every figure is recomputed on each
 publication.
 
-The canonical renderer is `osm_polygon_wikidata_only.hf.publication.write_readme_snapshot`,
-backed by `osm_polygon_wikidata_only.hf.dataset_stats.render_stats_section`
-and `osm_polygon_wikidata_only.hf.dataset_card.render_dataset_card`.
-The renderer pulls both the core `DatasetStats` snapshot and the
-private augmentation snapshot from the local sidecars.
+The canonical renderer is
+`osm_polygon_wikidata_only.hf.publication.write_readme_snapshot`.
 
 ---
 
@@ -648,29 +420,6 @@ of all polygons.
 
 ---
 
-## Wikimedia etiquette
-
-Wikimedia APIs require a User-Agent identifying the project and a
-contact. The defaults are in `config.settings.DEFAULT_USER_AGENT`.
-Set `--user-agent` in production deployments.
-
-The HTTP clients honor:
-
-* configurable `request_timeout_s`, `request_max_retries`,
-  `request_base_delay_s`,
-* exponential backoff with jitter (`utils.retry.with_retries`),
-* a disk-backed `JsonFileCache` (`io.cache.JsonFileCache`) that lets
-  repeated runs avoid hammering the same endpoint,
-* localized language lists (`--languages`) so we never fetch
-  unwanted sitelinks.
-
-For authenticated production processing, follow the
-[Bot Password setup](#wikimedia-bot-password-authentication). Bot Password
-cookies are kept in memory and isolated per Wikimedia API host. Anonymous mode
-remains available when neither credential environment variable is set.
-
----
-
 ## Development
 
 ### Run the tests
@@ -683,33 +432,8 @@ The tracked test suite is deterministic and requires no live network;
 HTTP clients come in three flavors (`Http…`, `InMemory…`,
 `Cached…`) and the tests use the in-memory flavors.
 
-### Lint and format
-
-```bash
-just lint
-just format
-```
-
-### Type-check
-
-```bash
-just typecheck
-```
-
-Run `just --list` for every available recipe. All Python commands are executed
-through uv; GitHub Actions runs the same complete `just check` gate, including
-tests, coverage, lint, formatting, typing, documentation, package build, and
-the whitespace check.
-
----
-
-## Repository / data separation policy
-
-The repository is **code-only**. Everything user-generated (datasets,
-HF caches, Arrow/Parquet files, downloaded PBFs) is git-ignored and
-must live on the configured external data root. This keeps the repo
-tiny, makes data updates cheap, and prevents accidental commits of
-multi-GB artifacts.
+Use `just --list` for the other recipes. All Python commands run through uv;
+GitHub Actions runs the same complete `just check` gate.
 
 ---
 
