@@ -176,6 +176,8 @@ def render_v2_card(
         + "\n"
         + "\n".join(
             [
+                "![NoeFlandre/osm-polygon-wikidata-and-wikipedia dataset overview](assets/dataset_hero.png)",
+                "",
                 "# OSM Polygon Wikidata + Wikipedia, V2",
                 "",
                 f"V2 builds on the [V1 Wikidata-only dataset]({V1_DATASET_URL}), which retained "

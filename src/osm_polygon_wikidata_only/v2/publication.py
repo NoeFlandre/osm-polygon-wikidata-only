@@ -8,7 +8,7 @@ from pathlib import Path
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.repo_layout import (
-    LOCAL_DATASET_HERO_FILE,
+    LOCAL_V2_DATASET_HERO_FILE,
     REMOTE_DATASET_HERO_FILE,
 )
 from osm_polygon_wikidata_only.v2.config import V2_ASSET_PATHS
@@ -40,7 +40,7 @@ def region_publication_ops(processed_v2: Path, stem: str) -> list[PublicationOp]
 def metadata_publication_ops(
     processed_v2: Path,
     *,
-    hero_path: Path | None = LOCAL_DATASET_HERO_FILE,
+    hero_path: Path | None = LOCAL_V2_DATASET_HERO_FILE,
 ) -> list[PublicationOp]:
     """Return the V2 maps, card, and manifest publication plan."""
     operations = _add_existing(

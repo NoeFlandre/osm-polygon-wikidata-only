@@ -59,6 +59,16 @@ LOCAL_DATASET_HERO_FILE = (
     if _REPOSITORY_DATASET_HERO_FILE.is_file()
     else _PACKAGED_DATASET_HERO_FILE
 )
+# V2 has its own source image while keeping the stable public repository path.
+_REPOSITORY_V2_DATASET_HERO_FILE = (
+    Path(__file__).resolve().parents[3] / "assets/dataset_hero_v2.png"
+)
+_PACKAGED_V2_DATASET_HERO_FILE = Path(__file__).resolve().parents[1] / "assets/dataset_hero_v2.png"
+LOCAL_V2_DATASET_HERO_FILE = (
+    _REPOSITORY_V2_DATASET_HERO_FILE
+    if _REPOSITORY_V2_DATASET_HERO_FILE.is_file()
+    else _PACKAGED_V2_DATASET_HERO_FILE
+)
 
 # Superseded geographic Wikipedia coverage path, retained for compatibility
 # imports and its atomic remote deletion.
@@ -114,6 +124,7 @@ __all__ = [
     "LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE",
     "LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE",
     "LOCAL_DATASET_HERO_FILE",
+    "LOCAL_V2_DATASET_HERO_FILE",
     "REMOTE_ARTICLES_DIR",
     "REMOTE_AUGMENTATION_MANIFEST_FILE",
     "REMOTE_CONTAINMENT_RETIREMENT_FILE",

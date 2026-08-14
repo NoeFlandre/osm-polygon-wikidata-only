@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.repo_layout import LOCAL_V2_DATASET_HERO_FILE
 from osm_polygon_wikidata_only.v2.publication import (
     _REGION_UPLOAD_BATCH_SIZE,
     metadata_publication_ops,
@@ -105,7 +106,9 @@ def test_metadata_publication_includes_v2_maps_and_card(tmp_path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
 
-    assert [op.path_in_repo for op in metadata_publication_ops(tmp_path)] == [
+    operations = metadata_publication_ops(tmp_path)
+    assert operations[0].local_path == LOCAL_V2_DATASET_HERO_FILE
+    assert [op.path_in_repo for op in operations] == [
         "assets/dataset_hero.png",
         "assets/coverage_map.png",
         "assets/geographic_text_presence.png",

@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
+from osm_polygon_wikidata_only.v2 import maps as v2_maps
 from osm_polygon_wikidata_only.v2.card import render_v2_card
 from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
@@ -43,7 +44,12 @@ def test_v2_card_is_viewer_ready_and_documents_v1_comparison(tmp_path: Path) -> 
     assert "assets/coverage_map.png" in card
     assert "assets/geographic_text_presence.png" in card
     assert "assets/geographic_text_density.png" in card
-    assert "assets/dataset_hero.png" not in card
+    hero = (
+        "![NoeFlandre/osm-polygon-wikidata-and-wikipedia dataset overview](assets/dataset_hero.png)"
+    )
+    assert hero in card
+    assert card.index(hero) < card.index("# OSM Polygon Wikidata + Wikipedia, V2")
+    assert card.index(hero) < card.index("V2 builds on")
     assert "**Wikipedia-tag-only polygons:** 1" in card
     assert "V2 builds on the [V1 Wikidata-only dataset]" in card
     assert "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only" in card
@@ -90,3 +96,37 @@ def test_v2_map_assets_render_all_three_views_without_network(tmp_path: Path) ->
         "geographic_text_density.png",
     )
     assert all(path.is_file() and path.stat().st_size > 0 for path in assets)
+
+
+def test_v2_map_assets_discovers_sibling_land_cache(tmp_path: Path, monkeypatch) -> None:
+    processed_v2 = tmp_path / "processed_v2"
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "ne_110m_land.geojson").write_text("{}", encoding="utf-8")
+    write_v2_region(processed_v2, "region-latest", polygons=[_polygon()], documents=[], links=[])
+
+    seen: dict[str, Path | None] = {}
+
+    def fake_coverage(_lons, _lats, output_path, *, land_geojson_path, **_kwargs):
+        seen["coverage"] = land_geojson_path
+        output_path.touch()
+
+    def fake_presence(_processed_root, output_path, *, land_geojson_path, **_kwargs):
+        seen["presence"] = land_geojson_path
+        output_path.touch()
+
+    def fake_density(_processed_root, output_path, *, land_cache_dir, **_kwargs):
+        seen["density"] = land_cache_dir
+        output_path.touch()
+
+    monkeypatch.setattr(v2_maps, "generate_coverage_map", fake_coverage)
+    monkeypatch.setattr(v2_maps, "generate_geographic_text_presence", fake_presence)
+    monkeypatch.setattr(v2_maps, "generate_geographic_text_density", fake_density)
+
+    generate_v2_map_assets(processed_v2, processed_v2 / "assets")
+
+    assert seen == {
+        "coverage": cache_dir / "ne_110m_land.geojson",
+        "presence": cache_dir / "ne_110m_land.geojson",
+        "density": cache_dir,
+    }

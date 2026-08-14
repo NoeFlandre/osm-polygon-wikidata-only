@@ -19,7 +19,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
-from osm_polygon_wikidata_only.hf.repo_layout import LOCAL_DATASET_HERO_FILE
+from osm_polygon_wikidata_only.hf.repo_layout import LOCAL_V2_DATASET_HERO_FILE
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs
@@ -293,8 +293,8 @@ def run_v2_sync(
             upload(
                 metadata_publication_ops(
                     data_root.processed_v2,
-                    hero_path=LOCAL_DATASET_HERO_FILE
-                    if LOCAL_DATASET_HERO_FILE.is_file()
+                    hero_path=LOCAL_V2_DATASET_HERO_FILE
+                    if LOCAL_V2_DATASET_HERO_FILE.is_file()
                     else None,
                 ),
                 "Update V2 dataset card and manifest",

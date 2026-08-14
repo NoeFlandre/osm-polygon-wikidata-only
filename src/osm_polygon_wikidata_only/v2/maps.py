@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from osm_polygon_wikidata_only.hf.coverage_map import (
+    WORLD_LAND_FILENAME,
     ensure_world_land,
     generate_coverage_map,
     load_centroids_from_parquet,
@@ -33,8 +34,18 @@ def generate_v2_map_assets(
     The all-polygons map, text-presence map, and H3 text-density map use the
     same rendering contracts as V1 but read only ``processed_v2``. No V1
     files are consulted, which keeps the two published cards independent.
+
+    When called directly with a standard data-root layout, an existing
+    ``<data-root>/cache/ne_110m_land.geojson`` is discovered automatically.
+    This keeps manually refreshed V2 assets consistent with the sync path.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    if land_geojson_path is None and land_cache_dir is None:
+        sibling_cache = processed_v2.parent / "cache"
+        sibling_land = sibling_cache / WORLD_LAND_FILENAME
+        if sibling_land.is_file() and sibling_land.stat().st_size > 0:
+            land_cache_dir = sibling_cache
+            land_geojson_path = sibling_land
     if land_geojson_path is None and land_cache_dir is not None:
         try:
             land_geojson_path = ensure_world_land(land_cache_dir)
