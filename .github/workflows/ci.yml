@@ -22,3 +22,13 @@ jobs:
         run: uv python install 3.12
       - name: Run the complete quality gate
         run: just check
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the non-root runtime image
+        run: docker build --target runtime --tag osm-polygon-wikidata-only:ci .
+      - name: Verify the safe default command
+        run: docker run --rm osm-polygon-wikidata-only:ci --help

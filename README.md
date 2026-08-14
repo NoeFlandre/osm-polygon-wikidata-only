@@ -126,6 +126,32 @@ This installs the runtime and development dependencies into a managed
 `.venv`; the complete toolchain is declared in `pyproject.toml` and
 `uv.lock`.
 
+### Reproducible Docker runtime
+
+The repository also ships a non-root Docker image built from the locked
+`uv.lock` environment. Build and smoke-test it without touching any dataset
+data:
+
+```bash
+just docker-build
+just docker-help
+```
+
+Mount a data root explicitly when running the resumable workflow. The
+`docker-run` recipe builds (or reuses) the cached image, and the image's
+default command is `--help`; no pipeline starts accidentally:
+
+```bash
+just docker-run /path/to/osm-polygon-data
+```
+
+`/path/to/osm-polygon-data` must contain `raw/`. The same mounted directory
+stores checkpoints, caches, manifests, and generated artifacts, so stopping
+and rerunning the command is safe. Credentials are supplied only through
+`HF_TOKEN` and the documented Wikimedia environment variables; they are not
+included in the image. See the [Docker reproducibility guide](docs/development.md#docker-reproducibility)
+for the development test/check targets and mount contract.
+
 ---
 
 ## Local data root

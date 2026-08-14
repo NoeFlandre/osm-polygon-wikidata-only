@@ -3,6 +3,19 @@
 The project is intentionally layered so each concern can be tested in
 isolation.
 
+## Container boundary
+
+The `Dockerfile` keeps the application boundary separate from operator data.
+Its `build` stage installs the `uv.lock` environment with a non-editable
+project package, `development` adds the test and documentation toolchain, and
+`runtime` copies only the installed package into a non-root image. `/data` is
+the single declared volume for raw PBFs, resumable state, caches, and generated
+artifacts; no credentials or data are copied into image layers. The default
+runtime command is `--help`, while an explicit mounted
+`sync-dir /data/raw --data-root /data`
+command is required to start processing. This makes container removal and
+restart safe because resume state remains in the host-mounted data root.
+
 | Layer | Responsibility |
 | --- | --- |
 | `config` | Immutable runtime settings and external data-root resolution. |

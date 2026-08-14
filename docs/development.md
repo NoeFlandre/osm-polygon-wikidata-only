@@ -16,6 +16,71 @@ uv run pre-commit install
 just --list
 ```
 
+## Docker reproducibility
+
+The checked-in `Dockerfile` provides a reproducible container path for the
+runtime and for quality checks. It uses the version-pinned
+`ghcr.io/astral-sh/uv:0.11.16-python3.12-bookworm-slim` base and
+installs the Python dependency graph only from `uv.lock`. The image runs as an
+unprivileged `app` user, uses a deterministic UTF-8/bytecode environment, and
+contains no credentials or data files.
+
+The versioned tag fixes the toolchain release, while a registry tag can still
+be moved. For bit-for-bit image provenance, build with a digest resolved from
+your trusted registry inventory:
+
+```bash
+docker build \
+  --build-arg UV_IMAGE=ghcr.io/astral-sh/uv:<verified-tag>@sha256:<verified-digest> \
+  --target runtime \
+  --tag osm-polygon-wikidata-only:local .
+```
+
+The repository intentionally does not invent or hard-code a digest without a
+verified registry manifest; the lockfile remains the authoritative dependency
+resolution in every build.
+
+The `just docker-build` recipe is a thin wrapper around `docker build` and
+selects the runtime stage by default.
+
+Build a minimal runtime image and verify its harmless default help command:
+
+```bash
+just docker-build
+just docker-help
+```
+
+Run the development tests or the focused container quality checks:
+
+```bash
+just docker-test
+just docker-check
+```
+
+The external data root is the only writable container volume. Mount it at
+`/data`; it must contain the input PBFs below `/data/raw` and retains all
+resumable state under the same tree. The checkout is never copied into the
+runtime image, and raw/generated files are excluded from the Docker build
+context by `.dockerignore`. The recipe uses Docker's explicit
+`--mount type=bind,src=<host-data-root>,dst=/data` form and maps the host UID/GID
+with `--user` so the non-root process can write resumable state. It mounts the
+`raw/` subdirectory again as `readonly`, protecting source PBFs from accidental
+container writes.
+
+The full data workflow is deliberately opt-in. `docker-run` first builds (or
+reuses) the cached runtime image, then requires a host data-root path explicitly:
+
+```bash
+just docker-run /path/to/osm-polygon-data
+```
+
+This invokes the same resumable `sync-dir --skip-existing --push` workflow as
+the host command. The mounted state survives container removal, so `Ctrl-C`
+and rerunning the identical command resumes completed work. `HF_TOKEN` and the
+optional Wikimedia Bot Password variables are passed through from the host;
+they are never written into the image or Dockerfile. Docker builds, help, and
+tests never read a real PBF or contact Hugging Face.
+
 Production data belongs under `OSM_POLYGON_DATA_ROOT`; tests use temporary
 directories and in-memory clients. The automated suite must not access the
 network or require a real PBF collection.

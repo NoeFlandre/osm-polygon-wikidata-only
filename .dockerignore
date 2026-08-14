@@ -1,0 +1,49 @@
+# Source-control and local tooling state.
+.git/
+.venv/
+venv/
+.uv-cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.DS_Store
+
+# Presentations are local deliverables and are not needed to build the
+# application image.
+presentations/
+
+# Raw and generated data must be mounted at runtime, never copied into an
+# image layer.
+data/
+raw/
+processed/
+processed_v2/
+cache/
+hf_cache/
+logs/
+output/
+*.pbf
+*.osm.pbf
+*.parquet
+*.arrow
+
+# Credentials and other private material.
+.env
+.env.*
+.huggingface/
+.aws/
+*.pem
+*.key
+*.token
+*.secret
+
+# Build and distribution artifacts.
+build/
+dist/
+*.egg-info/
+wheels/
