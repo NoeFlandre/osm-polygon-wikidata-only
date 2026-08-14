@@ -2,11 +2,85 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import yaml
 
 REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+def _public_markdown_files() -> Iterator[Path]:
+    yield REPOSITORY / "README.md"
+    yield from sorted((REPOSITORY / "docs").glob("*.md"))
+
+
+def test_public_docs_omit_private_operator_details() -> None:
+    """Public Markdown should not publish local internals or cache layouts."""
+    forbidden = (
+        "/Users/",
+        "/Volumes/",
+        "Seagate",
+        "superpowers/",
+        "cache/",
+        "processed/articles/",
+        "cli/_sync/",
+        "hf/_dataset_stats/",
+        "hf/_geographic/",
+        "hf/_publication/",
+        "hf/_uploader/",
+        "pipeline/_link_migration/",
+        "pipeline/_wikidata_recovery/",
+        "hf._",
+        "pipeline._",
+        "cli._",
+        "secret-value",
+    )
+    for document in _public_markdown_files():
+        text = document.read_text(encoding="utf-8")
+        for marker in forbidden:
+            assert marker not in text, f"{marker!r} leaked into {document}"
+
+
+def test_mkdocs_navigation_points_to_existing_public_pages() -> None:
+    config = yaml.safe_load((REPOSITORY / "mkdocs.yml").read_text(encoding="utf-8"))
+    nav = config["nav"]
+    targets = [
+        target
+        for entry in nav
+        for target in entry.values()
+        if isinstance(target, str) and target.endswith(".md")
+    ]
+    assert targets
+    for target in targets:
+        assert (REPOSITORY / "docs" / target).is_file(), target
+    assert config["exclude_docs"].split()
+
+
+def test_home_page_explains_v1_and_v2_contracts() -> None:
+    index = (REPOSITORY / "docs/index.md").read_text(encoding="utf-8")
+    assert "V1" in index
+    assert "V2" in index
+    assert "without a Wikidata QID" in index
+    assert "polygon_document_links/<stem>.parquet" in index
+    assert "link_sources" in index
+    assert "wikipedia_tag_refs" in index
+    assert "docs/citations/osm-polygon-wikidata-only.cff" in index
+    assert "docs/citations/osm-polygon-wikidata-and-wikipedia.cff" in index
+
+
+def test_pages_workflow_builds_strict_site_and_deploys_artifact() -> None:
+    workflow = yaml.safe_load(
+        (REPOSITORY / ".github/workflows/docs.yml").read_text(encoding="utf-8")
+    )
+    build = workflow["jobs"]["build"]
+    deploy = workflow["jobs"]["deploy"]
+    build_run = "\n".join(step.get("run", "") for step in build["steps"] if isinstance(step, dict))
+    assert "mkdocs build --strict --site-dir site" in build_run
+    assert any(step.get("uses") == "actions/upload-pages-artifact@v3" for step in build["steps"])
+    assert build["permissions"] == {"contents": "read", "pages": "read"}
+    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert any(step.get("uses") == "actions/deploy-pages@v4" for step in deploy["steps"])
 
 
 def test_readme_documents_complete_wikimedia_bot_password_workflow() -> None:
@@ -43,7 +117,9 @@ def test_security_and_development_docs_cover_bot_password_handling() -> None:
     assert "revoke" in security.lower()
     assert "browser cookies" in security.lower()
     assert "WIKIMEDIA_BOT_USERNAME" in development
+    assert "WIKIMEDIA_BOT_PASSWORD" in development
     assert "WIKIMEDIA_REQUESTS_PER_MINUTE" in development
+    assert "all-or-nothing" in development
     assert "live credentials" in development.lower()
 
 
@@ -125,6 +201,7 @@ def test_pages_workflow_publishes_dataset_presentation() -> None:
         "presentations/assets/text_presence.png",
     ):
         assert path in workflow
+        assert (REPOSITORY / path).is_file(), f"missing tracked Pages source {path}"
 
 
 def test_readme_documents_five_augmentation_sidecars() -> None:
@@ -206,25 +283,32 @@ def test_dataset_citation_files_are_valid_and_point_to_their_hubs() -> None:
 
 
 def test_architecture_documents_augmentation_readme_recomputation() -> None:
-    """Architecture doc must document that ``write_readme_snapshot``
-    recomputes both core and augmentation statistics."""
+    """Architecture doc must describe factual card recomputation."""
     architecture = (REPOSITORY / "docs" / "architecture.md").read_text(encoding="utf-8")
-    assert "write_readme_snapshot" in architecture
-    assert "core and augmentation stats" in architecture or (
-        "recomputes both" in architecture.lower()
-    )
+    assert "core and" in architecture
+    assert "augmentation statistics" in architecture
+    assert "finalized tables" in architecture
+
+
+def test_architecture_qualifies_skip_existing_behavior() -> None:
+    architecture = (REPOSITORY / "docs" / "architecture.md").read_text(encoding="utf-8")
+    assert "--skip-existing` skips completed local processing" in architecture
+    assert "remote reconciliation" in architecture
 
 
 def test_readme_describes_current_public_workflow_without_migration_language() -> None:
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
 
-    assert "at most eight requests in flight" in readme
+    assert "at most twelve requests in flight" in readme
+    assert "(anonymous runs default to three)" in readme
     assert "groups of 25 QIDs" in readme
-    assert "cache/wikidata_recovery/checkpoints" in readme
+    assert "checkpoints" in readme.lower()
     assert "The tracked test suite is deterministic and requires no live network" in readme
     assert "1,300+ tracked tests" not in readme
     assert "lossless" not in readme.lower()
     assert "at most three requests in flight" not in readme
+    assert "cache/" not in readme
+    assert "processed/articles/" not in readme
     assert "suite is fast (< 2 s)" not in readme
 
 
@@ -234,15 +318,14 @@ def test_readme_repository_layout_names_current_focused_modules() -> None:
 
     for name in (
         "augmentation/",
-        "cli/_sync/",
-        "enrichment/wikidata/",
-        "enrichment/wikipedia/",
-        "hf/_dataset_stats/",
-        "hf/_geographic/",
-        "hf/_publication/",
-        "hf/_uploader/",
-        "pipeline/_link_migration/",
-        "pipeline/_wikidata_recovery/",
+        "domain/",
+        "io/",
+        "cli/",
+        "enrichment/",
+        "hf/",
+        "pipeline/",
+        "utils/",
+        "v2/",
     ):
         assert name in layout
     assert "tests/               # pytest suite (114+" not in layout
@@ -255,19 +338,16 @@ def test_developer_docs_use_current_test_paths_and_quality_gate() -> None:
     assert "tests/cli/test_dependencies.py" in development
     assert "git diff --check" in development
     assert "uv build" in development
+    assert (
+        "uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q" in development
+    )
 
 
-def test_architecture_names_current_private_ownership_boundaries() -> None:
+def test_architecture_keeps_private_modules_out_of_public_docs() -> None:
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
-
-    assert "hf._publication.models" in architecture
-    assert "hf._publication.artifacts" in architecture
-    assert "hf._dataset_stats.summary_codec" in architecture
-    assert "pipeline._link_migration.transaction" in architecture
-    assert "cli._sync.retirement" in architecture
-    assert "pipeline._wikidata_recovery.validation" in architecture
-    assert "pipeline._wikidata_recovery.storage" in architecture
-    assert "RecoveryRepairResult" in architecture
+    assert "hf._" not in architecture
+    assert "pipeline._" not in architecture
+    assert "cli._" not in architecture
 
 
 def test_current_documentation_uses_uv_ruff_and_ty_quality_gate() -> None:

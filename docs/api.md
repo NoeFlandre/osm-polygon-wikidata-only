@@ -1,91 +1,68 @@
 # Supported Python API
 
-The command line is the primary interface. The following Python entry points
-are also supported:
+The command line is the primary interface. The modules below are the supported
+Python entry points; imports not listed here may change without notice.
 
-- `config.paths.DataRoot` and `resolve_data_root`
-- `config.settings.Settings`
-- `enrichment.wikidata_client` public client/entity names
-- `enrichment.wikipedia_client` public client/article/result names
-- `pipeline.processor.PbfStem`, `ProcessResult`, `ExtractedPbf`,
-  `IncompleteEnrichmentError`, `process_pbf`, `process_extracted_pbf`,
-  and `extract_pbf`
-- `pipeline.orchestrator.orchestrate`
-- `hf.dataset_card.render_dataset_card`
-- `hf.trackio_snapshot.publish_trackio_snapshot` for the single frozen
-  `final-dataset-snapshot` run and its three public plots
-- `hf.uploader` public upload helpers
-- `hf.coverage_map.generate_coverage_map`, `ensure_world_land`,
-  and `load_centroids_from_parquet`
-- `hf.geographic_text_coverage` documented types, constants, and
-  helpers (`CoverageCell`, `CoverageMapError`, `PolygonCountCell`,
-  `RenderResult`, `DEFAULT_H3_RESOLUTION`,
-  `DEFAULT_MIN_POLYGONS_PER_CELL`, the `LOCAL_*` / `REMOTE_*` asset
-  path constants, `assign_h3_cell`, the `aggregate_*`,
-  `generate_*`, and `render_*` helpers)
+## Configuration
 
-The remaining names exposed by the codebase -- including
-`pipeline.sync_planner`, `pipeline.sync_runner`,
-`hf.publication`, `hf.dataset_stats`, `hf.repo_layout`,
-`augmentation.orchestrator`, `utils.request_scheduler`,
-`utils.http_retry`, `enrichment.wikimedia`, and
-`enrichment.wikimedia_auth` -- are implementation details behind
-compatibility facades. They are not part of the supported Python
-surface; importing them directly is at the caller's risk.
+- `osm_polygon_wikidata_only.config.paths.DataRoot` and
+  `resolve_data_root` describe and validate the operator-selected data root.
+- `osm_polygon_wikidata_only.config.settings.Settings` contains immutable
+  runtime settings used by the processing commands.
 
-Compatibility facades preserve the supported imports above while
-focused internal packages may change. Underscore-prefixed packages
-(for example `hf._dataset_stats`, `hf._geographic`, `hf._uploader`)
-are private. Other focused modules (for example
-`enrichment.wikidata.transport`, `enrichment.wikipedia.transport`,
-`augmentation.steps`, `pipeline.sync_runner`) may also be
-implementation details even though they do not carry an underscore
-prefix; they remain reachable through compatibility facades and may
-change without notice. Names beginning with `_` at the attribute
-level are always implementation details. Parquet schemas and
-identifiers are data compatibility contracts documented in the README,
-not merely Python implementation details.
+The data root must be outside the source checkout. Callers should construct it
+through `resolve_data_root` rather than duplicating path rules.
 
-Clients are synchronous and may perform network or filesystem I/O. Pipeline
-publication is fail-closed: unresolved expected enrichment raises
-`IncompleteEnrichmentError` before final artifacts or manifest completion.
+## Processing and enrichment
 
-Exception boundary policy:
+`osm_polygon_wikidata_only.pipeline.processor` exposes the single-PBF facade:
 
-- **Atomic writes** (`io.atomic.atomic_write_text`,
-  `hf._geographic.rendering.atomic_save_png`) catch `BaseException` so
-  the temporary-file cleanup branch fires even on `KeyboardInterrupt`
-  and `SystemExit`. Narrowing to `Exception` would leak temp files on
-  Ctrl-C.
-- **Upload backend translation** in `hf._uploader.operations`
-  (`_ensure_repo_exists`, `upload_parquet`, `upload_files`,
-  `upload_card`) catches `Exception` so the unstable exception types
-  raised by `huggingface_hub` are translated uniformly into
-  `UploadError`. The same module's `_translate_hf_error` handles
-  401/403/404/auth-marker translation. Token resolution and
-  verification in `hf._uploader.token` catches `Exception` for the
-  same reason. `hf.upload_queue` is different: it does **not**
-  translate every exception into `UploadError`; it records failures
-  (with the underlying exception detail appended to the message) into
-  its `failures` list and lets the daemon worker survive to process
-  the next queued job.
-- **Heartbeat isolation** in
-  `pipeline.heartbeat.EnrichmentHeartbeat.run` catches `Exception` so
-  observational heartbeat failures are contained, logged at debug,
-  and the daemon thread exits without propagating uncaught
-  exceptions into the calling pipeline.
-- **World-land basemap fallback** in
-  `hf.publication.refresh_coverage_assets` and
-  `hf.publication.snapshot_upload_manifests` catches `Exception`
-  around `ensure_world_land` because the helper performs network
-  I/O via `urllib.request.urlretrieve` (raises `URLError`,
-  `HTTPError`, `ContentTooShortError`, `socket.timeout`, `OSError`);
-  the documented fallback is to render the map without continents.
-- **PyArrow schema-introspection fallback** in
-  `hf._geographic.parquet_inputs.read_required_columns` catches
-  `Exception` around `pq.read_metadata`. When the metadata read
-  fails, the implementation falls through with an empty `actual`
-  column-name set and lets the subsequent column-pruned
-  `pq.read_table` call determine the outcome: a valid parquet with
-  the requested columns still loads successfully; missing columns
-  are translated into `CoverageMapError`.
+- `PbfStem`, `ExtractedPbf`, and `ProcessResult` are the result models.
+- `extract_pbf` reads polygon candidates from one PBF.
+- `process_extracted_pbf` enriches an extracted input and writes its tables.
+- `process_pbf` performs both phases.
+- `IncompleteEnrichmentError` signals that expected enrichment did not finish;
+  callers should not treat incomplete output as a completed region.
+
+`osm_polygon_wikidata_only.pipeline.orchestrator` provides `collect_pbfs`,
+`already_processed`, and `orchestrate` for callers that need the directory
+workflow used by the CLI.
+
+For service boundaries, use the compatibility facades
+`osm_polygon_wikidata_only.enrichment.wikidata_client` and
+`osm_polygon_wikidata_only.enrichment.wikipedia_client`. They expose the
+typed client protocols, HTTP clients, in-memory clients for tests, parsers, and
+the `WikidataEntity`, `WikipediaArticle`, and `FetchResult` models. The CLI
+constructs these clients with the project defaults.
+
+## Dataset cards and publication
+
+- `osm_polygon_wikidata_only.hf.dataset_card.render_dataset_card` renders the
+  Hugging Face dataset card from supplied schema descriptions and statistics.
+- `osm_polygon_wikidata_only.hf.uploader` exposes `upload_parquet`,
+  `upload_manifest`, `upload_card`, and `upload_files`, plus the `HfHub` and
+  `StubHfHub` in-memory stub and token/authorization helpers. These functions
+  can write to the Hub; use the CLI for the normal atomic publication path.
+- `osm_polygon_wikidata_only.hf.trackio_snapshot.publish_trackio_snapshot`
+  publishes the single static `final-dataset-snapshot` run. The corresponding
+  console script is `osm-polygon-wikidata-only-trackio`.
+
+`osm_polygon_wikidata_only.hf.coverage_map` provides
+`load_centroids_from_parquet`, `generate_coverage_map`, and
+`ensure_world_land` for the all-polygon map. The
+`osm_polygon_wikidata_only.hf.geographic_text_coverage` facade provides the
+typed H3 aggregation and render helpers used for geographic coverage assets, including
+`assign_h3_cell`, `aggregate_geographic_text_coverage`, and
+`render_geographic_text_coverage`.
+
+## Compatibility rules
+
+The CLI, Parquet schemas, manifest names, deterministic ordering, and public
+client classes are compatibility contracts. New implementation details should
+be introduced behind these facades. Clients are synchronous and may perform
+network or filesystem I/O; tests can use the in-memory client variants and the
+Hub stub to avoid both.
+
+The V2 dataset is selected through the CLI's `sync-dir --dataset-version v2`
+option. It has a separate storage and publication contract, so Python callers
+should not mix V1 and V2 output paths in one run.

@@ -87,13 +87,10 @@ fetches only missing direct pages, and writes under `processed_v2/`. It uses a
 unified `polygon_document_links/` table with `link_sources` provenance and
 publishes to the separate V2 dataset above. V2 also writes
 `wikipedia/sections/<stem>.parquet` with the exact V1 section schema, reusing
-existing V1 rows and fetching only missing Wikipedia revisions. V1 files and
-the default workflow are never rewritten by a V2 run. V2 keeps a resumable
-reuse index in `cache/v2/v1-index/`; completed Parquet row groups are reused
-after an interruption or later restart. Extraction batches and completed direct
-Wikipedia results and section parses are checkpointed under
-`cache/v2/checkpoints/` and removed only after the region reaches its final
-local commit. A restart rescans at most the source PBF because libosmium does
+existing V1 rows and fetching only missing Wikipedia revisions. V1 files and the
+default workflow are never rewritten by a V2 run. Its resumable indexes,
+checkpoints, and fetched responses stay in the configured data root and are
+never published. A restart rescans at most the source PBF because libosmium does
 not expose a portable byte offset, while already saved extraction and fetch
 work is reused and never published until final reconciliation.
 
@@ -104,11 +101,8 @@ work is reused and never published until final reconciliation.
 The source is organized into focused packages: `augmentation/`, `domain/`,
 `enrichment/`, `io/`, `pipeline/`, `v2/`, `hf/`, `cli/`, and `utils/`.
 Tests are under `tests/`; package, Ruff, ty, and pytest configuration is in
-`pyproject.toml`. Focused internals include `cli/_sync/`,
-`enrichment/wikidata/`, `enrichment/wikipedia/`, `hf/_dataset_stats/`,
-`hf/_geographic/`, `hf/_publication/`, `hf/_uploader/`,
-`pipeline/_link_migration/`, and `pipeline/_wikidata_recovery/`. See [the
-architecture guide](docs/architecture.md) for ownership boundaries and data flow.
+`pyproject.toml`. See [the architecture guide](docs/architecture.md) for
+ownership boundaries and data flow.
 
 ---
 
@@ -220,10 +214,10 @@ uv run osm-polygon-wikidata-only sync-dir \
 ```
 
 V2 writes below `processed_v2/` and keeps its reuse index and restart
-checkpoints below `cache/v2/`. It reuses finalized V1 documents and sections,
-fetches only missing direct pages, and keeps V1 files unchanged. Extraction,
-fetching, and publication are checkpointed so an interrupted run can resume;
-use `--force` only when deliberately rebuilding a region.
+checkpoints in the configured data root. It reuses finalized V1 documents and
+sections, fetches only missing direct pages, and keeps V1 files unchanged.
+Extraction, fetching, and publication are checkpointed so an interrupted run
+can resume; use `--force` only when deliberately rebuilding a region.
 
 ### Wikimedia Bot Password authentication
 
@@ -250,8 +244,9 @@ a checked-in `.env` file, paste it into an issue, or use the main account
 password.
 
 With both variables present, the unified pipeline uses the authenticated
-1,200-request-per-minute budget with one shared scheduler and at most eight requests in flight
-(anonymous runs default to three). To choose a different authenticated ceiling:
+1,200-request-per-minute budget with one shared scheduler and at most twelve
+requests in flight (anonymous runs default to three). To choose a different
+authenticated ceiling:
 
 ```bash
 export WIKIMEDIA_REQUESTS_PER_MINUTE=600
@@ -259,7 +254,7 @@ export WIKIMEDIA_REQUESTS_PER_MINUTE=600
 
 Usually omit this override and let the adaptive scheduler work. The startup log
 reports the mode and ceiling, the password is never logged, authenticated runs
-keep at most eight requests in flight, and HTTP 429 responses trigger a
+keep at most twelve requests in flight, and HTTP 429 responses trigger a
 cooldown. To revoke access, remove the variables and revoke the named Bot
 Password at [Special:BotPasswords](https://meta.wikimedia.org/wiki/Special:BotPasswords).
 
@@ -282,9 +277,9 @@ publication repairs, and then new PBF processing; maps and the README are
 reported refreshed only after a successful publication.
 
 Recovery is resumable and fail-closed. Affected relationships are repaired in
-deterministic groups of 25 QIDs, with completed groups stored under
-`cache/wikidata_recovery/checkpoints/<stem>/<plan-hash>/`. A restart repeats only
-unfinished groups and keeps completed regional work.
+deterministic groups of 25 QIDs. Completed groups remain in local resumable
+state, and a restart repeats only unfinished groups while keeping completed
+regional work.
 
 To pause, stop the command with `Ctrl-C`. Run the identical command again to
 resume: completed PBFs remain skipped, while the interrupted PBF is retried
@@ -368,9 +363,8 @@ plain-text full text, thumbnails, license, attribution, and a
 deterministic SHA-256 `content_hash`. It preserves every field from
 the former `articles/` table and adds stable `document_id` and
 `project` fields. The legacy remote `articles/` path is deleted in
-the same atomic Hub commit as the canonical upload; the local
-`processed/articles/` staging file is removed only after confirmed
-publication and reference validation.
+the same atomic Hub commit as the canonical upload; local staging
+files are removed only after confirmed publication and reference validation.
 
 ### `polygon_articles/<stem>.parquet`
 
