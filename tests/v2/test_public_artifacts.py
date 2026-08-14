@@ -52,6 +52,15 @@ def test_v2_card_is_viewer_ready_and_documents_v1_comparison(tmp_path: Path) -> 
     assert "`wikidata_sitelink` means the relationship came from a Wikidata sitelink" in card
 
 
+def test_v2_card_explains_regional_duplicate_policy(tmp_path: Path) -> None:
+    write_v2_region(tmp_path, "region-latest", polygons=[_polygon()], documents=[], links=[])
+
+    card = render_v2_card(tmp_path)
+
+    assert "Regional extracts can overlap" in card
+    assert "We keep those copies to preserve regional membership and provenance" in card
+
+
 def test_v2_card_front_matter_has_viewer_configs_for_every_table(tmp_path: Path) -> None:
     write_v2_region(tmp_path, "region-latest", polygons=[_polygon()], documents=[], links=[])
 

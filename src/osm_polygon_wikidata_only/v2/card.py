@@ -230,6 +230,8 @@ def render_v2_card(
                 "",
                 "V2 deduplicates documents by `document_id` and polygon-document links by `(polygon_id, project, document_id)` within each region. Byte-identical repeats collapse deterministically; conflicting rows fail closed. `discovery_sources` explains how a polygon was included: `wikidata` means the polygon came from an OSM `wikidata=*` tag, while `wikipedia_tag` means it came from an OSM `wikipedia=*` tag. `link_sources` explains each polygon-document relationship: `wikidata_sitelink` means the relationship came from a Wikidata sitelink, while `osm_wikipedia_tag` means it came directly from an OSM `wikipedia=*` tag. A relationship can list both when both routes agree.",
                 "",
+                "Regional extracts can overlap, so the same OSM object or document may appear in more than one regional file. We keep those copies to preserve regional membership and provenance; snapshot counts are regional-shard rows rather than globally unique objects or pages.",
+                "",
                 "## Repository layout",
                 "",
                 "- `polygons/<stem>.parquet` — one row per retained OSM polygon.",
