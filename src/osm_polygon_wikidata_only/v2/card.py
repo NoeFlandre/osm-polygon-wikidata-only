@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import (
     V1_DATASET_URL,
     V2_CONTRACT_VERSION,
@@ -47,6 +48,12 @@ class V2CardStats:
     total_parquet_storage_bytes: int
     additional_document_words_vs_v1: int | None = None
     additional_sections_vs_v1: int | None = None
+    new_polygons_wikipedia_tag_vs_v1: int | None = None
+    new_polygons_wikidata_only_vs_v1: int | None = None
+    new_wikipedia_tag_polygons_without_document: int | None = None
+    new_wikipedia_document_identity_words_vs_v1: int | None = None
+    new_wikipedia_documents_sharing_v1_content: int | None = None
+    additional_unique_sections_vs_v1: int | None = None
 
     @property
     def documents(self) -> int:
@@ -110,6 +117,12 @@ def compute_v2_card_stats(
     v1_document_ids: set[str] | None = None
     v1_document_words: int | None = None
     v1_section_count: int | None = None
+    new_polygons_wikipedia_tag: int | None = None
+    new_polygons_wikidata_only: int | None = None
+    new_tag_polygons_without_document: int | None = None
+    new_document_identity_words: int | None = None
+    new_documents_sharing_content: int | None = None
+    additional_unique_sections: int | None = None
     if v1_processed is not None:
         v1_polygon_ids = set(
             _unique_values(
@@ -126,6 +139,57 @@ def compute_v2_card_stats(
             ("article_length_words", "text_length_words"),
         )
         v1_section_count = _sum_metadata(_v1_section_files(v1_processed))
+        new_polygon_ids = polygon_ids - v1_polygon_ids
+        source_sets = _polygon_source_sets(polygon_files, new_polygon_ids)
+        new_polygons_wikipedia_tag = sum(
+            "wikipedia_tag" in sources for sources in source_sets.values()
+        )
+        new_polygons_wikidata_only = sum(
+            sources == {"wikidata"} for sources in source_sets.values()
+        )
+        direct_link_polygon_ids = _polygon_ids_with_link_source(link_files, "osm_wikipedia_tag")
+        new_tag_polygons_without_document = sum(
+            "wikipedia_tag" in sources and polygon_id not in direct_link_polygon_ids
+            for polygon_id, sources in source_sets.items()
+        )
+        v2_document_words_by_id = _unique_numeric_values(
+            wikipedia_document_files,
+            "document_id",
+            ("article_length_words", "text_length_words"),
+        )
+        v1_document_words_by_id = _unique_numeric_values(
+            v1_wikipedia_document_files,
+            "document_id",
+            ("article_length_words", "text_length_words"),
+        )
+        if not v1_document_words_by_id:
+            v1_document_words_by_id = _unique_numeric_values(
+                v1_wikipedia_document_files,
+                "article_id",
+                ("article_length_words", "text_length_words"),
+            )
+        new_document_identity_words = sum(
+            value
+            for identity, value in v2_document_words_by_id.items()
+            if identity not in v1_document_words_by_id
+        )
+        v1_content_hashes = _unique_values(v1_wikipedia_document_files, "content_hash")
+        v2_new_content_hashes = _field_values_for_ids(
+            wikipedia_document_files,
+            "document_id",
+            "content_hash",
+            set(v2_document_words_by_id) - set(v1_document_words_by_id),
+        )
+        new_documents_sharing_content = sum(
+            content_hash in v1_content_hashes
+            for content_hash in v2_new_content_hashes.values()
+            if content_hash
+        )
+        v2_section_ids = _unique_values(
+            wikipedia_section_files + wikivoyage_section_files, "section_id"
+        )
+        v1_section_ids = _unique_values(_v1_section_files(v1_processed), "section_id")
+        additional_unique_sections = len(v2_section_ids - v1_section_ids)
 
     return V2CardStats(
         regions=len(stems),
@@ -158,6 +222,12 @@ def compute_v2_card_stats(
             if v1_section_count is not None
             else None
         ),
+        new_polygons_wikipedia_tag_vs_v1=new_polygons_wikipedia_tag,
+        new_polygons_wikidata_only_vs_v1=new_polygons_wikidata_only,
+        new_wikipedia_tag_polygons_without_document=new_tag_polygons_without_document,
+        new_wikipedia_document_identity_words_vs_v1=new_document_identity_words,
+        new_wikipedia_documents_sharing_v1_content=new_documents_sharing_content,
+        additional_unique_sections_vs_v1=additional_unique_sections,
     )
 
 
@@ -232,7 +302,7 @@ def render_v2_card(
                 "",
                 "V2 deduplicates documents by `document_id` and polygon-document links by `(polygon_id, project, document_id)` within each region. Byte-identical repeats collapse deterministically; conflicting rows fail closed. `discovery_sources` explains how a polygon was included: `wikidata` means the polygon came from an OSM `wikidata=*` tag, while `wikipedia_tag` means it came from an OSM `wikipedia=*` tag. `link_sources` explains each polygon-document relationship: `wikidata_sitelink` means the relationship came from a Wikidata sitelink, while `osm_wikipedia_tag` means it came directly from an OSM `wikipedia=*` tag. A relationship can list both when both routes agree.",
                 "",
-                "Regional extracts can overlap, so the same OSM object or document may appear in more than one regional file. We keep those copies to preserve regional membership and provenance; snapshot counts are regional-shard rows rather than globally unique objects or pages.",
+                "Regional extracts can overlap, so the same OSM object or document may appear in more than one regional file. We do not globally deduplicate these copies. We keep those copies to preserve regional membership and provenance; snapshot counts are regional-shard rows rather than globally unique objects or pages.",
                 "",
                 "## Repository layout",
                 "",
@@ -326,6 +396,12 @@ def _render_comparison(snapshot: V2CardStats) -> str:
             snapshot.new_wikipedia_documents_vs_v1,
             snapshot.additional_document_words_vs_v1,
             snapshot.additional_sections_vs_v1,
+            snapshot.new_polygons_wikipedia_tag_vs_v1,
+            snapshot.new_polygons_wikidata_only_vs_v1,
+            snapshot.new_wikipedia_tag_polygons_without_document,
+            snapshot.new_wikipedia_document_identity_words_vs_v1,
+            snapshot.new_wikipedia_documents_sharing_v1_content,
+            snapshot.additional_unique_sections_vs_v1,
         )
     ):
         lines.append(
@@ -336,10 +412,18 @@ def _render_comparison(snapshot: V2CardStats) -> str:
             [
                 "The following deltas are computed from the local V1 and V2 Parquet snapshots:",
                 "",
-                f"- **Additional polygons discovered through V2 Wikipedia tags:** {snapshot.new_polygons_vs_v1:,}",
+                f"- **Additional polygon identities:** {snapshot.new_polygons_vs_v1:,}",
+                f"- **Of those, polygons with a Wikipedia tag:** {snapshot.new_polygons_wikipedia_tag_vs_v1:,}",
+                f"- **Of those, Wikidata-only polygons:** {snapshot.new_polygons_wikidata_only_vs_v1:,}",
                 f"- **Additional Wikipedia document identities:** {snapshot.new_wikipedia_documents_vs_v1:,}",
-                f"- **Additional document words in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_document_words_vs_v1:,}",
-                f"- **Additional document sections in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_sections_vs_v1:,}",
+                f"- **Additional document-row words in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_document_words_vs_v1:,}",
+                f"- **Words in newly added Wikipedia document identities:** {snapshot.new_wikipedia_document_identity_words_vs_v1:,}",
+                f"- **New Wikipedia document identities sharing content with V1:** {snapshot.new_wikipedia_documents_sharing_v1_content:,}",
+                f"- **Additional section rows in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_sections_vs_v1:,}",
+                f"- **Additional unique section identities:** {snapshot.additional_unique_sections_vs_v1:,}",
+                f"- **New Wikipedia-tag polygons without a matching page at the snapshot:** {snapshot.new_wikipedia_tag_polygons_without_document:,}",
+                "",
+                "The polygon and document figures are set differences of stable identities, while row-word and row-section figures include regional copies. V2 keeps regional copies to preserve source membership and provenance; a direct Wikipedia reference without a matching page remains represented in the polygon table and is not counted as a document.",
                 "",
             ]
         )
@@ -417,6 +501,116 @@ def _sum_first_available(paths: Iterable[Path], columns: tuple[str, ...]) -> int
             for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536):
                 total += sum(int(value or 0) for value in batch.column(0).to_pylist())
     return total
+
+
+def _unique_numeric_values(
+    paths: Iterable[Path], key_column: str, value_columns: tuple[str, ...]
+) -> dict[str, int]:
+    """Return one stable numeric value for each document identity."""
+    values: dict[str, int] = {}
+    for path in paths:
+        names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
+        value_column = next((candidate for candidate in value_columns if candidate in names), None)
+        if key_column not in names or value_column is None:
+            continue
+        with pq.ParquetFile(path) as parquet_file:
+            for batch in parquet_file.iter_batches(
+                columns=[key_column, value_column], batch_size=65_536
+            ):
+                for identity, value in zip(
+                    batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
+                ):
+                    if identity in (None, ""):
+                        continue
+                    key = str(identity)
+                    numeric = int(value or 0)
+                    previous = values.get(key)
+                    if previous is not None and previous != numeric:
+                        raise ValueError(f"Inconsistent {value_column} for document {key!r}")
+                    values[key] = numeric
+    return values
+
+
+def _field_values_for_ids(
+    paths: Iterable[Path],
+    key_column: str,
+    value_column: str,
+    identities: set[str],
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not identities:
+        return values
+    for path in paths:
+        names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
+        if not {key_column, value_column}.issubset(names):
+            continue
+        with pq.ParquetFile(path) as parquet_file:
+            for batch in parquet_file.iter_batches(
+                columns=[key_column, value_column], batch_size=65_536
+            ):
+                for identity, value in zip(
+                    batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
+                ):
+                    if identity in identities and value not in (None, ""):
+                        values[str(identity)] = str(value)
+    return values
+
+
+def _polygon_source_sets(paths: Iterable[Path], identities: set[str]) -> dict[str, set[str]]:
+    values: dict[str, set[str]] = {}
+    for path in paths:
+        names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
+        if not {"polygon_id", "discovery_sources"}.issubset(names):
+            continue
+        with pq.ParquetFile(path) as parquet_file:
+            for batch in parquet_file.iter_batches(
+                columns=["polygon_id", "discovery_sources"], batch_size=65_536
+            ):
+                for identity, raw_sources in zip(
+                    batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
+                ):
+                    if identity not in identities:
+                        continue
+                    try:
+                        parsed = json_loads(str(raw_sources or "[]"))
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"Invalid discovery_sources for polygon {identity!r} in {path}"
+                        ) from exc
+                    if not isinstance(parsed, list) or not all(
+                        isinstance(source, str) for source in parsed
+                    ):
+                        raise ValueError(f"Invalid discovery_sources for polygon {identity!r}")
+                    values[str(identity)] = {str(source) for source in parsed}
+    return values
+
+
+def _polygon_ids_with_link_source(paths: Iterable[Path], source: str) -> set[str]:
+    values: set[str] = set()
+    for path in paths:
+        names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
+        if not {"polygon_id", "link_sources"}.issubset(names):
+            continue
+        with pq.ParquetFile(path) as parquet_file:
+            for batch in parquet_file.iter_batches(
+                columns=["polygon_id", "link_sources"], batch_size=65_536
+            ):
+                for identity, raw_sources in zip(
+                    batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
+                ):
+                    try:
+                        parsed = json_loads(str(raw_sources or "[]"))
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"Invalid link_sources for polygon {identity!r} in {path}"
+                        ) from exc
+                    if not isinstance(parsed, list) or not all(
+                        isinstance(item, str) for item in parsed
+                    ):
+                        raise ValueError(f"Invalid link_sources for polygon {identity!r}")
+                    if identity and source in parsed:
+                        values.add(str(identity))
+    return values
 
 
 def _text_metrics(
