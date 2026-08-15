@@ -18,13 +18,15 @@ multilingual `wikipedia=*` tags, including polygons without a Wikidata QID.
 
 The first Hugging Face dataset is **V1**, produced by the
 [V1.0.0 GitHub code](https://github.com/NoeFlandre/osm-polygon-wikidata-only/tree/v1.0.0).
+The V2 Hugging Face dataset is produced by the
+[V2.0.0 GitHub release](https://github.com/NoeFlandre/osm-polygon-wikidata-only/releases/tag/v2.0.0).
 
 ## Dataset versions
 
 | Version | Dataset and code | Scope | Snapshot |
 | --- | --- | --- | --- |
 | **V1** | [Hugging Face dataset](https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only) · [GitHub `v1.0.0`](https://github.com/NoeFlandre/osm-polygon-wikidata-only/tree/v1.0.0) | Wikidata-first polygons | 1,184,110 polygons · 2,288,170 Wikipedia + Wikivoyage documents · 351 languages · 375 regions |
-| **V2** | [Hugging Face dataset](https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia) · [GitHub `main`](https://github.com/NoeFlandre/osm-polygon-wikidata-only) | V1 plus valid multilingual `wikipedia=*` references, including polygons without Wikidata | 1,259,424 polygons · 2,332,127 Wikipedia + Wikivoyage documents · 353 languages · 386 regions |
+| **V2** | [Hugging Face dataset](https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia) · [GitHub `v2.0.0`](https://github.com/NoeFlandre/osm-polygon-wikidata-only/releases/tag/v2.0.0) | V1 plus valid multilingual `wikipedia=*` references, including polygons without Wikidata | 1,259,424 polygons · 2,332,127 Wikipedia + Wikivoyage documents · 353 languages · 386 regions |
 
 ## Trackio snapshot (V1)
 
