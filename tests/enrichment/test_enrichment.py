@@ -846,6 +846,22 @@ def test_fetch_qids_uses_batch_clients_and_preserves_input_order() -> None:
     assert wiki.calls == 2
 
 
+def test_batched_site_work_is_round_robin_and_deduplicated() -> None:
+    requests = {
+        ("en", "enwiki"): [(0, "enwiki", "A"), (1, "enwiki", "A"), (1, "enwiki", "B")],
+        ("fr", "frwiki"): [(0, "frwiki", "C")],
+    }
+
+    work, remaining = article_linker._plan_site_work(requests, batch_size=1)
+
+    assert work == [
+        (("en", "enwiki"), ["A"]),
+        (("fr", "frwiki"), ["C"]),
+        (("en", "enwiki"), ["B"]),
+    ]
+    assert remaining == {("en", "enwiki"): 2, ("fr", "frwiki"): 1}
+
+
 def test_fetch_qids_reports_batched_qid_site_and_article_progress() -> None:
     class BatchWd(InMemoryWikidataClient):
         def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:

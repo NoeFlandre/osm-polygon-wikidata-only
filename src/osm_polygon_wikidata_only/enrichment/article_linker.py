@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from .progress import EnrichmentProgress
@@ -36,6 +36,10 @@ LOGGER = logging.getLogger(__name__)
 PREFERRED_LANGUAGES: tuple[str, ...] = ("en", "fr", "de", "es", "it")
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_SITE_WORKERS = 5
+
+type SiteKey = tuple[str, str]
+type SiteRequest = tuple[int, str, str]
+type SiteWork = tuple[SiteKey, list[str]]
 
 
 @dataclass
@@ -98,30 +102,72 @@ def link_qid(
 
     summary = LinkSummary(qid=qid, entity=entity)
     allow = {lang for lang in languages} if languages is not None else None
+    _link_entity_articles(
+        summary,
+        wikipedia_client,
+        allow=allow,
+        fetch_full_text=fetch_full_text,
+    )
+    return summary
+
+
+def _site_allowed(site: str, allow: set[str] | None) -> bool:
+    return allow is None or language_from_site(site) in allow
+
+
+def _link_entity_articles(
+    summary: LinkSummary,
+    wikipedia_client: WikipediaClient,
+    *,
+    allow: set[str] | None,
+    fetch_full_text: bool,
+) -> None:
+    entity = summary.entity
+    assert entity is not None
 
     for site, title in sorted(entity.sitelinks.items()):
         language = language_from_site(site)
-        if allow is not None and language not in allow:
+        if not _site_allowed(site, allow):
             continue
-        result = wikipedia_client.fetch_article(
+        result = _fetch_entity_article(
+            wikipedia_client,
+            entity,
             language,
             site,
             title,
-            wikidata_label=entity.labels.get(language) or entity.labels.get("en", ""),
-            wikidata_description=entity.descriptions.get(language)
-            or entity.descriptions.get("en", ""),
-            wikidata_aliases=entity.aliases.get(language) or entity.aliases.get("en", []),
             fetch_full_text=fetch_full_text,
         )
-        summary.statuses[site] = result.status
-        if result.status == "article_not_found" or result.article is None:
-            summary.errors[site] = result.error
-            continue
-        summary.articles.append(result.article)
-        if result.status != "ok":
-            summary.errors[site] = result.error
+        _record_link_result(summary, site, result)
 
-    return summary
+
+def _fetch_entity_article(
+    wikipedia_client: WikipediaClient,
+    entity: WikidataEntity,
+    language: str,
+    site: str,
+    title: str,
+    *,
+    fetch_full_text: bool,
+) -> FetchResult:
+    return wikipedia_client.fetch_article(
+        language,
+        site,
+        title,
+        wikidata_label=entity.labels.get(language) or entity.labels.get("en", ""),
+        wikidata_description=entity.descriptions.get(language) or entity.descriptions.get("en", ""),
+        wikidata_aliases=entity.aliases.get(language) or entity.aliases.get("en", []),
+        fetch_full_text=fetch_full_text,
+    )
+
+
+def _record_link_result(summary: LinkSummary, site: str, result: FetchResult) -> None:
+    summary.statuses[site] = result.status
+    if result.status == "article_not_found" or result.article is None:
+        summary.errors[site] = result.error
+        return
+    summary.articles.append(result.article)
+    if result.status != "ok":
+        summary.errors[site] = result.error
 
 
 def fetch_qids(
@@ -137,98 +183,262 @@ def fetch_qids(
     progress: EnrichmentProgress | None = None,
 ) -> list[LinkSummary]:
     """Fetch and link several QIDs, returning one :class:`LinkSummary` each."""
-    if batch_size < 1:
-        raise ValueError("batch_size must be >= 1")
-    if site_workers < 1:
-        raise ValueError("site_workers must be >= 1")
+    _validate_fetch_options(batch_size, site_workers)
     requested = list(qids)
     if progress is not None:
         progress.set_qids_total(len(requested))
     if isinstance(wikidata_client, BatchWikidataClient) and isinstance(
         wikipedia_client, BatchWikipediaClient
     ):
-        entities: list[WikidataEntity | None] = []
-        for chunk in _chunks(requested, batch_size):
-            entities.extend(wikidata_client.get_entities(chunk))
-            if progress is not None:
-                progress.advance_qids(len(chunk))
-        summaries = [
-            LinkSummary(qid=qid, entity=entity)
-            for qid, entity in zip(requested, entities, strict=True)
-        ]
-        requests: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
-        allow = {lang for lang in languages} if languages is not None else None
-        for index, summary in enumerate(summaries):
-            if summary.entity is None:
-                continue
-            for site, title in sorted(summary.entity.sitelinks.items()):
-                language = language_from_site(site)
-                if allow is None or language in allow:
-                    requests.setdefault((language, site), []).append((index, site, title))
+        return _fetch_batched_qids(
+            requested,
+            wikidata_client=wikidata_client,
+            wikipedia_client=wikipedia_client,
+            languages=languages,
+            fetch_full_text=fetch_full_text,
+            max_articles_per_qid=max_articles_per_qid,
+            batch_size=batch_size,
+            site_workers=site_workers,
+            progress=progress,
+        )
+    return _fetch_compatibility_qids(
+        requested,
+        wikidata_client=wikidata_client,
+        wikipedia_client=wikipedia_client,
+        languages=languages,
+        fetch_full_text=fetch_full_text,
+        max_articles_per_qid=max_articles_per_qid,
+        progress=progress,
+    )
+
+
+def _validate_fetch_options(batch_size: int, site_workers: int) -> None:
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+    if site_workers < 1:
+        raise ValueError("site_workers must be >= 1")
+
+
+def _fetch_batched_entities(
+    requested: list[str],
+    client: BatchWikidataClient,
+    *,
+    batch_size: int,
+    progress: EnrichmentProgress | None,
+) -> list[LinkSummary]:
+    entities: list[WikidataEntity | None] = []
+    for chunk in _chunks(requested, batch_size):
+        entities.extend(client.get_entities(chunk))
         if progress is not None:
-            progress.start_wikipedia(len(requests))
+            progress.advance_qids(len(chunk))
+    return [
+        LinkSummary(qid=qid, entity=entity) for qid, entity in zip(requested, entities, strict=True)
+    ]
 
-        def fetch_chunk(
-            key: tuple[str, str], titles: list[str]
-        ) -> tuple[tuple[str, str], dict[str, FetchResult]]:
-            language, site = key
-            return key, wikipedia_client.fetch_articles(
-                language, site, titles, fetch_full_text=fetch_full_text
+
+def _build_site_requests(
+    summaries: list[LinkSummary],
+    languages: Iterable[str] | None,
+) -> tuple[dict[SiteKey, list[SiteRequest]], set[str] | None]:
+    requests: dict[SiteKey, list[SiteRequest]] = {}
+    allow = {lang for lang in languages} if languages is not None else None
+    for index, summary in enumerate(summaries):
+        for key, rows in _summary_site_requests(index, summary, allow).items():
+            requests.setdefault(key, []).extend(rows)
+    return requests, allow
+
+
+def _summary_site_requests(
+    index: int,
+    summary: LinkSummary,
+    allow: set[str] | None,
+) -> dict[SiteKey, list[SiteRequest]]:
+    if summary.entity is None:
+        return {}
+    requests: dict[SiteKey, list[SiteRequest]] = {}
+    for site, title in sorted(summary.entity.sitelinks.items()):
+        if _site_allowed(site, allow):
+            key = (language_from_site(site), site)
+            requests.setdefault(key, []).append((index, site, title))
+    return requests
+
+
+def _plan_site_work(
+    requests: dict[SiteKey, list[SiteRequest]],
+    *,
+    batch_size: int,
+) -> tuple[list[SiteWork], dict[SiteKey, int]]:
+    site_titles = _unique_site_titles(requests)
+    site_chunks = _chunk_site_titles(site_titles, batch_size)
+    return _round_robin_site_work(site_chunks)
+
+
+def _unique_site_titles(
+    requests: dict[SiteKey, list[SiteRequest]],
+) -> dict[SiteKey, list[str]]:
+    return {
+        key: list(dict.fromkeys(title for _, _, title in rows)) for key, rows in requests.items()
+    }
+
+
+def _chunk_site_titles(
+    site_titles: dict[SiteKey, list[str]],
+    batch_size: int,
+) -> dict[SiteKey, list[list[str]]]:
+    return {key: list(_chunks(titles, batch_size)) for key, titles in site_titles.items()}
+
+
+def _round_robin_site_work(
+    site_chunks: dict[SiteKey, list[list[str]]],
+) -> tuple[list[SiteWork], dict[SiteKey, int]]:
+    work: list[SiteWork] = []
+    for index in range(max(map(len, site_chunks.values()), default=0)):
+        work.extend(
+            (key, chunks[index]) for key, chunks in site_chunks.items() if index < len(chunks)
+        )
+    return work, {key: len(chunks) for key, chunks in site_chunks.items()}
+
+
+def _fetch_site_work(
+    work: list[SiteWork],
+    requests: dict[SiteKey, list[SiteRequest]],
+    chunks_remaining: dict[SiteKey, int],
+    client: BatchWikipediaClient,
+    *,
+    fetch_full_text: bool,
+    site_workers: int,
+    progress: EnrichmentProgress | None,
+) -> dict[SiteKey, dict[str, FetchResult]]:
+    remaining = dict(chunks_remaining)
+    fetched: dict[SiteKey, dict[str, FetchResult]] = {key: {} for key in requests}
+    with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(work)))) as executor:
+        futures = {
+            executor.submit(_fetch_one_site_chunk, client, key, titles, fetch_full_text): len(
+                titles
             )
-
-        site_titles = {
-            key: list(dict.fromkeys(title for _, _, title in rows))
-            for key, rows in requests.items()
+            for key, titles in work
         }
-        site_chunks = {
-            key: list(_chunks(titles, batch_size)) for key, titles in site_titles.items()
-        }
-        work = [
-            (key, chunks[index])
-            for index in range(max(map(len, site_chunks.values()), default=0))
-            for key, chunks in site_chunks.items()
-            if index < len(chunks)
-        ]
-        chunks_remaining = {key: len(chunks) for key, chunks in site_chunks.items()}
-        fetched: dict[tuple[str, str], dict[str, FetchResult]] = {key: {} for key in requests}
-        with ThreadPoolExecutor(max_workers=min(site_workers, max(1, len(work)))) as executor:
-            # Submit one chunk per site per pass. This lets large Wikipedias
-            # use spare capacity without putting all of their chunks ahead of
-            # every smaller site in the executor's FIFO queue.
-            futures = {
-                executor.submit(fetch_chunk, key, titles): len(titles) for key, titles in work
-            }
-            for future in as_completed(futures):
-                key, chunk_results = future.result()
-                fetched[key].update(chunk_results)
-                if progress is not None:
-                    progress.advance_articles(futures[future])
-                chunks_remaining[key] -= 1
-                if chunks_remaining[key] == 0 and progress is not None:
-                    progress.complete_site(0)
-        for summary in summaries:
-            entity = summary.entity
-            if entity is None:
-                continue
-            for site, title in sorted(entity.sitelinks.items()):
-                language = language_from_site(site)
-                if allow is not None and language not in allow:
-                    continue
-                article_result = fetched[(language, site)][title]
-                summary.statuses[site] = article_result.status
-                if (
-                    article_result.status != "article_not_found"
-                    and article_result.article is not None
-                ):
-                    summary.articles.append(article_result.article)
-                    if article_result.status != "ok":
-                        summary.errors[site] = article_result.error
-                else:
-                    summary.errors[site] = article_result.error
-            if max_articles_per_qid is not None:
-                summary.articles = summary.articles[:max_articles_per_qid]
-        return summaries
+        for future in as_completed(futures):
+            _consume_site_future(future, futures, fetched, remaining, progress)
+    return fetched
 
+
+def _fetch_one_site_chunk(
+    client: BatchWikipediaClient,
+    key: SiteKey,
+    titles: list[str],
+    fetch_full_text: bool,
+) -> tuple[SiteKey, dict[str, FetchResult]]:
+    language, site = key
+    return key, client.fetch_articles(language, site, titles, fetch_full_text=fetch_full_text)
+
+
+def _consume_site_future(
+    future: Future[tuple[SiteKey, dict[str, FetchResult]]],
+    futures: dict[Future[tuple[SiteKey, dict[str, FetchResult]]], int],
+    fetched: dict[SiteKey, dict[str, FetchResult]],
+    chunks_remaining: dict[SiteKey, int],
+    progress: EnrichmentProgress | None,
+) -> None:
+    key, chunk_results = future.result()
+    fetched[key].update(chunk_results)
+    if progress is not None:
+        progress.advance_articles(futures[future])
+    chunks_remaining[key] -= 1
+    if chunks_remaining[key] == 0 and progress is not None:
+        progress.complete_site(0)
+
+
+def _apply_article_result(
+    summary: LinkSummary,
+    site: str,
+    result: FetchResult,
+) -> None:
+    summary.statuses[site] = result.status
+    if result.status != "article_not_found" and result.article is not None:
+        summary.articles.append(result.article)
+        if result.status != "ok":
+            summary.errors[site] = result.error
+    else:
+        summary.errors[site] = result.error
+
+
+def _populate_batched_summaries(
+    summaries: list[LinkSummary],
+    fetched: dict[SiteKey, dict[str, FetchResult]],
+    allow: set[str] | None,
+    *,
+    max_articles_per_qid: int | None,
+) -> None:
+    for summary in summaries:
+        _populate_one_summary(summary, fetched, allow, max_articles_per_qid)
+
+
+def _populate_one_summary(
+    summary: LinkSummary,
+    fetched: dict[SiteKey, dict[str, FetchResult]],
+    allow: set[str] | None,
+    max_articles_per_qid: int | None,
+) -> None:
+    entity = summary.entity
+    if entity is None:
+        return
+    for site, title in sorted(entity.sitelinks.items()):
+        if not _site_allowed(site, allow):
+            continue
+        language = language_from_site(site)
+        _apply_article_result(summary, site, fetched[(language, site)][title])
+    if max_articles_per_qid is not None:
+        summary.articles = summary.articles[:max_articles_per_qid]
+
+
+def _fetch_batched_qids(
+    requested: list[str],
+    *,
+    wikidata_client: BatchWikidataClient,
+    wikipedia_client: BatchWikipediaClient,
+    languages: Iterable[str] | None,
+    fetch_full_text: bool,
+    max_articles_per_qid: int | None,
+    batch_size: int,
+    site_workers: int,
+    progress: EnrichmentProgress | None,
+) -> list[LinkSummary]:
+    summaries = _fetch_batched_entities(
+        requested, wikidata_client, batch_size=batch_size, progress=progress
+    )
+    requests, allow = _build_site_requests(summaries, languages)
+    if progress is not None:
+        progress.start_wikipedia(len(requests))
+    work, chunks_remaining = _plan_site_work(requests, batch_size=batch_size)
+    fetched = _fetch_site_work(
+        work,
+        requests,
+        chunks_remaining,
+        wikipedia_client,
+        fetch_full_text=fetch_full_text,
+        site_workers=site_workers,
+        progress=progress,
+    )
+    _populate_batched_summaries(
+        summaries,
+        fetched,
+        allow,
+        max_articles_per_qid=max_articles_per_qid,
+    )
+    return summaries
+
+
+def _fetch_compatibility_qids(
+    requested: list[str],
+    *,
+    wikidata_client: WikidataClient,
+    wikipedia_client: WikipediaClient,
+    languages: Iterable[str] | None,
+    fetch_full_text: bool,
+    max_articles_per_qid: int | None,
+    progress: EnrichmentProgress | None,
+) -> list[LinkSummary]:
     out: list[LinkSummary] = []
     for qid in requested:
         summary = link_qid(

@@ -9,6 +9,8 @@ import pytest
 
 import osm_polygon_wikidata_only.cli.commands as commands
 from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.settings import Settings
 
 
 def test_parser_has_two_subcommands() -> None:
@@ -28,6 +30,133 @@ def test_parser_accepts_canonical_sync_dir() -> None:
     assert args.command == "sync-dir"
     assert args.input == Path("/tmp/raw")
     assert args.skip_existing is True
+
+
+@pytest.mark.parametrize("command", ["process-pbf", "process-dir"])
+def test_processing_inputs_preserve_the_cli_path(command: str, tmp_path: Path) -> None:
+    input_path = tmp_path / ("region.osm.pbf" if command == "process-pbf" else "raw")
+
+    assert commands._processing_inputs(command, input_path) == [input_path]
+
+
+def test_augmentation_stems_selects_one_region_or_completed_regions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_root = DataRoot(tmp_path)
+    completed = ["b-latest", "a-latest"]
+    monkeypatch.setattr(commands, "completed_region_stems", lambda _root: completed)
+
+    assert commands._augmentation_stems("augment-region", "one-latest", data_root) == ["one-latest"]
+    assert commands._augmentation_stems("augment-dir", None, data_root) == completed
+
+
+def test_load_augmentation_result_skips_a_current_canonical_region(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.pipeline.link_migration as migration
+
+    data_root = DataRoot(tmp_path)
+    args = argparse.Namespace(skip_existing=True)
+    monkeypatch.setattr(commands, "augmentation_is_current", lambda *_args: True)
+
+    class EmptyPlan:
+        stems: tuple[object, ...] = ()
+
+    monkeypatch.setattr(migration, "plan_link_migration", lambda *_args, **_kwargs: EmptyPlan())
+
+    assert (
+        commands._load_augmentation_result(
+            args,
+            data_root=data_root,
+            stem="andorra-latest",
+            augmentation_client=object(),  # type: ignore[arg-type]
+        )
+        is None
+    )
+
+
+def test_load_augmentation_result_augments_and_loads_when_not_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.augmentation.orchestrator as orchestrator
+    import osm_polygon_wikidata_only.pipeline.link_migration as migration
+
+    data_root = DataRoot(tmp_path)
+    args = argparse.Namespace(skip_existing=False)
+    calls: list[str] = []
+    marker = object()
+    monkeypatch.setattr(
+        commands, "augment_region", lambda *_args, **_kwargs: calls.append("augment")
+    )
+    monkeypatch.setattr(
+        migration, "apply_link_migration", lambda *_args, **_kwargs: calls.append("migrate")
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "load_existing_augmentation_result",
+        lambda *_args, **_kwargs: marker,
+    )
+
+    result = commands._load_augmentation_result(
+        args,
+        data_root=data_root,
+        stem="andorra-latest",
+        augmentation_client=object(),  # type: ignore[arg-type]
+    )
+
+    assert result is marker
+    assert calls == ["augment", "migrate"]
+
+
+def test_publish_augmentation_submits_the_assembled_operations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.hf.publication as publication
+
+    data_root = DataRoot(tmp_path)
+    args = argparse.Namespace(
+        push=True,
+        dry_run=True,
+        commit_message=None,
+        upload_threads=2,
+    )
+    settings = Settings(repo_id="example/repo")
+    submitted: list[tuple[object, str]] = []
+    monkeypatch.setattr(publication, "assemble_augmentation_upload", lambda **_kwargs: ["op"])
+    monkeypatch.setattr(
+        commands,
+        "upload_files",
+        lambda repo_id, **kwargs: submitted.append((kwargs["ops"], kwargs["commit_message"])),
+    )
+
+    commands._publish_augmentation(
+        args,
+        settings,
+        data_root=data_root,
+        stem="andorra-latest",
+        result=object(),  # type: ignore[arg-type]
+    )
+
+    assert submitted == [(["op"], "Add text augmentation for andorra-latest")]
+
+
+def test_run_augmentation_command_processes_selected_stems(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_root = DataRoot(tmp_path)
+    args = argparse.Namespace(
+        command="augment-dir",
+        stem=None,
+        skip_existing=False,
+        push=False,
+    )
+    result = argparse.Namespace(counts={"wikipedia_documents": 1})
+    monkeypatch.setattr(commands, "AugmentationWikimediaClient", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(commands, "_augmentation_stems", lambda *_args: ["andorra-latest"])
+    monkeypatch.setattr(commands, "_load_augmentation_result", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(commands, "_publish_augmentation", lambda *_args, **_kwargs: None)
+
+    assert commands._run_augmentation_command(args, data_root=data_root, settings=Settings()) == 0
 
 
 def test_sync_dir_handles_empty_directory_without_network(tmp_path: Path) -> None:

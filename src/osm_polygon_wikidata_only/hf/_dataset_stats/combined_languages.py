@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -65,24 +66,37 @@ def _load_cached(
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    if (
-        not isinstance(payload, dict)
-        or payload.get("contract_version") != _CACHE_CONTRACT_VERSION
-        or payload.get("fingerprints") != [list(item) for item in fingerprints]
-    ):
+    if not _cache_matches(payload, fingerprints):
         return None
     stats = payload.get("stats")
     if not isinstance(stats, dict):
         return None
+    return _parse_cached_stats(stats)
+
+
+def _cache_matches(
+    payload: object,
+    fingerprints: tuple[tuple[str, str], ...],
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("contract_version") != _CACHE_CONTRACT_VERSION:
+        return False
+    return payload.get("fingerprints") == [list(item) for item in fingerprints]
+
+
+def _parse_cached_stats(stats: dict[str, object]) -> CombinedLanguageStats | None:
     try:
         return CombinedLanguageStats(
-            document_count=int(stats["document_count"]),
-            language_count=int(stats["language_count"]),
+            document_count=int(cast(Any, stats["document_count"])),
+            language_count=int(cast(Any, stats["language_count"])),
             documents_per_language=tuple(
-                (str(language), int(count)) for language, count in stats["documents_per_language"]
+                (str(language), int(count))
+                for language, count in cast(Any, stats["documents_per_language"])
             ),
             polygons_per_language=tuple(
-                (str(language), int(count)) for language, count in stats["polygons_per_language"]
+                (str(language), int(count))
+                for language, count in cast(Any, stats["polygons_per_language"])
             ),
         )
     except (KeyError, TypeError, ValueError):
@@ -108,6 +122,144 @@ def _write_cached(
     atomic_write_text(cache_path, json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
 
+def _record_document_row(
+    row: dict[str, object],
+    *,
+    project: str,
+    documents: set[tuple[str, str]],
+    document_counts: Counter[str],
+    text_languages: dict[tuple[str, str], str],
+    voyage_qid_languages: dict[str, set[str]] | None,
+) -> None:
+    values = _document_row_values(row, project)
+    if values is None:
+        return
+    identity, language = values
+    _record_document_identity(identity, language, documents, document_counts)
+    _record_document_text(
+        row,
+        identity,
+        language,
+        text_languages,
+        voyage_qid_languages,
+    )
+
+
+def _document_row_values(
+    row: dict[str, object],
+    project: str,
+) -> tuple[tuple[str, str], str] | None:
+    document_id = _document_id(row)
+    language = str(row.get("language") or "")
+    if not document_id or not language:
+        return None
+    return (project, document_id), language
+
+
+def _document_id(row: dict[str, object]) -> str:
+    value = row.get("document_id")
+    if value:
+        return str(value)
+    return str(row.get("article_id") or "")
+
+
+def _record_document_identity(
+    identity: tuple[str, str],
+    language: str,
+    documents: set[tuple[str, str]],
+    document_counts: Counter[str],
+) -> None:
+    if identity not in documents:
+        documents.add(identity)
+        document_counts[language] += 1
+
+
+def _record_document_text(
+    row: dict[str, object],
+    identity: tuple[str, str],
+    language: str,
+    text_languages: dict[tuple[str, str], str],
+    voyage_qid_languages: dict[str, set[str]] | None,
+) -> None:
+    if not _non_blank(row.get("full_text")):
+        return
+    text_languages[identity] = language
+    if voyage_qid_languages is None:
+        return
+    qid = str(row.get("wikidata") or "")
+    if qid:
+        voyage_qid_languages[qid].add(language)
+
+
+def _read_document_project(
+    processed_root: Path,
+    *,
+    project: str,
+    subdir: str,
+    documents: set[tuple[str, str]],
+    document_counts: Counter[str],
+    text_languages: dict[tuple[str, str], str],
+    voyage_qid_languages: dict[str, set[str]] | None = None,
+) -> None:
+    columns = ("document_id", "article_id", "wikidata", "language", "full_text")
+    for path in sorted_parquets(processed_root / subdir):
+        for row in _read_available(path, columns):
+            _record_document_row(
+                row,
+                project=project,
+                documents=documents,
+                document_counts=document_counts,
+                text_languages=text_languages,
+                voyage_qid_languages=voyage_qid_languages,
+            )
+
+
+def _polygon_languages_from_links(
+    processed_root: Path,
+    text_languages: dict[tuple[str, str], str],
+) -> dict[str, set[str]]:
+    polygons_by_language: dict[str, set[str]] = defaultdict(set)
+    for link in read_document_links(processed_root):
+        linked_language = text_languages.get((link.project, link.document_id))
+        if linked_language and link.polygon_id:
+            polygons_by_language[linked_language].add(link.polygon_id)
+    return polygons_by_language
+
+
+def _has_canonical_links(processed_root: Path) -> bool:
+    from osm_polygon_wikidata_only.domain.polygon_document_links import (
+        polygon_document_link_schema,
+    )
+
+    schema = polygon_document_link_schema()
+    return any(
+        pq.read_schema(path).equals(schema, check_metadata=True)  # type: ignore[no-untyped-call]
+        for path in sorted_parquets(processed_root / "polygon_articles")
+    )
+
+
+def _record_fallback_polygon(
+    row: dict[str, object],
+    voyage_qid_languages: dict[str, set[str]],
+    polygons_by_language: dict[str, set[str]],
+) -> None:
+    polygon_id = str(row.get("polygon_id") or "")
+    if not polygon_id:
+        return
+    for language in voyage_qid_languages.get(str(row.get("wikidata") or ""), ()):
+        polygons_by_language[language].add(polygon_id)
+
+
+def _add_voyage_polygon_fallback(
+    processed_root: Path,
+    voyage_qid_languages: dict[str, set[str]],
+    polygons_by_language: dict[str, set[str]],
+) -> None:
+    for path in sorted_parquets(processed_root / "polygons"):
+        for row in _read_available(path, ("polygon_id", "wikidata")):
+            _record_fallback_polygon(row, voyage_qid_languages, polygons_by_language)
+
+
 def compute_combined_language_stats(
     processed_root: Path,
     *,
@@ -116,64 +268,58 @@ def compute_combined_language_stats(
     """Compute factual cross-project document and polygon language counts."""
     fingerprints = _input_fingerprints(processed_root)
     cache_path = Path(cache_index_dir) / _CACHE_FILE if cache_index_dir is not None else None
+    cached = _load_cached_result(cache_path, fingerprints)
+    if cached is not None:
+        return cached
+
+    result = _compute_uncached_stats(processed_root)
     if cache_path is not None:
-        cached = _load_cached(cache_path, fingerprints)
-        if cached is not None:
-            return cached
+        _write_cached(cache_path, fingerprints, result)
+    return result
+
+
+def _load_cached_result(
+    cache_path: Path | None,
+    fingerprints: tuple[tuple[str, str], ...],
+) -> CombinedLanguageStats | None:
+    if cache_path is None:
+        return None
+    return _load_cached(cache_path, fingerprints)
+
+
+def _compute_uncached_stats(processed_root: Path) -> CombinedLanguageStats:
+    """Compute statistics without consulting or updating the cache."""
 
     documents: set[tuple[str, str]] = set()
     document_counts: Counter[str] = Counter()
     text_languages: dict[tuple[str, str], str] = {}
-    for path in sorted_parquets(processed_root / "wikipedia" / "documents"):
-        for row in _read_available(path, ("document_id", "article_id", "language", "full_text")):
-            document_id = str(row.get("document_id") or row.get("article_id") or "")
-            language = str(row.get("language") or "")
-            identity = ("wikipedia", document_id)
-            if document_id and language and identity not in documents:
-                documents.add(identity)
-                document_counts[language] += 1
-            if document_id and language and _non_blank(row.get("full_text")):
-                text_languages[("wikipedia", document_id)] = language
-
-    polygons_by_language: dict[str, set[str]] = defaultdict(set)
     voyage_qid_languages: dict[str, set[str]] = defaultdict(set)
-    for path in sorted_parquets(processed_root / "wikivoyage" / "documents"):
-        for row in _read_available(path, ("document_id", "wikidata", "language", "full_text")):
-            document_id = str(row.get("document_id") or "")
-            language = str(row.get("language") or "")
-            identity = ("wikivoyage", document_id)
-            if document_id and language and identity not in documents:
-                documents.add(identity)
-                document_counts[language] += 1
-            if document_id and language and _non_blank(row.get("full_text")):
-                text_languages[("wikivoyage", document_id)] = language
-                qid = str(row.get("wikidata") or "")
-                if qid:
-                    voyage_qid_languages[qid].add(language)
-
-    links = read_document_links(processed_root)
-    for link in links:
-        linked_language = text_languages.get((link.project, link.document_id))
-        if linked_language and link.polygon_id:
-            polygons_by_language[linked_language].add(link.polygon_id)
-
-    from osm_polygon_wikidata_only.domain.polygon_document_links import (
-        polygon_document_link_schema,
+    _read_document_project(
+        processed_root,
+        project="wikipedia",
+        subdir="wikipedia/documents",
+        documents=documents,
+        document_counts=document_counts,
+        text_languages=text_languages,
+    )
+    _read_document_project(
+        processed_root,
+        project="wikivoyage",
+        subdir="wikivoyage/documents",
+        documents=documents,
+        document_counts=document_counts,
+        text_languages=text_languages,
+        voyage_qid_languages=voyage_qid_languages,
     )
 
-    has_canonical_links = any(
-        pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
-            polygon_document_link_schema(), check_metadata=True
-        )
-        for path in sorted_parquets(processed_root / "polygon_articles")
-    )
+    polygons_by_language = _polygon_languages_from_links(processed_root, text_languages)
+    has_canonical_links = _has_canonical_links(processed_root)
     if not has_canonical_links:
-        for path in sorted_parquets(processed_root / "polygons"):
-            for row in _read_available(path, ("polygon_id", "wikidata")):
-                polygon_id = str(row.get("polygon_id") or "")
-                for language in voyage_qid_languages.get(str(row.get("wikidata") or ""), ()):
-                    if polygon_id:
-                        polygons_by_language[language].add(polygon_id)
+        _add_voyage_polygon_fallback(
+            processed_root,
+            voyage_qid_languages,
+            polygons_by_language,
+        )
 
     polygon_counts = Counter(
         {language: len(polygon_ids) for language, polygon_ids in polygons_by_language.items()}
@@ -184,8 +330,6 @@ def compute_combined_language_stats(
         documents_per_language=_sorted_counts(document_counts),
         polygons_per_language=_sorted_counts(polygon_counts),
     )
-    if cache_path is not None:
-        _write_cached(cache_path, fingerprints, result)
     return result
 
 
