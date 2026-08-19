@@ -408,41 +408,50 @@ def _persist_prepared_rule(
 
 
 def _update_pipeline_manifests(processed_dir: Path, staged: StagedRule) -> None:
-    processed_manifest = processed_dir / "manifests" / "processed_pbfs.json"
-    if processed_manifest.is_file():
-        payload = json.loads(processed_manifest.read_text(encoding="utf-8"))
-        for child in staged.children:
-            payload.pop(f"{child}.osm.pbf", None)
-        parent_entry = payload.get(f"{staged.parent}.osm.pbf")
-        if isinstance(parent_entry, dict):
-            parent_entry.update(_canonical_manifest_stats(staged))
-        atomic_write_text(processed_manifest, dumps(payload) + "\n")
+    _update_processed_manifest(processed_dir, staged)
+    _update_augmentation_manifest(processed_dir, staged)
 
+
+def _update_processed_manifest(processed_dir: Path, staged: StagedRule) -> None:
+    processed_manifest = processed_dir / "manifests" / "processed_pbfs.json"
+    if not processed_manifest.is_file():
+        return
+    payload = json.loads(processed_manifest.read_text(encoding="utf-8"))
+    for child in staged.children:
+        payload.pop(f"{child}.osm.pbf", None)
+    parent_entry = payload.get(f"{staged.parent}.osm.pbf")
+    if isinstance(parent_entry, dict):
+        parent_entry.update(_canonical_manifest_stats(staged))
+    atomic_write_text(processed_manifest, dumps(payload) + "\n")
+
+
+def _update_augmentation_manifest(processed_dir: Path, staged: StagedRule) -> None:
     augmentation_manifest = (
         processed_dir / "augmentation" / "manifests" / "augmentation_manifest.json"
     )
-    if augmentation_manifest.is_file():
-        from osm_polygon_wikidata_only.augmentation.steps import sha256_file
+    if not augmentation_manifest.is_file():
+        return
+    from osm_polygon_wikidata_only.augmentation.steps import sha256_file
 
-        payload = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
-        for child in staged.children:
-            payload.pop(child, None)
-        parent_entry = payload.get(staged.parent)
-        if isinstance(parent_entry, dict):
-            parent_entry["counts"] = {
-                "wikipedia_documents": _parquet_row_count(staged.artifact("wikipedia/documents")),
-                "wikipedia_sections": _parquet_row_count(staged.artifact("wikipedia/sections")),
-                "wikivoyage_documents": _parquet_row_count(staged.artifact("wikivoyage/documents")),
-                "wikivoyage_sections": _parquet_row_count(staged.artifact("wikivoyage/sections")),
-                "wikidata_facts": _parquet_row_count(staged.artifact("wikidata/facts")),
-            }
-            live_polygons = processed_dir / "polygons" / f"{staged.parent}.parquet"
-            live_documents = processed_dir / "wikipedia" / "documents" / f"{staged.parent}.parquet"
-            parent_entry["core_hashes"] = {
-                str(live_polygons): sha256_file(staged.artifact("polygons")),
-                str(live_documents): sha256_file(staged.artifact("wikipedia/documents")),
-            }
-        atomic_write_text(augmentation_manifest, dumps(payload) + "\n")
+    payload = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
+    for child in staged.children:
+        payload.pop(child, None)
+    parent_entry = payload.get(staged.parent)
+    if isinstance(parent_entry, dict):
+        parent_entry["counts"] = {
+            "wikipedia_documents": _parquet_row_count(staged.artifact("wikipedia/documents")),
+            "wikipedia_sections": _parquet_row_count(staged.artifact("wikipedia/sections")),
+            "wikivoyage_documents": _parquet_row_count(staged.artifact("wikivoyage/documents")),
+            "wikivoyage_sections": _parquet_row_count(staged.artifact("wikivoyage/sections")),
+            "wikidata_facts": _parquet_row_count(staged.artifact("wikidata/facts")),
+        }
+        live_polygons = processed_dir / "polygons" / f"{staged.parent}.parquet"
+        live_documents = processed_dir / "wikipedia" / "documents" / f"{staged.parent}.parquet"
+        parent_entry["core_hashes"] = {
+            str(live_polygons): sha256_file(staged.artifact("polygons")),
+            str(live_documents): sha256_file(staged.artifact("wikipedia/documents")),
+        }
+    atomic_write_text(augmentation_manifest, dumps(payload) + "\n")
 
 
 def prepare_local_rule(data_root: Path, audit: RuleAudit) -> PreparedRule:

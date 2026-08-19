@@ -14,10 +14,12 @@ from osm_polygon_wikidata_only.pipeline.containment_migration import (
     ChildAudit,
     PreparedRule,
     RuleAudit,
+    StagedRule,
     _document_manifest_stats,
     _has_required_files,
     _pending_rule,
     _polygon_manifest_stats,
+    _update_pipeline_manifests,
     load_retired_parent_children,
     prepare_safe_rules,
 )
@@ -232,3 +234,53 @@ def test_prepare_safe_rules_prepares_audited_rule(
     prepared, blocked = prepare_safe_rules(tmp_path, dry_run=False)
     assert prepared == (expected,)
     assert blocked == ()
+
+
+def test_update_pipeline_manifests_merges_processed_and_augmentation_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.augmentation.steps as augmentation_steps
+
+    processed = tmp_path / "processed"
+    processed_manifest = processed / "manifests" / "processed_pbfs.json"
+    processed_manifest.parent.mkdir(parents=True)
+    processed_manifest.write_text(
+        json.dumps(
+            {
+                "parent-latest.osm.pbf": {"old": True},
+                "child-latest.osm.pbf": {"retired": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    augmentation_manifest = processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    augmentation_manifest.parent.mkdir(parents=True)
+    augmentation_manifest.write_text(
+        json.dumps(
+            {
+                PARENT: {"counts": {"old": 1}},
+                CHILD: {"retired": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifacts = tuple(
+        (contract.subdir, tmp_path / f"{index}.parquet")
+        for index, contract in enumerate(TABLE_CONTRACTS)
+    )
+    staged = StagedRule(PARENT, (CHILD,), artifacts)
+    monkeypatch.setattr(
+        containment_migration, "_canonical_manifest_stats", lambda _staged: {"updated": True}
+    )
+    monkeypatch.setattr(containment_migration, "_parquet_row_count", lambda _path: 1)
+    monkeypatch.setattr(augmentation_steps, "sha256_file", lambda _path: "hash")
+
+    _update_pipeline_manifests(processed, staged)
+
+    processed_payload = json.loads(processed_manifest.read_text(encoding="utf-8"))
+    assert "child-latest.osm.pbf" not in processed_payload
+    assert processed_payload[f"{PARENT}.osm.pbf"]["updated"] is True
+    augmentation_payload = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
+    assert CHILD not in augmentation_payload
+    assert augmentation_payload[PARENT]["counts"]["wikidata_facts"] == 1
+    assert augmentation_payload[PARENT]["core_hashes"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +37,14 @@ class ReconciliationPlan:
     stems_to_augment: frozenset[str]
 
 
+@dataclass(frozen=True, slots=True)
+class _StemReconciliation:
+    present: tuple[tuple[str, str], ...] = ()
+    missing: tuple[tuple[str, str], ...] = ()
+    publish: bool = False
+    augment: bool = False
+
+
 class ReconciliationPlanner:
     def __init__(
         self,
@@ -50,120 +59,34 @@ class ReconciliationPlanner:
         self.augmentation_current = augmentation_current or {}
 
     def plan(self) -> ReconciliationPlan:
-        present: list[tuple[str, str]] = []
-        missing: list[tuple[str, str]] = []
-        unexpected: list[str] = []
-        stems_to_publish: list[str] = []
-        stems_to_augment: list[str] = []
-        repository_refresh: list[str] = []
-
         manifest_path = self.data_root.processed_manifests / "processed_pbfs.json"
         manifest_entries = load_manifest(manifest_path)
-
-        # Load and parse augmentation_manifest.json once per plan, not once per stem
         aug_manifest_path = (
             self.data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
         )
-        aug_manifest_entries = {}
-        if aug_manifest_path.is_file():
-            try:
-                aug_manifest_entries = json.loads(aug_manifest_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                raise ReconciliationValidationError(
-                    f"Malformed augmentation manifest JSON: {exc}"
-                ) from exc
-
+        aug_manifest_entries = _load_augmentation_manifest(aug_manifest_path)
+        present: list[tuple[str, str]] = []
+        missing: list[tuple[str, str]] = []
+        stems_to_publish: list[str] = []
+        stems_to_augment: list[str] = []
         for stem in sorted(self.stems):
-            # Check local core completeness
-            polygons_path = self.data_root.processed_polygons / f"{stem}.parquet"
-            polygon_articles_path = self.data_root.processed_links / f"{stem}.parquet"
-            manifest_key = f"{stem}.osm.pbf"
-
-            core_manifest_exists = manifest_key in manifest_entries
-            core_files_exist = polygons_path.is_file() and polygon_articles_path.is_file()
-            core_any_exist = (
-                core_manifest_exists or polygons_path.is_file() or polygon_articles_path.is_file()
+            result = _plan_stem(
+                self.data_root,
+                self.inventory,
+                stem,
+                manifest_entries=manifest_entries,
+                augmentation_manifest=aug_manifest_entries,
+                augmentation_current=self.augmentation_current,
             )
+            present.extend(result.present)
+            missing.extend(result.missing)
+            if result.publish:
+                stems_to_publish.append(stem)
+            if result.augment:
+                stems_to_augment.append(stem)
 
-            if core_any_exist and not (core_manifest_exists and core_files_exist):
-                raise ReconciliationValidationError(
-                    f"Inconsistent core state for {stem}: manifest_exists={core_manifest_exists}, "
-                    f"polygons={polygons_path.is_file()}, links={polygon_articles_path.is_file()}"
-                )
-
-            # Check if augmented
-            wikipedia_documents_path = (
-                self.data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
-            )
-
-            in_aug_manifest = stem in aug_manifest_entries
-
-            # Fail closed ONLY when manifest claims completion but required canonical file is missing
-            if in_aug_manifest and not wikipedia_documents_path.is_file():
-                raise ReconciliationValidationError(
-                    f"Inconsistent augmentation for {stem}: manifest claims completed but missing required canonical documents file"
-                )
-
-            # Retrieve precomputed/cached augmentation status, or calculate once
-            if stem in self.augmentation_current:
-                is_augmented_complete = self.augmentation_current[stem]
-            else:
-                is_augmented_complete = augmentation_is_current(self.data_root, stem)
-
-            if core_files_exist:
-                # Use canonical_region_paths(stem) as single canonical path definition
-                all_paths = canonical_region_paths(stem)
-                expected_paths = {}
-                for local_rel, remote_rel in all_paths.items():
-                    corpus_id = "/".join(local_rel.split("/")[:-1])
-                    if corpus_id in ("polygons", "polygon_articles") or is_augmented_complete:
-                        expected_paths[local_rel] = remote_rel
-
-                region_has_gap = False
-                for rel_path, remote_path in expected_paths.items():
-                    corpus_id = "/".join(rel_path.split("/")[:-1])
-                    if self.inventory.contains(remote_path):
-                        present.append((stem, corpus_id))
-                    else:
-                        missing.append((stem, corpus_id))
-                        region_has_gap = True
-
-                if region_has_gap:
-                    if is_augmented_complete:
-                        stems_to_publish.append(stem)
-                    else:
-                        stems_to_augment.append(stem)
-                else:
-                    if not is_augmented_complete:
-                        stems_to_augment.append(stem)
-
-        # Derive unexpected prefixes dynamically from canonical_region_paths
-        dummy_paths = canonical_region_paths("dummy")
-        remote_prefixes = sorted(
-            {remote_path.removesuffix("dummy.parquet") for remote_path in dummy_paths.values()}
-        )
-
-        all_local_stems = {p.stem for p in self.data_root.processed_polygons.glob("*.parquet")}
-        for remote_file in sorted(self.inventory.files):
-            if any(
-                remote_file.startswith(prefix) for prefix in remote_prefixes
-            ) and remote_file.endswith(".parquet"):
-                file_stem = Path(remote_file).stem
-                if file_stem not in all_local_stems:
-                    unexpected.append(remote_file)
-
-        # Repository-level metadata/assets requiring refresh (missing only)
-        repo_files = [
-            (REMOTE_MANIFEST_FILE, "manifests/processed_pbfs.json"),
-            (REMOTE_AUGMENTATION_MANIFEST_FILE, "manifests/augmentation_manifest.json"),
-            ("README.md", "README.md"),
-            (REMOTE_COVERAGE_MAP_FILE, "assets/coverage_map.png"),
-            (REMOTE_DATASET_HERO_FILE, REMOTE_DATASET_HERO_FILE),
-            (REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE, "assets/geographic_text_density.png"),
-        ]
-        for remote_path, _ in repo_files:
-            if not self.inventory.contains(remote_path):
-                repository_refresh.append(remote_path)
+        unexpected = _unexpected_remote_files(self.data_root, self.inventory)
+        repository_refresh = _repository_refresh(self.inventory)
 
         return ReconciliationPlan(
             present=tuple(sorted(present)),
@@ -173,3 +96,158 @@ class ReconciliationPlanner:
             stems_to_publish=frozenset(stems_to_publish),
             stems_to_augment=frozenset(stems_to_augment),
         )
+
+
+def _load_augmentation_manifest(path: Path) -> object:
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ReconciliationValidationError(f"Malformed augmentation manifest JSON: {exc}") from exc
+
+
+def _validate_core_state(
+    stem: str,
+    *,
+    manifest_exists: bool,
+    files_exist: bool,
+    any_exists: bool,
+    polygons_exists: bool,
+    links_exists: bool,
+) -> None:
+    if any_exists and not (manifest_exists and files_exist):
+        raise ReconciliationValidationError(
+            f"Inconsistent core state for {stem}: manifest_exists={manifest_exists}, "
+            f"polygons={polygons_exists}, links={links_exists}"
+        )
+
+
+def _resolve_augmentation_status(
+    data_root: DataRoot,
+    stem: str,
+    *,
+    augmentation_manifest: object,
+    augmentation_current: dict[str, bool],
+) -> bool:
+    documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    in_aug_manifest = isinstance(augmentation_manifest, Mapping) and stem in augmentation_manifest
+    if in_aug_manifest and not documents_path.is_file():
+        raise ReconciliationValidationError(
+            f"Inconsistent augmentation for {stem}: manifest claims completed but missing required canonical documents file"
+        )
+    if stem in augmentation_current:
+        return augmentation_current[stem]
+    return augmentation_is_current(data_root, stem)
+
+
+def _expected_region_paths(stem: str, *, augmented: bool) -> dict[str, str]:
+    return {
+        local_rel: remote_rel
+        for local_rel, remote_rel in canonical_region_paths(stem).items()
+        if "/".join(local_rel.split("/")[:-1]) in ("polygons", "polygon_articles") or augmented
+    }
+
+
+def _collect_region_presence(
+    stem: str,
+    inventory: RemoteInventory,
+    expected_paths: dict[str, str],
+) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]:
+    present: list[tuple[str, str]] = []
+    missing: list[tuple[str, str]] = []
+    for rel_path, remote_path in expected_paths.items():
+        corpus_id = "/".join(rel_path.split("/")[:-1])
+        target = present if inventory.contains(remote_path) else missing
+        target.append((stem, corpus_id))
+    return tuple(present), tuple(missing)
+
+
+def _plan_stem(
+    data_root: DataRoot,
+    inventory: RemoteInventory,
+    stem: str,
+    *,
+    manifest_entries: Mapping[str, object],
+    augmentation_manifest: object,
+    augmentation_current: dict[str, bool],
+) -> _StemReconciliation:
+    core_state = _core_state(data_root, stem, manifest_entries)
+    _validate_core_state(stem, **core_state)
+    files_exist = core_state["files_exist"]
+    augmented = _resolve_augmentation_status(
+        data_root,
+        stem,
+        augmentation_manifest=augmentation_manifest,
+        augmentation_current=augmentation_current,
+    )
+    if not files_exist:
+        return _StemReconciliation()
+    present, missing = _collect_region_presence(
+        stem,
+        inventory,
+        _expected_region_paths(stem, augmented=augmented),
+    )
+    has_gap = bool(missing)
+    return _StemReconciliation(
+        present=present,
+        missing=missing,
+        publish=has_gap and augmented,
+        augment=not augmented,
+    )
+
+
+def _core_state(
+    data_root: DataRoot,
+    stem: str,
+    manifest_entries: Mapping[str, object],
+) -> dict[str, bool]:
+    polygons_path = data_root.processed_polygons / f"{stem}.parquet"
+    links_path = data_root.processed_links / f"{stem}.parquet"
+    manifest_exists = f"{stem}.osm.pbf" in manifest_entries
+    polygons_exists = polygons_path.is_file()
+    links_exists = links_path.is_file()
+    return {
+        "manifest_exists": manifest_exists,
+        "files_exist": polygons_exists and links_exists,
+        "any_exists": manifest_exists or polygons_exists or links_exists,
+        "polygons_exists": polygons_exists,
+        "links_exists": links_exists,
+    }
+
+
+def _unexpected_remote_files(data_root: DataRoot, inventory: RemoteInventory) -> list[str]:
+    dummy_paths = canonical_region_paths("dummy")
+    prefixes = sorted(
+        {remote_path.removesuffix("dummy.parquet") for remote_path in dummy_paths.values()}
+    )
+    local_stems = {path.stem for path in data_root.processed_polygons.glob("*.parquet")}
+    return [
+        remote_file
+        for remote_file in sorted(inventory.files)
+        if _is_unexpected_region_file(remote_file, prefixes, local_stems)
+    ]
+
+
+def _is_unexpected_region_file(
+    remote_file: str,
+    prefixes: list[str],
+    local_stems: set[str],
+) -> bool:
+    if not remote_file.endswith(".parquet"):
+        return False
+    if not any(remote_file.startswith(prefix) for prefix in prefixes):
+        return False
+    return Path(remote_file).stem not in local_stems
+
+
+def _repository_refresh(inventory: RemoteInventory) -> list[str]:
+    repo_files = (
+        REMOTE_MANIFEST_FILE,
+        REMOTE_AUGMENTATION_MANIFEST_FILE,
+        "README.md",
+        REMOTE_COVERAGE_MAP_FILE,
+        REMOTE_DATASET_HERO_FILE,
+        REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
+    )
+    return [path for path in repo_files if not inventory.contains(path)]
