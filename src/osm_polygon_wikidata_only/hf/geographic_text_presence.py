@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pyarrow.parquet as pq
 
 from ._geographic.models import CoverageMapError, RenderResult
 from ._geographic.parquet_inputs import read_required_columns, require_directory, sorted_parquets
-from ._links.reader import read_document_links
+from ._links.reader import DocumentLink, read_document_links
 from .coverage_map import generate_coverage_map
 
 
@@ -35,6 +36,10 @@ def _non_blank(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _document_identity_column(names: set[str] | list[str] | tuple[str, ...]) -> str:
+    return "document_id" if "document_id" in names else "article_id"
+
+
 def load_text_presence(
     processed_root: Path,
     *,
@@ -55,82 +60,22 @@ def load_text_presence(
     require_directory(source_links_dir, label="polygon links")
     wikivoyage_dir = processed_root / "wikivoyage" / "documents"
 
-    wikipedia_ids: set[str] = set()
-    for path in sorted_parquets(wikipedia_dir):
-        identifier_column = (
-            "document_id"
-            if "document_id" in pq.read_schema(path).names  # type: ignore[no-untyped-call]
-            else "article_id"
-        )
-        for row in read_required_columns(path, (identifier_column, "full_text"), label="wikipedia"):
-            if row.get(identifier_column) and _non_blank(row.get("full_text")):
-                wikipedia_ids.add(str(row[identifier_column]))
-
-    wikivoyage_ids: set[str] = set()
-    legacy_wikivoyage_qids: set[str] = set()
-    for path in sorted_parquets(wikivoyage_dir):
-        for row in read_required_columns(
-            path, ("document_id", "wikidata", "full_text"), label="wikivoyage"
-        ):
-            if not _non_blank(row.get("full_text")):
-                continue
-            if row.get("document_id"):
-                wikivoyage_ids.add(str(row["document_id"]))
-            if row.get("wikidata"):
-                legacy_wikivoyage_qids.add(str(row["wikidata"]))
+    wikipedia_ids = _wikipedia_text_ids(wikipedia_dir)
+    wikivoyage_ids, legacy_wikivoyage_qids = _wikivoyage_text_ids(wikivoyage_dir)
     document_ids = {
         "wikipedia": wikipedia_ids,
         "wikivoyage": wikivoyage_ids,
     }
-    wikipedia_polygons: set[str] = set()
-    combined_ids: set[str] = set()
     links = read_document_links(processed_root, links_dir=source_links_dir)
-    for link in links:
-        if link.document_id not in document_ids.get(link.project, set()):
-            continue
-        combined_ids.add(link.polygon_id)
-        if link.project == "wikipedia":
-            wikipedia_polygons.add(link.polygon_id)
-    from osm_polygon_wikidata_only.domain.polygon_document_links import (
-        polygon_document_link_schema,
+    wikipedia_polygons, combined_ids = _linked_text_polygon_ids(links, document_ids)
+    has_canonical_links = _has_canonical_links(source_links_dir)
+    all_polygon_ids, points_by_id = _polygon_points(
+        polygons_dir,
+        combined_ids,
+        legacy_wikivoyage_qids,
+        has_canonical_links,
     )
-
-    has_canonical_links = any(
-        pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
-            polygon_document_link_schema(), check_metadata=True
-        )
-        for path in sorted_parquets(source_links_dir)
-    )
-
-    all_polygon_ids: set[str] = set()
-    points_by_id: dict[str, CoveredPoint] = {}
-    for path in sorted_parquets(polygons_dir):
-        for row in read_required_columns(
-            path, ("polygon_id", "wikidata", "lon", "lat"), label="polygons"
-        ):
-            polygon_id = str(row.get("polygon_id") or "")
-            qid = str(row.get("wikidata") or "")
-            if not polygon_id:
-                raise CoverageMapError(f"polygons parquet {path} contains an empty polygon_id")
-            all_polygon_ids.add(polygon_id)
-            if not has_canonical_links and qid in legacy_wikivoyage_qids:
-                combined_ids.add(polygon_id)
-            if polygon_id in combined_ids:
-                try:
-                    points_by_id.setdefault(
-                        polygon_id,
-                        CoveredPoint(polygon_id, qid, float(row["lon"]), float(row["lat"])),
-                    )
-                except (KeyError, TypeError, ValueError) as error:
-                    raise CoverageMapError(
-                        f"polygons parquet {path} has invalid coordinates for {polygon_id}"
-                    ) from error
-
-    unresolved = combined_ids - all_polygon_ids
-    if unresolved:
-        raise CoverageMapError(
-            f"polygon_articles contains {len(unresolved)} polygon id(s) absent from polygons"
-        )
+    _validate_link_polygon_ids(combined_ids, all_polygon_ids)
     points = tuple(points_by_id[polygon_id] for polygon_id in sorted(points_by_id))
     return TextPresenceSnapshot(
         polygon_count=len(all_polygon_ids),
@@ -140,6 +85,165 @@ def load_text_presence(
         wikivoyage_document_ids=frozenset(wikivoyage_ids),
         covered_points=points,
     )
+
+
+def _wikipedia_text_ids(wikipedia_dir: Path) -> set[str]:
+    values: set[str] = set()
+    for path in sorted_parquets(wikipedia_dir):
+        values.update(_wikipedia_file_text_ids(path))
+    return values
+
+
+def _wikipedia_file_text_ids(path: Path) -> set[str]:
+    identifier_column = _document_identity_column(set(pq.read_schema(path).names))  # type: ignore[no-untyped-call]
+    values: set[str] = set()
+    for row in read_required_columns(path, (identifier_column, "full_text"), label="wikipedia"):
+        if row.get(identifier_column) and _non_blank(row.get("full_text")):
+            values.add(str(row[identifier_column]))
+    return values
+
+
+def _wikivoyage_text_ids(directory: Path) -> tuple[set[str], set[str]]:
+    document_ids: set[str] = set()
+    qids: set[str] = set()
+    for path in sorted_parquets(directory):
+        file_ids, file_qids = _wikivoyage_file_text_ids(path)
+        document_ids.update(file_ids)
+        qids.update(file_qids)
+    return document_ids, qids
+
+
+def _wikivoyage_file_text_ids(path: Path) -> tuple[set[str], set[str]]:
+    document_ids: set[str] = set()
+    qids: set[str] = set()
+    for row in read_required_columns(
+        path, ("document_id", "wikidata", "full_text"), label="wikivoyage"
+    ):
+        if not _non_blank(row.get("full_text")):
+            continue
+        if row.get("document_id"):
+            document_ids.add(str(row["document_id"]))
+        if row.get("wikidata"):
+            qids.add(str(row["wikidata"]))
+    return document_ids, qids
+
+
+def _linked_text_polygon_ids(
+    links: tuple[DocumentLink, ...],
+    document_ids: dict[str, set[str]],
+) -> tuple[set[str], set[str]]:
+    wikipedia_ids: set[str] = set()
+    combined_ids: set[str] = set()
+    for link in links:
+        if link.document_id not in document_ids.get(link.project, set()):
+            continue
+        combined_ids.add(link.polygon_id)
+        if link.project == "wikipedia":
+            wikipedia_ids.add(link.polygon_id)
+    return wikipedia_ids, combined_ids
+
+
+def _has_canonical_links(source_links_dir: Path) -> bool:
+    from osm_polygon_wikidata_only.domain.polygon_document_links import (
+        polygon_document_link_schema,
+    )
+
+    return any(
+        pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
+            polygon_document_link_schema(), check_metadata=True
+        )
+        for path in sorted_parquets(source_links_dir)
+    )
+
+
+def _polygon_points(
+    polygons_dir: Path,
+    combined_ids: set[str],
+    legacy_wikivoyage_qids: set[str],
+    has_canonical_links: bool,
+) -> tuple[set[str], dict[str, CoveredPoint]]:
+    all_polygon_ids: set[str] = set()
+    points_by_id: dict[str, CoveredPoint] = {}
+    for path in sorted_parquets(polygons_dir):
+        file_ids, file_points = _polygon_file_points(
+            path,
+            combined_ids,
+            legacy_wikivoyage_qids,
+            has_canonical_links,
+        )
+        all_polygon_ids.update(file_ids)
+        points_by_id.update(file_points)
+    return all_polygon_ids, points_by_id
+
+
+def _polygon_file_points(
+    path: Path,
+    combined_ids: set[str],
+    legacy_wikivoyage_qids: set[str],
+    has_canonical_links: bool,
+) -> tuple[set[str], dict[str, CoveredPoint]]:
+    all_polygon_ids: set[str] = set()
+    points_by_id: dict[str, CoveredPoint] = {}
+    for row in read_required_columns(
+        path, ("polygon_id", "wikidata", "lon", "lat"), label="polygons"
+    ):
+        _record_polygon_row(
+            path,
+            row,
+            all_polygon_ids,
+            points_by_id,
+            combined_ids,
+            legacy_wikivoyage_qids,
+            has_canonical_links,
+        )
+    return all_polygon_ids, points_by_id
+
+
+def _record_polygon_row(
+    path: Path,
+    row: dict[str, Any],
+    all_polygon_ids: set[str],
+    points_by_id: dict[str, CoveredPoint],
+    combined_ids: set[str],
+    legacy_wikivoyage_qids: set[str],
+    has_canonical_links: bool,
+) -> None:
+    polygon_id = _row_text(row, "polygon_id")
+    qid = _row_text(row, "wikidata")
+    if not polygon_id:
+        raise CoverageMapError(f"polygons parquet {path} contains an empty polygon_id")
+    all_polygon_ids.add(polygon_id)
+    if not has_canonical_links and qid in legacy_wikivoyage_qids:
+        combined_ids.add(polygon_id)
+    if polygon_id in combined_ids:
+        points_by_id.setdefault(polygon_id, _covered_point(path, polygon_id, qid, row))
+
+
+def _row_text(row: dict[str, object], key: str) -> str:
+    value = row.get(key)
+    return str(value) if value else ""
+
+
+def _covered_point(
+    path: Path,
+    polygon_id: str,
+    qid: str,
+    row: dict[str, Any],
+) -> CoveredPoint:
+    try:
+        return CoveredPoint(polygon_id, qid, float(row["lon"]), float(row["lat"]))
+    except (KeyError, TypeError, ValueError) as error:
+        raise CoverageMapError(
+            f"polygons parquet {path} has invalid coordinates for {polygon_id}"
+        ) from error
+
+
+def _validate_link_polygon_ids(combined_ids: set[str], all_polygon_ids: set[str]) -> None:
+    unresolved = combined_ids - all_polygon_ids
+    if unresolved:
+        raise CoverageMapError(
+            f"polygon_articles contains {len(unresolved)} polygon id(s) absent from polygons"
+        )
 
 
 def generate_geographic_text_presence(

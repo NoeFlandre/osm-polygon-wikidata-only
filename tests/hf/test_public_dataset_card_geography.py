@@ -21,9 +21,15 @@ from osm_polygon_wikidata_only.hf.geographic_text_density import (
     aggregate_geographic_text_density,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
+    _document_identity_column,
     generate_geographic_text_presence,
     load_text_presence,
 )
+
+
+def test_document_identity_column_prefers_canonical_id() -> None:
+    assert _document_identity_column({"document_id", "article_id"}) == "document_id"
+    assert _document_identity_column({"article_id"}) == "article_id"
 
 
 def test_antimeridian_polygon_is_split_into_closed_local_rings() -> None:
@@ -44,7 +50,7 @@ def test_non_crossing_polygon_is_preserved() -> None:
     assert split_antimeridian(source) == [source]
 
 
-def _write(path: Path, rows: list[dict[str, object]]) -> None:
+def _write(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows), path)
 
