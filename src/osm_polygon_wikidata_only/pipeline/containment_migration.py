@@ -289,25 +289,48 @@ def _canonical_manifest_stats(staged: StagedRule) -> dict[str, Any]:
         staged.artifact("wikipedia/documents"),
         columns=["language", "article_length_chars"],
     ).to_pylist()
-    area_buckets = Counter(row["area_bucket"] for row in polygons)
+    return {
+        **_polygon_manifest_stats(polygons),
+        **_document_manifest_stats(documents),
+    }
+
+
+def _polygon_manifest_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate manifest values derived from polygon rows."""
+    return {
+        "polygon_count": len(rows),
+        "unique_wikidata_count": len({row["wikidata"] for row in rows if row["wikidata"]}),
+        "rows_with_wikipedia": sum(bool(row["has_wikipedia"]) for row in rows),
+        "rows_with_full_text": sum(bool(row["text_available"]) for row in rows),
+        "area_bucket_counts": _area_bucket_counts(rows),
+        "top_tag_keys": _top_tag_keys(rows),
+    }
+
+
+def _area_bucket_counts(rows: list[dict[str, Any]]) -> dict[Any, int]:
+    """Count polygon rows by their existing area bucket."""
+    return dict(Counter(row["area_bucket"] for row in rows))
+
+
+def _top_tag_keys(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Count valid serialized tag keys, ignoring malformed rows."""
     tag_keys: Counter[str] = Counter()
-    for row in polygons:
+    for row in rows:
         try:
             tag_keys.update(json.loads(row["tag_keys"]))
         except (TypeError, ValueError):
             continue
-    languages = sorted({row["language"] for row in documents})
+    return dict(tag_keys.most_common(50))
+
+
+def _document_manifest_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate manifest values derived from Wikipedia document rows."""
+    languages = sorted({row["language"] for row in rows})
     return {
-        "polygon_count": len(polygons),
-        "unique_wikidata_count": len({row["wikidata"] for row in polygons if row["wikidata"]}),
-        "article_count": len(documents),
+        "article_count": len(rows),
         "language_count": len(languages),
         "languages": languages,
-        "rows_with_wikipedia": sum(bool(row["has_wikipedia"]) for row in polygons),
-        "rows_with_full_text": sum(bool(row["text_available"]) for row in polygons),
-        "total_full_text_chars": sum(row["article_length_chars"] for row in documents),
-        "area_bucket_counts": dict(area_buckets),
-        "top_tag_keys": dict(tag_keys.most_common(50)),
+        "total_full_text_chars": sum(row["article_length_chars"] for row in rows),
     }
 
 
@@ -351,6 +374,37 @@ def _remove_active_children(processed_dir: Path, children: tuple[str, ...]) -> N
     for child in children:
         for contract in TABLE_CONTRACTS:
             (processed_dir / contract.subdir / f"{child}.parquet").unlink(missing_ok=True)
+
+
+def _quarantine_and_install(
+    processed_dir: Path,
+    quarantine: Path,
+    staged: StagedRule,
+    children: tuple[str, ...],
+) -> None:
+    """Quarantine live inputs and install staged parent artifacts."""
+    for contract in TABLE_CONTRACTS:
+        parent_live = processed_dir / contract.subdir / f"{staged.parent}.parquet"
+        _copy_once(
+            parent_live,
+            quarantine / "_parents" / staged.parent / contract.subdir / parent_live.name,
+        )
+        for child in children:
+            child_live = processed_dir / contract.subdir / f"{child}.parquet"
+            _copy_once(child_live, quarantine / child / contract.subdir / child_live.name)
+        _install_file(staged.artifact(contract.subdir), parent_live)
+
+
+def _persist_prepared_rule(
+    processed_dir: Path,
+    staged: StagedRule,
+    children: tuple[str, ...],
+) -> None:
+    """Record a completed local containment preparation."""
+    payload = _load_retirement_payload(processed_dir)
+    for child in children:
+        payload["retired"][child] = {"parent": staged.parent, "status": "prepared"}
+    atomic_write_text(_retirement_path(processed_dir), dumps(payload) + "\n")
 
 
 def _update_pipeline_manifests(processed_dir: Path, staged: StagedRule) -> None:
@@ -402,21 +456,9 @@ def prepare_local_rule(data_root: Path, audit: RuleAudit) -> PreparedRule:
         return prepared
     staged = stage_rule(processed_dir, data_root / "cache" / "containment_retirement", audit)
     quarantine = data_root / "quarantine" / "containment-v1"
-    for contract in TABLE_CONTRACTS:
-        parent_live = processed_dir / contract.subdir / f"{staged.parent}.parquet"
-        _copy_once(
-            parent_live,
-            quarantine / "_parents" / staged.parent / contract.subdir / parent_live.name,
-        )
-        for child in children:
-            child_live = processed_dir / contract.subdir / f"{child}.parquet"
-            _copy_once(child_live, quarantine / child / contract.subdir / child_live.name)
-        _install_file(staged.artifact(contract.subdir), parent_live)
+    _quarantine_and_install(processed_dir, quarantine, staged, children)
     _update_pipeline_manifests(processed_dir, staged)
-    payload = _load_retirement_payload(processed_dir)
-    for child in children:
-        payload["retired"][child] = {"parent": staged.parent, "status": "prepared"}
-    atomic_write_text(_retirement_path(processed_dir), dumps(payload) + "\n")
+    _persist_prepared_rule(processed_dir, staged, children)
     _remove_active_children(processed_dir, children)
     return prepared
 

@@ -317,10 +317,8 @@ def render_rejections_section(audit: Mapping[str, Any]) -> str:
     The block is empty when no rejection was recorded, so the card
     is stable across reruns on a clean dataset.
     """
-    totals = audit.get("totals", {}) if isinstance(audit, Mapping) else {}
-    polygon_rejected = int(totals.get("polygon_articles_rejected", 0) or 0)
-    voyage_rejected = int(totals.get("wikivoyage_documents_rejected", 0) or 0)
-    voyage_cascaded = int(totals.get("wikivoyage_sections_cascaded", 0) or 0)
+    totals = _audit_totals(audit)
+    polygon_rejected, voyage_rejected, voyage_cascaded = _rejection_counts(totals)
     contract_version = str(audit.get("contract_version", "join-integrity-v1"))
     shards = sorted(totals.get("shards_with_rejections", []) or [])
 
@@ -334,9 +332,33 @@ def render_rejections_section(audit: Mapping[str, Any]) -> str:
         f"| `wikivoyage/sections` cascaded from rejected documents | {voyage_cascaded} |",
         "",
     ]
+    return "\n".join(_render_affected_shards(parts, shards))
+
+
+def _audit_totals(audit: Any) -> Mapping[str, Any]:
+    """Return the totals mapping, preserving the empty non-mapping fallback."""
+    return audit.get("totals", {}) if isinstance(audit, Mapping) else {}
+
+
+def _rejection_counts(totals: Mapping[str, Any]) -> tuple[int, int, int]:
+    """Extract the three displayed rejection counts."""
+    return (
+        _count_total(totals, "polygon_articles_rejected"),
+        _count_total(totals, "wikivoyage_documents_rejected"),
+        _count_total(totals, "wikivoyage_sections_cascaded"),
+    )
+
+
+def _count_total(totals: Mapping[str, Any], key: str) -> int:
+    """Read one optional count from an audit totals mapping."""
+    return int(totals.get(key, 0) or 0)
+
+
+def _render_affected_shards(parts: list[str], shards: list[str]) -> list[str]:
+    """Append the optional sorted affected-shard line."""
     if shards:
         parts.append("Affected shards: " + ", ".join(f"`{shard}`" for shard in shards) + ".\n")
-    return "\n".join(parts)
+    return parts
 
 
 __all__ = ["render_dataset_card"]

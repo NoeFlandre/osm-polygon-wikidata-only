@@ -18,7 +18,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
-from osm_polygon_wikidata_only.io.manifest import load_manifest
+from osm_polygon_wikidata_only.io import manifest as manifest_io
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 from .models import CorePublicationArtifacts, PublicationValidationError
@@ -71,7 +71,10 @@ def load_existing_core_artifacts(data_root: DataRoot, stem: str) -> CorePublicat
     _require_file(manifest_path, "Processed manifest")
 
     manifest_key = f"{stem}.osm.pbf"
-    manifest = load_manifest(manifest_path)
+    # Resolve the loader from its module at call time.  This keeps the
+    # publication boundary compatible with injected/test manifest loaders and
+    # avoids retaining a stale function captured during module import.
+    manifest = manifest_io.load_manifest(manifest_path)
     if manifest_key not in manifest:
         raise KeyError(f"Stem {stem} not found in processed manifests")
     entry = manifest[manifest_key]

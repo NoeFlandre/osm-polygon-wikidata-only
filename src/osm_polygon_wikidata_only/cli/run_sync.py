@@ -21,8 +21,8 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Collection, Iterable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +90,18 @@ from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
 )
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
+
+
+@dataclass(slots=True)
+class _RemoteReconciliation:
+    """Remote inputs computed once before sync-state planning."""
+
+    inventory: RemoteInventory | None
+    plan: Any | None
+    augmentation_current: dict[str, bool]
+    stems_with_gaps: set[str]
+    containment_publications: dict[str, tuple[str, ...]]
+    core_repaired: bool
 
 
 def _recovery_audit_stems(
@@ -171,12 +183,7 @@ def _run_pre_publication_migration(
             f"Plan is not safe to apply: {len(blocked)} blocked stem(s): {blocked}"
         )
 
-    stems_to_persist = {
-        stem_plan.stem
-        for stem_plan in migration_plan.stems
-        if stem_plan.operation
-        in (MigrationOperation.CREATE_MISSING, MigrationOperation.UPGRADE_LEGACY)
-    }
+    stems_to_persist = _migration_stems_to_persist(migration_plan.stems)
     add_pending_publications(data_root, stems_to_persist)
 
     apply_migration(migration_plan)
@@ -220,25 +227,15 @@ def execute(
         prepare_safe_rules,
     )
 
-    if push_enabled:
-        prepared_rules, blocked_rules = prepare_safe_rules(data_root.path, dry_run=dry_run)
-        if prepared_rules:
-            LOGGER.info(
-                "Prepared %d lossless contained-region retirement rule(s)", len(prepared_rules)
-            )
-        for blocked in blocked_rules:
-            LOGGER.warning(
-                "Containment retirement blocked for %s: %s",
-                blocked.parent,
-                "; ".join(blocked.blockers),
-            )
+    _prepare_containment_rules(
+        enabled=push_enabled,
+        data_path=data_root.path,
+        dry_run=dry_run,
+        prepare_safe_rules=prepare_safe_rules,
+    )
 
     retired_children = load_retired_children(data_root.processed)
-    pbfs = [
-        pbf
-        for pbf in collect_pbfs([args.input])
-        if pbf.name.removesuffix(".osm.pbf") not in retired_children
-    ]
+    pbfs = _active_pbfs(collect_pbfs([args.input]), retired_children)
     input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
 
     _run_pre_publication_migration(data_root, input_stems)
@@ -252,89 +249,36 @@ def execute(
         session=runtime.session,
     )
 
-    remote_inventory = None
-    reconciliation_plan = None
-    stems_with_gaps = set()
-    core_will_be_repaired = False
-    core_repaired = False
-    augmentation_current = {}
-    containment_publications: dict[str, tuple[str, ...]] = {}
-
+    planner_cls = None
+    canonical_region_paths = None
     if push_enabled:
+        # Keep these imports lazy.  Some local-only callers replace the
+        # manifest loader while exercising the shell; importing reconciliation
+        # during that window would capture the temporary replacement and leak
+        # it into later push-enabled runs.
         from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
-
-        # Compute current augmentation state exactly once per input
-        # stem, with bounded startup progress visibility.
-        augmentation_current = _validate_local_augmentation_state(data_root, sorted(input_stems))
-
-        if _remote_inventory is not None:
-            remote_inventory = _remote_inventory
-        else:
-            remote_inventory = RemoteInventory.fetch(
-                repo_id=settings.repo_id,
-                hub=_hub,
-                token=settings.hf_token,
-            )
-        retired_groups = load_retired_parent_children(data_root.processed)
         from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
 
-        containment_publications = {
-            parent: tuple(
-                child
-                for child in children
-                if any(
-                    remote_inventory.contains(path)
-                    for path in canonical_region_paths(child).values()
-                )
-            )
-            for parent, children in retired_groups.items()
-        }
-        containment_publications = {
-            parent: children for parent, children in containment_publications.items() if children
-        }
-        planner = ReconciliationPlanner(
-            data_root=data_root,
-            inventory=remote_inventory,
-            stems=input_stems,
-            augmentation_current=augmentation_current,
-        )
-        reconciliation_plan = planner.plan()
-        stems_with_gaps = set(reconciliation_plan.stems_to_publish) | set(
-            reconciliation_plan.stems_to_augment
-        )
+        planner_cls = ReconciliationPlanner
 
-        core_repaired = any(
-            (stem, "polygons") in reconciliation_plan.missing
-            or (stem, "polygon_articles") in reconciliation_plan.missing
-            for stem in stems_with_gaps
-        )
-
-        # Log remote reconciliation progress
-        missing_core_count = sum(
-            1
-            for stem in input_stems
-            if (stem, "polygons") in reconciliation_plan.missing
-            or (stem, "polygon_articles") in reconciliation_plan.missing
-        )
-        missing_aug_count = sum(
-            1
-            for stem in input_stems
-            if any(
-                (stem, corpus) in reconciliation_plan.missing
-                for corpus in [
-                    "wikipedia/documents",
-                    "wikipedia/sections",
-                    "wikivoyage/documents",
-                    "wikivoyage/sections",
-                    "wikidata/facts",
-                ]
-            )
-        )
-        LOGGER.info(
-            "Remote reconciliation: %d regions missing core artifacts, %d missing augmentation artifacts",
-            missing_core_count,
-            missing_aug_count,
-        )
+    remote_state = _prepare_remote_reconciliation(
+        enabled=push_enabled,
+        data_root=data_root,
+        settings=settings,
+        input_stems=input_stems,
+        hub=_hub,
+        inventory_override=_remote_inventory,
+        validate_augmentation=_validate_local_augmentation_state,
+        load_retired_parent_children=load_retired_parent_children,
+        canonical_region_paths=canonical_region_paths,
+        planner_cls=planner_cls,
+    )
+    reconciliation_plan = remote_state.plan
+    stems_with_gaps = remote_state.stems_with_gaps
+    core_repaired = remote_state.core_repaired
+    augmentation_current = remote_state.augmentation_current
+    containment_publications = remote_state.containment_publications
+    core_will_be_repaired = False
 
     # 5. Plan sync states
     all_pending_stems = load_pending_publications(data_root)
@@ -349,38 +293,25 @@ def execute(
         local_current = _validate_local_augmentation_state(data_root, sorted(core_stems))
         current_augmentation = {stem for stem, current in local_current.items() if current}
 
-    recovery_stems = set(
-        _recovery_audit_stems(
-            input_stems=input_stems,
-            core_stems=core_stems,
-            current_augmentation=current_augmentation,
-            force=settings.force or not settings.skip_existing,
-        )
-    )
-    link_plan = plan_link_migration(data_root.processed, stems=input_stems)
-    link_migration_stems = {
-        stem.stem for stem in link_plan.stems if stem.classification.value != "canonical"
-    }
-    recovery_stems.update(link_migration_stems)
-    states = plan_sync_states(
+    states = _plan_sync_states(
         pbfs,
+        input_stems=input_stems,
         core_stems=core_stems,
-        augmentation_stems=current_augmentation,
+        current_augmentation=current_augmentation,
         force=settings.force or not settings.skip_existing,
         pending_stems=all_pending_stems,
-        recovery_stems=recovery_stems,
+        recovery_stems=set(),
+        processed_path=data_root.processed,
+        plan_link_migration=plan_link_migration,
     )
     if push_enabled and reconciliation_plan is not None:
+        missing = set(reconciliation_plan.missing)
         for state in states:
-            if state.action == SyncAction.PROCESS:
-                core_will_be_repaired = True
-            elif state.action in (SyncAction.PUBLISH, SyncAction.AUGMENT):
-                stem = state.stem
-                if (stem, "polygons") in reconciliation_plan.missing or (
-                    stem,
-                    "polygon_articles",
-                ) in reconciliation_plan.missing:
-                    core_will_be_repaired = True
+            core_will_be_repaired = core_will_be_repaired or _core_repair_required(
+                state.action,
+                state.stem,
+                missing,
+            )
 
     upload_queue = _build_upload_queue(
         push=push_enabled,
@@ -526,18 +457,239 @@ def _log_remote_reconciliation_summary(
     spy to observe emissions without depending on caplog state
     or module-level logger configuration.
     """
-    maps_refreshed = core_repaired or metadata_repaired
-    if maps_refreshed and len(stems_with_gaps) > 0:
-        log(
-            f"Remote reconciliation complete: {len(stems_with_gaps)} "
-            "regions repaired; README and maps refreshed"
+    log(
+        _reconciliation_summary_message(
+            len(stems_with_gaps),
+            core_repaired,
+            metadata_repaired,
         )
-    elif maps_refreshed:
-        log("Remote reconciliation complete: README and maps refreshed")
-    elif len(stems_with_gaps) > 0:
-        log(f"Remote reconciliation complete: {len(stems_with_gaps)} regions repaired")
-    else:
-        log("Remote reconciliation complete: converged")
+    )
+
+
+def _reconciliation_summary_message(
+    repaired_regions: int,
+    core_repaired: bool,
+    metadata_repaired: bool,
+) -> str:
+    """Build the stable summary text from upload outcomes."""
+    maps_refreshed = core_repaired or metadata_repaired
+    if maps_refreshed:
+        if repaired_regions:
+            return (
+                f"Remote reconciliation complete: {repaired_regions} "
+                "regions repaired; README and maps refreshed"
+            )
+        return "Remote reconciliation complete: README and maps refreshed"
+    if repaired_regions:
+        return f"Remote reconciliation complete: {repaired_regions} regions repaired"
+    return "Remote reconciliation complete: converged"
+
+
+def _active_pbfs(pbfs: list[Path], retired_children: Collection[str]) -> list[Path]:
+    """Return non-retired PBFs in the order supplied by the planner."""
+    return [pbf for pbf in pbfs if pbf.name.removesuffix(".osm.pbf") not in retired_children]
+
+
+def _migration_stems_to_persist(stems: Iterable[Any]) -> set[str]:
+    """Select migration operations whose canonical output must be published."""
+    return {
+        stem_plan.stem
+        for stem_plan in stems
+        if stem_plan.operation
+        in (MigrationOperation.CREATE_MISSING, MigrationOperation.UPGRADE_LEGACY)
+    }
+
+
+def _containment_publications_for_remote(
+    parent_children: dict[str, tuple[str, ...]],
+    *,
+    inventory: RemoteInventory,
+    canonical_region_paths: Callable[[str], dict[str, str]],
+) -> dict[str, tuple[str, ...]]:
+    """Keep only contained children represented by a remote artifact."""
+    publications: dict[str, tuple[str, ...]] = {}
+    for parent, children in parent_children.items():
+        present = tuple(
+            child
+            for child in children
+            if _remote_child_has_artifact(child, inventory, canonical_region_paths)
+        )
+        if present:
+            publications[parent] = present
+    return publications
+
+
+def _remote_child_has_artifact(
+    child: str,
+    inventory: RemoteInventory,
+    canonical_region_paths: Callable[[str], dict[str, str]],
+) -> bool:
+    """Return whether any canonical artifact for a child is remote."""
+    return any(inventory.contains(path) for path in canonical_region_paths(child).values())
+
+
+def _reconciliation_gap_counts(
+    input_stems: set[str],
+    missing: set[tuple[str, str]],
+) -> tuple[int, int]:
+    """Count regions with missing core files and augmentation files."""
+    augmentation_corpora = (
+        "wikipedia/documents",
+        "wikipedia/sections",
+        "wikivoyage/documents",
+        "wikivoyage/sections",
+        "wikidata/facts",
+    )
+    core_count = sum(
+        (stem, "polygons") in missing or (stem, "polygon_articles") in missing
+        for stem in input_stems
+    )
+    augmentation_count = sum(
+        any((stem, corpus) in missing for corpus in augmentation_corpora) for stem in input_stems
+    )
+    return core_count, augmentation_count
+
+
+def _prepare_remote_reconciliation(
+    *,
+    enabled: bool,
+    data_root: DataRoot,
+    settings: Settings,
+    input_stems: set[str],
+    hub: HfHub | None,
+    inventory_override: RemoteInventory | None,
+    validate_augmentation: Callable[[DataRoot, list[str]], dict[str, bool]],
+    load_retired_parent_children: Callable[[Path], dict[str, tuple[str, ...]]],
+    canonical_region_paths: Callable[[str], dict[str, str]] | None = None,
+    planner_cls: Any = None,
+) -> _RemoteReconciliation:
+    """Prepare remote reconciliation inputs without work on local-only runs."""
+    if not enabled:
+        return _RemoteReconciliation(None, None, {}, set(), {}, False)
+    if canonical_region_paths is None or planner_cls is None:
+        raise RuntimeError("Remote reconciliation helpers are required when push is enabled")
+
+    augmentation_current = validate_augmentation(data_root, sorted(input_stems))
+    inventory = (
+        inventory_override
+        if inventory_override is not None
+        else RemoteInventory.fetch(
+            repo_id=settings.repo_id,
+            hub=hub,
+            token=settings.hf_token,
+        )
+    )
+    retired_groups = load_retired_parent_children(data_root.processed)
+    containment_publications = _containment_publications_for_remote(
+        retired_groups,
+        inventory=inventory,
+        canonical_region_paths=canonical_region_paths,
+    )
+    reconciliation_plan = planner_cls(
+        data_root=data_root,
+        inventory=inventory,
+        stems=input_stems,
+        augmentation_current=augmentation_current,
+    ).plan()
+    stems_with_gaps = set(reconciliation_plan.stems_to_publish) | set(
+        reconciliation_plan.stems_to_augment
+    )
+    missing = set(reconciliation_plan.missing)
+    core_repaired = any(
+        _core_repair_required(SyncAction.PUBLISH, stem, missing) for stem in stems_with_gaps
+    )
+    missing_core_count, missing_aug_count = _reconciliation_gap_counts(
+        input_stems,
+        missing,
+    )
+    LOGGER.info(
+        "Remote reconciliation: %d regions missing core artifacts, %d missing augmentation artifacts",
+        missing_core_count,
+        missing_aug_count,
+    )
+    return _RemoteReconciliation(
+        inventory,
+        reconciliation_plan,
+        augmentation_current,
+        stems_with_gaps,
+        containment_publications,
+        core_repaired,
+    )
+
+
+def _prepare_containment_rules(
+    *,
+    enabled: bool,
+    data_path: Path,
+    dry_run: bool,
+    prepare_safe_rules: Callable[..., tuple[Collection[Any], Collection[Any]]],
+    log_info: Callable[..., None] = LOGGER.info,
+    log_warning: Callable[..., None] = LOGGER.warning,
+) -> None:
+    """Prepare lossless containment rules and report blocked candidates."""
+    if not enabled:
+        return
+    prepared_rules, blocked_rules = prepare_safe_rules(data_path, dry_run=dry_run)
+    if prepared_rules:
+        log_info(
+            "Prepared %d lossless contained-region retirement rule(s)",
+            len(prepared_rules),
+        )
+    for blocked in blocked_rules:
+        log_warning(
+            "Containment retirement blocked for %s: %s",
+            blocked.parent,
+            "; ".join(blocked.blockers),
+        )
+
+
+def _core_repair_required(
+    action: SyncAction,
+    stem: str,
+    missing: set[tuple[str, str]],
+) -> bool:
+    """Return whether a state changes core artifacts requiring refresh."""
+    if action is SyncAction.PROCESS:
+        return True
+    if action not in (SyncAction.PUBLISH, SyncAction.AUGMENT):
+        return False
+    return (stem, "polygons") in missing or (stem, "polygon_articles") in missing
+
+
+def _plan_sync_states(
+    pbfs: list[Path],
+    *,
+    input_stems: set[str],
+    core_stems: set[str],
+    current_augmentation: set[str],
+    force: bool,
+    pending_stems: set[str],
+    recovery_stems: set[str],
+    processed_path: Path,
+    plan_link_migration: Callable[..., Any],
+) -> list[RegionSyncState]:
+    """Build the deterministic action plan, including link migrations."""
+    recovery = set(recovery_stems)
+    recovery.update(
+        _recovery_audit_stems(
+            input_stems=input_stems,
+            core_stems=core_stems,
+            current_augmentation=current_augmentation,
+            force=force,
+        )
+    )
+    link_plan = plan_link_migration(processed_path, stems=input_stems)
+    recovery.update(
+        stem.stem for stem in link_plan.stems if stem.classification.value != "canonical"
+    )
+    return plan_sync_states(
+        pbfs,
+        core_stems=core_stems,
+        augmentation_stems=current_augmentation,
+        force=force,
+        pending_stems=pending_stems,
+        recovery_stems=recovery,
+    )
 
 
 def _commit_message(

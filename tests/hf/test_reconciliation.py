@@ -23,6 +23,7 @@ from osm_polygon_wikidata_only.hf.publication import (
 from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
+from osm_polygon_wikidata_only.io import manifest as manifest_io
 
 
 def test_canonical_region_paths() -> None:
@@ -123,6 +124,41 @@ def test_load_existing_core_artifacts_success(tmp_path: Path) -> None:
     assert artifacts.polygons_path == data_root.processed_polygons / f"{stem}.parquet"
     assert artifacts.polygon_articles_path == data_root.processed_links / f"{stem}.parquet"
     assert artifacts.wikipedia_documents_path == doc_dir / f"{stem}.parquet"
+
+
+def test_core_loader_resolves_manifest_loader_at_call_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injected manifest loaders must affect publication validation immediately."""
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    stem = "mexico-latest"
+
+    pq.write_table(
+        pa.Table.from_pylist([{"polygon_id": "1"}], schema=polygon_schema()),
+        data_root.processed_polygons / f"{stem}.parquet",
+    )  # type: ignore[no-untyped-call]
+    pq.write_table(
+        pa.Table.from_pylist([{"polygon_id": "1"}], schema=polygon_article_schema()),
+        data_root.processed_links / f"{stem}.parquet",
+    )  # type: ignore[no-untyped-call]
+    manifest_path = data_root.processed_manifests / "processed_pbfs.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                f"{stem}.osm.pbf": {
+                    "source_pbf": f"{stem}.osm.pbf",
+                    "polygons_path": f"polygons/{stem}.parquet",
+                    "polygon_articles_path": f"polygon_articles/{stem}.parquet",
+                }
+            }
+        )
+    )
+
+    monkeypatch.setattr(manifest_io, "load_manifest", lambda _path: {})
+
+    with pytest.raises(KeyError, match=stem):
+        load_existing_core_artifacts(data_root, stem)
 
 
 def test_load_existing_core_artifacts_validation_errors(tmp_path: Path) -> None:

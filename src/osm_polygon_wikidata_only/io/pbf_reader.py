@@ -133,43 +133,76 @@ class _PolygonHandler(osmium.SimpleHandler):
         """Return whether the final values contain a retained OSM reference.
 
         ``osmium`` normally exposes unique keys, but keeping the last value
-        here matches the existing ``dict`` conversion if a malformed input
-        contains duplicate keys.  This cheap pass avoids allocating a full
-        tag dictionary for the many areas that cannot reach the callback.
+        matches the existing ``dict`` conversion if a malformed input
+        contains duplicate keys.
         """
-        wikidata = ""
-        wikipedia_values: dict[str, str] = {}
-        for tag in tags:
-            key = tag.k
-            value = tag.v
-            if key == "wikidata":
-                wikidata = value
-            elif include_wikipedia_tagged and (key == "wikipedia" or key.startswith("wikipedia:")):
-                wikipedia_values[key] = value
-        return bool(wikidata.strip()) or any(value.strip() for value in wikipedia_values.values())
+        references = _reference_tags(tags, include_wikipedia_tagged=include_wikipedia_tagged)
+        if references.get("wikidata", "").strip():
+            return True
+        return _has_wikipedia_reference(
+            references,
+            include_wikipedia_tagged=include_wikipedia_tagged,
+        )
 
     def area(self, a: osmium.osm.Area) -> None:
-        if not self._has_relevant_tag(
+        tags = _candidate_tags(
             a.tags,
             include_wikipedia_tagged=self._include_wikipedia_tagged,
-        ):
-            return
-        tags = self._tags(a.tags)
-        wd = tags.get("wikidata", "").strip()
-        has_wikipedia = bool(
-            tags.get("wikipedia", "").strip()
-            or any(key.startswith("wikipedia:") and value.strip() for key, value in tags.items())
         )
-        if not wd and not (self._include_wikipedia_tagged and has_wikipedia):
+        if tags is None:
             return
-        if a.is_multipolygon():
-            osm_type = "relation"
-        elif a.from_way():
-            osm_type = "way"
-        else:
+        osm_type = _area_osm_type(a)
+        if osm_type is None:
             return
-        try:
-            geom_json: str = self._factory.create_multipolygon(a)
-        except (RuntimeError, ValueError):
+        geom_json = _geometry_json(self._factory, a)
+        if geom_json is None:
             return
         self._callback((osm_type, a.id, tags, geom_json))
+
+
+def _candidate_tags(tags: Any, *, include_wikipedia_tagged: bool) -> dict[str, str] | None:
+    """Return normalized tags for a retained area, or ``None``."""
+    if not _PolygonHandler._has_relevant_tag(
+        tags,
+        include_wikipedia_tagged=include_wikipedia_tagged,
+    ):
+        return None
+    return _PolygonHandler._tags(tags)
+
+
+def _reference_tags(tags: Any, *, include_wikipedia_tagged: bool) -> dict[str, str]:
+    """Collect only retained reference keys, preserving the last value."""
+    references: dict[str, str] = {}
+    for tag in tags:
+        if tag.k == "wikidata" or (include_wikipedia_tagged and _is_wikipedia_key(tag.k)):
+            references[tag.k] = tag.v
+    return references
+
+
+def _has_wikipedia_reference(values: dict[str, str], *, include_wikipedia_tagged: bool) -> bool:
+    """Return whether normalized tags contain an opted-in Wikipedia reference."""
+    if not include_wikipedia_tagged:
+        return False
+    return any(_is_wikipedia_key(key) and value.strip() for key, value in values.items())
+
+
+def _is_wikipedia_key(key: str) -> bool:
+    """Return whether an OSM key stores a Wikipedia reference."""
+    return key == "wikipedia" or key.startswith("wikipedia:")
+
+
+def _area_osm_type(area: Any) -> str | None:
+    """Return the OSM identity represented by an assembled area."""
+    if area.is_multipolygon():
+        return "relation"
+    if area.from_way():
+        return "way"
+    return None
+
+
+def _geometry_json(factory: Any, area: Any) -> str | None:
+    """Build GeoJSON while treating malformed geometry as non-candidate."""
+    try:
+        return str(factory.create_multipolygon(area))
+    except (RuntimeError, ValueError):
+        return None

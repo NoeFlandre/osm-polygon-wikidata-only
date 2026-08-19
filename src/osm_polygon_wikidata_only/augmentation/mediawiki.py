@@ -281,42 +281,86 @@ class AugmentationWikimediaClient:
             f"https://{language}.wikivoyage.org/w/api.php?{params}",
             key=f"wikivoyage/{language}/{urllib.parse.quote(title, safe='')}.json",
         )
-        pages = (data.get("query") or {}).get("pages") or []
-        if not pages or pages[0].get("missing"):
+        page_revision = _voyage_page(data)
+        if page_revision is None:
             return None
-        page = pages[0]
-        revisions = page.get("revisions") or []
-        if not revisions:
-            return None
-        revision = revisions[0]
-        text = clean_article_text(str(page.get("extract", "")))
-        page_id, revision_id = int(page.get("pageid", 0)), int(revision.get("revid", 0))
-        retrieved = utc_now_iso()
-        return Document(
-            document_id(qid, "wikivoyage", language, page_id, revision_id),
-            "",
-            qid,
-            "wikivoyage",
-            language,
-            site,
-            str(page.get("title", title)),
-            str(page.get("fullurl", "")),
-            page_id,
-            revision_id,
-            str(revision.get("timestamp", "")),
-            retrieved,
-            text,
-            "plain_text",
-            len(text),
-            count_words(text),
-            estimate_tokens(text),
-            "CC BY-SA 4.0",
-            f'Text from Wikivoyage article "{page.get("title", title)}"; revision {revision_id}; CC BY-SA.',
-            "mediawiki_action_api",
-            "ok" if text else "empty_text",
-            "",
-            __import__("hashlib").sha256(text.encode()).hexdigest(),
+        page, revision = page_revision
+        return _voyage_document(
+            qid=qid,
+            language=language,
+            site=site,
+            title=title,
+            page=page,
+            revision=revision,
+            retrieved=utc_now_iso(),
         )
+
+
+def _voyage_page(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Return the first available Wikivoyage page and revision."""
+    page = _first_voyage_page(data)
+    if page is None:
+        return None
+    revision = _first_revision(page)
+    if revision is None:
+        return None
+    return page, revision
+
+
+def _first_voyage_page(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the first non-missing page in a query response."""
+    pages = (data.get("query") or {}).get("pages") or []
+    if not pages or pages[0].get("missing"):
+        return None
+    return pages[0]
+
+
+def _first_revision(page: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the first revision attached to a page."""
+    revisions = page.get("revisions") or []
+    if not revisions:
+        return None
+    return revisions[0]
+
+
+def _voyage_document(
+    *,
+    qid: str,
+    language: str,
+    site: str,
+    title: str,
+    page: dict[str, Any],
+    revision: dict[str, Any],
+    retrieved: str,
+) -> Document:
+    """Build a Wikivoyage document from a selected API page and revision."""
+    text = clean_article_text(str(page.get("extract", "")))
+    page_id, revision_id = int(page.get("pageid", 0)), int(revision.get("revid", 0))
+    return Document(
+        document_id(qid, "wikivoyage", language, page_id, revision_id),
+        "",
+        qid,
+        "wikivoyage",
+        language,
+        site,
+        str(page.get("title", title)),
+        str(page.get("fullurl", "")),
+        page_id,
+        revision_id,
+        str(revision.get("timestamp", "")),
+        retrieved,
+        text,
+        "plain_text",
+        len(text),
+        count_words(text),
+        estimate_tokens(text),
+        "CC BY-SA 4.0",
+        f'Text from Wikivoyage article "{page.get("title", title)}"; revision {revision_id}; CC BY-SA.',
+        "mediawiki_action_api",
+        "ok" if text else "empty_text",
+        "",
+        __import__("hashlib").sha256(text.encode()).hexdigest(),
+    )
 
 
 __all__ = ["AugmentationWikimediaClient"]

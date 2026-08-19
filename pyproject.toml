@@ -126,6 +126,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/v2/wikipedia_tags.py",
     "src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py",
     "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
+    "src/osm_polygon_wikidata_only/io/pbf_reader.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only"]
 mutate_only_covered_lines = true
@@ -137,4 +138,7 @@ pytest_add_cli_args_test_selection = [
     "tests/v2/test_wikipedia_tags.py",
     "tests/enrichment/test_parsing_quality.py",
     "tests/enrichment/test_enrichment.py",
+    "tests/io/test_pbf_reader_area_quality.py",
+    "tests/io/test_pbf_reader_contracts.py",
+    "tests/v2/test_pbf_reader_scope.py",
 ]
