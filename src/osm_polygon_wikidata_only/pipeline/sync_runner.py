@@ -54,6 +54,33 @@ __all__ = [
 ]
 
 
+def _partition_states(
+    states: list[RegionSyncState],
+) -> tuple[
+    list[RegionSyncState],
+    list[RegionSyncState],
+    list[RegionSyncState],
+    list[RegionSyncState],
+]:
+    """Partition states by action while preserving their input order."""
+    buckets: dict[SyncAction, list[RegionSyncState]] = {
+        SyncAction.PROCESS: [],
+        SyncAction.AUGMENT: [],
+        SyncAction.PUBLISH: [],
+        SyncAction.RECOVERY: [],
+    }
+    for state in states:
+        bucket = buckets.get(state.action)
+        if bucket is not None:
+            bucket.append(state)
+    return (
+        buckets[SyncAction.PROCESS],
+        buckets[SyncAction.AUGMENT],
+        buckets[SyncAction.PUBLISH],
+        buckets[SyncAction.RECOVERY],
+    )
+
+
 def run_sync(
     states: list[RegionSyncState],
     *,
@@ -131,15 +158,9 @@ def run_sync(
        ``build_upload_files`` and ``submit_upload`` are provided,
        assemble and submit one atomic publication.
     """
-    if extract_pbf is None or process_extracted_pbf is None or augment_region is None:
-        raise RuntimeError(
-            "run_sync requires extract_pbf, process_extracted_pbf, and augment_region collaborators"
-        )
+    _validate_required_collaborators(extract_pbf, process_extracted_pbf, augment_region)
 
-    process_states = [state for state in states if state.action is SyncAction.PROCESS]
-    augment_states = [state for state in states if state.action is SyncAction.AUGMENT]
-    publish_states = [state for state in states if state.action is SyncAction.PUBLISH]
-    recovery_states = [state for state in states if state.action is SyncAction.RECOVERY]
+    process_states, augment_states, publish_states, recovery_states = _partition_states(states)
 
     extraction_executor = ThreadPoolExecutor(max_workers=1)
     core_results: dict[str, Any] = {}
@@ -153,44 +174,35 @@ def run_sync(
         # candidates return None. A repaired region is published
         # before the next candidate is audited. PBF extraction starts
         # only after this resumable recovery queue is drained.
-        for state in recovery_states:
-            if recover_region is None:
-                raise RuntimeError(
-                    "run_sync requires recover_region collaborator for RECOVERY states"
-                )
-            recovery_result = recover_region(state)
-            if recovery_result is None:
-                continue
-            if on_complete is not None:
-                on_complete(state, recovery_result)
-            _maybe_submit(
-                state=state,
-                augmentation=recovery_result,
-                core=core_results.get(state.stem),
-                submit_upload=submit_upload,
-                build_upload_files=build_upload_files,
-                commit_message=commit_message,
-            )
+        _run_recovery_phase(
+            recovery_states,
+            recover_region=recover_region,
+            core_results=core_results,
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
 
         # Step 2: once recovery has converged, restore the established
         # one-PBF-ahead overlap with AUGMENT/PUBLISH work.
-        if process_states:
-            extraction_future = extraction_executor.submit(extract_pbf, process_states[0].pbf_path)
+        extraction_future = _start_extraction_prefetch(
+            process_states,
+            extraction_executor=extraction_executor,
+            extract_pbf=extract_pbf,
+        )
 
         # Step 3: drain AUGMENT (backlog) states. Any exception
         # propagates after the executor is shut down in finally.
-        for state in augment_states:
-            augmentation = augment_region(state)
-            if on_complete is not None:
-                on_complete(state, augmentation)
-            _maybe_submit(
-                state=state,
-                augmentation=augmentation,
-                core=core_results.get(state.stem),
-                submit_upload=submit_upload,
-                build_upload_files=build_upload_files,
-                commit_message=commit_message,
-            )
+        _run_augment_phase(
+            augment_states,
+            augment_region=augment_region,
+            core_results=core_results,
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
 
         # Step 3: drain PUBLISH-only reconciliation repairs. These
         # are safe, Wikimedia-free uploads of finalized local
@@ -198,62 +210,202 @@ def run_sync(
         # existing augmentation result (no extraction, no Wikidata /
         # Wikipedia / Wikivoyage call) and enqueues one atomic
         # Hugging Face commit before PROCESS begins.
-        for state in publish_states:
-            if load_existing_augmentation is None:
-                raise RuntimeError(
-                    "run_sync requires load_existing_augmentation collaborator for PUBLISH states"
-                )
-            augmentation = load_existing_augmentation(state)
-            if on_complete is not None:
-                on_complete(state, augmentation)
-            _maybe_submit(
-                state=state,
-                augmentation=augmentation,
-                core=core_results.get(state.stem),
-                submit_upload=submit_upload,
-                build_upload_files=build_upload_files,
-                commit_message=commit_message,
-            )
+        _run_publish_phase(
+            publish_states,
+            load_existing_augmentation=load_existing_augmentation,
+            core_results=core_results,
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
 
         # Step 4+5: walk PROCESS states. For each, await extraction,
         # immediately schedule the next extraction (one-PBF-ahead),
         # then enrich/persist, then augment that same region. Failures
         # in extraction or processing propagate; subsequent PROCESS
         # states are not entered.
-        for process_index, state in enumerate(process_states):
-            if extraction_future is None:
-                raise RuntimeError(f"Missing prefetched extraction for PROCESS state {state.stem}")
-            extracted = extraction_future.result()
-            next_state = (
-                process_states[process_index + 1]
-                if process_index + 1 < len(process_states)
-                else None
-            )
-            extraction_future = (
-                extraction_executor.submit(extract_pbf, next_state.pbf_path)
-                if next_state is not None
-                else None
-            )
-            result = process_extracted_pbf(extracted)
-            core_results[state.stem] = result
-            augmentation = augment_region(state)
-            if on_complete is not None:
-                on_complete(state, augmentation)
-            _maybe_submit(
-                state=state,
-                augmentation=augmentation,
-                core=result,
-                submit_upload=submit_upload,
-                build_upload_files=build_upload_files,
-                commit_message=commit_message,
-            )
+        _run_process_phase(
+            process_states,
+            extraction_future=extraction_future,
+            extraction_executor=extraction_executor,
+            extract_pbf=extract_pbf,
+            process_extracted_pbf=process_extracted_pbf,
+            augment_region=augment_region,
+            core_results=core_results,
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
     finally:
         extraction_executor.shutdown(wait=True, cancel_futures=True)
         if close_uploads is not None:
             failures.extend(close_uploads())
-    if failures:
-        return 1
-    return 0
+    return int(bool(failures))
+
+
+def _validate_required_collaborators(
+    extract_pbf: Callable[[Path], Any] | None,
+    process_extracted_pbf: Callable[[Any], Any] | None,
+    augment_region: Callable[[RegionSyncState], Any] | None,
+) -> None:
+    """Validate the callbacks needed by every execution plan."""
+    if extract_pbf is None or process_extracted_pbf is None or augment_region is None:
+        raise RuntimeError(
+            "run_sync requires extract_pbf, process_extracted_pbf, and augment_region collaborators"
+        )
+
+
+def _start_extraction_prefetch(
+    states: list[RegionSyncState],
+    *,
+    extraction_executor: ThreadPoolExecutor,
+    extract_pbf: Callable[[Path], Any],
+) -> Future[Any] | None:
+    """Start the first PROCESS extraction, if any state needs it."""
+    if not states:
+        return None
+    return extraction_executor.submit(extract_pbf, states[0].pbf_path)
+
+
+def _complete_state(
+    state: RegionSyncState,
+    result: Any,
+    *,
+    core: Any | None,
+    on_complete: Callable[[RegionSyncState, Any], None] | None,
+    submit_upload: Callable[[list[Any], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
+    commit_message: Callable[[RegionSyncState], str] | None,
+) -> None:
+    if on_complete is not None:
+        on_complete(state, result)
+    _maybe_submit(
+        state=state,
+        augmentation=result,
+        core=core,
+        submit_upload=submit_upload,
+        build_upload_files=build_upload_files,
+        commit_message=commit_message,
+    )
+
+
+def _run_recovery_phase(
+    states: list[RegionSyncState],
+    *,
+    recover_region: Callable[[RegionSyncState], Any] | None,
+    core_results: dict[str, Any],
+    on_complete: Callable[[RegionSyncState, Any], None] | None,
+    submit_upload: Callable[[list[Any], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
+    commit_message: Callable[[RegionSyncState], str] | None,
+) -> None:
+    """Drain recovery states before any PBF extraction starts."""
+    if not states:
+        return
+    if recover_region is None:
+        raise RuntimeError("run_sync requires recover_region collaborator for RECOVERY states")
+    for state in states:
+        result = recover_region(state)
+        if result is not None:
+            _complete_state(
+                state,
+                result,
+                core=core_results.get(state.stem),
+                on_complete=on_complete,
+                submit_upload=submit_upload,
+                build_upload_files=build_upload_files,
+                commit_message=commit_message,
+            )
+
+
+def _run_augment_phase(
+    states: list[RegionSyncState],
+    *,
+    augment_region: Callable[[RegionSyncState], Any],
+    core_results: dict[str, Any],
+    on_complete: Callable[[RegionSyncState, Any], None] | None,
+    submit_upload: Callable[[list[Any], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
+    commit_message: Callable[[RegionSyncState], str] | None,
+) -> None:
+    """Drain the existing augmentation backlog."""
+    for state in states:
+        _complete_state(
+            state,
+            augment_region(state),
+            core=core_results.get(state.stem),
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
+
+
+def _run_publish_phase(
+    states: list[RegionSyncState],
+    *,
+    load_existing_augmentation: Callable[[RegionSyncState], Any] | None,
+    core_results: dict[str, Any],
+    on_complete: Callable[[RegionSyncState, Any], None] | None,
+    submit_upload: Callable[[list[Any], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
+    commit_message: Callable[[RegionSyncState], str] | None,
+) -> None:
+    """Drain publish-only repairs without extraction or Wikimedia calls."""
+    if not states:
+        return
+    if load_existing_augmentation is None:
+        raise RuntimeError(
+            "run_sync requires load_existing_augmentation collaborator for PUBLISH states"
+        )
+    for state in states:
+        _complete_state(
+            state,
+            load_existing_augmentation(state),
+            core=core_results.get(state.stem),
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
+
+
+def _run_process_phase(
+    states: list[RegionSyncState],
+    *,
+    extraction_future: Future[Any] | None,
+    extraction_executor: ThreadPoolExecutor,
+    extract_pbf: Callable[[Path], Any],
+    process_extracted_pbf: Callable[[Any], Any],
+    augment_region: Callable[[RegionSyncState], Any],
+    core_results: dict[str, Any],
+    on_complete: Callable[[RegionSyncState, Any], None] | None,
+    submit_upload: Callable[[list[Any], str], None] | None,
+    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
+    commit_message: Callable[[RegionSyncState], str] | None,
+) -> None:
+    """Process cores with one PBF extraction prefetched ahead."""
+    for index, state in enumerate(states):
+        if extraction_future is None:
+            raise RuntimeError(f"Missing prefetched extraction for PROCESS state {state.stem}")
+        extracted = extraction_future.result()
+        if index + 1 < len(states):
+            extraction_future = extraction_executor.submit(extract_pbf, states[index + 1].pbf_path)
+        else:
+            extraction_future = None
+        result = process_extracted_pbf(extracted)
+        core_results[state.stem] = result
+        _complete_state(
+            state,
+            augment_region(state),
+            core=result,
+            on_complete=on_complete,
+            submit_upload=submit_upload,
+            build_upload_files=build_upload_files,
+            commit_message=commit_message,
+        )
 
 
 def _maybe_submit(

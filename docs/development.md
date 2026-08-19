@@ -93,6 +93,28 @@ uv build
 git diff --check
 ```
 
+### Mutation and complexity gates
+
+The advanced gate covers the pure, deterministic Wikipedia and Wikidata parser
+helpers. It keeps reports in `/tmp`, uses two mutation workers to limit peak
+Mac memory, and does not read production data. HTML cleaning remains covered by
+the CRAP and branch-coverage gates; mutmut 3.7 cannot execute mutations inside
+its `HTMLParser` subclass trampoline reliably, so those unsupported class
+mutations are not counted as actionable results:
+
+```bash
+just crap
+just mutation
+just quality-advanced
+```
+
+`just crap` joins coverage.py and Radon function reports and fails when any
+function reaches CRAP 6; every measured score must therefore be below 6.
+`just mutation` runs mutmut over the explicit two
+module scope and fails unless every generated mutant is killed. These gates
+are deliberately narrow: network clients, large data files, and external
+publication are outside the mutation run.
+
 Run `uv run pre-commit run --all-files` before opening a pull request. The
 hooks intentionally run the fast Ruff and `ty` subset; `just check` remains the
 complete gate used by GitHub Actions.

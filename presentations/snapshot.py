@@ -156,7 +156,9 @@ def read_snapshot() -> DatasetSnapshot:
         retired = json.loads(retired_path.read_text(encoding="utf-8"))
         if isinstance(retired, dict):
             retired_entries = retired.get("retired", retired.get("retirements", []))
-            retired_inputs = len(retired_entries) if isinstance(retired_entries, (dict, list)) else 0
+            retired_inputs = (
+                len(retired_entries) if isinstance(retired_entries, (dict, list)) else 0
+            )
 
     continent_rows = _continent_rows(card)
     text_polygon_count = sum(_number(row[3]) for row in continent_rows)

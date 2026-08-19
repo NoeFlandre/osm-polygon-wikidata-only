@@ -41,6 +41,11 @@ class FetchResult:
     article: WikipediaArticle | None
     error: str = ""
 
+    @classmethod
+    def ok(cls, article: WikipediaArticle) -> FetchResult:
+        """Build a successful result with the stable empty-error contract."""
+        return cls("ok", article)
+
 
 class WikipediaClient(ABC):
     """Stable single-article client contract used by the pipeline."""

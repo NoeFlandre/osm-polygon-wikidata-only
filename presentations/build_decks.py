@@ -100,7 +100,9 @@ def _dataset_deck(s: DatasetSnapshot) -> str:
     language_rows = "\n".join(
         f"| `{code}` | {docs} | {share} |" for code, docs, share in s.top_language_rows
     )
-    return _frontmatter("The dataset in one view", "Noé Flandre", s.generated_on) + f'''
+    return (
+        _frontmatter("The dataset in one view", "Noé Flandre", s.generated_on)
+        + f"""
 # Wordlwide OSM polygons with linked knowledge
 
 <p class="kicker">Dataset overview</p>
@@ -288,11 +290,14 @@ ds = load_dataset(
 <p><a href="https://github.com/NoeFlandre/osm-polygon-wikidata-only">Source code on GitHub</a></p>
 
 {_notes("Project README, docs/architecture.md, and pipeline publication modules. Public links: https://github.com/NoeFlandre/osm-polygon-wikidata-only and https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only.")}
-'''
+"""
+    )
 
 
 def _codebase_deck(s: DatasetSnapshot) -> str:
-    return _frontmatter("The codebase in one view", "Noé Flandre", s.generated_on) + f'''
+    return (
+        _frontmatter("The codebase in one view", "Noé Flandre", s.generated_on)
+        + f"""
 # A modular, resumable enrichment pipeline
 
 <p class="kicker">Codebase overview</p>
@@ -478,7 +483,8 @@ uv run osm-polygon-wikidata-only sync-dir \
 <p><a href="https://github.com/NoeFlandre/osm-polygon-wikidata-only">Explore the source code</a></p>
 
 {_notes("README.md, docs/architecture.md, docs/api.md, and pyproject.toml. Public source link: https://github.com/NoeFlandre/osm-polygon-wikidata-only.")}
-'''
+"""
+    )
 
 
 def _write_deck(name: str, content: str) -> None:

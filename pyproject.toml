@@ -63,6 +63,8 @@ dev = [
     "pre-commit>=4.6.1",
     "pytest>=8",
     "pytest-cov>=5",
+    "mutmut>=3.7,<4",
+    "radon>=6,<7",
     "ruff>=0.5",
     "ty==0.0.64",
     "types-pyyaml>=6.0",
@@ -116,18 +118,23 @@ skip_covered = false
 fail_under = 80
 
 [tool.mutmut]
-# Keep the exhaustive mutation gate focused on pure data-integrity helpers.
-# The full orchestration suite remains covered by pytest and coverage, while
-# this small scope makes a 100% killed-mutant result practical on every host.
+# Keep exhaustive mutation focused on pure deterministic helpers.
+on_dependency_change = "rerun"
 source_paths = [
     "src/osm_polygon_wikidata_only/v2/deduplication.py",
     "src/osm_polygon_wikidata_only/v2/fingerprints.py",
     "src/osm_polygon_wikidata_only/v2/wikipedia_tags.py",
+    "src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py",
+    "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
 ]
+also_copy = ["src/osm_polygon_wikidata_only"]
+mutate_only_covered_lines = true
+max_stack_depth = 8
+pytest_add_cli_args = ["--no-cov", "-q"]
 pytest_add_cli_args_test_selection = [
     "tests/v2/test_deduplication.py",
     "tests/v2/test_fingerprints.py",
     "tests/v2/test_wikipedia_tags.py",
+    "tests/enrichment/test_parsing_quality.py",
+    "tests/enrichment/test_enrichment.py",
 ]
-mutate_only_covered_lines = true
-max_stack_depth = 8

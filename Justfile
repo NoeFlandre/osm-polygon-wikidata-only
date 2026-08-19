@@ -12,19 +12,30 @@ test:
 coverage:
     uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
 
-# Exhaustively mutate the pure data-integrity helpers configured in pyproject.toml.
-mutation:
-    uv run mutmut run
-    uv run mutmut results
-
-# Enforce a CRAP score below 6 for the same tested helper scope.
+# Enforce a CRAP score below 6 for the v2 data-integrity helper scope.
 crap:
     uv run pytest tests/domain/test_filters.py tests/v2/test_deduplication.py tests/v2/test_fingerprints.py tests/v2/test_wikipedia_tags.py --cov=osm_polygon_wikidata_only.domain.filters --cov=osm_polygon_wikidata_only.v2.deduplication --cov=osm_polygon_wikidata_only.v2.fingerprints --cov=osm_polygon_wikidata_only.v2.wikipedia_tags --cov-branch --cov-report=lcov:/tmp/osm-polygon-wikidata-only-crap.lcov -q
     uv run crap4py --lcov /tmp/osm-polygon-wikidata-only-crap.lcov --max-crap 5.99 src/osm_polygon_wikidata_only/domain/filters.py src/osm_polygon_wikidata_only/v2/deduplication.py src/osm_polygon_wikidata_only/v2/fingerprints.py src/osm_polygon_wikidata_only/v2/wikipedia_tags.py
 
+# Report function-level CRAP scores for the pure parsing/cleaning and sync
+# application scopes. Reports stay in /tmp so Mac storage remains bounded.
+crap-sync:
+    uv run pytest -q tests/enrichment/test_parsing_quality.py tests/enrichment/test_enrichment.py tests/cli/test_sync_application.py --cov=osm_polygon_wikidata_only.enrichment.wikipedia.parsing --cov=osm_polygon_wikidata_only.enrichment.wikidata.parsing --cov=osm_polygon_wikidata_only.enrichment.text_cleaning --cov=osm_polygon_wikidata_only.cli.sync_application --cov-report=json:/tmp/osm-polygon-wikidata-crap-coverage.json
+    uv run radon cc -j src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py src/osm_polygon_wikidata_only/enrichment/text_cleaning.py src/osm_polygon_wikidata_only/cli/sync_application.py > /tmp/osm-polygon-wikidata-crap-complexity.json
+    uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-crap-complexity.json --maximum 6
+
+# Run mutmut with two workers to keep peak Mac memory bounded. The explicit
+# source scope contains only pure deterministic helpers, and the gate refuses
+# any survivor, timeout, or untested mutant.
+mutation:
+    uv run mutmut run --max-children 2
+    uv run mutmut results --all=true | uv run python scripts/quality/mutation_gate.py
+
 # Run both opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap
+quality-strength: mutation crap crap-sync
+
+quality-advanced: crap crap-sync mutation
 
 lint:
     uv run ruff check src tests scripts

@@ -20,7 +20,6 @@ venv/
 .coverage.*
 htmlcov/
 coverage.xml
-.mutmut-cache
 .mutmut-cache/
 mutants/
 
