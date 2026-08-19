@@ -8,6 +8,12 @@
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1-python3.12-trixie-slim
 FROM ${UV_IMAGE} AS build
 
+# pyosmium links against Expat; keep the native runtime dependency explicit
+# for both development and production images.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=0 \
@@ -47,6 +53,10 @@ CMD ["uv", "run", "pytest", "-q"]
 # dependencies. No token, PBF, generated artifact, or local cache is copied
 # into the image.
 FROM ${UV_IMAGE} AS runtime
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

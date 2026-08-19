@@ -25,6 +25,8 @@ def test_dockerfile_uses_locked_uv_install_and_safe_runtime() -> None:
     dockerfile = _read("Dockerfile")
 
     assert "ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1-python3.12-trixie-slim" in dockerfile
+    assert dockerfile.count("apt-get install --no-install-recommends -y libexpat1") == 2
+    assert dockerfile.count("rm -rf /var/lib/apt/lists/*") >= 2
     assert "FROM ${UV_IMAGE} AS build" in dockerfile
     assert "FROM ${UV_IMAGE} AS runtime" in dockerfile
     assert "COPY pyproject.toml uv.lock README.md LICENSE ./" in dockerfile
