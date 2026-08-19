@@ -105,6 +105,17 @@ def test_ordered_replacements_applies_json_manifests_last(tmp_path: Path) -> Non
     assert manifest_target.read_text() == '{"new": 1}'
 
 
+def test_apply_replacements_helper_preserves_transaction_boundary(tmp_path: Path) -> None:
+    """The private replacement adapter keeps the public transaction seam small."""
+    mod = _import_module()
+    target, staged = _make_text_pair(tmp_path, "data.parquet", "OLD", "NEW")
+
+    assert hasattr(mod, "_apply_replacements")
+    mod._apply_replacements(tmp_path, [(target, staged)])
+
+    assert target.read_text() == "NEW"
+
+
 # ---------------------------------------------------------------------------
 # Crash hook semantics
 # ---------------------------------------------------------------------------
