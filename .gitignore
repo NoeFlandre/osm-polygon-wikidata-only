@@ -20,6 +20,7 @@ venv/
 .coverage.*
 htmlcov/
 coverage.xml
+mutants/
 
 # All data artifacts: the repository is code-only.
 # PBF inputs, intermediate outputs, Arrow/Parquet files, saved datasets,

@@ -54,27 +54,56 @@ def qids_from_osm_tag(value: str) -> tuple[str, ...]:
 
 def parse_wikidata_entity(qid: str, data: dict[str, Any]) -> WikidataEntity | None:
     """Parse one entity from a ``wbgetentities`` response."""
+    raw = _entity_payload(qid, data)
+    if raw is None:
+        return None
+    return WikidataEntity(
+        qid,
+        _language_sitelinks(raw),
+        _localized_values(raw, "labels"),
+        _localized_values(raw, "descriptions"),
+        _localized_aliases(raw),
+    )
+
+
+def _entity_payload(qid: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a non-missing entity payload, if present."""
     entities = data.get("entities") or {}
     if qid not in entities:
         return None
     raw = entities[qid]
-    if raw.get("missing") is not None:
-        return None
+    return None if raw.get("missing") is not None else raw
+
+
+def _language_sitelinks(raw: dict[str, Any]) -> Sitelinks:
+    """Keep titled sitelinks that point to language Wikipedias."""
     sitelinks: Sitelinks = {}
     for site, info in (raw.get("sitelinks") or {}).items():
-        if _is_language_wiki(site):
-            title = info.get("title")
-            if title:
-                sitelinks[site] = title
-    labels = {key: value.get("value", "") for key, value in (raw.get("labels") or {}).items()}
-    descriptions = {
-        key: value.get("value", "") for key, value in (raw.get("descriptions") or {}).items()
-    }
-    aliases = {
-        key: [value.get("value", "") for value in values if value.get("value")]
+        title = _language_sitelink_title(site, info)
+        if title:
+            sitelinks[site] = title
+    return sitelinks
+
+
+def _language_sitelink_title(site: str, info: dict[str, Any]) -> str | None:
+    """Return a valid language sitelink title, if present."""
+    if not _is_language_wiki(site):
+        return None
+    title = info.get("title")
+    return title if title else None
+
+
+def _localized_values(raw: dict[str, Any], field: str) -> dict[str, str]:
+    """Extract localized scalar values from one entity field."""
+    return {key: value.get("value", "") for key, value in (raw.get(field) or {}).items()}
+
+
+def _localized_aliases(raw: dict[str, Any]) -> dict[str, list[str]]:
+    """Extract non-empty localized aliases from one entity."""
+    return {
+        key: [value["value"] for value in values if value.get("value")]
         for key, values in (raw.get("aliases") or {}).items()
     }
-    return WikidataEntity(qid, sitelinks, labels, descriptions, aliases)
 
 
 def language_from_site(site: str) -> str:
@@ -90,11 +119,21 @@ def _is_language_wiki(site: str) -> bool:
     if not site.endswith("wiki") or len(site) <= len("wiki"):
         return False
     language = site[: -len("wiki")]
-    return (
-        language not in _NON_LANGUAGE_PROJECTS
-        and language == language.lower()
-        and all(character.isalnum() or character in "_-" for character in language)
-    )
+    return _is_language_code(language)
+
+
+def _is_language_code(language: str) -> bool:
+    """Return whether a site prefix is a lowercase language code."""
+    if language in _NON_LANGUAGE_PROJECTS:
+        return False
+    if language != language.lower():
+        return False
+    return all(_is_language_character(character) for character in language)
+
+
+def _is_language_character(character: str) -> bool:
+    """Return whether one site-key character is valid in a language code."""
+    return character.isalnum() or character in ("_", "-")
 
 
 __all__ = ["is_valid_qid", "language_from_site", "parse_wikidata_entity", "qids_from_osm_tag"]

@@ -61,6 +61,8 @@ dev = [
     "pre-commit>=4.6.1",
     "pytest>=8",
     "pytest-cov>=5",
+    "mutmut>=3.7,<4",
+    "radon>=6,<7",
     "ruff>=0.5",
     "ty==0.0.64",
     "types-pyyaml>=6.0",
@@ -112,3 +114,17 @@ source = ["src/osm_polygon_wikidata_only"]
 show_missing = true
 skip_covered = false
 fail_under = 80
+
+[tool.mutmut]
+on_dependency_change = "rerun"
+source_paths = [
+    "src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py",
+    "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
+]
+also_copy = ["src/osm_polygon_wikidata_only"]
+mutate_only_covered_lines = true
+pytest_add_cli_args = ["--no-cov", "-q"]
+pytest_add_cli_args_test_selection = [
+    "tests/enrichment/test_parsing_quality.py",
+    "tests/enrichment/test_enrichment.py",
+]

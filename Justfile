@@ -12,6 +12,22 @@ test:
 coverage:
     uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
 
+# Report function-level CRAP scores for the pure parsing/cleaning scope.
+# Reports stay in /tmp so the checkout and Mac storage remain bounded.
+crap:
+    uv run pytest -q tests/enrichment/test_parsing_quality.py tests/enrichment/test_enrichment.py --cov=osm_polygon_wikidata_only.enrichment.wikipedia.parsing --cov=osm_polygon_wikidata_only.enrichment.wikidata.parsing --cov=osm_polygon_wikidata_only.enrichment.text_cleaning --cov-report=json:/tmp/osm-polygon-wikidata-crap-coverage.json
+    uv run radon cc -j src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py src/osm_polygon_wikidata_only/enrichment/text_cleaning.py > /tmp/osm-polygon-wikidata-crap-complexity.json
+    uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-crap-complexity.json --maximum 6
+
+# Run mutmut with two workers to keep peak Mac memory bounded. The explicit
+# source scope contains only pure deterministic helpers, and the gate refuses
+# any survivor, timeout, or untested mutant.
+mutation:
+    uv run mutmut run --max-children 2
+    uv run mutmut results --all=true | uv run python scripts/quality/mutation_gate.py
+
+quality-advanced: crap mutation
+
 lint:
     uv run ruff check src tests scripts
 
