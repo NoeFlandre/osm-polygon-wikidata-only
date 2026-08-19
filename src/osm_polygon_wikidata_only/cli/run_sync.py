@@ -24,11 +24,10 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
-    AugmentationResult,
     augment_region,
     augmentation_is_current,
     load_existing_augmentation_result,
@@ -47,9 +46,13 @@ from osm_polygon_wikidata_only.cli._sync.retirement import (
     paired_retirement_stems as _paired_retirement_stems,
 )
 from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
+from osm_polygon_wikidata_only.cli.sync_application import (
+    SyncApplication,
+    SyncApplicationContext,
+    SyncApplicationServices,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.hf._publication.models import CorePublicationArtifacts
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
@@ -74,7 +77,7 @@ from osm_polygon_wikidata_only.pipeline.pending_publications import (
     load_pending_publications,
     remove_pending_publications,
 )
-from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf, ProcessResult
+from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf
 from osm_polygon_wikidata_only.pipeline.sync_planner import (
     RegionSyncState,
     SyncAction,
@@ -367,10 +370,6 @@ def execute(
         pending_stems=all_pending_stems,
         recovery_stems=recovery_stems,
     )
-    recovered_stems: set[str] = set()
-    recovery_map_refresh_stems: set[str] = set()
-    recovery_classifications: dict[str, dict[Any, Any]] = {}
-
     if push_enabled and reconciliation_plan is not None:
         for state in states:
             if state.action == SyncAction.PROCESS:
@@ -425,8 +424,8 @@ def execute(
         counts[SyncAction.COMPLETE],
     )
 
-    # Capture settings + clients once so the closures below don't
-    # need to look them up at call time.
+    # Capture settings + clients once so the bound extraction/process
+    # collaborators do not need to look them up at call time.
     wikidata_client = runtime.wikidata
     wikipedia_client = runtime.wikipedia
     runtime_cache = runtime.cache
@@ -451,316 +450,60 @@ def execute(
             cache=runtime_cache,
         )
 
-    def _augment(state: RegionSyncState) -> Any:
-        from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
-
-        progress = AugmentationProgress()
-        LOGGER.info("Sync region %s: augmentation started", state.stem)
-        from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
-
-        actionable = [s for s in states if s.action is not SyncAction.COMPLETE]
-        with SyncHeartbeat(
-            region=state.stem,
-            region_index=actionable.index(state) + 1 if state in actionable else 0,
-            region_total=len(actionable) or len(states),
-            augmentation_snapshot=progress.snapshot,
-            scheduler_snapshot=runtime.scheduler.snapshot,
-            auth_snapshot=runtime.session.auth_snapshot,
-            log=LOGGER.info,
-        ):
-            augmentation_result = augment_region(
-                data_root,
-                state.stem,
-                augmentation_client,
-                progress=progress,
-            )
-            if getattr(augmentation_result, "wikipedia_documents_path", None):
-                current_links = plan_link_migration(data_root.processed, stems={state.stem})
-                if (
-                    current_links.stems
-                    and current_links.stems[0].classification.value != "canonical"
-                ):
-                    apply_link_migration(data_root.processed, stems={state.stem})
-                augmentation_result = load_existing_augmentation_result(data_root, state.stem)
-            audit = audit_wikidata_integrity(
-                data_root,
-                [state.stem],
-                runtime.wikidata,
-                batch_size=settings.enrichment_batch_size,
-                languages=settings.languages,
-                max_articles_per_qid=settings.max_articles_per_qid,
-                log=LOGGER.info,
-            )
-            _ensure_recovery_audit_unblocked(audit)
-            region = audit.region(state.stem)
-            if region.requires_repair:
-                repair_result = repair_wikidata_region(
-                    data_root,
-                    region,
-                    wikidata_client=runtime.wikidata,
-                    wikipedia_client=runtime.wikipedia,
-                    augmentation_client=augmentation_client,
-                    settings=settings,
-                    log=LOGGER.info,
-                    scheduler_snapshot=runtime.scheduler.snapshot,
-                )
-                if repair_result.changed:
-                    recovered_stems.add(state.stem)
-                    if repair_result.map_inputs_changed:
-                        recovery_map_refresh_stems.add(state.stem)
-                    augmentation_result = load_existing_augmentation_result(data_root, state.stem)
-        LOGGER.info(
-            "Unified sync completed %s: %s",
-            state.stem,
-            augmentation_result.counts,
-        )
-        return augmentation_result
-
-    def _load_existing(state: RegionSyncState) -> Any:
-        return load_existing_augmentation_result(data_root, state.stem)
-
-    def _migrate_links_if_needed(stem: str) -> bool:
-        current = plan_link_migration(data_root.processed, stems={stem})
-        if not current.stems:
-            return False
-        stem_plan = current.stems[0]
-        if stem_plan.classification.value == "canonical":
-            return False
-        if stem_plan.classification.value == "BLOCKED":
-            raise MigrationError(
-                f"Unified polygon-document link migration is blocked for {stem}: {stem_plan.reason}"
-            )
-        apply_link_migration(data_root.processed, stems={stem})
-        return True
-
-    def _recover(state: RegionSyncState) -> Any:
-        audit = audit_wikidata_integrity(
-            data_root,
-            [state.stem],
-            runtime.wikidata,
-            batch_size=settings.enrichment_batch_size,
-            languages=settings.languages,
-            max_articles_per_qid=settings.max_articles_per_qid,
-            log=LOGGER.info,
-        )
-        _ensure_recovery_audit_unblocked(audit)
-        plan = audit.region(state.stem)
-        if not plan.requires_repair:
-            if _migrate_links_if_needed(state.stem):
-                recovery_classifications[state.stem] = dict(plan.classifications)
-                recovered_stems.add(state.stem)
-                if not push_enabled:
-                    return None
-                return load_existing_augmentation_result(data_root, state.stem)
-            if push_enabled and state.stem in all_pending_stems:
-                return load_existing_augmentation_result(data_root, state.stem)
-            return None
-        repair_result = repair_wikidata_region(
-            data_root,
-            plan,
-            wikidata_client=runtime.wikidata,
-            wikipedia_client=runtime.wikipedia,
-            augmentation_client=augmentation_client,
-            settings=settings,
-            log=LOGGER.info,
-            scheduler_snapshot=runtime.scheduler.snapshot,
-        )
-        if not repair_result.changed:
-            if _migrate_links_if_needed(state.stem):
-                recovery_classifications[state.stem] = dict(plan.classifications)
-                recovered_stems.add(state.stem)
-                if not push_enabled:
-                    return None
-                return load_existing_augmentation_result(data_root, state.stem)
-            if push_enabled and state.stem in all_pending_stems:
-                return load_existing_augmentation_result(data_root, state.stem)
-            return None
-        recovered_stems.add(state.stem)
-        if repair_result.map_inputs_changed:
-            recovery_map_refresh_stems.add(state.stem)
-        _migrate_links_if_needed(state.stem)
-        return load_existing_augmentation_result(data_root, state.stem)
-
-    def _prepare_publication(state: RegionSyncState, result: Any) -> None:
-        # Test doubles and third-party collaborators predating canonical
-        # documents may not produce a sidecar. Production augmentation
-        # always returns this path; only then is retirement applicable.
-        if getattr(result, "wikipedia_documents_path", None) is None:
-            return
-        prepare_local_retirement(data_root, state.stem)
-        add_pending_publications(data_root, {state.stem})
-        classifications = recovery_classifications.get(state.stem)
-        if classifications is not None:
-            record_region_recovery_receipt(data_root, state.stem, classifications)
-
-    def _submit_upload(ops: list[PublicationOp], message: str) -> None:
-        if upload_queue is None:
-            return
-        upload_queue.submit(ops, message)
-
-    def _build_region_publication(
-        state: object,
-        augmentation: object,
-        core: object | None,
-    ) -> list[PublicationOp]:
-        """Region-publication builder injected into ``pipeline.sync_runner``.
-
-        Pure assembly: delegates to
-        :func:`hf.publication.assemble_region_upload`, which
-        returns the ordered op list and performs NO upload.
-        Submission is the upload queue's responsibility, executed
-        exactly once by ``_maybe_submit`` in the runner. The
-        unified-sync world-land fallback is silent (``None``).
-        """
-        from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
-
-        stem = getattr(state, "stem", "")
-        needs_existing_core = stem in recovered_stems or (
-            push_enabled
-            and reconciliation_plan is not None
-            and (
-                (stem, "polygons") in reconciliation_plan.missing
-                or (stem, "polygon_articles") in reconciliation_plan.missing
-            )
-        )
-        if core is None and needs_existing_core:
-            LOGGER.info(
-                "Repairing remote region %s from finalized local artifacts (no Wikimedia requests)",
-                stem,
-            )
-            try:
-                core = _load_existing_core_for_publication(
-                    data_root,
-                    stem,
-                    core,
-                    required=True,
-                )
-            except Exception as e:
-                LOGGER.error("Failed to load local core artifacts for %s: %s", stem, e)
-                raise
-
-        if stem in recovered_stems and core is None:
-            raise RuntimeError(f"Recovered region {stem!r} has no core publication artifacts")
-
-        return assemble_region_upload(
-            data_root=data_root,
-            repo_id=settings.repo_id,
-            stem=stem,
-            augmentation=cast(AugmentationResult, augmentation),
-            core=cast(ProcessResult | CorePublicationArtifacts | None, core),
-            world_land_warning=None,
-            refresh_maps=(
-                getattr(state, "action", None) is not SyncAction.RECOVERY
-                or stem in recovery_map_refresh_stems
-            ),
-        )
-
-    def _close_uploads() -> list[str]:
-        if upload_queue is None:
-            return []
-        return upload_queue.close_and_wait()
-
-    # Push-disabled: do not even hand the runner a publication
-    # builder. The runner will skip _maybe_submit entirely. When the
-    # CLI shell is given an override builder (legacy compatibility),
-    # use it; otherwise default to the production
-    # ``hf.publication.assemble_region_upload`` builder.
-    publish_builder: Callable[..., list[PublicationOp]] | None = (
-        (build_upload_files or _build_region_publication) if push_enabled else None
+    from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
+    from osm_polygon_wikidata_only.hf.publication import (
+        assemble_metadata_only_upload,
+        assemble_region_upload,
     )
-    submit_callback: Callable[[list[PublicationOp], str], None] | None = (
-        _submit_upload if push_enabled else None
-    )
-
     from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod
+    from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
 
-    rc = 0
-    metadata_repaired = False
-    success = False
-    try:
-        rc = sync_runner_mod.run_sync(
-            states,
+    application = SyncApplication(
+        context=SyncApplicationContext(
+            data_root=data_root,
+            settings=settings,
+            runtime=runtime,
+            augmentation_client=augmentation_client,
+            states=states,
+            push_enabled=push_enabled,
+            dry_run=dry_run,
+            pending_stems=all_pending_stems,
+            stems_with_gaps=stems_with_gaps,
+            reconciliation_plan=reconciliation_plan,
+            upload_queue=upload_queue,
+            publish_builder=build_upload_files,
+            core_will_be_repaired=core_will_be_repaired,
+            core_repaired=core_repaired,
+            containment_enqueued=containment_enqueued,
+        ),
+        services=SyncApplicationServices(
             extract_pbf=_extract,
             process_extracted_pbf=_process,
-            augment_region=_augment,
-            build_upload_files=publish_builder,
+            augment_region=augment_region,
+            load_existing_augmentation=load_existing_augmentation_result,
+            recover_region=lambda state: None,
+            run_sync=sync_runner_mod.run_sync,
+            plan_link_migration=plan_link_migration,
+            apply_link_migration=apply_link_migration,
+            audit_wikidata_integrity=audit_wikidata_integrity,
+            ensure_recovery_audit_unblocked=_ensure_recovery_audit_unblocked,
+            repair_wikidata_region=repair_wikidata_region,
+            prepare_local_retirement=prepare_local_retirement,
+            add_pending_publications=add_pending_publications,
+            record_region_recovery_receipt=record_region_recovery_receipt,
+            assemble_region_upload=assemble_region_upload,
+            assemble_metadata_only_upload=assemble_metadata_only_upload,
+            load_existing_core_for_publication=_load_existing_core_for_publication,
             commit_message=_commit_message(getattr(args, "commit_message", None)),
-            submit_upload=submit_callback,
-            close_uploads=None,
-            load_existing_augmentation=_load_existing,
-            recover_region=_recover,
-            on_complete=_prepare_publication,
-        )
-        core_will_be_repaired = core_will_be_repaired or bool(recovered_stems)
-        if (
-            rc == 0
-            and push_enabled
-            and reconciliation_plan is not None
-            and reconciliation_plan.repository_refresh
-            and not core_will_be_repaired
-            and not containment_enqueued
-        ):
-            # Enqueue metadata-only repair if needed and core won't be repaired by another upload
-            from osm_polygon_wikidata_only.hf.publication import assemble_metadata_only_upload
-
-            LOGGER.info("Enqueuing metadata-only repair (no region core repair planned)")
-            ops = assemble_metadata_only_upload(
-                data_root=data_root,
-                repo_id=settings.repo_id,
-                world_land_warning=None,
-            )
-            if submit_callback is not None:
-                submit_callback(ops, "Repair remote repository metadata and maps")
-                metadata_repaired = True
-        success = rc == 0
-    except Exception as error:
-        if upload_queue is not None:
-            LOGGER.error("Unified sync aborted: %s", error)
-        raise
-    finally:
-        failures = _close_uploads()
-        if failures:
-            rc = 1
-            success = False
-
-    marker = load_metadata_refresh_marker(data_root) if push_enabled else None
-    if success and rc == 0 and not failures and marker is not None:
-        from osm_polygon_wikidata_only.hf.publication import (
-            assemble_metadata_only_upload,
-        )
-
-        LOGGER.info(
-            "Refreshing repository metadata after %d migrated region(s)",
-            len(marker["stems"]),
-        )
-        metadata_ops = assemble_metadata_only_upload(
-            data_root=data_root,
-            repo_id=settings.repo_id,
-            world_land_warning=None,
-        )
-        if upload_queue is None:
-            raise RuntimeError("Metadata refresh requires an upload queue")
-        upload_queue.upload_synchronously(
-            metadata_ops,
-            "Repair remote repository metadata and maps",
-        )
-        clear_metadata_refresh_marker(data_root)
-        metadata_repaired = True
-
-    if success and rc == 0 and not failures:
-        if push_enabled:
-            core_repaired = core_repaired or bool(recovered_stems)
-            _log_remote_reconciliation_summary(
-                stems_with_gaps=stems_with_gaps,
-                core_repaired=core_repaired,
-                metadata_repaired=metadata_repaired,
-                log=LOGGER.info,
-            )
-        return 0
-    else:
-        if rc != 0:
-            LOGGER.error("Unified sync completed with failures (rc=%d)", rc)
-        return rc or 1
+            log_remote_reconciliation_summary=_log_remote_reconciliation_summary,
+            load_metadata_refresh_marker=load_metadata_refresh_marker,
+            clear_metadata_refresh_marker=clear_metadata_refresh_marker,
+            augmentation_progress=AugmentationProgress,
+            sync_heartbeat=SyncHeartbeat,
+            logger=LOGGER,
+        ),
+    )
+    return application.run().return_code
 
 
 def _log_remote_reconciliation_summary(
