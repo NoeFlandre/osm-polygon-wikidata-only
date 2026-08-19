@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from osm_polygon_wikidata_only.v2 import reuse
-from osm_polygon_wikidata_only.v2.sections import SectionClient, build_missing_sections
+from osm_polygon_wikidata_only.v2.sections import (
+    SectionClient,
+    _string_field,
+    build_missing_sections,
+)
 
 
 def _document(document_id: str, *, project: str = "wikipedia") -> dict[str, Any]:
@@ -80,3 +84,9 @@ def test_section_builder_does_not_fetch_non_wikipedia_documents() -> None:
 def test_reuse_module_preserves_section_compatibility_exports() -> None:
     assert reuse.SectionClient is SectionClient
     assert reuse._build_missing_sections is build_missing_sections
+
+
+def test_string_field_preserves_empty_value_defaults() -> None:
+    assert _string_field({"value": None}, "value") == ""
+    assert _string_field({"value": 0}, "value") == ""
+    assert _string_field({"value": "kept"}, "value") == "kept"
