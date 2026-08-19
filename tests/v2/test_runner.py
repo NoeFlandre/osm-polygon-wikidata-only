@@ -75,6 +75,24 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
     )
     assert [message for _, message in uploads] == ["Update V2 dataset card and manifest"]
 
+    uploads.clear()
+    assert (
+        run_v2_sync(
+            root.raw,
+            data_root=root,
+            settings=Settings(skip_existing=True),
+            wikipedia_client=client,
+            push=True,
+            upload=lambda ops, message: uploads.append((ops, message)),
+            remote_inventory=RemoteInventory({"polygons/region-latest.parquet"}),
+        )
+        == 0
+    )
+    assert [message for _, message in uploads] == [
+        "Repair V2 region region-latest",
+        "Update V2 dataset card and manifest",
+    ]
+
 
 def test_v2_runner_resumes_provisional_region_without_reextracting(
     tmp_path: Path,
