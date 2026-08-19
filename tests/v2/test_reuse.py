@@ -9,7 +9,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
-from osm_polygon_wikidata_only.v2.reuse import _rows, load_v1_region
+from osm_polygon_wikidata_only.v2.reuse import _direct_inputs, _rows, load_v1_region
 
 
 def _write(path: Path, schema: pa.Schema, row: dict) -> None:
@@ -123,3 +123,28 @@ def test_rows_closes_parquet_file_after_read(
     assert _rows(path)
     assert opened
     assert closed == opened
+
+
+def test_direct_inputs_are_sorted_and_skip_polygons_without_wikipedia_refs() -> None:
+    polygons = {
+        "b": {"polygon_id": "b", "wikipedia_tag_refs": "[]"},
+        "a": {
+            "polygon_id": "a",
+            "wikipedia_tag_refs": json.dumps(
+                [
+                    {
+                        "language": "en",
+                        "title": "Alpha",
+                        "raw_key": "wikipedia",
+                        "raw_value": "en:Alpha",
+                    }
+                ]
+            ),
+        },
+    }
+
+    result = _direct_inputs(polygons)
+
+    assert [(polygon_id, refs[0].language, refs[0].title) for polygon_id, _, refs in result] == [
+        ("a", "en", "Alpha")
+    ]
