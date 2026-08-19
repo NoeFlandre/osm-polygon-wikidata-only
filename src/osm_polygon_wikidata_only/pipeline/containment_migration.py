@@ -463,6 +463,46 @@ def prepare_local_rule(data_root: Path, audit: RuleAudit) -> PreparedRule:
     return prepared
 
 
+def _pending_rule(rule: ContainmentRule, retired: frozenset[str]) -> ContainmentRule | None:
+    """Return the still-active part of a policy rule, if any."""
+    pending_children = tuple(child for child in rule.children if child not in retired)
+    return ContainmentRule(rule.parent, pending_children) if pending_children else None
+
+
+def _has_required_files(processed_dir: Path, rule: ContainmentRule) -> bool:
+    """Return whether every table file needed to audit ``rule`` exists."""
+    stems = (rule.parent, *rule.children)
+    return all(
+        (processed_dir / contract.subdir / f"{stem}.parquet").is_file()
+        for contract in TABLE_CONTRACTS
+        for stem in stems
+    )
+
+
+def _prepare_audited_rule(
+    data_root: Path, audit: RuleAudit, *, dry_run: bool
+) -> PreparedRule | None:
+    """Apply one safe audit unless preparation was explicitly disabled."""
+    return None if dry_run else prepare_local_rule(data_root, audit)
+
+
+def _record_audited_rule(
+    data_root: Path,
+    audit: RuleAudit,
+    *,
+    dry_run: bool,
+    prepared: list[PreparedRule],
+    blocked: list[RuleAudit],
+) -> None:
+    """Record one audit outcome and prepare it when safe and requested."""
+    if not audit.safe_to_stage:
+        blocked.append(audit)
+        return
+    result = _prepare_audited_rule(data_root, audit, dry_run=dry_run)
+    if result is not None:
+        prepared.append(result)
+
+
 def prepare_safe_rules(
     data_root: Path, *, dry_run: bool
 ) -> tuple[tuple[PreparedRule, ...], tuple[RuleAudit, ...]]:
@@ -472,23 +512,19 @@ def prepare_safe_rules(
     prepared: list[PreparedRule] = []
     blocked: list[RuleAudit] = []
     for rule in CONTAINMENT_RULES:
-        pending_children = tuple(child for child in rule.children if child not in retired)
-        if not pending_children:
+        scoped = _pending_rule(rule, retired)
+        if scoped is None:
             continue
-        scoped = ContainmentRule(rule.parent, pending_children)
-        expected = [
-            processed_dir / contract.subdir / f"{stem}.parquet"
-            for contract in TABLE_CONTRACTS
-            for stem in (scoped.parent, *scoped.children)
-        ]
-        if not all(path.is_file() for path in expected):
+        if not _has_required_files(processed_dir, scoped):
             continue
         audit = audit_rule(processed_dir, scoped)
-        if not audit.safe_to_stage:
-            blocked.append(audit)
-            continue
-        if not dry_run:
-            prepared.append(prepare_local_rule(data_root, audit))
+        _record_audited_rule(
+            data_root,
+            audit,
+            dry_run=dry_run,
+            prepared=prepared,
+            blocked=blocked,
+        )
     return tuple(prepared), tuple(blocked)
 
 
