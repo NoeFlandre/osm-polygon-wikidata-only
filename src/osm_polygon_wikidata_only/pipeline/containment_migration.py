@@ -83,57 +83,126 @@ def _identity_set(path: Path, contract: TableContract) -> tuple[set[tuple[Any, .
     return identities, len(rows) - len(identities)
 
 
+def _contract_paths(
+    processed_dir: Path,
+    contract: TableContract,
+    parent: str,
+    child: str,
+) -> tuple[Path, Path]:
+    """Return live parent and child paths for one table contract."""
+    return (
+        processed_dir / contract.subdir / f"{parent}.parquet",
+        processed_dir / contract.subdir / f"{child}.parquet",
+    )
+
+
+def _duplicate_blockers(
+    child: str,
+    subdir: str,
+    parent_duplicates: int,
+    child_duplicates: int,
+) -> list[str]:
+    """Describe duplicate identity blockers for one audited table."""
+    blockers: list[str] = []
+    if parent_duplicates:
+        blockers.append(f"{child}: {subdir} parent has {parent_duplicates} duplicate identities")
+    if child_duplicates:
+        blockers.append(f"{child}: {subdir} child has {child_duplicates} duplicate identities")
+    return blockers
+
+
+def _audit_present_contract(
+    processed_dir: Path,
+    contract: TableContract,
+    parent: str,
+    child: str,
+    parent_path: Path,
+    child_path: Path,
+) -> tuple[TableAudit, list[str]]:
+    """Audit one contract whose parent and child files are present."""
+    try:
+        parent_schema = pq.read_schema(parent_path)  # type: ignore[no-untyped-call]
+        child_schema = pq.read_schema(child_path)  # type: ignore[no-untyped-call]
+        if not parent_schema.equals(child_schema, check_metadata=True):
+            return (
+                TableAudit(contract.subdir, 0, 0, 0, 0),
+                [f"{child}: schema mismatch for {contract.subdir}"],
+            )
+        parent_ids, parent_duplicates = _identity_set(parent_path, contract)
+        child_ids, child_duplicates = _identity_set(child_path, contract)
+    except Exception as error:
+        return (
+            TableAudit(contract.subdir, 0, 0, 0, 0),
+            [f"{child}: unreadable {contract.subdir}: {type(error).__name__}"],
+        )
+    audit = TableAudit(
+        contract.subdir,
+        len(child_ids),
+        len(child_ids - parent_ids),
+        parent_duplicates,
+        child_duplicates,
+    )
+    return audit, _duplicate_blockers(
+        child,
+        contract.subdir,
+        parent_duplicates,
+        child_duplicates,
+    )
+
+
+def _audit_contract(
+    processed_dir: Path,
+    contract: TableContract,
+    parent: str,
+    child: str,
+) -> tuple[TableAudit, list[str]]:
+    """Audit one table contract and return its findings and blockers."""
+    parent_path, child_path = _contract_paths(processed_dir, contract, parent, child)
+    missing_paths = [path for path in (parent_path, child_path) if not path.is_file()]
+    if missing_paths:
+        blockers = [
+            f"{child}: missing file {path.relative_to(processed_dir)}" for path in missing_paths
+        ]
+        return TableAudit(contract.subdir, 0, 0, 0, 0), blockers
+    return _audit_present_contract(
+        processed_dir,
+        contract,
+        parent,
+        child,
+        parent_path,
+        child_path,
+    )
+
+
+def _audit_child(
+    processed_dir: Path,
+    parent: str,
+    child: str,
+) -> tuple[ChildAudit, list[str]]:
+    """Audit every supported table for one child."""
+    table_audits: list[TableAudit] = []
+    blockers: list[str] = []
+    for contract in TABLE_CONTRACTS:
+        table_audit, contract_blockers = _audit_contract(
+            processed_dir,
+            contract,
+            parent,
+            child,
+        )
+        table_audits.append(table_audit)
+        blockers.extend(contract_blockers)
+    return ChildAudit(child, tuple(table_audits)), blockers
+
+
 def audit_rule(processed_dir: Path, rule: ContainmentRule) -> RuleAudit:
     """Audit a rule without mutating files; any uncertainty blocks staging."""
     parent = validate_stem(rule.parent)
     children: list[ChildAudit] = []
     blockers: list[str] = []
     for child_value in sorted(rule.children):
-        child = validate_stem(child_value)
-        table_audits: list[TableAudit] = []
-        for contract in TABLE_CONTRACTS:
-            parent_path = processed_dir / contract.subdir / f"{parent}.parquet"
-            child_path = processed_dir / contract.subdir / f"{child}.parquet"
-            missing_paths = [path for path in (parent_path, child_path) if not path.is_file()]
-            if missing_paths:
-                blockers.extend(
-                    f"{child}: missing file {path.relative_to(processed_dir)}"
-                    for path in missing_paths
-                )
-                table_audits.append(TableAudit(contract.subdir, 0, 0, 0, 0))
-                continue
-            try:
-                parent_schema = pq.read_schema(parent_path)  # type: ignore[no-untyped-call]
-                child_schema = pq.read_schema(child_path)  # type: ignore[no-untyped-call]
-                if not parent_schema.equals(child_schema, check_metadata=True):
-                    blockers.append(f"{child}: schema mismatch for {contract.subdir}")
-                    table_audits.append(TableAudit(contract.subdir, 0, 0, 0, 0))
-                    continue
-                parent_ids, parent_duplicates = _identity_set(parent_path, contract)
-                child_ids, child_duplicates = _identity_set(child_path, contract)
-            except Exception as error:
-                blockers.append(f"{child}: unreadable {contract.subdir}: {type(error).__name__}")
-                table_audits.append(TableAudit(contract.subdir, 0, 0, 0, 0))
-                continue
-            missing = child_ids - parent_ids
-            table_audits.append(
-                TableAudit(
-                    contract.subdir,
-                    len(child_ids),
-                    len(missing),
-                    parent_duplicates,
-                    child_duplicates,
-                )
-            )
-            if parent_duplicates:
-                blockers.append(
-                    f"{child}: {contract.subdir} parent has {parent_duplicates} duplicate identities"
-                )
-            if child_duplicates:
-                blockers.append(
-                    f"{child}: {contract.subdir} child has {child_duplicates} duplicate identities"
-                )
-        children.append(ChildAudit(child, tuple(table_audits)))
+        child, child_blockers = _audit_child(processed_dir, parent, validate_stem(child_value))
+        children.append(child)
+        blockers.extend(child_blockers)
     return RuleAudit(parent, tuple(children), tuple(sorted(blockers)))
 
 
@@ -183,25 +252,170 @@ def _canonical_polygon_row(
         else parent
     )
     canonical = dict(newest)
-    if "polygon_id" in canonical:
-        canonical["polygon_id"] = (
-            parent["polygon_id"]
-            if parent is not None
-            else f"{parent_stem}:{child['osm_type']}:{child['osm_id']}"
-        )
-    if "region" in canonical:
-        canonical["region"] = (
-            parent.get("region", parent_stem.removesuffix("-latest"))
-            if parent is not None
-            else parent_stem.removesuffix("-latest")
-        )
-    if "source_pbf" in canonical:
-        canonical["source_pbf"] = (
-            parent.get("source_pbf", f"{parent_stem}.osm.pbf")
-            if parent is not None
-            else f"{parent_stem}.osm.pbf"
-        )
+    for field in ("polygon_id", "region", "source_pbf"):
+        if field in canonical:
+            canonical[field] = _canonical_provenance_value(
+                field,
+                parent,
+                child,
+                parent_stem,
+            )
     return canonical
+
+
+def _canonical_provenance_value(
+    field: str,
+    parent: dict[str, Any] | None,
+    child: dict[str, Any],
+    parent_stem: str,
+) -> Any:
+    """Return one canonical parent-provenance field."""
+    if field == "polygon_id":
+        return _polygon_provenance(parent, child, parent_stem)
+    if field == "region":
+        return _parent_or_default(parent, "region", parent_stem.removesuffix("-latest"))
+    return _parent_or_default(parent, "source_pbf", f"{parent_stem}.osm.pbf")
+
+
+def _polygon_provenance(
+    parent: dict[str, Any] | None,
+    child: dict[str, Any],
+    parent_stem: str,
+) -> str:
+    """Return the canonical polygon identity."""
+    if parent is not None:
+        return str(parent["polygon_id"])
+    return f"{parent_stem}:{child['osm_type']}:{child['osm_id']}"
+
+
+def _parent_or_default(
+    parent: dict[str, Any] | None,
+    field: str,
+    default: str,
+) -> str:
+    """Read a parent provenance field with its canonical fallback."""
+    if parent is None:
+        return default
+    return str(parent.get(field, default))
+
+
+def _merge_polygon_rows(
+    processed_dir: Path,
+    parent_stem: str,
+    children: tuple[str, ...],
+) -> tuple[list[dict[str, Any]], dict[tuple[Any, Any], dict[str, Any]]]:
+    """Merge child polygon snapshots into canonical parent rows."""
+    parent_path = processed_dir / "polygons" / f"{parent_stem}.parquet"
+    polygon_rows = pq.read_table(parent_path).to_pylist()  # type: ignore[no-untyped-call]
+    polygon_positions = {
+        (row["osm_type"], row["osm_id"]): position
+        for position, row in enumerate(polygon_rows)
+    }
+    for child in children:
+        child_path = processed_dir / "polygons" / f"{child}.parquet"
+        _merge_child_polygon_rows(
+            polygon_rows,
+            polygon_positions,
+            pq.read_table(child_path).to_pylist(),  # type: ignore[no-untyped-call]
+            parent_stem,
+        )
+    parent_polygons = {(row["osm_type"], row["osm_id"]): row for row in polygon_rows}
+    return polygon_rows, parent_polygons
+
+
+def _merge_child_polygon_rows(
+    polygon_rows: list[dict[str, Any]],
+    polygon_positions: dict[tuple[Any, Any], int],
+    child_rows: list[dict[str, Any]],
+    parent_stem: str,
+) -> None:
+    """Merge one child's polygon snapshots into the parent rows."""
+    for child_row in child_rows:
+        key = (child_row["osm_type"], child_row["osm_id"])
+        position = polygon_positions.get(key)
+        if position is None:
+            polygon_positions[key] = len(polygon_rows)
+            polygon_rows.append(_canonical_polygon_row(None, child_row, parent_stem=parent_stem))
+            continue
+        polygon_rows[position] = _canonical_polygon_row(
+            polygon_rows[position],
+            child_row,
+            parent_stem=parent_stem,
+        )
+
+
+def _append_child_rows(
+    rows: list[dict[str, Any]],
+    seen: set[tuple[Any, ...]],
+    child_rows: list[dict[str, Any]],
+    contract: TableContract,
+    parent_stem: str,
+    parent_polygons: dict[tuple[Any, Any], dict[str, Any]],
+) -> None:
+    """Append unseen child rows, remapping polygon article provenance."""
+    for candidate in child_rows:
+        key = _identity(candidate, contract)
+        if key in seen:
+            continue
+        if contract.subdir == "polygon_articles":
+            candidate = _remap_link(
+                candidate,
+                parent_stem=parent_stem,
+                parent_polygons=parent_polygons,
+            )
+        rows.append(candidate)
+        seen.add(key)
+
+
+def _merged_contract_rows(
+    processed_dir: Path,
+    parent_stem: str,
+    children: tuple[str, ...],
+    contract: TableContract,
+    polygon_rows: list[dict[str, Any]],
+    parent_polygons: dict[tuple[Any, Any], dict[str, Any]],
+) -> tuple[list[dict[str, Any]], pa.Schema]:
+    """Merge one containment table and return rows plus its parent schema."""
+    parent_path = processed_dir / contract.subdir / f"{parent_stem}.parquet"
+    parent = pq.read_table(parent_path)  # type: ignore[no-untyped-call]
+    rows = polygon_rows if contract.subdir == "polygons" else parent.to_pylist()
+    seen = {_identity(row, contract) for row in rows}
+    for child in children:
+        child_path = processed_dir / contract.subdir / f"{child}.parquet"
+        child_rows = pq.read_table(child_path).to_pylist()  # type: ignore[no-untyped-call]
+        _append_child_rows(
+            rows,
+            seen,
+            child_rows,
+            contract,
+            parent_stem,
+            parent_polygons,
+        )
+    return rows, parent.schema
+
+
+def _stage_contract_artifact(
+    processed_dir: Path,
+    cache_dir: Path,
+    parent_stem: str,
+    children: tuple[str, ...],
+    contract: TableContract,
+    polygon_rows: list[dict[str, Any]],
+    parent_polygons: dict[tuple[Any, Any], dict[str, Any]],
+) -> tuple[str, Path]:
+    """Merge and stage one containment table."""
+    rows, schema = _merged_contract_rows(
+        processed_dir,
+        parent_stem,
+        children,
+        contract,
+        polygon_rows,
+        parent_polygons,
+    )
+    staged_table = pa.Table.from_pylist(rows, schema=schema)
+    target = cache_dir / parent_stem / contract.subdir / f"{parent_stem}.parquet"
+    _atomic_write_parquet(target, staged_table)
+    return contract.subdir, target
 
 
 def stage_rule(processed_dir: Path, cache_dir: Path, audit: RuleAudit) -> StagedRule:
@@ -212,51 +426,19 @@ def stage_rule(processed_dir: Path, cache_dir: Path, audit: RuleAudit) -> Staged
         )
     parent_stem = validate_stem(audit.parent)
     children = tuple(child.stem for child in audit.children)
-    polygon_path = processed_dir / "polygons" / f"{parent_stem}.parquet"
-    polygon_rows = pq.read_table(polygon_path).to_pylist()  # type: ignore[no-untyped-call]
-    polygon_positions = {
-        (row["osm_type"], row["osm_id"]): position for position, row in enumerate(polygon_rows)
-    }
-    for child in children:
-        child_path = processed_dir / "polygons" / f"{child}.parquet"
-        for child_row in pq.read_table(child_path).to_pylist():  # type: ignore[no-untyped-call]
-            key = (child_row["osm_type"], child_row["osm_id"])
-            position = polygon_positions.get(key)
-            if position is None:
-                polygon_positions[key] = len(polygon_rows)
-                polygon_rows.append(
-                    _canonical_polygon_row(None, child_row, parent_stem=parent_stem)
-                )
-            else:
-                polygon_rows[position] = _canonical_polygon_row(
-                    polygon_rows[position], child_row, parent_stem=parent_stem
-                )
-    parent_polygons = {(row["osm_type"], row["osm_id"]): row for row in polygon_rows}
-    artifacts: list[tuple[str, Path]] = []
-    for contract in TABLE_CONTRACTS:
-        parent_path = processed_dir / contract.subdir / f"{parent_stem}.parquet"
-        parent = pq.read_table(parent_path)  # type: ignore[no-untyped-call]
-        rows = polygon_rows if contract.subdir == "polygons" else parent.to_pylist()
-        seen = {_identity(row, contract) for row in rows}
-        for child in children:
-            child_path = processed_dir / contract.subdir / f"{child}.parquet"
-            child_rows = pq.read_table(child_path).to_pylist()  # type: ignore[no-untyped-call]
-            for candidate in child_rows:
-                key = _identity(candidate, contract)
-                if key in seen:
-                    continue
-                if contract.subdir == "polygon_articles":
-                    candidate = _remap_link(
-                        candidate,
-                        parent_stem=parent_stem,
-                        parent_polygons=parent_polygons,
-                    )
-                rows.append(candidate)
-                seen.add(key)
-        staged_table = pa.Table.from_pylist(rows, schema=parent.schema)
-        target = cache_dir / parent_stem / contract.subdir / f"{parent_stem}.parquet"
-        _atomic_write_parquet(target, staged_table)
-        artifacts.append((contract.subdir, target))
+    polygon_rows, parent_polygons = _merge_polygon_rows(processed_dir, parent_stem, children)
+    artifacts = [
+        _stage_contract_artifact(
+            processed_dir,
+            cache_dir,
+            parent_stem,
+            children,
+            contract,
+            polygon_rows,
+            parent_polygons,
+        )
+        for contract in TABLE_CONTRACTS
+    ]
     return StagedRule(parent_stem, children, tuple(artifacts))
 
 
