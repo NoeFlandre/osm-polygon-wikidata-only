@@ -32,3 +32,17 @@ jobs:
         run: docker build --target runtime --tag osm-polygon-wikidata-only:ci .
       - name: Verify the safe default command
         run: docker run --rm osm-polygon-wikidata-only:ci --help
+
+  test-strength:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: taiki-e/install-action@just
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Run mutation and CRAP gates
+        run: just quality-strength

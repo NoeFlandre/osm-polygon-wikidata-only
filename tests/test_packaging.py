@@ -53,7 +53,15 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     }
 
     assert {"typer", "rich", "tqdm", "trackio"} <= runtime_names
-    assert {"pytest", "pytest-cov", "ruff", "ty", "pre-commit"} <= development_names
+    assert {
+        "crap4py",
+        "mutmut",
+        "pytest",
+        "pytest-cov",
+        "ruff",
+        "ty",
+        "pre-commit",
+    } <= development_names
     assert (
         config["project"]["scripts"]["osm-polygon-wikidata-only-audit-remote"]
         == "osm_polygon_wikidata_only.cli.audit_remote:run"
@@ -79,6 +87,9 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "build:",
         "docs:",
         "trackio:",
+        "mutation:",
+        "crap:",
+        "quality-strength:",
         "check:",
     ):
         assert recipe in justfile
@@ -94,6 +105,13 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
     ):
         assert command in justfile
     assert "mypy" not in justfile
+
+
+def test_github_actions_runs_the_test_strength_gate() -> None:
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "run: just quality-strength" in workflow
 
 
 def test_pre_commit_runs_fast_uv_managed_quality_hooks() -> None:

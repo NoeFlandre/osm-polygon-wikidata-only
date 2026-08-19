@@ -6,6 +6,24 @@ from collections.abc import Iterable
 from typing import Any
 
 
+def _document_identity(raw: dict[str, Any]) -> str:
+    identity = str(raw.get("document_id", ""))
+    if not identity:
+        raise ValueError("Document row is missing document_id")
+    return identity
+
+
+def _link_identity(raw: dict[str, Any]) -> tuple[str, str, str]:
+    identity = (
+        str(raw.get("polygon_id", "")),
+        str(raw.get("project", "")),
+        str(raw.get("document_id", "")),
+    )
+    if not all(identity):
+        raise ValueError(f"Link row is missing identity fields: {identity!r}")
+    return identity
+
+
 def deduplicate_documents(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse identical document rows and reject conflicting identities.
 
@@ -15,9 +33,7 @@ def deduplicate_documents(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
     """
     by_identity: dict[str, dict[str, Any]] = {}
     for raw in rows:
-        identity = str(raw.get("document_id", ""))
-        if not identity:
-            raise ValueError("Document row is missing document_id")
+        identity = _document_identity(raw)
         row = dict(raw)
         previous = by_identity.get(identity)
         if previous is not None and previous != row:
@@ -35,13 +51,7 @@ def deduplicate_links(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     by_identity: dict[tuple[str, str, str], dict[str, Any]] = {}
     for raw in rows:
-        identity = (
-            str(raw.get("polygon_id", "")),
-            str(raw.get("project", "")),
-            str(raw.get("document_id", "")),
-        )
-        if not all(identity):
-            raise ValueError(f"Link row is missing identity fields: {identity!r}")
+        identity = _link_identity(raw)
         row = dict(raw)
         previous = by_identity.get(identity)
         if previous is not None and previous != row:

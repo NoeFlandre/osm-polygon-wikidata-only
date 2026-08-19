@@ -12,6 +12,20 @@ test:
 coverage:
     uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
 
+# Exhaustively mutate the pure data-integrity helpers configured in pyproject.toml.
+mutation:
+    uv run mutmut run
+    uv run mutmut results
+
+# Enforce a CRAP score below 6 for the same tested helper scope.
+crap:
+    uv run pytest tests/domain/test_filters.py tests/v2/test_deduplication.py tests/v2/test_fingerprints.py tests/v2/test_wikipedia_tags.py --cov=osm_polygon_wikidata_only.domain.filters --cov=osm_polygon_wikidata_only.v2.deduplication --cov=osm_polygon_wikidata_only.v2.fingerprints --cov=osm_polygon_wikidata_only.v2.wikipedia_tags --cov-branch --cov-report=lcov:/tmp/osm-polygon-wikidata-only-crap.lcov -q
+    uv run crap4py --lcov /tmp/osm-polygon-wikidata-only-crap.lcov --max-crap 5.99 src/osm_polygon_wikidata_only/domain/filters.py src/osm_polygon_wikidata_only/v2/deduplication.py src/osm_polygon_wikidata_only/v2/fingerprints.py src/osm_polygon_wikidata_only/v2/wikipedia_tags.py
+
+# Run both opt-in quality-strength checks; these are intentionally separate
+# from `just check` because mutation testing is substantially slower.
+quality-strength: mutation crap
+
 lint:
     uv run ruff check src tests scripts
 

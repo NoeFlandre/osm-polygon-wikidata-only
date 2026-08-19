@@ -97,6 +97,25 @@ Run `uv run pre-commit run --all-files` before opening a pull request. The
 hooks intentionally run the fast Ruff and `ty` subset; `just check` remains the
 complete gate used by GitHub Actions.
 
+## Test strength checks
+
+The normal gate measures regression coverage across the whole package. The
+opt-in `just quality-strength` recipe adds two stricter checks for the small,
+pure helpers that decide whether OSM references and document/link identities
+are valid:
+
+```bash
+just mutation
+just crap
+```
+
+`mutmut` deliberately changes those helpers and requires every generated
+mutant to be killed by the focused tests. `crap4py` reports the CRAP score,
+which combines cyclomatic complexity and line coverage, and fails if any
+targeted function reaches 6 or more. Keeping this gate focused makes the result
+exhaustive and repeatable without pretending that a single mutation run can
+meaningfully cover the entire I/O-heavy pipeline.
+
 ## Documentation and contribution
 
 Build the site without starting a server:

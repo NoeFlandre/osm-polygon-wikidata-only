@@ -20,6 +20,9 @@ venv/
 .coverage.*
 htmlcov/
 coverage.xml
+.mutmut-cache
+.mutmut-cache/
+mutants/
 
 # All data artifacts: the repository is code-only.
 # PBF inputs, intermediate outputs, Arrow/Parquet files, saved datasets,
