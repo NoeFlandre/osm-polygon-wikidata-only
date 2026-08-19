@@ -9,6 +9,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
 from osm_polygon_wikidata_only.v2 import card
 from osm_polygon_wikidata_only.v2.card import (
+    _word_column,
     compute_v2_card_stats,
     render_v2_card,
     write_v2_card,
@@ -37,6 +38,12 @@ def test_card_is_factual_and_deterministic(tmp_path: Path) -> None:
     )
     assert first.index("## Citation") > first.index("## Reproducibility")
     assert write_v2_card(tmp_path).read_text(encoding="utf-8") == first
+
+
+def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:
+    assert _word_column({"article_length_words", "text_length_words"}) == ("article_length_words")
+    assert _word_column({"text_length_words"}) == "text_length_words"
+    assert _word_column({"document_id"}) is None
 
 
 def test_write_v2_card_preserves_previous_card_when_atomic_write_fails(
