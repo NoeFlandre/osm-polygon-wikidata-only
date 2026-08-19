@@ -45,7 +45,12 @@ from osm_polygon_wikidata_only.config.paths import (
     PROCESSED_POLYGONS,
     DataRoot,
 )
-from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
+from osm_polygon_wikidata_only.domain.models import (
+    Article,
+    ManifestStats,
+    Polygon,
+    PolygonArticleLink,
+)
 from osm_polygon_wikidata_only.io.manifest import (
     manifest_path,
     update_entry,
@@ -103,6 +108,143 @@ def _link_row(link: PolygonArticleLink) -> dict[str, Any]:
     return dict(link.__dict__)
 
 
+def _persistence_paths(data_root: DataRoot, stem: str) -> tuple[Path, Path, Path]:
+    """Return the canonical polygon, article, and link paths."""
+    return (
+        _local_path(data_root.processed, PROCESSED_POLYGONS, stem),
+        _local_path(data_root.processed, PROCESSED_ARTICLES, stem),
+        _local_path(data_root.processed, PROCESSED_LINKS, stem),
+    )
+
+
+def _temporary_paths(final_paths: tuple[Path, Path, Path]) -> tuple[Path, Path, Path]:
+    """Return temporary siblings corresponding to final parquet paths."""
+    return (
+        final_paths[0].with_suffix(final_paths[0].suffix + ".tmp"),
+        final_paths[1].with_suffix(final_paths[1].suffix + ".tmp"),
+        final_paths[2].with_suffix(final_paths[2].suffix + ".tmp"),
+    )
+
+
+def _write_parquet_to_temporary(
+    polygons: list[Polygon],
+    articles: list[Article],
+    links: list[PolygonArticleLink],
+    temporary_paths: tuple[Path, Path, Path],
+) -> None:
+    """Write row collections to their temporary parquet siblings."""
+    write_polygons(temporary_paths[0], [_polygon_row(p) for p in polygons])
+    write_articles(temporary_paths[1], [_article_row(a) for a in articles])
+    write_polygon_articles(temporary_paths[2], [_link_row(link) for link in links])
+
+
+def _replace_persistence_files(
+    temporary_paths: tuple[Path, Path, Path],
+    final_paths: tuple[Path, Path, Path],
+) -> None:
+    """Atomically install each completed parquet sibling."""
+    for temporary, final in zip(temporary_paths, final_paths, strict=True):
+        os.replace(temporary, final)
+
+
+def _write_persistence_files(
+    polygons: list[Polygon],
+    articles: list[Article],
+    links: list[PolygonArticleLink],
+    final_paths: tuple[Path, Path, Path],
+) -> float:
+    """Write all parquet artifacts and remove temporary siblings on failure."""
+    temporary_paths = _temporary_paths(final_paths)
+    write_started = time.perf_counter()
+    try:
+        _write_parquet_to_temporary(polygons, articles, links, temporary_paths)
+        _replace_persistence_files(temporary_paths, final_paths)
+    finally:
+        for temporary in temporary_paths:
+            temporary.unlink(missing_ok=True)
+    return time.perf_counter() - write_started
+
+
+def _persistence_stats(
+    polygons: list[Polygon],
+    articles: list[Article],
+    links: list[PolygonArticleLink],
+) -> ManifestStats:
+    """Stream row statistics without retaining another copy of the rows."""
+    stats = StreamingStats()
+    for polygon in polygons:
+        stats.add_polygon(polygon)
+    for article in articles:
+        stats.add_article(article)
+    for link in links:
+        stats.add_link(link)
+    return stats.finalize()
+
+
+def _write_manifest_entry(
+    data_root: DataRoot,
+    stem: str,
+    source_pbf: str,
+    stats: ManifestStats,
+) -> tuple[Path, dict[str, Any], float]:
+    """Write the canonical processed-manifest entry and return its timing."""
+    manifest_started = time.perf_counter()
+    path = manifest_path(data_root.processed_manifests)
+    entry = upsert_entry(
+        path,
+        source_pbf=source_pbf,
+        region=stem,
+        polygons_path=_remote_path(PROCESSED_POLYGONS, stem),
+        articles_path=_remote_path(PROCESSED_ARTICLES, stem),
+        polygon_articles_path=_remote_path(PROCESSED_LINKS, stem),
+        stats=stats,
+        extraction_version=__version__,
+    )
+    return path, entry, time.perf_counter() - manifest_started
+
+
+def _integrity_metadata(result: PolygonArticlesIntegrityResult) -> dict[str, Any]:
+    """Serialize the deterministic integrity result for the manifest."""
+    return {
+        "contract_version": INTEGRITY_CONTRACT_VERSION,
+        "shard": result.shard,
+        "original_row_count": result.original_row_count,
+        "retained_row_count": result.retained_row_count,
+        "rejected_row_count": result.rejected_row_count,
+        "rewritten": result.rewritten,
+        "rejections": [record.to_dict() for record in result.rejections],
+    }
+
+
+def _enforce_integrity_if_needed(
+    data_root: DataRoot,
+    stem: str,
+    source_pbf: str,
+    links_path: Path,
+    polygons_path: Path,
+    manifest_path_value: Path,
+    entry: dict[str, Any],
+) -> tuple[PolygonArticlesIntegrityResult | None, dict[str, Any]]:
+    """Run reject-only link integrity enforcement when both artifacts exist."""
+    if not links_path.is_file() or not polygons_path.is_file():
+        return None, entry
+    result = enforce_polygon_articles_integrity(data_root, stem)
+    if result.rejected_row_count <= 0:
+        return result, entry
+    updated = update_entry(
+        manifest_path_value,
+        source_pbf=source_pbf,
+        integrity=_integrity_metadata(result),
+    )
+    PROCESSOR_LOGGER.warning(
+        "Integrity pass dropped %d polygon_articles row(s) for shard %r "
+        "with mismatched wikidata; canonical polygons unchanged.",
+        result.rejected_row_count,
+        stem,
+    )
+    return result, updated
+
+
 def run_persistence_phase(
     polygons: list[Polygon],
     articles: list[Article],
@@ -118,52 +260,19 @@ def run_persistence_phase(
     removed and the manifest is left untouched -- no half-published
     PBF.
     """
-    polygons_path = _local_path(data_root.processed, PROCESSED_POLYGONS, stem)
-    articles_path = _local_path(data_root.processed, PROCESSED_ARTICLES, stem)
-    links_path = _local_path(data_root.processed, PROCESSED_LINKS, stem)
-
-    temporary_paths = [
-        path.with_suffix(path.suffix + ".tmp")
-        for path in (polygons_path, articles_path, links_path)
-    ]
-    write_started = time.perf_counter()
-    try:
-        write_polygons(temporary_paths[0], [_polygon_row(p) for p in polygons])
-        write_articles(temporary_paths[1], [_article_row(a) for a in articles])
-        write_polygon_articles(temporary_paths[2], [_link_row(link) for link in links])
-        for temporary, final in zip(
-            temporary_paths,
-            (polygons_path, articles_path, links_path),
-            strict=True,
-        ):
-            os.replace(temporary, final)
-    finally:
-        for temporary in temporary_paths:
-            temporary.unlink(missing_ok=True)
-    write_duration = time.perf_counter() - write_started
-
-    manifest_started = time.perf_counter()
-    stats = StreamingStats()
-    for polygon in polygons:
-        stats.add_polygon(polygon)
-    for article in articles:
-        stats.add_article(article)
-    for link in links:
-        stats.add_link(link)
-    final_stats = stats.finalize()
-
-    mpath = manifest_path(data_root.processed_manifests)
-    entry = upsert_entry(
-        mpath,
-        source_pbf=source_pbf,
-        region=stem,
-        polygons_path=_remote_path(PROCESSED_POLYGONS, stem),
-        articles_path=_remote_path(PROCESSED_ARTICLES, stem),
-        polygon_articles_path=_remote_path(PROCESSED_LINKS, stem),
-        stats=final_stats,
-        extraction_version=__version__,
+    polygons_path, articles_path, links_path = _persistence_paths(data_root, stem)
+    write_duration = _write_persistence_files(
+        polygons,
+        articles,
+        links,
+        (polygons_path, articles_path, links_path),
     )
-    manifest_duration = time.perf_counter() - manifest_started
+    mpath, entry, manifest_duration = _write_manifest_entry(
+        data_root,
+        stem,
+        source_pbf,
+        _persistence_stats(polygons, articles, links),
+    )
 
     PROCESSOR_LOGGER.info(
         "Built %d unique articles and %d polygon-article links",
@@ -171,34 +280,15 @@ def run_persistence_phase(
         len(links),
     )
 
-    # Deterministic join-integrity enforcement: reject any
-    # polygon_articles row whose wikidata does not match the canonical
-    # polygon wikidata (Path A only -- never rewrite QIDs). The
-    # rejection summary travels with the manifest entry so the audit
-    # metadata is reproducible.
-    integrity_result: PolygonArticlesIntegrityResult | None = None
-    if links_path.is_file() and polygons_path.is_file():
-        integrity_result = enforce_polygon_articles_integrity(data_root, stem)
-        if integrity_result.rejected_row_count > 0:
-            entry = update_entry(
-                mpath,
-                source_pbf=source_pbf,
-                integrity={
-                    "contract_version": INTEGRITY_CONTRACT_VERSION,
-                    "shard": integrity_result.shard,
-                    "original_row_count": integrity_result.original_row_count,
-                    "retained_row_count": integrity_result.retained_row_count,
-                    "rejected_row_count": integrity_result.rejected_row_count,
-                    "rewritten": integrity_result.rewritten,
-                    "rejections": [r.to_dict() for r in integrity_result.rejections],
-                },
-            )
-            PROCESSOR_LOGGER.warning(
-                "Integrity pass dropped %d polygon_articles row(s) for shard %r "
-                "with mismatched wikidata; canonical polygons unchanged.",
-                integrity_result.rejected_row_count,
-                stem,
-            )
+    integrity_result, entry = _enforce_integrity_if_needed(
+        data_root,
+        stem,
+        source_pbf,
+        links_path,
+        polygons_path,
+        mpath,
+        entry,
+    )
 
     return PersistenceOutcome(
         polygons_path=polygons_path,
