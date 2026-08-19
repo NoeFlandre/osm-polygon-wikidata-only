@@ -1,4 +1,4 @@
-"""Pure dataset publication assembly.
+"""Public dataset publication facade.
 
 This module owns the construction of publication-op lists for the
 three documented publication contracts. Assemblers return
@@ -105,6 +105,11 @@ exception silently. Callers pass a ``warning_callback`` (or
 ``None`` for the silent policy) to each entry point so the policy
 stays with the caller and the publication module never invents a
 new logger identity.
+
+The ordered assemblers live in the focused modules under
+``hf._publication``. This module keeps the stable import surface and binds
+their helper dependencies at call time so existing injection and test seams
+remain valid.
 """
 
 from __future__ import annotations
@@ -135,15 +140,11 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
     compute_augmentation_stats,
 )
+from osm_polygon_wikidata_only.hf._publication import artifacts as _publication_artifacts
 from osm_polygon_wikidata_only.hf._publication.artifacts import (
     load_existing_core_artifacts,
 )
-from osm_polygon_wikidata_only.hf._publication.artifacts import (
-    validate_augmentation_artifacts as _validate_augmentation_artifacts,
-)
-from osm_polygon_wikidata_only.hf._publication.artifacts import (
-    validate_core_artifacts as _validate_core_artifacts,
-)
+from osm_polygon_wikidata_only.hf._publication.hooks import PublicationHooks
 from osm_polygon_wikidata_only.hf._publication.models import (
     CorePublicationArtifacts,
     PublicationValidationError,
@@ -183,26 +184,20 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
-    LEGACY_REMOTE_COVERAGE_MAP_FILE,
-    LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
-    LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
     LOCAL_DATASET_HERO_FILE,
     REMOTE_AUGMENTATION_MANIFEST_FILE,
-    REMOTE_CONTAINMENT_RETIREMENT_FILE,
-    REMOTE_COVERAGE_MAP_FILE,
     REMOTE_DATASET_HERO_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
-    REMOTE_LINKS_DIR,
-    REMOTE_MANIFEST_FILE,
-    REMOTE_POLYGONS_DIR,
     REMOTE_WIKIPEDIA_DOCUMENTS_DIR,
-    canonical_region_paths,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.publication")
+
+# Preserve the focused validation aliases used by downstream integrations and
+# the existing publication ownership contract.
+_validate_core_artifacts = _publication_artifacts.validate_core_artifacts
+_validate_augmentation_artifacts = _publication_artifacts.validate_augmentation_artifacts
 
 
 def _dataset_hero_op() -> PublicationOp:
@@ -436,8 +431,33 @@ def coverage_refresh_required(core: object | None) -> bool:
     return core is not None
 
 
+def _publication_hooks() -> PublicationHooks:
+    """Build current helper bindings for compatibility and test injection.
+
+    The bindings are resolved for every assembly call so existing callers that
+    patch the historical publication helpers retain the same behavior.
+    """
+
+    return PublicationHooks(
+        dataset_hero_op=_dataset_hero_op,
+        augmentation_migration_ops=_augmentation_migration_ops,
+        legacy_article_retirement_ops=_legacy_article_retirement_ops,
+        snapshot_upload_manifests=snapshot_upload_manifests,
+        snapshot_canonical_document=_snapshot_canonical_document,
+        metadata_only_upload=assemble_metadata_only_upload,
+        write_readme_snapshot=write_readme_snapshot,
+        refresh_coverage_assets=refresh_coverage_assets,
+        ensure_world_land=ensure_world_land,
+        generate_coverage_map=generate_coverage_map,
+        load_centroids_from_parquet=load_centroids_from_parquet,
+        generate_geographic_text_presence=_generate_geographic_text_presence,
+        load_text_presence=_load_text_presence,
+        generate_geographic_text_density_snapshot=_generate_geographic_text_density_snapshot,
+    )
+
+
 # ---------------------------------------------------------------------------
-# Assembly contracts (pure: each returns the ordered op list)
+# Public compatibility facade
 # ---------------------------------------------------------------------------
 
 
@@ -448,65 +468,18 @@ def assemble_core_upload(
     core: ProcessResult,
     world_land_warning: Callable[[str], None],
 ) -> list[PublicationOp]:
-    """Assemble the legacy core publication op list.
+    """Assemble the legacy core publication plan."""
+    from osm_polygon_wikidata_only.hf._publication.core import (
+        assemble_core_upload as _assemble_core_upload,
+    )
 
-    Returns the ordered list of :class:`PublicationOp` records:
-
-    1. polygons
-    2. articles
-    3. polygon_articles
-    4. processed manifest
-    5. combined text point map
-    6. combined text H3 density
-    7. legacy Wikipedia H3 coverage (delete)
-    8. legacy all-polygon H3 density (delete)
-    9. README
-    10. canonical coverage map (add)
-    11. legacy coverage map (delete)
-
-    The function is pure: no HF upload state is owned here. The
-    caller submits the returned list. Required artifacts are
-    validated before any snapshot is written, and any snapshot
-    failure propagates without producing a partial op list. The
-    legacy core publication does NOT touch the augmentation
-    manifests directory at all.
-    """
-    _validate_core_artifacts(core)
-    hero_op = _dataset_hero_op()
-    snapshot, card_snapshot = snapshot_upload_manifests(data_root=data_root, core=core)
-    map_snapshot, text_presence_snapshot, density_snapshot = refresh_coverage_assets(
+    return _assemble_core_upload(
         data_root=data_root,
-        snapshot_stem=core.polygons_path.stem,
-        snapshots_dir=data_root.cache / "upload_manifest_snapshots",
+        repo_id=repo_id,
+        core=core,
         world_land_warning=world_land_warning,
+        hooks=_publication_hooks(),
     )
-    write_readme_snapshot(data_root, repo_id, card_snapshot)
-    canonical_document = _snapshot_canonical_document(
-        core,
-        data_root.cache
-        / "upload_manifest_snapshots"
-        / f"{core.articles_path.stem}-wikipedia-documents.parquet",
-    )
-    return [
-        add_op(core.polygons_path, path_in_repo=f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}"),
-        *_legacy_article_retirement_ops(
-            stem=core.articles_path.stem,
-            canonical_document_path=canonical_document,
-        ),
-        add_op(
-            core.polygon_articles_path,
-            path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
-        ),
-        add_op(snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
-        add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
-        add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
-        delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-        delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-        hero_op,
-        add_op(card_snapshot, path_in_repo="README.md"),
-        add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
-        delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
-    ]
 
 
 def assemble_region_upload(
@@ -519,182 +492,21 @@ def assemble_region_upload(
     world_land_warning: Callable[[str], None] | None,
     refresh_maps: bool = True,
 ) -> list[PublicationOp]:
-    """Assemble one atomic region upload (sync-dir publication).
-
-    File ordering follows the documented contract. When ``core`` is
-    provided, the core operations are prepended to the augmentation
-    operations. When ``core`` is ``None``, the augmentation block also
-    refreshes the Wikivoyage-sensitive combined text-presence map.
-    ``refresh_maps=False`` is reserved for migration/recovery transactions
-    followed by one repository-level metadata publication. Those regional
-    commits contain data and manifests only; maps and README are generated
-    once after every regional upload has drained.
-
-    The augmentation block ALWAYS emits the canonical
-    ``add`` op + the legacy ``delete`` op. The first publication
-    after the migration picks up the new canonical path and removes
-    the legacy object. Subsequent publications are idempotent: the
-    delete op affects a path that no longer exists.
-
-    The function is pure: no HF upload state is owned here. The
-    caller submits the returned list. Required artifacts are
-    validated before any snapshot is written, and any snapshot
-    failure propagates without producing a partial op list.
-    """
-    if core is not None:
-        _validate_core_artifacts(core)
-    _validate_augmentation_artifacts(augmentation)
-    hero_op = _dataset_hero_op() if refresh_maps else None
-    snapshots = data_root.cache / "sync_upload_snapshots" / stem
-    snapshots.mkdir(parents=True, exist_ok=True)
-    augmentation_manifest_snapshot = snapshots / "augmentation_manifest.json"
-    atomic_write_text(augmentation_manifest_snapshot, augmentation.manifest_path.read_text())
-    readme_snapshot = snapshots / "README.md"
-
-    ops: list[PublicationOp] = []
-
-    if coverage_refresh_required(core):
-        assert core is not None
-        processed_manifest_snapshot = snapshots / "processed_pbfs.json"
-        atomic_write_text(
-            processed_manifest_snapshot,
-            (data_root.processed_manifests / "processed_pbfs.json").read_text(),
-        )
-        ops.extend(
-            [
-                add_op(
-                    core.polygons_path,
-                    path_in_repo=f"{REMOTE_POLYGONS_DIR}/{core.polygons_path.name}",
-                ),
-                add_op(
-                    core.polygon_articles_path,
-                    path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
-                ),
-                add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
-            ]
-        )
-        if refresh_maps:
-            map_snapshot = snapshots / "coverage_map.png"
-            lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-            try:
-                land_path = ensure_world_land(data_root.cache)
-            # ``except Exception`` retained: same rationale as the legacy
-            # core path -- ``ensure_world_land`` does network I/O via
-            # ``urllib.request.urlretrieve`` which raises a broad,
-            # unstable set of exception types. The sync path passes
-            # ``world_land_warning=None`` (silent fallback).
-            except Exception:
-                if world_land_warning is not None:
-                    world_land_warning("Could not fetch world land data; map will omit continents")
-                land_path = None
-            generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
-            geographic_text_presence_snapshot = snapshots / "geographic_text_presence.png"
-            text_snapshot = _load_text_presence(data_root.processed)
-            _generate_geographic_text_presence(
-                data_root.processed,
-                geographic_text_presence_snapshot,
-                land_geojson_path=land_path,
-                snapshot=text_snapshot,
-            )
-            geographic_text_density_snapshot = snapshots / "geographic_text_density.png"
-            _generate_geographic_text_density_snapshot(
-                data_root,
-                geographic_text_density_snapshot,
-                snapshot=text_snapshot,
-            )
-            ops.extend(
-                [
-                    add_op(
-                        geographic_text_presence_snapshot,
-                        path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
-                    ),
-                    add_op(
-                        geographic_text_density_snapshot,
-                        path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
-                    ),
-                    delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-                    delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-                    add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
-                    delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
-                ]
-            )
-
-    augmentation_only_map_ops: list[PublicationOp] = []
-    if core is None and refresh_maps:
-        text_presence_snapshot = snapshots / "geographic_text_presence.png"
-        try:
-            land_path = ensure_world_land(data_root.cache)
-        except Exception:
-            LOGGER.warning(
-                "Could not fetch world land data; combined text map will omit continents"
-            )
-            land_path = None
-        text_snapshot = _load_text_presence(data_root.processed)
-        _generate_geographic_text_presence(
-            data_root.processed,
-            text_presence_snapshot,
-            land_geojson_path=land_path,
-            snapshot=text_snapshot,
-        )
-        augmentation_only_map_ops.append(
-            add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE)
-        )
-        density_snapshot = snapshots / "geographic_text_density.png"
-        _generate_geographic_text_density_snapshot(
-            data_root,
-            density_snapshot,
-            snapshot=text_snapshot,
-        )
-        augmentation_only_map_ops.extend(
-            [
-                add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
-                delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-                delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-            ]
-        )
-
-    ops.extend(
-        [
-            *(
-                [
-                    add_op(
-                        augmentation.polygon_document_links_path,
-                        path_in_repo=f"{REMOTE_LINKS_DIR}/{stem}.parquet",
-                    )
-                ]
-                if core is None and augmentation.polygon_document_links_path is not None
-                else []
-            ),
-            *_legacy_article_retirement_ops(
-                stem=stem,
-                canonical_document_path=augmentation.wikipedia_documents_path,
-            ),
-            add_op(
-                augmentation.wikipedia_sections_path,
-                path_in_repo=f"wikipedia/sections/{stem}.parquet",
-            ),
-            add_op(
-                augmentation.wikivoyage_documents_path,
-                path_in_repo=f"wikivoyage/documents/{stem}.parquet",
-            ),
-            add_op(
-                augmentation.wikivoyage_sections_path,
-                path_in_repo=f"wikivoyage/sections/{stem}.parquet",
-            ),
-            add_op(
-                augmentation.wikidata_facts_path,
-                path_in_repo=f"wikidata/facts/{stem}.parquet",
-            ),
-            *_augmentation_migration_ops(augmentation_manifest_snapshot),
-            *augmentation_only_map_ops,
-        ]
+    """Assemble one unified-sync region publication plan."""
+    from osm_polygon_wikidata_only.hf._publication.region import (
+        assemble_region_upload as _assemble_region_upload,
     )
-    if refresh_maps:
-        assert hero_op is not None
-        write_readme_snapshot(data_root, repo_id, readme_snapshot)
-        ops.append(hero_op)
-        ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
-    return ops
+
+    return _assemble_region_upload(
+        data_root=data_root,
+        repo_id=repo_id,
+        stem=stem,
+        augmentation=augmentation,
+        core=core,
+        world_land_warning=world_land_warning,
+        refresh_maps=refresh_maps,
+        hooks=_publication_hooks(),
+    )
 
 
 def assemble_augmentation_upload(
@@ -703,104 +515,17 @@ def assemble_augmentation_upload(
     repo_id: str,
     augmentation: AugmentationResult,
 ) -> list[PublicationOp]:
-    """Assemble one augmentation-only publication op list.
+    """Assemble one legacy augmentation publication plan."""
+    from osm_polygon_wikidata_only.hf._publication.augmentation import (
+        assemble_augmentation_upload as _assemble_augmentation_upload,
+    )
 
-    File ordering follows the documented contract:
-
-    1. wikipedia documents
-    2. wikipedia sections
-    3. wikivoyage documents
-    4. wikivoyage sections
-    5. wikidata facts
-    6. canonical augmentation manifest (add)
-    7. legacy augmentation manifest (delete)
-    8. combined Wikipedia/Wikivoyage coverage map
-    9. README
-
-    The combined text-presence map is regenerated because Wikivoyage
-    documents change its numerator. The other coverage assets depend
-    only on core tables and are reused. No new stem-augmentation
-    manifest snapshot is created for this contract: the legacy
-    augmentation command uploads the original
-    ``augmentation_result.manifest_path`` directly. The README
-    snapshot is rendered by this function immediately before
-    returning. The function is pure: no HF upload state is owned
-    here.
-    """
-    _validate_augmentation_artifacts(augmentation)
-    hero_op = _dataset_hero_op()
-    snapshots = data_root.cache / "augmentation_upload_snapshots"
-    snapshots.mkdir(parents=True, exist_ok=True)
-    readme_snapshot = snapshots / f"{augmentation.wikipedia_documents_path.stem}-README.md"
-    text_presence_snapshot = (
-        snapshots / f"{augmentation.wikipedia_documents_path.stem}-geographic_text_presence.png"
+    return _assemble_augmentation_upload(
+        data_root=data_root,
+        repo_id=repo_id,
+        augmentation=augmentation,
+        hooks=_publication_hooks(),
     )
-    try:
-        land_path = ensure_world_land(data_root.cache)
-    except Exception:
-        LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
-        land_path = None
-    text_snapshot = _load_text_presence(data_root.processed)
-    _generate_geographic_text_presence(
-        data_root.processed,
-        text_presence_snapshot,
-        land_geojson_path=land_path,
-        snapshot=text_snapshot,
-    )
-    density_snapshot = (
-        snapshots / f"{augmentation.wikipedia_documents_path.stem}-geographic_text_density.png"
-    )
-    _generate_geographic_text_density_snapshot(
-        data_root,
-        density_snapshot,
-        snapshot=text_snapshot,
-    )
-    write_readme_snapshot(data_root, repo_id, readme_snapshot)
-    return [
-        *(
-            [
-                add_op(
-                    augmentation.polygon_document_links_path,
-                    path_in_repo=(
-                        f"{REMOTE_LINKS_DIR}/{augmentation.polygon_document_links_path.name}"
-                    ),
-                )
-            ]
-            if augmentation.polygon_document_links_path is not None
-            else []
-        ),
-        *_legacy_article_retirement_ops(
-            stem=augmentation.wikipedia_documents_path.stem,
-            canonical_document_path=augmentation.wikipedia_documents_path,
-        ),
-        add_op(
-            augmentation.wikipedia_sections_path,
-            path_in_repo=str(augmentation.wikipedia_sections_path.relative_to(data_root.processed)),
-        ),
-        add_op(
-            augmentation.wikivoyage_documents_path,
-            path_in_repo=str(
-                augmentation.wikivoyage_documents_path.relative_to(data_root.processed)
-            ),
-        ),
-        add_op(
-            augmentation.wikivoyage_sections_path,
-            path_in_repo=str(
-                augmentation.wikivoyage_sections_path.relative_to(data_root.processed)
-            ),
-        ),
-        add_op(
-            augmentation.wikidata_facts_path,
-            path_in_repo=str(augmentation.wikidata_facts_path.relative_to(data_root.processed)),
-        ),
-        *_augmentation_migration_ops(augmentation.manifest_path),
-        add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
-        add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
-        delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-        delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-        hero_op,
-        add_op(readme_snapshot, path_in_repo="README.md"),
-    ]
 
 
 def assemble_metadata_only_upload(
@@ -809,53 +534,17 @@ def assemble_metadata_only_upload(
     repo_id: str,
     world_land_warning: Callable[[str], None] | None = None,
 ) -> list[PublicationOp]:
-    """Assemble repository-level metadata assets when no region is repaired."""
-    snapshots = data_root.cache / "metadata_upload_snapshots"
-    snapshots.mkdir(parents=True, exist_ok=True)
-
-    processed_manifest = data_root.processed_manifests / "processed_pbfs.json"
-    if not processed_manifest.is_file():
-        raise FileNotFoundError("Local processed manifest is missing")
-
-    processed_manifest_snapshot = snapshots / "processed_pbfs.json"
-    atomic_write_text(processed_manifest_snapshot, processed_manifest.read_text(encoding="utf-8"))
-
-    augmentation_manifest = (
-        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    """Assemble repository metadata publication operations."""
+    from osm_polygon_wikidata_only.hf._publication.metadata import (
+        assemble_metadata_only_upload as _assemble_metadata_only_upload,
     )
-    augmentation_manifest_snapshot = snapshots / "augmentation_manifest.json"
-    has_aug_manifest = False
-    if augmentation_manifest.is_file():
-        atomic_write_text(
-            augmentation_manifest_snapshot, augmentation_manifest.read_text(encoding="utf-8")
-        )
-        has_aug_manifest = True
 
-    readme_snapshot = snapshots / "README.md"
-    map_snapshot, text_presence_snapshot, density_snapshot = refresh_coverage_assets(
+    return _assemble_metadata_only_upload(
         data_root=data_root,
-        snapshot_stem="metadata",
-        snapshots_dir=snapshots,
+        repo_id=repo_id,
         world_land_warning=world_land_warning,
+        hooks=_publication_hooks(),
     )
-    write_readme_snapshot(data_root, repo_id, readme_snapshot)
-    hero_op = _dataset_hero_op()
-
-    ops = [
-        add_op(processed_manifest_snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
-        add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
-        add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
-        delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
-        delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
-        add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
-        delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),
-        hero_op,
-    ]
-    if has_aug_manifest:
-        ops.extend(_augmentation_migration_ops(augmentation_manifest_snapshot))
-
-    ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
-    return ops
 
 
 def assemble_containment_retirement_upload(
@@ -865,36 +554,18 @@ def assemble_containment_retirement_upload(
     parent_children: dict[str, tuple[str, ...]],
     world_land_warning: Callable[[str], None] | None = None,
 ) -> list[PublicationOp]:
-    """Assemble one atomic parent replacement + contained-child retirement."""
-    if not parent_children:
-        raise PublicationValidationError("Containment retirement requires at least one parent")
-    operations: list[PublicationOp] = []
-    for parent in sorted(parent_children):
-        for local_relative, remote in canonical_region_paths(parent).items():
-            local = data_root.processed / local_relative
-            if not local.is_file():
-                raise FileNotFoundError(f"Canonical containment parent artifact missing: {local}")
-            operations.append(add_op(local, path_in_repo=remote))
-        for child in sorted(parent_children[parent]):
-            for remote in canonical_region_paths(child).values():
-                operations.append(delete_op(remote))
+    """Assemble a contained-region retirement publication plan."""
+    from osm_polygon_wikidata_only.hf._publication.metadata import (
+        assemble_containment_retirement_upload as _assemble_containment_retirement_upload,
+    )
 
-    retirement_manifest = data_root.processed / "manifests" / "containment_retirements.json"
-    if not retirement_manifest.is_file():
-        raise FileNotFoundError("Local containment retirement manifest is missing")
-
-    metadata_ops = assemble_metadata_only_upload(
+    return _assemble_containment_retirement_upload(
         data_root=data_root,
         repo_id=repo_id,
+        parent_children=parent_children,
         world_land_warning=world_land_warning,
+        hooks=_publication_hooks(),
     )
-    readme = metadata_ops[-1]
-    if readme.path_in_repo != "README.md":
-        raise PublicationValidationError("Metadata publication must end with README.md")
-    operations.extend(metadata_ops[:-1])
-    operations.append(add_op(retirement_manifest, path_in_repo=REMOTE_CONTAINMENT_RETIREMENT_FILE))
-    operations.append(readme)
-    return operations
 
 
 __all__ = [

@@ -8,6 +8,7 @@ import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf import publication
+from osm_polygon_wikidata_only.hf._publication.models import PublicationValidationError
 from osm_polygon_wikidata_only.hf._uploader.plan import add_op, delete_op
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
@@ -57,4 +58,68 @@ def test_uploader_rejects_unpaired_canonical_region_delete(tmp_path: Path) -> No
             ],
             hub=StubHfHub(),
             commit_message="unsafe",
+        )
+
+
+def test_containment_publication_requires_a_parent() -> None:
+    with pytest.raises(PublicationValidationError, match="at least one parent"):
+        publication.assemble_containment_retirement_upload(
+            data_root=DataRoot(Path("/tmp/unused")),
+            repo_id="owner/dataset",
+            parent_children={},
+        )
+
+
+def test_containment_publication_requires_parent_artifacts(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    with pytest.raises(FileNotFoundError, match="parent artifact missing"):
+        publication.assemble_containment_retirement_upload(
+            data_root=data_root,
+            repo_id="owner/dataset",
+            parent_children={"parent-latest": ("child-latest",)},
+        )
+
+
+def test_containment_publication_requires_retirement_manifest(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    for relative in canonical_region_paths("parent-latest"):
+        path = data_root.processed / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"parquet")
+
+    with pytest.raises(FileNotFoundError, match="retirement manifest is missing"):
+        publication.assemble_containment_retirement_upload(
+            data_root=data_root,
+            repo_id="owner/dataset",
+            parent_children={"parent-latest": ("child-latest",)},
+        )
+
+
+def test_containment_publication_requires_readme_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    for relative in canonical_region_paths("parent-latest"):
+        path = data_root.processed / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"parquet")
+    retirement = data_root.processed_manifests / "containment_retirements.json"
+    retirement.write_text("{}", encoding="utf-8")
+    not_readme = tmp_path / "metadata.txt"
+    not_readme.write_text("metadata", encoding="utf-8")
+    monkeypatch.setattr(
+        publication,
+        "assemble_metadata_only_upload",
+        lambda **_kwargs: [add_op(not_readme, path_in_repo="metadata.txt")],
+    )
+
+    with pytest.raises(PublicationValidationError, match=r"must end with README\.md"):
+        publication.assemble_containment_retirement_upload(
+            data_root=data_root,
+            repo_id="owner/dataset",
+            parent_children={"parent-latest": ("child-latest",)},
         )

@@ -57,6 +57,7 @@ from osm_polygon_wikidata_only.domain.schema import article_schema
 from osm_polygon_wikidata_only.hf.publication import (
     assemble_augmentation_upload,
     assemble_core_upload,
+    assemble_metadata_only_upload,
     assemble_region_upload,
     coverage_refresh_required,
     refresh_coverage_assets,
@@ -330,6 +331,79 @@ def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
     assert calls == ["presence", "density"]
 
 
+def test_assemble_augmentation_upload_logs_world_land_fallback(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Augmentation publication remains usable when land data is unavailable."""
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
+
+    def boom(_cache: Path) -> Path:
+        raise RuntimeError("land unavailable")
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.hf.publication.ensure_world_land", boom)
+    caplog.set_level(logging.WARNING)
+
+    ops = assemble_augmentation_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        augmentation=aug,
+    )
+
+    assert ops
+    assert any("combined text map will omit continents" in r.getMessage() for r in caplog.records)
+
+
+def test_assemble_metadata_only_upload_includes_manifest_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Metadata refresh publishes the canonical and legacy manifest operations."""
+    _core, data_root = _stub_process_result(tmp_path)
+    augmentation_manifest = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    augmentation_manifest.parent.mkdir(parents=True, exist_ok=True)
+    augmentation_manifest.write_text("{}", encoding="utf-8")
+
+    def refresh_assets(**kwargs: object) -> tuple[Path, Path, Path]:
+        snapshots_dir = kwargs["snapshots_dir"]
+        assert isinstance(snapshots_dir, Path)
+        paths = tuple(
+            snapshots_dir / name for name in ("coverage.png", "presence.png", "density.png")
+        )
+        for path in paths:
+            path.touch()
+        return paths  # type: ignore[return-value]
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.refresh_coverage_assets", refresh_assets
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda _root, _repo, destination: destination.write_text("card", encoding="utf-8"),
+    )
+
+    ops = assemble_metadata_only_upload(data_root=data_root, repo_id=REPO_ID)
+    remotes = [op.path_in_repo for op in ops]
+
+    assert "manifests/augmentation_manifest.json" in remotes
+    assert "augmentation/manifests/augmentation_manifest.json" in remotes
+    assert remotes[-1] == "README.md"
+
+
+def test_assemble_metadata_only_upload_requires_processed_manifest(tmp_path: Path) -> None:
+    """Metadata publication fails closed when its source manifest is absent."""
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    with pytest.raises(FileNotFoundError, match="Local processed manifest is missing"):
+        assemble_metadata_only_upload(data_root=data_root, repo_id=REPO_ID)
+
+
 # ---------------------------------------------------------------------------
 # Unified-sync publication
 # ---------------------------------------------------------------------------
@@ -373,6 +447,36 @@ def test_assemble_region_upload_without_core_refreshes_combined_map(
         "assets/dataset_hero.png",
         "README.md",
     ]
+
+
+def test_assemble_region_upload_without_core_logs_world_land_fallback(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Augmentation-only unified sync survives a missing land overlay."""
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    aug = _stub_augmentation_result(data_root.processed)
+    _stub_generators(monkeypatch)
+
+    def boom(_cache: Path) -> Path:
+        raise RuntimeError("land unavailable")
+
+    monkeypatch.setattr("osm_polygon_wikidata_only.hf.publication.ensure_world_land", boom)
+    caplog.set_level(logging.WARNING)
+
+    ops = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=None,
+        world_land_warning=None,
+    )
+
+    assert ops
+    assert any("combined text map will omit continents" in r.getMessage() for r in caplog.records)
 
 
 def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
@@ -679,6 +783,46 @@ def test_assemble_region_upload_swallows_world_land_failure(
     )
     assert files, "region upload should still produce files"
     assert not any("Could not fetch world land data" in r.getMessage() for r in caplog.records)
+
+
+def test_assemble_region_upload_invokes_world_land_warning_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Core-inclusive unified sync forwards the documented fallback warning."""
+    core, data_root = _stub_process_result(tmp_path)
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
+        lambda *a, **kw: a[1].touch() or a[1],
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.load_centroids_from_parquet",
+        lambda _dir: ([], []),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
+        lambda _dir: (_ for _ in ()).throw(RuntimeError("land unavailable")),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
+        lambda _lons, _lats, dest, **_kw: dest.touch() or dest,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *a, **kw: None,
+    )
+    warnings: list[str] = []
+
+    assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=core,
+        world_land_warning=warnings.append,
+    )
+
+    assert warnings == ["Could not fetch world land data; map will omit continents"]
 
 
 # ---------------------------------------------------------------------------
