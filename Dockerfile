@@ -5,7 +5,7 @@
 # may override UV_IMAGE with a verified registry digest for bit-for-bit image
 # provenance without changing the Dockerfile.
 
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.16-python3.12-bookworm-slim
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1-python3.12-trixie-slim
 FROM ${UV_IMAGE} AS build
 
 ENV UV_LINK_MODE=copy \
