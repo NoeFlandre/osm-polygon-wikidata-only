@@ -116,6 +116,18 @@ def test_plan_key_is_deterministic_and_input_sensitive() -> None:
     )
 
 
+def test_section_metadata_parser_normalizes_valid_documents_and_rejects_bad_values() -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import (
+        _section_batch_expected_documents,
+    )
+
+    assert _section_batch_expected_documents(
+        {"documents": [["doc", "20", "hash"], ["other", 21, "hash2"]]}
+    ) == (("doc", 20, "hash"), ("other", 21, "hash2"))
+    assert _section_batch_expected_documents({"documents": object()}) is None
+    assert _section_batch_expected_documents(None) is None
+
+
 @pytest.mark.parametrize("stem", ["", ".", "..", "../escape", "nested/stem", r"nested\stem"])
 def test_checkpoint_store_rejects_unsafe_stem(tmp_path: Path, stem: str) -> None:
     from osm_polygon_wikidata_only.augmentation.checkpoints import (

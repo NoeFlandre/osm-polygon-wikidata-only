@@ -14,7 +14,7 @@ import os
 import tempfile
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -23,8 +23,13 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    DirectEnrichmentResult,
+    DirectWikipediaStatus,
+)
 from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 from osm_polygon_wikidata_only.v2.schema import polygon_v2_schema
+from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
 
 CHECKPOINT_CONTRACT_VERSION = "wikipedia-tags-v2-checkpoints-v2"
 
@@ -80,6 +85,166 @@ def _atomic_write_table(path: Path, rows: list[dict[str, Any]], schema: pa.Schem
 
 def _atomic_write_json(path: Path, value: Any) -> None:
     atomic_write_text(path, json_dumps(value) + "\n")
+
+
+def _expected_direct_refs(refs: Any) -> list[dict[str, Any]]:
+    """Serialize direct references into the checkpoint comparison shape."""
+    return [
+        {
+            "language": ref.language,
+            "title": ref.title,
+            "raw_key": ref.raw_key,
+            "raw_value": ref.raw_value,
+        }
+        for ref in refs
+    ]
+
+
+def _direct_payload_matches(
+    payload: object,
+    polygon_id: str,
+    expected_refs: list[dict[str, Any]],
+) -> bool:
+    """Return whether a decoded direct checkpoint belongs to this request."""
+    return (
+        isinstance(payload, dict)
+        and payload.get("polygon_id") == polygon_id
+        and payload.get("refs") == expected_refs
+    )
+
+
+def _load_direct_statuses(
+    payload: object,
+    refs: Any,
+) -> tuple[DirectWikipediaStatus, ...] | None:
+    """Decode and validate one direct checkpoint's per-reference statuses."""
+    if not isinstance(payload, dict):
+        return None
+    return _decode_direct_statuses(payload.get("statuses"), refs)
+
+
+def _decode_direct_statuses(
+    statuses_raw: object,
+    refs: Any,
+) -> tuple[DirectWikipediaStatus, ...] | None:
+    """Decode a status list after the enclosing checkpoint was validated."""
+    if not isinstance(statuses_raw, list) or len(statuses_raw) != len(refs):
+        return None
+    statuses: list[DirectWikipediaStatus] = []
+    for raw, ref in zip(statuses_raw, refs, strict=True):
+        status = _direct_status(raw, ref)
+        if status is None:
+            return None
+        statuses.append(status)
+    return tuple(statuses)
+
+
+def _direct_status(raw: object, ref: Any) -> DirectWikipediaStatus | None:
+    """Decode one direct checkpoint status or reject its shape."""
+    if not isinstance(raw, dict):
+        return None
+    return DirectWikipediaStatus(
+        WikipediaTagRef(ref.language, ref.title, ref.raw_key, ref.raw_value),
+        str(raw.get("status", "")),
+        str(raw.get("error", "")),
+        bool(raw.get("reused_v1", False)),
+    )
+
+
+def _direct_rows(value: object) -> list[dict[str, Any]] | None:
+    """Return a JSON list of object rows, or reject it."""
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        return None
+    return cast(list[dict[str, Any]], value)
+
+
+def _load_direct_rows(
+    payload: object,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+    """Decode document and link rows from a validated direct checkpoint."""
+    if not isinstance(payload, dict):
+        return None
+    documents = _direct_rows(payload.get("documents", []))
+    links = _direct_rows(payload.get("links", []))
+    if documents is None or links is None:
+        return None
+    return documents, links
+
+
+def _read_extraction_rows(
+    chunks: list[Path],
+    schema: pa.Schema,
+) -> list[dict[str, Any]]:
+    """Read contiguous extraction chunks and validate their exact schema."""
+    indices = [int(path.stem.removeprefix("chunk-")) for path in chunks]
+    if indices != list(range(len(indices))):
+        raise ValueError("Extraction checkpoint chunks are not contiguous")
+    rows: list[dict[str, Any]] = []
+    for path in chunks:
+        with pq.ParquetFile(path) as parquet_file:
+            table = parquet_file.read()
+        if not table.schema.equals(schema, check_metadata=True):
+            raise ValueError(f"Invalid extraction checkpoint schema: {path}")
+        rows.extend(table.to_pylist())
+    return rows
+
+
+def _validate_complete_extraction_accounting(
+    metadata: dict[str, Any],
+    chunks: list[Path],
+    rows: list[dict[str, Any]],
+) -> None:
+    """Ensure a completed extraction checkpoint accounts for every chunk/row."""
+    if not bool(metadata.get("complete", False)):
+        return
+    if not _extraction_accounting_matches(metadata, chunks, rows):
+        raise ValueError("Complete extraction checkpoint accounting is invalid")
+
+
+def _extraction_accounting_matches(
+    metadata: dict[str, Any],
+    chunks: list[Path],
+    rows: list[dict[str, Any]],
+) -> bool:
+    """Return whether completed-checkpoint counts match its files."""
+    chunk_count = metadata.get("chunk_count")
+    row_count = metadata.get("row_count")
+    return not (
+        not isinstance(chunk_count, int)
+        or not isinstance(row_count, int)
+        or chunk_count != len(chunks)
+        or row_count != len(rows)
+    )
+
+
+def _section_rows_match_document(rows: list[object], document_id: str) -> bool:
+    return all(
+        isinstance(row, dict) and str(row.get("document_id", "")) == document_id for row in rows
+    )
+
+
+def _section_payload_parts(payload: object) -> tuple[str, list[object]] | None:
+    """Extract the required identity and row list from a decoded payload."""
+    if not isinstance(payload, dict):
+        return None
+    document_id = payload.get("document_id")
+    rows = payload.get("rows")
+    if not isinstance(document_id, str) or not document_id:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return cast(str, document_id), cast(list[object], rows)
+
+
+def _parse_section_payload(payload: object) -> dict[str, Any] | None:
+    """Validate one decoded section checkpoint payload."""
+    parts = _section_payload_parts(payload)
+    if parts is None:
+        return None
+    document_id, rows = parts
+    if not _section_rows_match_document(rows, document_id):
+        return None
+    return {"document_id": document_id, "rows": rows}
 
 
 class ExtractionCheckpoint:
@@ -145,22 +310,8 @@ class ExtractionCheckpoint:
         schema = polygon_v2_schema()
         chunks = self._chunks()
         try:
-            indices = [int(path.stem.removeprefix("chunk-")) for path in chunks]
-            if indices != list(range(len(indices))):
-                raise ValueError("Extraction checkpoint chunks are not contiguous")
-            for path in chunks:
-                with pq.ParquetFile(path) as parquet_file:
-                    table = parquet_file.read()
-                if not table.schema.equals(schema, check_metadata=True):
-                    raise ValueError(f"Invalid extraction checkpoint schema: {path}")
-                rows.extend(table.to_pylist())
-            if self.complete and (
-                not isinstance(self._metadata.get("chunk_count"), int)
-                or not isinstance(self._metadata.get("row_count"), int)
-                or self._metadata["chunk_count"] != len(chunks)
-                or self._metadata["row_count"] != len(rows)
-            ):
-                raise ValueError("Complete extraction checkpoint accounting is invalid")
+            rows = _read_extraction_rows(chunks, schema)
+            _validate_complete_extraction_accounting(self._metadata, chunks, rows)
         except (OSError, ValueError, pa.ArrowException):
             self._clear_files()
             self._metadata = {
@@ -336,50 +487,20 @@ class RegionFetchCheckpoint:
             payload = json_loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, ValueError, TypeError):
             return None
-        expected_refs = [
-            {
-                "language": ref.language,
-                "title": ref.title,
-                "raw_key": ref.raw_key,
-                "raw_value": ref.raw_value,
-            }
-            for ref in refs
-        ]
-        if not isinstance(payload, dict) or payload.get("polygon_id") != polygon_id:
+        expected_refs = _expected_direct_refs(refs)
+        if not _direct_payload_matches(payload, polygon_id, expected_refs):
             return None
-        if payload.get("refs") != expected_refs:
+        statuses = _load_direct_statuses(payload, refs)
+        if statuses is None:
             return None
-        statuses_raw = payload.get("statuses")
-        if not isinstance(statuses_raw, list) or len(statuses_raw) != len(refs):
+        rows = _load_direct_rows(payload)
+        if rows is None:
             return None
-        from osm_polygon_wikidata_only.v2.direct_enrichment import (
-            DirectEnrichmentResult,
-            DirectWikipediaStatus,
-        )
-        from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
-
-        statuses = []
-        for raw, ref in zip(statuses_raw, refs, strict=True):
-            if not isinstance(raw, dict):
-                return None
-            statuses.append(
-                DirectWikipediaStatus(
-                    WikipediaTagRef(ref.language, ref.title, ref.raw_key, ref.raw_value),
-                    str(raw.get("status", "")),
-                    str(raw.get("error", "")),
-                    bool(raw.get("reused_v1", False)),
-                )
-            )
-        documents = payload.get("documents", [])
-        links = payload.get("links", [])
-        if not isinstance(documents, list) or not isinstance(links, list):
-            return None
-        if not all(isinstance(row, dict) for row in (*documents, *links)):
-            return None
+        documents, links = rows
         return DirectEnrichmentResult(
             documents=tuple(documents),
             links=tuple(links),
-            statuses=tuple(statuses),
+            statuses=statuses,
         )
 
     def save_sections(self, document_id: str, rows: list[dict[str, Any]]) -> None:
@@ -422,18 +543,7 @@ class RegionFetchCheckpoint:
             payload = json_loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             return None
-        if not isinstance(payload, dict):
-            return None
-        document_id = payload.get("document_id")
-        rows = payload.get("rows")
-        if not isinstance(document_id, str) or not document_id or not isinstance(rows, list):
-            return None
-        if any(
-            not isinstance(row, dict) or str(row.get("document_id", "")) != document_id
-            for row in rows
-        ):
-            return None
-        return {"document_id": document_id, "rows": rows}
+        return _parse_section_payload(payload)
 
     def clear(self) -> None:
         for directory in (self.direct_root, self.sections_root):

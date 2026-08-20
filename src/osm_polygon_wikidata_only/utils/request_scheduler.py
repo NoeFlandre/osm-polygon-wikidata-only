@@ -99,6 +99,21 @@ def _require_fraction(value: float, message: str) -> None:
         raise ValueError(message)
 
 
+def _with_default[ConfigT](value: ConfigT | None, default: ConfigT) -> ConfigT:
+    return default if value is None else value
+
+
+def _has_proportional_settings(
+    active_host_window_s: float | None,
+    minimum_systemic_hosts: int | None,
+    systemic_host_fraction: float | None,
+) -> bool:
+    return any(
+        value is not None
+        for value in (active_host_window_s, minimum_systemic_hosts, systemic_host_fraction)
+    )
+
+
 def _validate_scheduler_values(
     *,
     max_in_flight: int,
@@ -134,20 +149,14 @@ def _resolve_systemic_config(
     systemic_host_fraction: float | None,
 ) -> _SystemicConfig:
     """Resolve and validate optional proportional-throttle settings."""
-    proportional = (
-        active_host_window_s is not None
-        or minimum_systemic_hosts is not None
-        or systemic_host_fraction is not None
+    proportional = _has_proportional_settings(
+        active_host_window_s,
+        minimum_systemic_hosts,
+        systemic_host_fraction,
     )
-    active_window = (
-        active_host_window_s if active_host_window_s is not None else SYSTEMIC_ACTIVE_HOST_WINDOW_S
-    )
-    minimum_hosts = (
-        minimum_systemic_hosts if minimum_systemic_hosts is not None else SYSTEMIC_MINIMUM_HOSTS
-    )
-    host_fraction = (
-        systemic_host_fraction if systemic_host_fraction is not None else SYSTEMIC_HOST_FRACTION
-    )
+    active_window = _with_default(active_host_window_s, SYSTEMIC_ACTIVE_HOST_WINDOW_S)
+    minimum_hosts = _with_default(minimum_systemic_hosts, SYSTEMIC_MINIMUM_HOSTS)
+    host_fraction = _with_default(systemic_host_fraction, SYSTEMIC_HOST_FRACTION)
     _require_positive(active_window, "active_host_window_s must be positive")
     _require_at_least(minimum_hosts, 1, "minimum_systemic_hosts must be at least 1")
     _require_fraction(
@@ -329,8 +338,11 @@ class AdaptiveRequestScheduler:
         with state.lock:
             state.cooldown_until = max(state.cooldown_until, now + delay)
             self._record_recent(state.recent_throttles, now)
-        # Rolling global throttle telemetry + atomic systemic decision.
-        systemic_apply = False
+        if self._record_systemic_host_event(host, now):
+            self._apply_global_throttle(delay_s, count_event=False)
+
+    def _record_systemic_host_event(self, host: str, now: float) -> bool:
+        """Record one host event and atomically decide whether to escalate."""
         with self._lock:
             self._record_recent(self._global_throttle_times, now)
             cutoff = now - self._host_throttle_window_s
@@ -342,15 +354,14 @@ class AdaptiveRequestScheduler:
                 len(self._systemic_host_events) >= self._systemic_threshold()
                 and now - self._last_systemic_reduction_at > self._host_throttle_window_s
             )
-            if systemic:
-                # Decision and suppression-timestamp update are one atomic
-                # operation: the next contender that acquires this lock will
-                # see the fresh ``_last_systemic_reduction_at`` and fail the
-                # guard, guaranteeing at most one reduction per window.
-                self._last_systemic_reduction_at = now
-                systemic_apply = True
-        if systemic_apply:
-            self._apply_global_throttle(delay_s, count_event=False)
+            if not systemic:
+                return False
+            # Decision and suppression-timestamp update are one atomic
+            # operation: the next contender that acquires this lock will
+            # see the fresh timestamp and fail the guard, guaranteeing at
+            # most one reduction per window.
+            self._last_systemic_reduction_at = now
+            return True
 
     def _apply_global_throttle(self, delay_s: float, *, count_event: bool) -> None:
         with self._lock:
@@ -425,8 +436,7 @@ class AdaptiveRequestScheduler:
         while deq and deq[0] < cutoff:
             deq.popleft()
 
-    def snapshot(self) -> RequestSchedulerSnapshot:
-        """Return measured traffic and adaptive-budget state for operator logs."""
+    def _global_snapshot_metrics(self) -> tuple[float, int, int, float, float]:
         with self._lock:
             now = self._clock()
             cutoff = now - ROLLING_WINDOW_S
@@ -437,6 +447,9 @@ class AdaptiveRequestScheduler:
             throttle_events = len(self._global_throttle_times)
             global_cooldown = max(0.0, self._cooldown_until - now)
             utilization = recent / self._max_requests_per_minute * 100.0
+        return now, recent, throttle_events, global_cooldown, utilization
+
+    def _host_snapshot_metrics(self, now: float) -> tuple[int, int]:
         throttled_hosts = 0
         cooling_down = 0
         with self._hosts_lock:
@@ -448,6 +461,12 @@ class AdaptiveRequestScheduler:
                     throttled_hosts += 1
                 if state.cooldown_until > now:
                     cooling_down += 1
+        return throttled_hosts, cooling_down
+
+    def snapshot(self) -> RequestSchedulerSnapshot:
+        """Return measured traffic and adaptive-budget state for operator logs."""
+        now, recent, throttle_events, global_cooldown, utilization = self._global_snapshot_metrics()
+        throttled_hosts, cooling_down = self._host_snapshot_metrics(now)
         return RequestSchedulerSnapshot(
             requests_last_minute=recent,
             current_requests_per_minute=self.current_requests_per_minute,

@@ -371,12 +371,10 @@ def repair_wikidata_region(
     _write_table(staged["sections"], merged_sections, SECTION_COLUMNS, section_schema())
     _write_table(staged["facts"], merged_facts, FACT_COLUMNS, fact_schema())
     _stage_manifests(
-        data_root,
         stem,
         paths=paths,
         staged=staged,
         polygons=updated_polygons,
-        links=persisted_links,
         documents=merged_documents,
         sections=merged_sections,
         facts=merged_facts,
@@ -560,14 +558,28 @@ def _resolve_entities(
 
 def _eligible_sitelinks(entity: WikidataEntity, settings: Settings) -> list[tuple[str, str]]:
     allowed = set(settings.languages) if settings.languages is not None else None
-    links = [
+    links = _language_sitelinks(entity, allowed)
+    return _limit_sitelinks(links, settings.max_articles_per_qid)
+
+
+def _language_sitelinks(
+    entity: WikidataEntity,
+    allowed: set[str] | None,
+) -> list[tuple[str, str]]:
+    return [
         (site, title)
         for site, title in sorted(entity.sitelinks.items())
         if allowed is None or language_from_site(site) in allowed
     ]
-    if settings.max_articles_per_qid is not None:
-        links = links[: max(0, settings.max_articles_per_qid)]
-    return links
+
+
+def _limit_sitelinks(
+    links: list[tuple[str, str]],
+    max_articles_per_qid: int | None,
+) -> list[tuple[str, str]]:
+    if max_articles_per_qid is None:
+        return links
+    return links[: max(0, max_articles_per_qid)]
 
 
 def _fetch_missing_documents(
@@ -777,16 +789,46 @@ def _terminal_classifications(
 
 
 def _stage_manifests(
-    data_root: DataRoot,
     stem: str,
     *,
     paths: dict[str, Path],
     staged: dict[str, Path],
     polygons: list[dict[str, Any]],
-    links: list[dict[str, Any]],
     documents: list[dict[str, Any]],
     sections: list[dict[str, Any]],
     facts: list[dict[str, Any]],
+    affected_qids: tuple[str, ...],
+    affected_polygon_count: int,
+) -> None:
+    """Stage both manifests from the same repaired artifact snapshot."""
+    _stage_processed_manifest(
+        stem,
+        paths=paths,
+        staged=staged["processed_manifest"],
+        polygons=polygons,
+        documents=documents,
+        affected_qids=affected_qids,
+        affected_polygon_count=affected_polygon_count,
+    )
+    _stage_augmentation_manifest(
+        stem,
+        paths=paths,
+        staged=staged["augmentation_manifest"],
+        staged_polygons=staged["polygons"],
+        staged_documents=staged["documents"],
+        documents=documents,
+        sections=sections,
+        facts=facts,
+    )
+
+
+def _stage_processed_manifest(
+    stem: str,
+    *,
+    paths: dict[str, Path],
+    staged: Path,
+    polygons: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
     affected_qids: tuple[str, ...],
     affected_polygon_count: int,
 ) -> None:
@@ -795,29 +837,58 @@ def _stage_manifests(
     if manifest_key not in manifest:
         raise RecoveryRepairError(f"Processed manifest is missing {manifest_key!r}")
     entry = dict(manifest[manifest_key])
-    languages = sorted({str(row["language"]) for row in documents})
     entry.update(
-        {
-            "polygon_count": len(polygons),
-            "unique_wikidata_count": len(
-                {qid for row in polygons for qid in qids_from_osm_tag(str(row["wikidata"]))}
-            ),
-            "article_count": len(documents),
-            "language_count": len(languages),
-            "languages": languages,
-            "rows_with_wikipedia": sum(bool(row["has_wikipedia"]) for row in polygons),
-            "rows_with_full_text": sum(bool(row["text_available"]) for row in polygons),
-            "total_full_text_chars": sum(len(str(row["full_text"])) for row in documents),
-            "wikidata_recovery": {
-                "contract_version": RECOVERY_CONTRACT_VERSION,
-                "affected_qids": list(affected_qids),
-                "affected_polygon_count": affected_polygon_count,
-            },
-        }
+        _processed_manifest_statistics(
+            polygons=polygons,
+            documents=documents,
+            affected_qids=affected_qids,
+            affected_polygon_count=affected_polygon_count,
+        )
     )
     manifest[manifest_key] = entry
-    atomic_write_text(staged["processed_manifest"], dumps(manifest) + "\n")
+    atomic_write_text(staged, dumps(manifest) + "\n")
 
+
+def _processed_manifest_statistics(
+    *,
+    polygons: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    affected_qids: tuple[str, ...],
+    affected_polygon_count: int,
+) -> dict[str, object]:
+    languages = sorted({str(row["language"]) for row in documents})
+    return {
+        "polygon_count": len(polygons),
+        "unique_wikidata_count": len(_polygon_qids(polygons)),
+        "article_count": len(documents),
+        "language_count": len(languages),
+        "languages": languages,
+        "rows_with_wikipedia": sum(bool(row["has_wikipedia"]) for row in polygons),
+        "rows_with_full_text": sum(bool(row["text_available"]) for row in polygons),
+        "total_full_text_chars": sum(len(str(row["full_text"])) for row in documents),
+        "wikidata_recovery": {
+            "contract_version": RECOVERY_CONTRACT_VERSION,
+            "affected_qids": list(affected_qids),
+            "affected_polygon_count": affected_polygon_count,
+        },
+    }
+
+
+def _polygon_qids(polygons: list[dict[str, Any]]) -> set[str]:
+    return {qid for row in polygons for qid in qids_from_osm_tag(str(row["wikidata"]))}
+
+
+def _stage_augmentation_manifest(
+    stem: str,
+    *,
+    paths: dict[str, Path],
+    staged: Path,
+    staged_polygons: Path,
+    staged_documents: Path,
+    documents: list[dict[str, Any]],
+    sections: list[dict[str, Any]],
+    facts: list[dict[str, Any]],
+) -> None:
     try:
         augmentation: object = json.loads(
             paths["augmentation_manifest"].read_text(encoding="utf-8")
@@ -843,14 +914,14 @@ def _stage_manifests(
         {
             "contract_version": CONTRACT_VERSION,
             "core_hashes": {
-                str(paths["polygons"]): sha256_file(staged["polygons"]),
-                str(paths["documents"]): sha256_file(staged["documents"]),
+                str(paths["polygons"]): sha256_file(staged_polygons),
+                str(paths["documents"]): sha256_file(staged_documents),
             },
             "counts": updated_counts,
         }
     )
     augmentation_mapping[stem] = augmentation_entry
-    atomic_write_text(staged["augmentation_manifest"], dumps(augmentation_mapping) + "\n")
+    atomic_write_text(staged, dumps(augmentation_mapping) + "\n")
 
 
 __all__ = ["RecoveryRepairError", "RecoveryRepairResult", "repair_wikidata_region"]

@@ -62,6 +62,48 @@ def document_identities(
     )
 
 
+def _section_batch_expected_documents(
+    metadata: dict[str, Any] | None,
+) -> tuple[tuple[str, int, str], ...] | None:
+    """Normalize section-batch document identities from checkpoint metadata."""
+    if metadata is None:
+        return None
+    try:
+        return tuple(
+            (str(value[0]), int(value[1]), str(value[2]))
+            for value in metadata.get("documents", ())
+            if isinstance(value, list) and len(value) == 3
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _section_batch_rows(
+    rows: list[dict[str, Any]] | None,
+) -> list[Section] | None:
+    """Construct typed sections from a checkpoint table or reject it."""
+    if rows is None:
+        return None
+    try:
+        return [Section(**row) for row in rows]
+    except (TypeError, ValueError):
+        return None
+
+
+def _validated_section_batch(
+    sections: list[Section],
+    expected_documents: tuple[tuple[str, int, str], ...],
+) -> list[Section] | None:
+    """Validate section identities and return deterministic ordering."""
+    expected_ids = {document_id for document_id, _, _ in expected_documents}
+    if any(section.document_id not in expected_ids for section in sections):
+        return None
+    if len({section.section_id for section in sections}) != len(sections):
+        return None
+    sections.sort(key=lambda row: (row.document_id, row.section_index))
+    return sections
+
+
 class AugmentationCheckpointStore:
     """Persist complete phase artifacts below one operator data-root cache."""
 
@@ -147,35 +189,13 @@ class AugmentationCheckpointStore:
         expected_documents: tuple[tuple[str, int, str], ...],
     ) -> list[Section] | None:
         directory = self._section_batch_path(index)
-        metadata = self._metadata(directory)
-        try:
-            expected = (
-                tuple(
-                    (str(value[0]), int(value[1]), str(value[2]))
-                    for value in metadata.get("documents", ())
-                    if isinstance(value, list) and len(value) == 3
-                )
-                if metadata
-                else ()
-            )
-        except (TypeError, ValueError):
+        expected = _section_batch_expected_documents(self._metadata(directory))
+        if expected is None or expected != expected_documents:
             return None
-        if metadata is None or expected != expected_documents:
-            return None
-        rows = self._read_table(directory / "sections.parquet", section_schema())
-        if rows is None:
-            return None
-        try:
-            sections = [Section(**row) for row in rows]
-        except (TypeError, ValueError):
-            return None
-        expected_ids = {document_id for document_id, _, _ in expected_documents}
-        if any(section.document_id not in expected_ids for section in sections) or len(
-            {section.section_id for section in sections}
-        ) != len(sections):
-            return None
-        sections.sort(key=lambda row: (row.document_id, row.section_index))
-        return sections
+        sections = _section_batch_rows(
+            self._read_table(directory / "sections.parquet", section_schema())
+        )
+        return None if sections is None else _validated_section_batch(sections, expected_documents)
 
     def save_section_batch(
         self,

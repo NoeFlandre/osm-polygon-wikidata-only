@@ -10,6 +10,12 @@ from osm_polygon_wikidata_only.v2 import extractor
 from osm_polygon_wikidata_only.v2.checkpoints import (
     ExtractionCheckpoint,
     RegionFetchCheckpoint,
+    _direct_payload_matches,
+    _direct_rows,
+    _direct_status,
+    _expected_direct_refs,
+    _load_direct_rows,
+    _load_direct_statuses,
 )
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
 from osm_polygon_wikidata_only.v2.reuse import merge_v2_region
@@ -141,6 +147,45 @@ def test_complete_extraction_checkpoint_is_invalidated_when_chunk_is_missing(
     assert not recovered.complete
 
 
+def test_extraction_checkpoint_discards_noncontiguous_chunks(tmp_path: Path) -> None:
+    pbf = tmp_path / "region-latest.osm.pbf"
+    pbf.write_bytes(b"stable source")
+    checkpoint = ExtractionCheckpoint(tmp_path / "checkpoints", pbf)
+    row = candidate_to_v2_row(
+        _candidate(1),
+        source_pbf_stem="region-latest",
+        region="region",
+        source_pbf=pbf.name,
+    )
+    assert row is not None
+    checkpoint.append([row])
+    checkpoint.append([row | {"osm_id": 2}])
+    first, _ = sorted(checkpoint.root.glob("chunk-*.parquet"))
+    first.unlink()
+
+    recovered = ExtractionCheckpoint(tmp_path / "checkpoints", pbf)
+    assert recovered.load_rows() == []
+    assert not recovered.complete
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not-json",
+        "[]",
+        '{"rows": []}',
+        '{"document_id": "", "rows": []}',
+        '{"document_id": "doc", "rows": {}}',
+    ],
+)
+def test_fetch_checkpoint_rejects_malformed_section_payloads(tmp_path: Path, payload: str) -> None:
+    checkpoint = RegionFetchCheckpoint(tmp_path / "checkpoints", "region-latest")
+    path = checkpoint.sections_root / "broken.json"
+    path.write_text(payload, encoding="utf-8")
+
+    assert checkpoint._load_section_payload(path) is None
+
+
 def test_fetch_checkpoint_discards_state_with_invalid_metadata(tmp_path: Path) -> None:
     root = tmp_path / "checkpoints"
     checkpoint = RegionFetchCheckpoint(root, "region-latest", input_fingerprint="fingerprint-a")
@@ -160,6 +205,77 @@ def test_fetch_checkpoint_records_empty_section_results(tmp_path: Path) -> None:
     checkpoint.save_sections("document-1", [])
     assert checkpoint.load_sections() == []
     assert checkpoint.section_document_ids() == {"document-1"}
+
+
+def test_direct_checkpoint_helpers_validate_payload_shapes() -> None:
+    from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
+
+    refs = (WikipediaTagRef("en", "Page", "wikipedia", "en:Page"),)
+    expected = _expected_direct_refs(refs)
+    assert expected == [
+        {"language": "en", "title": "Page", "raw_key": "wikipedia", "raw_value": "en:Page"}
+    ]
+
+    payload = {"polygon_id": "p1", "refs": expected}
+    assert _direct_payload_matches(payload, "p1", expected)
+    assert not _direct_payload_matches(payload, "p2", expected)
+    assert not _direct_payload_matches({"polygon_id": "p1", "refs": []}, "p1", expected)
+    assert not _direct_payload_matches([], "p1", expected)
+
+    valid_status = {
+        "status": "ok",
+        "error": "",
+        "reused_v1": True,
+    }
+    statuses = _load_direct_statuses({"statuses": [valid_status]}, refs)
+    assert statuses is not None
+    assert statuses[0].status == "ok"
+    assert statuses[0].reused_v1 is True
+    assert _direct_status(valid_status, refs[0]) is not None
+    assert _direct_status(object(), refs[0]) is None
+    assert _load_direct_statuses([], refs) is None
+    assert _load_direct_statuses({"statuses": []}, refs) is None
+    assert _load_direct_statuses({"statuses": [object()]}, refs) is None
+    assert _load_direct_statuses({"statuses": [valid_status, valid_status]}, refs) is None
+
+    assert _direct_rows([{"document_id": "d"}]) == [{"document_id": "d"}]
+    assert _direct_rows(object()) is None
+    assert _direct_rows([object()]) is None
+    assert _load_direct_rows({"documents": [{"document_id": "d"}], "links": []}) == (
+        [{"document_id": "d"}],
+        [],
+    )
+    assert _load_direct_rows({"documents": object(), "links": []}) is None
+    assert _load_direct_rows({"documents": [{}], "links": [object()]}) is None
+
+
+def test_fetch_checkpoint_loads_and_rejects_direct_results(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.direct_enrichment import (
+        DirectEnrichmentResult,
+        DirectWikipediaStatus,
+    )
+    from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
+
+    checkpoint = RegionFetchCheckpoint(tmp_path / "checkpoints", "region-latest")
+    ref = WikipediaTagRef("en", "Page", "wikipedia", "en:Page")
+    result = DirectEnrichmentResult(
+        documents=({"document_id": "doc-1"},),
+        links=({"document_id": "doc-1"},),
+        statuses=(DirectWikipediaStatus(ref, "ok"),),
+    )
+    checkpoint.save_direct("polygon-1", (ref,), result)
+
+    assert checkpoint.load_direct("polygon-1", (ref,)) == result
+    assert checkpoint.load_direct("polygon-1", ()) is None
+
+    direct_path = next(checkpoint.direct_root.glob("*.json"))
+    direct_path.write_text(
+        '{"polygon_id": "polygon-1", "refs": [], "statuses": []}', encoding="utf-8"
+    )
+    assert checkpoint.load_direct("polygon-1", (ref,)) is None
+
+    direct_path.write_text("not-json", encoding="utf-8")
+    assert checkpoint.load_direct("polygon-1", (ref,)) is None
 
 
 def test_fetch_checkpoint_loads_section_state_in_one_pass(

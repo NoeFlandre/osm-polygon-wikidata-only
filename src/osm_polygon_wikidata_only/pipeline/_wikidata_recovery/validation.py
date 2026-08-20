@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
@@ -17,47 +18,106 @@ def validate_existing_rows(
     facts: list[dict[str, Any]],
 ) -> None:
     """Validate all existing primary keys and cross-table references."""
+    polygon_qids = _validate_polygons(polygons)
+    documents_by_article, document_ids = _validate_documents(documents)
+    _validate_links(links, polygon_qids, documents_by_article)
+    _validate_sections(sections, document_ids)
+    _validate_facts(facts, polygon_qids)
+
+
+def _validate_polygons(polygons: list[dict[str, Any]]) -> dict[str, tuple[str, ...]]:
     polygon_tags = _unique_mapping(polygons, "polygon_id", "wikidata", "polygon_id")
     polygon_qids = {
         polygon_id: qids_from_osm_tag(raw_tag) for polygon_id, raw_tag in polygon_tags.items()
     }
-    invalid = next(
-        (raw_tag for raw_tag in polygon_tags.values() if not qids_from_osm_tag(raw_tag)),
-        None,
-    )
+    invalid = _first_invalid_polygon_tag(polygon_tags.values())
     if invalid is not None:
         raise RecoveryRepairError(f"polygon contains invalid Wikidata identifier {invalid!r}")
+    return polygon_qids
+
+
+def _first_invalid_polygon_tag(tags: Iterable[str]) -> str | None:
+    return next((raw_tag for raw_tag in tags if not qids_from_osm_tag(raw_tag)), None)
+
+
+def _validate_documents(
+    documents: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], set[str]]:
     documents_by_article = _unique_rows(documents, "article_id", "article_id")
     _unique_rows(documents, "document_id", "document_id")
-    document_ids = {str(row["document_id"]) for row in documents}
-    _unique_rows(sections, "section_id", "section_id")
-    _unique_rows(facts, "fact_id", "fact_id")
+    return documents_by_article, {str(row["document_id"]) for row in documents}
 
+
+def _validate_links(
+    links: list[dict[str, Any]],
+    polygon_qids: dict[str, tuple[str, ...]],
+    documents_by_article: dict[str, dict[str, Any]],
+) -> None:
     link_ids: set[tuple[str, str]] = set()
     for link in links:
-        polygon_id = str(link["polygon_id"])
-        article_identifier = str(link["article_id"])
-        identity = (polygon_id, article_identifier)
-        if identity in link_ids:
-            raise RecoveryRepairError(f"duplicate polygon-article identity {identity!r}")
-        link_ids.add(identity)
-        if polygon_id not in polygon_qids:
-            raise RecoveryRepairError(f"link references missing polygon {polygon_id!r}")
-        document = documents_by_article.get(article_identifier)
-        if document is None:
-            raise RecoveryRepairError(f"link references missing document {article_identifier!r}")
-        qid = str(link["wikidata"])
-        if qid not in polygon_qids[polygon_id] or str(document["wikidata"]) != qid:
-            raise RecoveryRepairError(f"link QID mismatch for {identity!r}")
+        _validate_link(link, polygon_qids, documents_by_article, link_ids)
+
+
+def _validate_link(
+    link: dict[str, Any],
+    polygon_qids: dict[str, tuple[str, ...]],
+    documents_by_article: dict[str, dict[str, Any]],
+    link_ids: set[tuple[str, str]],
+) -> None:
+    polygon_id = str(link["polygon_id"])
+    article_identifier = str(link["article_id"])
+    identity = (polygon_id, article_identifier)
+    _record_link_identity(identity, link_ids)
+    _validate_link_reference(
+        link, polygon_id, article_identifier, identity, polygon_qids, documents_by_article
+    )
+
+
+def _record_link_identity(identity: tuple[str, str], link_ids: set[tuple[str, str]]) -> None:
+    if identity in link_ids:
+        raise RecoveryRepairError(f"duplicate polygon-article identity {identity!r}")
+    link_ids.add(identity)
+
+
+def _validate_link_reference(
+    link: dict[str, Any],
+    polygon_id: str,
+    article_identifier: str,
+    identity: tuple[str, str],
+    polygon_qids: dict[str, tuple[str, ...]],
+    documents_by_article: dict[str, dict[str, Any]],
+) -> None:
+    if polygon_id not in polygon_qids:
+        raise RecoveryRepairError(f"link references missing polygon {polygon_id!r}")
+    document = documents_by_article.get(article_identifier)
+    if document is None:
+        raise RecoveryRepairError(f"link references missing document {article_identifier!r}")
+    qid = str(link["wikidata"])
+    if qid not in polygon_qids[polygon_id] or str(document["wikidata"]) != qid:
+        raise RecoveryRepairError(f"link QID mismatch for {identity!r}")
+
+
+def _validate_sections(sections: list[dict[str, Any]], document_ids: set[str]) -> None:
+    _unique_rows(sections, "section_id", "section_id")
     for section in sections:
-        if str(section["document_id"]) not in document_ids:
-            raise RecoveryRepairError(
-                f"section references missing document {section['document_id']!r}"
-            )
+        _validate_section(section, document_ids)
+
+
+def _validate_section(section: dict[str, Any], document_ids: set[str]) -> None:
+    if str(section["document_id"]) not in document_ids:
+        raise RecoveryRepairError(f"section references missing document {section['document_id']!r}")
+
+
+def _validate_facts(facts: list[dict[str, Any]], polygon_qids: dict[str, tuple[str, ...]]) -> None:
+    _unique_rows(facts, "fact_id", "fact_id")
     valid_qids = {qid for values in polygon_qids.values() for qid in values}
     for fact in facts:
-        if str(fact["wikidata"]) not in valid_qids:
-            raise RecoveryRepairError(f"fact references absent QID {fact['wikidata']!r}")
+        _validate_fact(fact, valid_qids)
+
+
+def _validate_fact(fact: dict[str, Any], valid_qids: set[str]) -> None:
+    if str(fact["wikidata"]) not in valid_qids:
+        raise RecoveryRepairError(f"fact references absent QID {fact['wikidata']!r}")
 
 
 def validate_preservation(
@@ -75,26 +135,54 @@ def validate_preservation(
     removed_section_ids: set[str],
 ) -> None:
     """Prove healthy rows remain byte-equivalent at the row level."""
+    _validate_healthy_polygon_preservation(
+        original_polygons,
+        updated_polygons,
+        affected_qids=affected_qids,
+    )
+    for original, updated, key, label, removed_ids in (
+        (original_documents, updated_documents, "document_id", "document", removed_document_ids),
+        (original_sections, updated_sections, "section_id", "section", removed_section_ids),
+        (original_facts, updated_facts, "fact_id", "fact", set()),
+    ):
+        _validate_rows_preserved(
+            original,
+            updated,
+            key=key,
+            label=label,
+            removed_ids=removed_ids,
+        )
+
+
+def _validate_healthy_polygon_preservation(
+    original_polygons: list[dict[str, Any]],
+    updated_polygons: list[dict[str, Any]],
+    *,
+    affected_qids: set[str],
+) -> None:
     updated_polygon_map = {str(row["polygon_id"]): row for row in updated_polygons}
     for row in original_polygons:
-        if (
-            not (set(qids_from_osm_tag(str(row["wikidata"]))) & affected_qids)
-            and updated_polygon_map[str(row["polygon_id"])] != row
-        ):
+        if set(qids_from_osm_tag(str(row["wikidata"]))) & affected_qids:
+            continue
+        if updated_polygon_map[str(row["polygon_id"])] != row:
             raise RecoveryRepairError(f"healthy polygon changed: {row['polygon_id']}")
-    for original, updated, key, label in (
-        (original_documents, updated_documents, "document_id", "document"),
-        (original_sections, updated_sections, "section_id", "section"),
-        (original_facts, updated_facts, "fact_id", "fact"),
-    ):
-        updated_map = {str(row[key]): row for row in updated}
-        for row in original:
-            if label == "document" and str(row[key]) in removed_document_ids:
-                continue
-            if label == "section" and str(row[key]) in removed_section_ids:
-                continue
-            if updated_map.get(str(row[key])) != row:
-                raise RecoveryRepairError(f"existing {label} changed: {row[key]}")
+
+
+def _validate_rows_preserved(
+    original: list[dict[str, Any]],
+    updated: list[dict[str, Any]],
+    *,
+    key: str,
+    label: str,
+    removed_ids: set[str],
+) -> None:
+    updated_map = {str(row[key]): row for row in updated}
+    for row in original:
+        identifier = str(row[key])
+        if identifier in removed_ids:
+            continue
+        if updated_map.get(identifier) != row:
+            raise RecoveryRepairError(f"existing {label} changed: {row[key]}")
 
 
 def _unique_mapping(

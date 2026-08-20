@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -344,12 +345,24 @@ def _log_reused_section_batches(stem: str, reused_batches: int, total_batches: i
 
 
 def completed_region_stems(data_root: DataRoot) -> list[str]:
-    article_stems = {path.stem for path in data_root.processed_articles.glob("*.parquet")}
-    article_stems.update(
-        path.stem for path in (data_root.processed / "wikipedia" / "documents").glob("*.parquet")
+    """Return sorted core stems that have both polygon and article shards."""
+    return _completed_region_stems(data_root)
+
+
+def _completed_region_stems(data_root: DataRoot) -> list[str]:
+    """Collect the deterministic intersection of core shard stems."""
+    article_paths = (
+        data_root.processed_articles.glob("*.parquet"),
+        (data_root.processed / "wikipedia" / "documents").glob("*.parquet"),
     )
-    polygon_stems = {path.stem for path in data_root.processed_polygons.glob("*.parquet")}
+    article_stems = _stems_from_paths(path for paths in article_paths for path in paths)
+    polygon_stems = _stems_from_paths(data_root.processed_polygons.glob("*.parquet"))
     return sorted(article_stems & polygon_stems)
+
+
+def _stems_from_paths(paths: Iterable[Path]) -> set[str]:
+    """Return unique file stems from a path iterable."""
+    return {path.stem for path in paths}
 
 
 def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
