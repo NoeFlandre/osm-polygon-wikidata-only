@@ -69,6 +69,94 @@ class _HostState:
     recent_throttles: deque[float] = field(default_factory=lambda: deque[float]())
 
 
+@dataclass(frozen=True, slots=True)
+class _SystemicConfig:
+    """Validated settings for proportional systemic-throttle detection."""
+
+    proportional_mode: bool
+    active_host_window_s: float
+    minimum_systemic_hosts: int
+    systemic_host_fraction: float
+
+
+def _require_positive(value: float, message: str) -> None:
+    if value <= 0:
+        raise ValueError(message)
+
+
+def _require_at_least(value: float, lower: float, message: str) -> None:
+    if value < lower:
+        raise ValueError(message)
+
+
+def _require_between(value: float, lower: float, upper: float, message: str) -> None:
+    if not lower <= value <= upper:
+        raise ValueError(message)
+
+
+def _require_fraction(value: float, message: str) -> None:
+    if not 0 < value <= 1.0:
+        raise ValueError(message)
+
+
+def _validate_scheduler_values(
+    *,
+    max_in_flight: int,
+    requests_per_minute: float,
+    max_requests_per_minute: float | None,
+    minimum_requests_per_minute: float,
+    successes_per_increase: int,
+    host_throttle_window_s: float,
+    host_throttle_threshold: int,
+) -> float:
+    """Validate core scheduler bounds and return the resolved rate ceiling."""
+    _require_between(max_in_flight, 1, 16, "max_in_flight must be between 1 and 16")
+    _require_positive(requests_per_minute, "requests_per_minute must be positive")
+    maximum = requests_per_minute if max_requests_per_minute is None else max_requests_per_minute
+    if maximum < requests_per_minute:
+        raise ValueError("max_requests_per_minute must not be below the initial rate")
+    minimum_message = (
+        "minimum_requests_per_minute must be positive and no greater than the initial rate"
+    )
+    _require_positive(minimum_requests_per_minute, minimum_message)
+    if minimum_requests_per_minute > requests_per_minute:
+        raise ValueError(minimum_message)
+    _require_positive(successes_per_increase, "successes_per_increase must be positive")
+    _require_positive(host_throttle_window_s, "host_throttle_window_s must be positive")
+    _require_at_least(host_throttle_threshold, 1, "host_throttle_threshold must be at least 1")
+    return maximum
+
+
+def _resolve_systemic_config(
+    *,
+    active_host_window_s: float | None,
+    minimum_systemic_hosts: int | None,
+    systemic_host_fraction: float | None,
+) -> _SystemicConfig:
+    """Resolve and validate optional proportional-throttle settings."""
+    proportional = (
+        active_host_window_s is not None
+        or minimum_systemic_hosts is not None
+        or systemic_host_fraction is not None
+    )
+    active_window = (
+        active_host_window_s if active_host_window_s is not None else SYSTEMIC_ACTIVE_HOST_WINDOW_S
+    )
+    minimum_hosts = (
+        minimum_systemic_hosts if minimum_systemic_hosts is not None else SYSTEMIC_MINIMUM_HOSTS
+    )
+    host_fraction = (
+        systemic_host_fraction if systemic_host_fraction is not None else SYSTEMIC_HOST_FRACTION
+    )
+    _require_positive(active_window, "active_host_window_s must be positive")
+    _require_at_least(minimum_hosts, 1, "minimum_systemic_hosts must be at least 1")
+    _require_fraction(
+        host_fraction,
+        "systemic_host_fraction must be between 0 (exclusive) and 1",
+    )
+    return _SystemicConfig(proportional, active_window, minimum_hosts, host_fraction)
+
+
 class AdaptiveRequestScheduler:
     """Bound global concurrency, pacing, and cooldown across Wikimedia hosts."""
 
@@ -88,49 +176,24 @@ class AdaptiveRequestScheduler:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not 1 <= max_in_flight <= 16:
-            raise ValueError("max_in_flight must be between 1 and 16")
-        if requests_per_minute <= 0:
-            raise ValueError("requests_per_minute must be positive")
-        maximum = (
-            requests_per_minute if max_requests_per_minute is None else max_requests_per_minute
+        maximum = _validate_scheduler_values(
+            max_in_flight=max_in_flight,
+            requests_per_minute=requests_per_minute,
+            max_requests_per_minute=max_requests_per_minute,
+            minimum_requests_per_minute=minimum_requests_per_minute,
+            successes_per_increase=successes_per_increase,
+            host_throttle_window_s=host_throttle_window_s,
+            host_throttle_threshold=host_throttle_threshold,
         )
-        if maximum < requests_per_minute:
-            raise ValueError("max_requests_per_minute must not be below the initial rate")
-        if minimum_requests_per_minute <= 0 or minimum_requests_per_minute > requests_per_minute:
-            raise ValueError(
-                "minimum_requests_per_minute must be positive and no greater than the initial rate"
-            )
-        if successes_per_increase <= 0:
-            raise ValueError("successes_per_increase must be positive")
-        if host_throttle_window_s <= 0:
-            raise ValueError("host_throttle_window_s must be positive")
-        if host_throttle_threshold < 1:
-            raise ValueError("host_throttle_threshold must be at least 1")
-        # Proportional systemic threshold: when any of the new parameters
-        # are provided, use proportional mode; otherwise fall back to the
-        # fixed ``host_throttle_threshold``.
-        proportional = (
-            active_host_window_s is not None
-            or minimum_systemic_hosts is not None
-            or systemic_host_fraction is not None
+        systemic = _resolve_systemic_config(
+            active_host_window_s=active_host_window_s,
+            minimum_systemic_hosts=minimum_systemic_hosts,
+            systemic_host_fraction=systemic_host_fraction,
         )
-        self._proportional_mode = proportional
-        self._active_host_window_s = (
-            active_host_window_s if active_host_window_s is not None else 60.0
-        )
-        self._minimum_systemic_hosts = (
-            minimum_systemic_hosts if minimum_systemic_hosts is not None else 5
-        )
-        self._systemic_host_fraction = (
-            systemic_host_fraction if systemic_host_fraction is not None else 0.10
-        )
-        if self._active_host_window_s <= 0:
-            raise ValueError("active_host_window_s must be positive")
-        if self._minimum_systemic_hosts < 1:
-            raise ValueError("minimum_systemic_hosts must be at least 1")
-        if not 0 < self._systemic_host_fraction <= 1.0:
-            raise ValueError("systemic_host_fraction must be between 0 (exclusive) and 1")
+        self._proportional_mode = systemic.proportional_mode
+        self._active_host_window_s = systemic.active_host_window_s
+        self._minimum_systemic_hosts = systemic.minimum_systemic_hosts
+        self._systemic_host_fraction = systemic.systemic_host_fraction
         self._max_in_flight = max_in_flight
         self._semaphore = threading.BoundedSemaphore(max_in_flight)
         self._current_requests_per_minute = requests_per_minute
