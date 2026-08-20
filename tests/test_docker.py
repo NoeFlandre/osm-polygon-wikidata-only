@@ -103,11 +103,16 @@ def test_architecture_docs_describe_the_container_data_boundary() -> None:
 
 def test_ci_builds_and_smoke_tests_the_runtime_image() -> None:
     workflow = _read(".github/workflows/ci.yml")
+    justfile = _read("Justfile")
 
-    assert "docker build" in workflow
-    assert "--target runtime" in workflow
-    assert "docker run --rm" in workflow
-    assert "--help" in workflow
+    assert "run: just quality-gauntlet" in workflow
+    assert "docker build --target runtime" in workflow
+    assert "docker run --rm osm-polygon-wikidata-only:ci --help" in workflow
+    assert "smoke-test:" in justfile
+    assert "uv run osm-polygon-wikidata-only --help" in justfile
+    assert "uv run osm-polygon-wikidata-only sync-dir --help" in justfile
+    assert "docker build --target runtime" in justfile
+    assert "docker run --rm" in justfile
 
 
 @pytest.mark.integration

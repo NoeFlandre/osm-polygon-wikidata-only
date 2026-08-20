@@ -35,7 +35,7 @@ def test_project_uses_ty_as_its_only_static_type_checker() -> None:
 
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     justfile = (root / "Justfile").read_text(encoding="utf-8")
-    assert "run: just check" in workflow
+    assert "run: just quality-gauntlet" in workflow
     assert "uv run ty check src scripts" in justfile
     assert "uv run mypy" not in workflow
 
@@ -80,17 +80,28 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "sync:",
         "test:",
         "coverage:",
+        "baseline:",
+        "ruff:",
         "lint:",
+        "tests:",
+        "acceptance-tests:",
+        "architecture-checks:",
         "format:",
         "format-check:",
         "typecheck:",
+        "ty:",
         "build:",
         "docs:",
         "trackio:",
         "mutation:",
         "crap:",
+        "crap-all:",
         "crap-upload:",
         "quality-strength:",
+        "smoke-test:",
+        "diff-review:",
+        "qa-gauntlet:",
+        "quality-gauntlet:",
         "check:",
     ):
         assert recipe in justfile
@@ -106,13 +117,16 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
     ):
         assert command in justfile
     assert "mypy" not in justfile
+    assert "scripts/quality/qa_gauntlet.py" in justfile
 
 
-def test_github_actions_runs_the_test_strength_gate() -> None:
+def test_github_actions_runs_the_canonical_gauntlet_once() -> None:
     root = Path(__file__).parents[1]
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "run: just quality-strength" in workflow
+    assert workflow.count("run: just quality-gauntlet") == 1
+    assert "run: just qa-gauntlet" not in workflow
+    assert "run: just quality-strength" not in workflow
 
 
 def test_pre_commit_runs_fast_uv_managed_quality_hooks() -> None:
@@ -131,7 +145,45 @@ def test_github_actions_delegates_quality_commands_to_just() -> None:
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "taiki-e/install-action@just" in workflow
-    assert "run: just check" in workflow
+    assert "run: just quality-gauntlet" in workflow
     for recipe in ("coverage", "lint", "format-check", "typecheck", "build"):
         assert f"run: just {recipe}" not in workflow
     assert "uv sync --frozen" not in workflow
+
+
+def test_quality_gauntlet_is_the_single_canonical_completion_gate() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "quality-gauntlet:" in justfile
+    assert "check: quality-gauntlet" in justfile
+    assert "just build" in justfile
+    assert "just docs" in justfile
+    assert "docker-help" in justfile
+    assert workflow.count("run: just quality-gauntlet") == 1
+    assert "run: just qa-gauntlet" not in workflow
+
+
+def test_coverage_recipes_use_isolated_temporary_databases() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$" in justfile
+
+
+def test_crap_gate_keeps_the_existing_v2_fingerprint_scope() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "src/osm_polygon_wikidata_only/v2/fingerprints.py" in justfile
+
+
+def test_diff_review_executes_unmerged_path_check() -> None:
+    """The diff-review recipe must evaluate, not quote, its command substitution."""
+
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert 'test -z "$(git diff --name-only --diff-filter=U)"' in justfile
+    assert 'test -z "$$(git diff --name-only --diff-filter=U)"' not in justfile

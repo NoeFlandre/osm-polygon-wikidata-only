@@ -73,24 +73,41 @@ then refactor while the test remains green. Contract tests should check the
 observable CLI, schema, workflow, or documentation behavior rather than private
 implementation details.
 
-The complete local gate is:
+The deterministic pre-completion gate is:
+
+```bash
+just quality-gauntlet
+```
+
+The command runs the following stages exactly once, in this order, and stops
+at the first failure:
+
+```bash
+just baseline
+just ruff
+just ty
+just tests
+just acceptance-tests
+just architecture-checks
+just crap-all
+just mutation
+just smoke-test
+just diff-review
+```
+
+`crap-all` combines the three bounded CRAP scopes (domain/V2 helpers, parsing
+and sync helpers, and the durable upload queue). The architecture stage also
+builds the package and strict MkDocs site before running its contracts. The
+smoke stage checks both public CLI help paths without reading a data root or
+making a network request. The Docker runtime has its own `docker-help` recipe
+and CI container contract.
+`diff-review` runs `git diff --check` and a short branch status check.
+
+`just check` and the short alias `just qa-gauntlet` run the same deterministic
+completion gate locally:
 
 ```bash
 just check
-```
-
-It runs the frozen dependency setup, pytest with coverage, Ruff lint and format
-checks, `ty` over `src` and maintained scripts, the package build, a strict
-MkDocs build, and `git diff --check`. The individual commands are:
-
-```bash
-uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run ty check src scripts
-uv run mkdocs build --strict --site-dir /tmp/osm-polygon-wikidata-only-site
-uv build
-git diff --check
 ```
 
 ### Mutation and complexity gates
@@ -117,8 +134,8 @@ are deliberately narrow: network clients, large data files, and external
 publication are outside the mutation run.
 
 Run `uv run pre-commit run --all-files` before opening a pull request. The
-hooks intentionally run the fast Ruff and `ty` subset; `just check` remains the
-complete gate used by GitHub Actions.
+hooks intentionally run the fast Ruff and `ty` subset; `just check` and
+GitHub Actions both use the complete `just quality-gauntlet` gate.
 
 ## Test strength checks
 

@@ -336,11 +336,11 @@ def test_developer_docs_use_current_test_paths_and_quality_gate() -> None:
 
     assert "tests/enrichment/test_wikimedia_auth.py" in development
     assert "tests/cli/test_dependencies.py" in development
+    assert "just quality-gauntlet" in development
+    assert "just diff-review" in development
     assert "git diff --check" in development
-    assert "uv build" in development
-    assert (
-        "uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q" in development
-    )
+    assert "just check" in development
+    assert "just tests" in development
 
 
 def test_architecture_keeps_private_modules_out_of_public_docs() -> None:
@@ -358,8 +358,8 @@ def test_current_documentation_uses_uv_ruff_and_ty_quality_gate() -> None:
     )
     combined = "\n".join(document.read_text(encoding="utf-8") for document in documents)
 
-    assert "uv run ruff check src tests scripts" in combined
-    assert "uv run ty check src scripts" in combined
+    assert "just ruff" in combined
+    assert "just ty" in combined
     assert "mypy" not in combined.lower()
 
 

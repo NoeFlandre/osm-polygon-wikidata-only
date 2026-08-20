@@ -39,9 +39,9 @@ def test_ci_runs_the_canonical_full_quality_gate() -> None:
     """CI must execute the same complete gate documented for contributors."""
     workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "run: just check" in workflow
+    assert "run: just quality-gauntlet" in workflow
+    assert "run: just check" not in workflow
     assert "run: just coverage" not in workflow
-    assert "run: just build" not in workflow
 
 
 def test_docs_landing_page_is_public_and_points_to_project_sources() -> None:

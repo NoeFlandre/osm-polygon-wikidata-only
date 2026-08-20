@@ -12,6 +12,10 @@ well-tested changes that preserve dataset completeness and deterministic output.
 5. Run the complete local quality gate documented in
    [`docs/development.md`](docs/development.md).
 
+Before requesting review, run `just quality-gauntlet`. It is the canonical,
+fail-fast sequence: baseline, Ruff, ty, tests, acceptance tests, architecture
+checks, CRAP, mutation tests, smoke test, and diff review.
+
 Do not commit PBFs, Parquet files, caches, tokens, or generated datasets. Keep
 pull requests focused and explain compatibility effects explicitly. Changes to
 polygon filtering, schemas, completeness, or publication semantics require a

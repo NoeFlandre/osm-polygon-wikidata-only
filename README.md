@@ -334,10 +334,10 @@ PBFs untouched. Use `--force` only when deliberately rebuilding one.
 ## Development quality checks
 
 The project exposes the same uv-managed checks locally and in GitHub
-Actions through `just`:
+Actions through `just`. Before completion, use:
 
 ```bash
-just check
+just quality-gauntlet
 ```
 
 Install the pre-commit hooks once per checkout:
@@ -462,7 +462,7 @@ HTTP clients come in three flavors (`Http…`, `InMemory…`,
 `Cached…`) and the tests use the in-memory flavors.
 
 Use `just --list` for the other recipes. All Python commands run through uv;
-GitHub Actions runs the same complete `just check` gate.
+GitHub Actions runs the same complete `just quality-gauntlet` gate.
 
 ---
 

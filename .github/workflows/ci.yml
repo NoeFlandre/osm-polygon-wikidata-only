@@ -11,7 +11,9 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The deterministic gate includes the full suite, three CRAP scopes, and
+    # bounded mutation tests. Keep enough time for a cold runner.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -20,8 +22,8 @@ jobs:
       - uses: taiki-e/install-action@just
       - name: Install Python
         run: uv python install 3.12
-      - name: Run the complete quality gate
-        run: just check
+      - name: Run the deterministic QA gauntlet
+        run: just quality-gauntlet
 
   container:
     runs-on: ubuntu-latest
@@ -32,17 +34,3 @@ jobs:
         run: docker build --target runtime --tag osm-polygon-wikidata-only:ci .
       - name: Verify the safe default command
         run: docker run --rm osm-polygon-wikidata-only:ci --help
-
-  test-strength:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - uses: taiki-e/install-action@just
-      - name: Install Python
-        run: uv python install 3.12
-      - name: Run mutation and CRAP gates
-        run: just quality-strength
