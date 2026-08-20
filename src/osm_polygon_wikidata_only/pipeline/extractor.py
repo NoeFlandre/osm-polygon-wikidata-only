@@ -106,6 +106,14 @@ def _row_dict(polygon: Polygon) -> dict[str, Any]:
     return dict(polygon.__dict__)
 
 
+def _candidate_tag_data(tags: dict[str, str]) -> tuple[str, dict[str, str]] | None:
+    """Return the required QID and cleaned tags for one candidate."""
+    wikidata = tags.get("wikidata", "").strip()
+    if not wikidata:
+        return None
+    return wikidata, {key: value for key, value in tags.items() if key != "wikidata"}
+
+
 def candidate_to_polygon(
     candidate: PolygonCandidate,
     *,
@@ -127,11 +135,10 @@ def candidate_to_polygon(
         return None
     pg, geom = computed
 
-    wikidata = tags.get("wikidata", "").strip()
-    if not wikidata:
+    tag_data = _candidate_tag_data(tags)
+    if tag_data is None:
         return None
-
-    cleaned_tags = {k: v for k, v in tags.items() if k != "wikidata"}
+    wikidata, cleaned_tags = tag_data
     name = cleaned_tags.get("name", "")
     bbox = bbox_from_geom(geom)
 

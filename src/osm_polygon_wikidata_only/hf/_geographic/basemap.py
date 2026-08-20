@@ -41,6 +41,12 @@ def load_land_basemap(cache_dir: Path) -> list[Any] | None:
     candidate = cache_dir / "ne_110m_land.geojson"
     if not candidate.exists() or candidate.stat().st_size == 0:
         return None
+    data = _read_land_geojson(candidate)
+    return data.get("features") or [] if data is not None else None
+
+
+def _read_land_geojson(candidate: Path) -> dict[str, Any] | None:
+    """Read one cached GeoJSON object, logging malformed cache content."""
     try:
         data = json.loads(candidate.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -48,25 +54,50 @@ def load_land_basemap(cache_dir: Path) -> list[Any] | None:
         return None
     if not isinstance(data, dict):
         return None
-    return data.get("features") or []
+    return data
 
 
 def draw_landmasses(ax: Any, features: Sequence[Any]) -> None:
     """Draw Natural Earth landmasses on ``ax``."""
     for feature in features:
-        if not isinstance(feature, dict):
-            continue
-        geom = feature.get("geometry")
-        if not isinstance(geom, dict):
-            continue
-        coords = geom.get("coordinates")
-        gtype = geom.get("type")
-        if gtype == "Polygon" and coords:
-            _draw_land_ring(ax, coords[0])
-        elif gtype == "MultiPolygon" and coords:
-            for polygon in coords:
-                if polygon:
-                    _draw_land_ring(ax, polygon[0])
+        for ring in _feature_rings(feature):
+            _draw_land_ring(ax, ring)
+
+
+def _feature_rings(feature: Any) -> list[Sequence[Sequence[float]]]:
+    """Return exterior rings from one Natural Earth feature."""
+    geometry = _feature_geometry(feature)
+    return _geometry_rings(geometry) if geometry is not None else []
+
+
+def _feature_geometry(feature: Any) -> dict[str, Any] | None:
+    """Return a feature's geometry mapping when it has one."""
+    if not isinstance(feature, dict):
+        return None
+    geom = feature.get("geometry")
+    return geom if isinstance(geom, dict) else None
+
+
+def _geometry_rings(geom: dict[str, Any]) -> list[Sequence[Sequence[float]]]:
+    """Return exterior rings for a Polygon or MultiPolygon geometry."""
+    gtype = geom.get("type")
+    if gtype == "Polygon":
+        return _polygon_rings(geom.get("coordinates"))
+    if gtype == "MultiPolygon":
+        return _multipolygon_rings(geom.get("coordinates"))
+    return []
+
+
+def _polygon_rings(coords: Any) -> list[Sequence[Sequence[float]]]:
+    """Return the exterior ring of a non-empty Polygon."""
+    return [coords[0]] if coords else []
+
+
+def _multipolygon_rings(coords: Any) -> list[Sequence[Sequence[float]]]:
+    """Return exterior rings of all non-empty MultiPolygon members."""
+    if not coords:
+        return []
+    return [polygon[0] for polygon in coords if polygon]
 
 
 def _draw_land_ring(ax: Any, ring: Sequence[Sequence[float]]) -> None:

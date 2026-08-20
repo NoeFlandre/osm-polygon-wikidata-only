@@ -8,6 +8,7 @@ contract test; no Parquet reads, no network.
 from __future__ import annotations
 
 import pyarrow as pa
+import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
@@ -117,6 +118,38 @@ def test_dataset_card_front_matter_passes_structural_validator() -> None:
     end_index = md.find(end_marker, 4)
     header_block = md[: end_index + len(end_marker)]
     validate_front_matter(header_block)
+
+
+@pytest.mark.parametrize(
+    ("front_matter", "message"),
+    [
+        ("", "must deserialize"),
+        ("---\n- item\n---\n", "must deserialize to a mapping"),
+        ("---\nconfigs: {}\n---\n", "non-empty"),
+        ("---\nconfigs: []\n---\n", "non-empty"),
+        ("---\nconfigs:\n  - item\n---\n", "entry must be a mapping"),
+        ("---\nconfigs:\n  - data_files: []\n---\n", "contain `config_name`"),
+        (
+            "---\nconfigs:\n  - config_name: polygons\n---\n",
+            "missing `data_files`",
+        ),
+        (
+            "---\nconfigs:\n  - config_name: polygons\n    data_files: [item]\n---\n",
+            "block must be a mapping",
+        ),
+        (
+            "---\nconfigs:\n  - config_name: polygons\n    data_files:\n      - split: polygons\n---\n",
+            "has no `path:`",
+        ),
+    ],
+)
+def test_dataset_card_front_matter_validator_rejects_malformed_shapes(
+    front_matter: str, message: str
+) -> None:
+    from osm_polygon_wikidata_only.hf.dataset_card import validate_front_matter
+
+    with pytest.raises(ValueError, match=message):
+        validate_front_matter(front_matter)
 
 
 # --- augmentation schema sections ---------------------------------

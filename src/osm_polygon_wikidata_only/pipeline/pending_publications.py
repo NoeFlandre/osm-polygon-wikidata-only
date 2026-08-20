@@ -219,9 +219,7 @@ def _validated_marker_inputs(
     return validated_stems, validated_hashes
 
 
-def _validate_marker_collections(
-    stems: list[str], fingerprint_hashes: dict[str, str]
-) -> None:
+def _validate_marker_collections(stems: list[str], fingerprint_hashes: dict[str, str]) -> None:
     """Validate marker container types and matching keys."""
     _validate_marker_types(stems, fingerprint_hashes)
     if not stems:
@@ -232,9 +230,7 @@ def _validate_marker_collections(
         raise ValueError("Marker fingerprint_hashes keys must match the stems list exactly")
 
 
-def _validate_marker_types(
-    stems: list[str], fingerprint_hashes: dict[str, str]
-) -> None:
+def _validate_marker_types(stems: list[str], fingerprint_hashes: dict[str, str]) -> None:
     """Validate marker collection container types."""
     if not isinstance(stems, list):
         raise ValueError(f"Marker stems must be a list; got {type(stems).__name__}")

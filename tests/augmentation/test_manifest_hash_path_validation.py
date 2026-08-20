@@ -22,7 +22,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from osm_polygon_wikidata_only.augmentation.orchestrator import augmentation_is_current
+from osm_polygon_wikidata_only.augmentation.orchestrator import (
+    _augmentation_inputs_exist,
+    _core_hashes_are_current,
+    _is_valid_core_hash_path,
+    _is_valid_sha256_hash,
+    _link_artifacts_are_current,
+    augmentation_is_current,
+)
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
     fact_schema,
@@ -275,3 +282,45 @@ def test_malformed_core_hashes_return_false(tmp_path: Path, bad_hashes: object) 
         encoding="utf-8",
     )
     assert not augmentation_is_current(data_root, STEM)
+
+
+def test_core_hash_helpers_validate_hex_and_tree_membership(tmp_path: Path) -> None:
+    data_root = _seed_data_root(tmp_path)
+    polygon = data_root.processed_polygons / f"{STEM}.parquet"
+    allowed = {str(polygon)}
+    assert _is_valid_sha256_hash("a" * 64)
+    assert not _is_valid_sha256_hash("g" * 64)
+    assert _is_valid_core_hash_path(str(polygon), allowed, data_root.processed.resolve())
+    assert not _is_valid_core_hash_path(
+        str(tmp_path / "outside.parquet"), allowed, data_root.processed.resolve()
+    )
+
+
+def test_currentness_helpers_accept_seeded_core_files(tmp_path: Path) -> None:
+    data_root = _seed_data_root(tmp_path)
+    _write_manifest_with_hashes(data_root, _valid_canonical_hashes(data_root))
+    assert _augmentation_inputs_exist(data_root, STEM)
+    manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    hashes = manifest[STEM]["core_hashes"]
+    assert _core_hashes_are_current(hashes, data_root, STEM)
+
+
+def test_currentness_helpers_reject_missing_core_file_and_link_artifact(tmp_path: Path) -> None:
+    data_root = _seed_data_root(tmp_path)
+    _write_manifest_with_hashes(data_root, _valid_canonical_hashes(data_root))
+    hashes = _valid_canonical_hashes(data_root)
+    missing_path = next(iter(hashes))
+    Path(missing_path).unlink()
+    assert not _core_hashes_are_current(hashes, data_root, STEM)
+    assert _link_artifacts_are_current({}, data_root, STEM)
+    assert not _link_artifacts_are_current(
+        {
+            "link_schema_version": "polygon-document-links-v1",
+            "link_artifact_sha256": "a" * 64,
+        },
+        data_root,
+        STEM,
+    )

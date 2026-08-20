@@ -308,8 +308,7 @@ def _merge_polygon_rows(
     parent_path = processed_dir / "polygons" / f"{parent_stem}.parquet"
     polygon_rows = pq.read_table(parent_path).to_pylist()  # type: ignore[no-untyped-call]
     polygon_positions = {
-        (row["osm_type"], row["osm_id"]): position
-        for position, row in enumerate(polygon_rows)
+        (row["osm_type"], row["osm_id"]): position for position, row in enumerate(polygon_rows)
     }
     for child in children:
         child_path = processed_dir / "polygons" / f"{child}.parquet"

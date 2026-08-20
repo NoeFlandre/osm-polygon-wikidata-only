@@ -391,6 +391,16 @@ def validate_front_matter(front_matter: str) -> None:
     entries, missing ``config_name`` fields, or glob typos before
     the card reaches the HF Hub.
     """
+    parsed = _parse_front_matter(front_matter)
+    configs = parsed.get("configs")
+    if not isinstance(configs, list) or not configs:
+        raise ValueError("Front matter must declare a non-empty `configs:` list")
+    for entry in configs:
+        _validate_config_entry(entry)
+
+
+def _parse_front_matter(front_matter: str) -> Mapping[str, Any]:
+    """Deserialize the first non-empty YAML document as a mapping."""
     import yaml
 
     # ``safe_load_all`` accepts the conventional ``---\n...\n---\n``
@@ -398,29 +408,39 @@ def validate_front_matter(front_matter: str) -> None:
     # yielded document is the canonical front-matter mapping; trailing
     # ``None`` entries (introduced by PyYAML's trailing whitespace
     # handling) are ignored.
-    docs = [d for d in yaml.safe_load_all(front_matter) if d is not None]
+    docs = [document for document in yaml.safe_load_all(front_matter) if document is not None]
     if not docs:
         raise ValueError("Front matter must deserialize to a YAML document")
     parsed = docs[0]
     if not isinstance(parsed, dict):
         raise ValueError("Front matter must deserialize to a mapping")
-    configs = parsed.get("configs")
-    if not isinstance(configs, list) or not configs:
-        raise ValueError("Front matter must declare a non-empty `configs:` list")
-    for entry in configs:
-        if not isinstance(entry, dict):
-            raise ValueError("Each `configs:` entry must be a mapping")
-        if "config_name" not in entry:
-            raise ValueError("Each `configs:` entry must contain `config_name`")
-        if "data_files" not in entry:
-            raise ValueError(f"configs entry {entry.get('config_name')!r} is missing `data_files`")
-        data_files = entry["data_files"]
-        files_iter = data_files if isinstance(data_files, list) else [data_files]
-        seen_paths = False
-        for file_block in files_iter:
-            if not isinstance(file_block, dict):
-                raise ValueError("`data_files:` block must be a mapping")
-            if "path" in file_block:
-                seen_paths = True
-        if not seen_paths:
-            raise ValueError(f"configs entry {entry['config_name']!r} has no `path:` glob")
+    return parsed
+
+
+def _validate_config_entry(entry: Any) -> None:
+    """Validate one HF config entry and its path declarations."""
+    if not isinstance(entry, dict):
+        raise ValueError("Each `configs:` entry must be a mapping")
+    config_name, data_files = _required_config_fields(entry)
+    if not any("path" in block for block in _data_file_blocks(data_files)):
+        raise ValueError(f"configs entry {config_name!r} has no `path:` glob")
+
+
+def _required_config_fields(entry: Mapping[str, Any]) -> tuple[Any, Any]:
+    """Return required config fields, raising the original diagnostics."""
+    if "config_name" not in entry:
+        raise ValueError("Each `configs:` entry must contain `config_name`")
+    if "data_files" not in entry:
+        raise ValueError(f"configs entry {entry.get('config_name')!r} is missing `data_files`")
+    return entry["config_name"], entry["data_files"]
+
+
+def _data_file_blocks(data_files: Any) -> list[Mapping[str, Any]]:
+    """Normalize one config's data-file declaration and validate its blocks."""
+    files_iter = data_files if isinstance(data_files, list) else [data_files]
+    blocks: list[Mapping[str, Any]] = []
+    for file_block in files_iter:
+        if not isinstance(file_block, dict):
+            raise ValueError("`data_files:` block must be a mapping")
+        blocks.append(file_block)
+    return blocks

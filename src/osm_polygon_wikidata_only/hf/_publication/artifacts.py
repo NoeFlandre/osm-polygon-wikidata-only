@@ -116,33 +116,58 @@ def _optional_wikipedia_documents(
     entry: dict[str, object],
     manifest_key: str,
 ) -> Path | None:
-    path = data_root.processed / "wikipedia/documents" / f"{stem}.parquet"
+    path = _wikipedia_documents_path(data_root, stem)
     expected = f"wikipedia/documents/{stem}.parquet"
     if path.is_file():
-        configured = entry.get("wikipedia_documents_path")
-        if configured and configured != expected:
-            raise PublicationValidationError(
-                f"Manifest entry wikipedia_documents_path mismatch for key '{manifest_key}': "
-                f"expected '{expected}', got '{configured}'"
-            )
-        _require_schema(path, wikipedia_document_schema(), "wikipedia documents parquet")
+        _validate_wikipedia_documents(path, entry, expected, manifest_key)
         return path
 
-    augmentation_manifest = (
-        data_root.processed / "augmentation/manifests/augmentation_manifest.json"
-    )
-    if augmentation_manifest.is_file():
-        try:
-            augmentation = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as error:
-            raise PublicationValidationError(
-                f"Malformed augmentation manifest JSON: {error}"
-            ) from error
-        if stem in augmentation:
-            raise PublicationValidationError(
-                f"Wikipedia documents file missing for augmented region {stem}: {path}"
-            )
+    _reject_missing_augmented_documents(data_root, stem, path)
     return None
+
+
+def _wikipedia_documents_path(data_root: DataRoot, stem: str) -> Path:
+    return data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
+
+
+def _validate_wikipedia_documents(
+    path: Path,
+    entry: dict[str, object],
+    expected: str,
+    manifest_key: str,
+) -> None:
+    configured = entry.get("wikipedia_documents_path")
+    if configured and configured != expected:
+        raise PublicationValidationError(
+            f"Manifest entry wikipedia_documents_path mismatch for key '{manifest_key}': "
+            f"expected '{expected}', got '{configured}'"
+        )
+    _require_schema(path, wikipedia_document_schema(), "wikipedia documents parquet")
+
+
+def _reject_missing_augmented_documents(data_root: DataRoot, stem: str, path: Path) -> None:
+    manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    if not manifest_path.is_file():
+        return
+    augmentation = _load_augmentation_manifest(manifest_path)
+    if stem in augmentation:
+        raise PublicationValidationError(
+            f"Wikipedia documents file missing for augmented region {stem}: {path}"
+        )
+
+
+def _load_augmentation_manifest(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise PublicationValidationError(
+            f"Malformed augmentation manifest JSON: {error}"
+        ) from error
+    if not isinstance(payload, dict):
+        raise PublicationValidationError("Malformed augmentation manifest JSON: expected an object")
+    return payload
 
 
 def _require_file(path: Path, label: str) -> None:

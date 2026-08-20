@@ -43,10 +43,7 @@ def _auth_progress_part(auth: WikimediaAuthSnapshot | None) -> str | None:
         auth.credentials_configured or auth.authenticated_hosts or auth.anonymous_hosts
     ):
         return None
-    return (
-        f"authenticated hosts {auth.authenticated_hosts}, "
-        f"anonymous hosts {auth.anonymous_hosts}"
-    )
+    return f"authenticated hosts {auth.authenticated_hosts}, anonymous hosts {auth.anonymous_hosts}"
 
 
 def _throttle_progress_parts(scheduler: RequestSchedulerSnapshot) -> list[str]:

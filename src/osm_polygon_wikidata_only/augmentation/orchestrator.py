@@ -27,7 +27,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 
@@ -43,7 +43,7 @@ from osm_polygon_wikidata_only.augmentation.integrity import (
     WikivoyageIntegrityResult,
     enforce_wikivoyage_integrity,
 )
-from osm_polygon_wikidata_only.augmentation.models import Document, Section
+from osm_polygon_wikidata_only.augmentation.models import Document, Section, WikidataFact
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
     fact_schema,
@@ -60,6 +60,7 @@ from .progress import AugmentationProgress
 from .steps import (
     CONTRACT_VERSION,
     AugmentationClient,
+    CoreInputs,
     build_wikidata_facts,
     fetch_document_sections_batch,
     fetch_wikivoyage_documents,
@@ -99,6 +100,102 @@ def sidecar_paths(data_root: DataRoot, stem: str) -> tuple[Path, Path, Path, Pat
     )
 
 
+def _load_or_resolve_entities(
+    checkpoint_store: AugmentationCheckpointStore,
+    client: AugmentationClient,
+    qids: list[str],
+    core_inputs: CoreInputs,
+    progress: AugmentationProgress,
+    stem: str,
+) -> tuple[dict[str, dict[str, Any]], str]:
+    """Load entity work from a checkpoint or resolve and save it."""
+    entities = checkpoint_store.load_entities(core_inputs.qids)
+    if entities is None:
+        entities = resolve_entities(client, qids, progress=progress)
+        checkpoint_store.save_entities(core_inputs.qids, entities)
+    else:
+        LOGGER.info("Augmentation checkpoint %s: reused Wikidata entities", stem)
+        progress.start("Wikidata entities", total=len(qids))
+        progress.complete()
+    return entities, entities_digest(entities)
+
+
+def _load_or_fetch_voyage_documents(
+    checkpoint_store: AugmentationCheckpointStore,
+    client: AugmentationClient,
+    entities: dict[str, dict[str, Any]],
+    entity_digest: str,
+    progress: AugmentationProgress,
+    stem: str,
+) -> list[Document]:
+    """Load Wikivoyage documents from a checkpoint or fetch and save them."""
+    voyage_documents = checkpoint_store.load_voyage_documents(entity_digest)
+    with ThreadPoolExecutor(max_workers=VOYAGE_WORKERS) as voyage_executor:
+        if voyage_documents is None:
+            voyage_documents = fetch_wikivoyage_documents(
+                client,
+                entities=entities,
+                progress=progress,
+                executor=voyage_executor,
+            )
+            checkpoint_store.save_voyage_documents(entity_digest, voyage_documents)
+        else:
+            LOGGER.info("Augmentation checkpoint %s: reused Wikivoyage documents", stem)
+            voyage_total = sum(
+                len(discover_wikivoyage_sitelinks(entity)) for entity in entities.values()
+            )
+            progress.start("Wikivoyage documents", total=voyage_total)
+            progress.complete()
+    return voyage_documents
+
+
+def _load_or_build_facts(
+    checkpoint_store: AugmentationCheckpointStore,
+    client: AugmentationClient,
+    entities: dict[str, dict[str, Any]],
+    entity_digest: str,
+    progress: AugmentationProgress,
+    stem: str,
+) -> list[WikidataFact]:
+    """Load Wikidata facts from a checkpoint or build and save them."""
+    facts = checkpoint_store.load_facts(entity_digest)
+    if facts is None:
+        facts = build_wikidata_facts(client, entities=entities, progress=progress)
+        checkpoint_store.save_facts(entity_digest, facts)
+    else:
+        LOGGER.info("Augmentation checkpoint %s: reused Wikidata facts", stem)
+        progress.start("Wikidata facts", total=len(entities))
+        progress.complete()
+    return facts
+
+
+def _core_artifacts_unchanged(core_inputs: CoreInputs) -> bool:
+    """Return whether core files still match the pre-augmentation hashes."""
+    current = {str(path): sha256_file(path) for path in core_inputs.core_paths}
+    return core_inputs.core_hashes == current
+
+
+def _integrity_rejections_payload(
+    integrity: WikivoyageIntegrityResult,
+) -> dict[str, Any] | None:
+    """Serialize rejection details only when integrity removed documents."""
+    if integrity.rejected_document_count <= 0:
+        return None
+    return {
+        "contract_version": INTEGRITY_CONTRACT_VERSION,
+        "shard": integrity.shard,
+        "original_document_count": integrity.original_document_count,
+        "retained_document_count": integrity.retained_document_count,
+        "rejected_document_count": integrity.rejected_document_count,
+        "original_section_count": integrity.original_section_count,
+        "retained_section_count": integrity.retained_section_count,
+        "cascaded_section_count": integrity.cascaded_section_count,
+        "rewritten_documents": integrity.rewritten_documents,
+        "rewritten_sections": integrity.rewritten_sections,
+        "rejections": [rejection.to_dict() for rejection in integrity.rejections],
+    }
+
+
 def augment_region(
     data_root: DataRoot,
     stem: str,
@@ -123,33 +220,12 @@ def augment_region(
         ),
     )
 
-    entities = checkpoint_store.load_entities(core_inputs.qids)
-    if entities is None:
-        entities = resolve_entities(client, qids, progress=progress)
-        checkpoint_store.save_entities(core_inputs.qids, entities)
-    else:
-        LOGGER.info("Augmentation checkpoint %s: reused Wikidata entities", stem)
-        progress.start("Wikidata entities", total=len(qids))
-        progress.complete()
-    entity_digest = entities_digest(entities)
-
-    voyage_documents = checkpoint_store.load_voyage_documents(entity_digest)
-    with ThreadPoolExecutor(max_workers=VOYAGE_WORKERS) as voyage_executor:
-        if voyage_documents is None:
-            voyage_documents = fetch_wikivoyage_documents(
-                client,
-                entities=entities,
-                progress=progress,
-                executor=voyage_executor,
-            )
-            checkpoint_store.save_voyage_documents(entity_digest, voyage_documents)
-        else:
-            LOGGER.info("Augmentation checkpoint %s: reused Wikivoyage documents", stem)
-            voyage_total = sum(
-                len(discover_wikivoyage_sitelinks(entity)) for entity in entities.values()
-            )
-            progress.start("Wikivoyage documents", total=voyage_total)
-            progress.complete()
+    entities, entity_digest = _load_or_resolve_entities(
+        checkpoint_store, client, qids, core_inputs, progress, stem
+    )
+    voyage_documents = _load_or_fetch_voyage_documents(
+        checkpoint_store, client, entities, entity_digest, progress, stem
+    )
 
     all_documents = wikipedia_documents + voyage_documents
     sections_by_project = _checkpointed_document_sections(
@@ -160,16 +236,9 @@ def augment_region(
         stem=stem,
     )
 
-    facts = checkpoint_store.load_facts(entity_digest)
-    if facts is None:
-        facts = build_wikidata_facts(client, entities=entities, progress=progress)
-        checkpoint_store.save_facts(entity_digest, facts)
-    else:
-        LOGGER.info("Augmentation checkpoint %s: reused Wikidata facts", stem)
-        progress.start("Wikidata facts", total=len(entities))
-        progress.complete()
+    facts = _load_or_build_facts(checkpoint_store, client, entities, entity_digest, progress, stem)
 
-    if core_inputs.core_hashes != {str(path): sha256_file(path) for path in core_inputs.core_paths}:
+    if not _core_artifacts_unchanged(core_inputs):
         raise RuntimeError("Core artifacts changed during augmentation")
 
     write_sidecars(
@@ -182,7 +251,7 @@ def augment_region(
         articles_path=core_inputs.core_paths[0],
     )
 
-    if core_inputs.core_hashes != {str(path): sha256_file(path) for path in core_inputs.core_paths}:
+    if not _core_artifacts_unchanged(core_inputs):
         raise RuntimeError("Core artifacts changed during augmentation")
 
     # Deterministic join-integrity enforcement: reject every wikivoyage
@@ -198,21 +267,7 @@ def augment_region(
         "wikidata_facts": len(facts),
     }
 
-    rejections_payload: dict[str, Any] | None = None
-    if wikivoyage_integrity.rejected_document_count > 0:
-        rejections_payload = {
-            "contract_version": INTEGRITY_CONTRACT_VERSION,
-            "shard": wikivoyage_integrity.shard,
-            "original_document_count": wikivoyage_integrity.original_document_count,
-            "retained_document_count": wikivoyage_integrity.retained_document_count,
-            "rejected_document_count": wikivoyage_integrity.rejected_document_count,
-            "original_section_count": wikivoyage_integrity.original_section_count,
-            "retained_section_count": wikivoyage_integrity.retained_section_count,
-            "cascaded_section_count": wikivoyage_integrity.cascaded_section_count,
-            "rewritten_documents": wikivoyage_integrity.rewritten_documents,
-            "rewritten_sections": wikivoyage_integrity.rewritten_sections,
-            "rejections": [r.to_dict() for r in wikivoyage_integrity.rejections],
-        }
+    rejections_payload = _integrity_rejections_payload(wikivoyage_integrity)
 
     manifest_path = update_augmentation_manifest(
         data_root,
@@ -273,6 +328,12 @@ def _checkpointed_document_sections(
                 sections_by_project[section.project].append(section)
     for rows in sections_by_project.values():
         rows.sort(key=lambda row: (row.document_id, row.section_index))
+    _log_reused_section_batches(stem, reused_batches, total_batches)
+    return sections_by_project
+
+
+def _log_reused_section_batches(stem: str, reused_batches: int, total_batches: int) -> None:
+    """Log checkpoint reuse only when at least one batch was reused."""
     if reused_batches:
         LOGGER.info(
             "Augmentation checkpoint %s: reused %d/%d article-section batches",
@@ -280,7 +341,6 @@ def _checkpointed_document_sections(
             reused_batches,
             total_batches,
         )
-    return sections_by_project
 
 
 def completed_region_stems(data_root: DataRoot) -> list[str]:
@@ -296,45 +356,74 @@ def augmentation_is_current(data_root: DataRoot, stem: str) -> bool:
     manifest_path = (
         data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     )
-    if not manifest_path.exists() or not all(
-        path.exists() for path in sidecar_paths(data_root, stem)
-    ):
+    if not _augmentation_inputs_exist(data_root, stem):
         return False
     manifest = json.loads(manifest_path.read_text())
     entry = manifest.get(stem, {})
     if entry.get("contract_version") != CONTRACT_VERSION:
         return False
-    if "link_schema_version" in entry or "link_artifact_sha256" in entry:
-        links_path = data_root.processed_links / f"{stem}.parquet"
-        if (
-            entry.get("link_schema_version") != "polygon-document-links-v1"
-            or not links_path.is_file()
-            or entry.get("link_artifact_sha256") != sha256_file(links_path)
-        ):
-            return False
-        processed_manifest_path = data_root.processed_manifests / "processed_pbfs.json"
-        try:
-            processed_entry = json.loads(processed_manifest_path.read_text(encoding="utf-8"))[
-                f"{stem}.osm.pbf"
-            ]
-        except (FileNotFoundError, KeyError, TypeError, json.JSONDecodeError):
-            return False
-        if (
-            processed_entry.get("link_schema_version") != "polygon-document-links-v1"
-            or processed_entry.get("link_count") != pq.read_metadata(links_path).num_rows  # type: ignore[no-untyped-call]
-        ):
-            return False
-    expected_hashes = entry.get("core_hashes")
-    if not _is_valid_core_hashes(expected_hashes, data_root, stem):
+    if not _link_artifacts_are_current(entry, data_root, stem):
         return False
-    # Validate exactly the source paths named by the manifest. After
-    # ``prepare_local_retirement`` repoints the manifest to the canonical
-    # document, the legacy staging file may still exist but must NOT be
-    # chosen over the canonical source the manifest records.
+    expected_hashes = entry.get("core_hashes")
+    return _core_hashes_are_current(expected_hashes, data_root, stem)
+
+
+def _augmentation_inputs_exist(data_root: DataRoot, stem: str) -> bool:
+    """Return whether the manifest and all five sidecars are present."""
+    manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    return manifest_path.exists() and all(path.exists() for path in sidecar_paths(data_root, stem))
+
+
+def _link_artifact_file_is_current(entry: dict[str, Any], links_path: Path) -> bool:
+    """Validate the canonical link file and its recorded content hash."""
+    return (
+        entry.get("link_schema_version") == "polygon-document-links-v1"
+        and links_path.is_file()
+        and entry.get("link_artifact_sha256") == sha256_file(links_path)
+    )
+
+
+def _processed_link_manifest_is_current(data_root: DataRoot, stem: str, links_path: Path) -> bool:
+    """Validate the processed-PBF link metadata against the link file."""
+    processed_manifest_path = data_root.processed_manifests / "processed_pbfs.json"
+    try:
+        processed_entry = json.loads(processed_manifest_path.read_text(encoding="utf-8"))[
+            f"{stem}.osm.pbf"
+        ]
+    except (FileNotFoundError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    return (
+        processed_entry.get("link_schema_version") == "polygon-document-links-v1"
+        and processed_entry.get("link_count") == pq.read_metadata(links_path).num_rows  # type: ignore[no-untyped-call]
+    )
+
+
+def _link_artifacts_are_current(entry: dict[str, Any], data_root: DataRoot, stem: str) -> bool:
+    """Validate link metadata when the manifest carries the link contract."""
+    if "link_schema_version" not in entry and "link_artifact_sha256" not in entry:
+        return True
+    links_path = data_root.processed_links / f"{stem}.parquet"
+    return _link_artifact_file_is_current(
+        entry, links_path
+    ) and _processed_link_manifest_is_current(data_root, stem, links_path)
+
+
+def _core_hashes_are_current(value: object, data_root: DataRoot, stem: str) -> bool:
+    """Validate recorded core hashes against the current files."""
+    if not _is_valid_core_hashes(value, data_root, stem):
+        return False
+    expected_hashes = cast(dict[str, str], value)
     expected_paths = [Path(key) for key in expected_hashes]
     if not all(path.is_file() for path in expected_paths):
         return False
-    current = {str(path): sha256_file(path) for path in expected_paths}
+    return _hashes_match_files(expected_hashes, expected_paths)
+
+
+def _hashes_match_files(expected_hashes: dict[str, str], paths: list[Path]) -> bool:
+    """Compare recorded hashes with freshly computed file hashes."""
+    current = {str(path): sha256_file(path) for path in paths}
     return bool(expected_hashes == current)
 
 
@@ -358,11 +447,6 @@ def _is_valid_core_hashes(value: object, data_root: DataRoot, stem: str) -> bool
     never used to select between legacy and canonical; both layout
     variants share it.
     """
-    if not isinstance(value, dict) or not value:
-        return False
-    if len(value) != 2:
-        return False
-
     polygon_path = data_root.processed_polygons / f"{stem}.parquet"
     legacy_path = data_root.processed_articles / f"{stem}.parquet"
     canonical_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
@@ -371,71 +455,94 @@ def _is_valid_core_hashes(value: object, data_root: DataRoot, stem: str) -> bool
     polygon_key = str(polygon_path)
     legacy_key = str(legacy_path)
     canonical_key = str(canonical_path)
+    allowed_keys = {polygon_key, legacy_key, canonical_key}
 
-    if polygon_key not in value:
+    if not isinstance(value, dict):
         return False
-    sources_present = sum(1 for key in (legacy_key, canonical_key) if key in value)
-    if sources_present != 1:
+    hash_entries = cast(dict[object, object], value)
+    if not _has_expected_core_hash_keys(hash_entries, polygon_key, legacy_key, canonical_key):
         return False
 
-    for key, hash_value in value.items():
-        if not isinstance(key, str):
-            return False
-        if not isinstance(hash_value, str):
-            return False
-        if len(hash_value) != _SHA256_HEX_LENGTH:
-            return False
-        if not all(ch in "0123456789abcdef" for ch in hash_value):
-            return False
-        # Only the two allowed paths are accepted.
-        if key not in {polygon_key, legacy_key, canonical_key}:
-            return False
-        # Traversal and out-of-tree paths are rejected even if they
-        # coincidentally match the allowed layout.
-        try:
-            resolved = Path(key).resolve(strict=False)
-        except (OSError, RuntimeError):
-            return False
-        try:
-            resolved.relative_to(processed_root)
-        except ValueError:
+    for key, hash_value in hash_entries.items():
+        if not _is_valid_core_hash_entry(key, hash_value, allowed_keys, processed_root):
             return False
 
     return True
 
 
-def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> AugmentationResult:
-    """Load and validate an existing augmentation result without remote work."""
-    manifest_path = (
-        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+def _has_expected_core_hash_keys(
+    value: dict[object, object], polygon_key: str, legacy_key: str, canonical_key: str
+) -> bool:
+    """Require exactly the polygon path and one document-source path."""
+    if not value or len(value) != 2:
+        return False
+    if polygon_key not in value:
+        return False
+    return sum(key in value for key in (legacy_key, canonical_key)) == 1
+
+
+def _is_valid_sha256_hash(value: object) -> bool:
+    """Return whether a value is a lowercase 64-character SHA-256 hash."""
+    return (
+        isinstance(value, str)
+        and len(value) == _SHA256_HEX_LENGTH
+        and all(ch in "0123456789abcdef" for ch in value)
     )
+
+
+def _is_valid_core_hash_path(key: str, allowed_keys: set[str], processed_root: Path) -> bool:
+    """Return whether a manifest path is allowed and inside ``processed_root``."""
+    if key not in allowed_keys:
+        return False
+    try:
+        resolved = Path(key).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    try:
+        resolved.relative_to(processed_root)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_valid_core_hash_entry(
+    key: object, hash_value: object, allowed_keys: set[str], processed_root: Path
+) -> bool:
+    """Validate one path/hash pair from the core hash map."""
+    if not isinstance(key, str):
+        return False
+    return _is_valid_sha256_hash(hash_value) and _is_valid_core_hash_path(
+        key, allowed_keys, processed_root
+    )
+
+
+def _read_augmentation_manifest(manifest_path: Path) -> dict[str, Any]:
+    """Read one augmentation manifest and validate its top-level shape."""
     if not manifest_path.exists():
         raise FileNotFoundError(f"Augmentation manifest not found: {manifest_path}")
-
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Augmentation manifest is not valid JSON: {exc}") from exc
-
     if not isinstance(manifest, dict):
         raise TypeError("Augmentation manifest must be a JSON object")
+    return manifest
 
+
+def _augmentation_manifest_entry(manifest: dict[str, Any], stem: str) -> dict[str, Any]:
+    """Return one manifest entry after validating its object shape."""
     if stem not in manifest:
         raise KeyError(f"Stem {stem!r} not found in augmentation manifest")
-
     entry = manifest[stem]
     if not isinstance(entry, dict):
         raise TypeError(f"Manifest entry for {stem!r} must be a JSON object")
+    return entry
 
-    if entry.get("contract_version") != CONTRACT_VERSION:
-        raise ValueError(
-            f"Invalid contract version for {stem!r} in manifest: expected {CONTRACT_VERSION!r}, got {entry.get('contract_version')!r}"
-        )
 
-    counts = entry.get("counts")
+def _validate_augmentation_counts(counts: Any, stem: str) -> dict[str, Any]:
+    """Validate the required non-negative sidecar counts."""
     if not isinstance(counts, dict):
         raise TypeError(f"Manifest entry counts for {stem!r} must be a JSON object")
-
     expected_keys = {
         "wikipedia_documents",
         "wikipedia_sections",
@@ -447,14 +554,42 @@ def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> Augment
         raise ValueError(
             f"Manifest entry counts for {stem!r} is missing required fields: expected {expected_keys}, got {set(counts.keys())}"
         )
+    for key in expected_keys:
+        _validate_count_value(counts[key], key)
+    return counts
 
-    for k in expected_keys:
-        if not isinstance(counts[k], int) or counts[k] < 0:
-            raise TypeError(f"Manifest count for {k!r} must be a non-negative integer")
 
-    # Validate sidecar files
-    paths = sidecar_paths(data_root, stem)
+def _validate_count_value(value: object, key: str) -> None:
+    """Require one manifest count to be a non-negative integer."""
+    if not isinstance(value, int):
+        raise TypeError(f"Manifest count for {key!r} must be a non-negative integer")
+    if value < 0:
+        raise TypeError(f"Manifest count for {key!r} must be a non-negative integer")
 
+
+def _validate_augmentation_entry(entry: dict[str, Any], stem: str) -> dict[str, Any]:
+    """Validate one augmentation manifest entry and return its counts."""
+    if entry.get("contract_version") != CONTRACT_VERSION:
+        raise ValueError(
+            f"Invalid contract version for {stem!r} in manifest: expected {CONTRACT_VERSION!r}, got {entry.get('contract_version')!r}"
+        )
+    return _validate_augmentation_counts(entry.get("counts"), stem)
+
+
+def _validate_sidecar_file(path: Path, expected_schema: Any) -> None:
+    """Require one sidecar file to exist, be readable, and match its schema."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Sidecar file is missing: {path}")
+    try:
+        actual_schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Sidecar file is unreadable: {path} ({exc})") from exc
+    if not actual_schema.equals(expected_schema, check_metadata=True):
+        raise ValueError(f"Sidecar schema mismatch for {path}")
+
+
+def _validate_sidecars(paths: tuple[Path, Path, Path, Path, Path]) -> None:
+    """Validate all five canonical sidecar files."""
     expected_schemas = (
         wikipedia_document_schema(),
         section_schema(),
@@ -462,16 +597,21 @@ def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> Augment
         section_schema(),
         fact_schema(),
     )
-
     for path, expected_schema in zip(paths, expected_schemas, strict=True):
-        if not path.is_file():
-            raise FileNotFoundError(f"Sidecar file is missing: {path}")
-        try:
-            actual_schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"Sidecar file is unreadable: {path} ({exc})") from exc
-        if not actual_schema.equals(expected_schema, check_metadata=True):
-            raise ValueError(f"Sidecar schema mismatch for {path}")
+        _validate_sidecar_file(path, expected_schema)
+
+
+def load_existing_augmentation_result(data_root: DataRoot, stem: str) -> AugmentationResult:
+    """Load and validate an existing augmentation result without remote work."""
+    manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    manifest = _read_augmentation_manifest(manifest_path)
+    entry = _augmentation_manifest_entry(manifest, stem)
+    counts = cast(dict[str, int], _validate_augmentation_entry(entry, stem))
+
+    paths = sidecar_paths(data_root, stem)
+    _validate_sidecars(paths)
 
     return AugmentationResult(
         wikipedia_documents_path=paths[0],

@@ -46,6 +46,32 @@ def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:
     assert _word_column({"document_id"}) is None
 
 
+def test_record_numeric_value_ignores_empty_ids_and_rejects_conflicts() -> None:
+    values: dict[str, int] = {}
+    card._record_numeric_value(values, None, 7, "words")
+    card._record_numeric_value(values, "", 7, "words")
+    card._record_numeric_value(values, "doc", None, "words")
+    card._record_numeric_value(values, "doc", 0, "words")
+    assert values == {"doc": 0}
+    with pytest.raises(ValueError, match="Inconsistent words"):
+        card._record_numeric_value(values, "doc", 1, "words")
+
+
+def test_sum_first_available_file_uses_first_present_word_column(tmp_path: Path) -> None:
+    path = tmp_path / "documents.parquet"
+    pq.write_table(pa.table({"document_id": ["a", "b"], "article_length_words": [3, None]}), path)
+    assert card._sum_first_available_file(path, ("article_length_words", "text_length_words")) == 3
+    assert card._sum_first_available_file(path, ("missing",)) == 0
+
+
+def test_validated_source_list_rejects_non_lists_and_non_strings() -> None:
+    assert card._validated_source_list(["wikidata"], "p1", "sources") == ["wikidata"]
+    with pytest.raises(ValueError, match="Invalid sources"):
+        card._validated_source_list({"source": "wikidata"}, "p1", "sources")
+    with pytest.raises(ValueError, match="Invalid sources"):
+        card._validated_source_list(["wikidata", 1], "p1", "sources")
+
+
 def test_write_v2_card_preserves_previous_card_when_atomic_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

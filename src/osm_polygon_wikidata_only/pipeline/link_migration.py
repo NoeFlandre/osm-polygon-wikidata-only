@@ -606,9 +606,7 @@ def _stage_canonical_link(
 def _source_pbf_for_stem(inputs: _StemApplyInputs) -> str:
     """Return the unique source PBF recorded by a polygon shard."""
     source_pbf_set = {
-        str(value)
-        for value in inputs.polygons_table.column("source_pbf").to_pylist()
-        if value
+        str(value) for value in inputs.polygons_table.column("source_pbf").to_pylist() if value
     }
     if len(source_pbf_set) != 1:
         raise RuntimeError(
@@ -652,9 +650,7 @@ def _new_processed_entry(
         "source_pbf": source_pbf,
         "region": next(iter(regions)),
         "polygons_path": f"polygons/{inputs.stem_plan.stem}.parquet",
-        "wikipedia_documents_path": (
-            f"wikipedia/documents/{inputs.stem_plan.stem}.parquet"
-        ),
+        "wikipedia_documents_path": (f"wikipedia/documents/{inputs.stem_plan.stem}.parquet"),
         "polygon_articles_path": f"polygon_articles/{inputs.stem_plan.stem}.parquet",
         "extraction_version": "link-migration",
         "processed_at": _utc_now_iso(),
@@ -730,9 +726,7 @@ def _augmentation_entry(
             str(polygons_path): _file_content_hash(polygons_path),
             str(wiki_docs_path): _file_content_hash(wiki_docs_path),
         },
-        "paths": [
-            str(path.relative_to(processed_dir)) for path in sidecar_paths(data_root, stem)
-        ],
+        "paths": [str(path.relative_to(processed_dir)) for path in sidecar_paths(data_root, stem)],
         "counts": counts,
         "completed_at": previous_entry.get("completed_at", _utc_now_iso()),
         "link_schema_version": _LINK_CONTRACT_VERSION,
@@ -784,9 +778,7 @@ def _updated_pending_publications(
     pending_stems.add(stem)
     marker = payload.get("metadata_refresh", {})
     marker_stems = set(marker.get("stems", [])) if isinstance(marker, dict) else set()
-    marker_hashes = (
-        dict(marker.get("fingerprint_hashes", {})) if isinstance(marker, dict) else {}
-    )
+    marker_hashes = dict(marker.get("fingerprint_hashes", {})) if isinstance(marker, dict) else {}
     marker_stems.add(stem)
     marker_hashes[stem] = link_artifact_sha256
     payload["stems"] = sorted(pending_stems)
@@ -1043,6 +1035,8 @@ def apply_link_migration(
         _wiki_rejections_by_stem(plan),
         _crash_hook=_crash_hook,
     )
+
+
 __all__ = [
     "MigrationPlan",
     "StemClassification",
