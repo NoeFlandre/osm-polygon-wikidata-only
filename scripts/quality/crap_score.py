@@ -86,12 +86,14 @@ def entries_from_reports(
                 raise ValueError("Radon function line is malformed")
             qualified_name = f"{classname}.{name}" if classname else name
             function = _function_coverage(coverage_files, raw_path, qualified_name)
-            summary = _mapping(function.get("summary"), "function coverage")
-            percent = summary.get("percent_statements_covered", summary.get("percent_covered"))
-            if not isinstance(percent, (int, float)) or isinstance(percent, bool):
-                raise ValueError("coverage function summary has no percentage")
             entries.append(
-                CrapEntry(raw_path, qualified_name, complexity, float(percent) / 100.0, line)
+                CrapEntry(
+                    raw_path,
+                    qualified_name,
+                    complexity,
+                    _function_coverage_fraction(function),
+                    line,
+                )
             )
     if not entries:
         raise ValueError("reports contain no function entries")
@@ -116,7 +118,19 @@ def _function_coverage(files: Mapping[str, object], path: str, name: str) -> dic
         raw_file = matches[0] if len(matches) == 1 else None
     file_data = _mapping(raw_file, f"coverage file {path}")
     functions = _mapping_value(file_data, "functions")
-    return _mapping(functions.get(name), f"coverage function {path}:{name}")
+    function = functions.get(name)
+    return {} if function is None else _mapping(function, f"coverage function {path}:{name}")
+
+
+def _function_coverage_fraction(function: Mapping[str, object]) -> float:
+    """Return a function's coverage fraction, treating omitted functions as uncovered."""
+    if not function:
+        return 0.0
+    summary = _mapping(function.get("summary"), "function coverage")
+    percent = summary.get("percent_statements_covered", summary.get("percent_covered"))
+    if not isinstance(percent, (int, float)) or isinstance(percent, bool):
+        raise ValueError("coverage function summary has no percentage")
+    return float(percent) / 100.0
 
 
 def _load_json(path: Path) -> dict[str, object]:

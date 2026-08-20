@@ -57,3 +57,12 @@ def test_entries_from_reports_joins_radon_with_coverage_summary() -> None:
     )
 
     assert entries == [CrapEntry("module.py", "parse", 10, 0.75, 4)]
+
+
+def test_entries_from_reports_scores_uncovered_functions_as_zero() -> None:
+    entries = entries_from_reports(
+        {"files": {"module.py": {"functions": {}}}},
+        {"module.py": [{"type": "function", "name": "uncovered", "complexity": 5, "lineno": 9}]},
+    )
+
+    assert entries == [CrapEntry("module.py", "uncovered", 5, 0.0, 9)]

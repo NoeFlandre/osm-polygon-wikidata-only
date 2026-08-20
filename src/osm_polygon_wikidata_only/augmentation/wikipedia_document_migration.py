@@ -230,54 +230,77 @@ def _check_shared_values(
     Raises MigrationError on row-count mismatch, identity set mismatch,
     duplicate identities, or any shared-value conflict.
     """
+    shared_cols, legacy_by_id, canonical_by_id = _shared_comparison_inputs(
+        legacy_table, canonical_table, stem
+    )
+    for doc_id in sorted(canonical_by_id):
+        _validate_shared_row(
+            stem,
+            doc_id,
+            shared_cols,
+            legacy_by_id[doc_id],
+            canonical_by_id[doc_id],
+        )
+
+
+def _shared_comparison_inputs(
+    legacy_table: pa.Table,
+    canonical_table: pa.Table,
+    stem: str,
+) -> tuple[list[str], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Validate shared identities and build row lookups for comparison."""
     legacy_ids: list[str] = legacy_table.column("document_id").to_pylist()
     canonical_ids: list[str] = canonical_table.column("document_id").to_pylist()
+    _validate_shared_identities(legacy_ids, canonical_ids, stem)
+    shared_cols = sorted(
+        (set(legacy_table.schema.names) & set(canonical_table.schema.names)) - {"document_id"}
+    )
+    select_cols = [*shared_cols, "document_id"]
+    legacy_rows = legacy_table.select(select_cols).to_pylist()
+    canonical_rows = canonical_table.select(select_cols).to_pylist()
+    return (
+        shared_cols,
+        {row["document_id"]: row for row in legacy_rows},
+        {row["document_id"]: row for row in canonical_rows},
+    )
 
-    # Row count check
+
+def _validate_shared_identities(
+    legacy_ids: list[str],
+    canonical_ids: list[str],
+    stem: str,
+) -> None:
+    """Validate row counts, uniqueness, and document identity sets."""
     if len(legacy_ids) != len(canonical_ids):
         raise MigrationError(
             f"Stem '{stem}': row count mismatch "
             f"(document has {len(legacy_ids)}, canonical has {len(canonical_ids)})"
         )
-
     legacy_id_set = set(legacy_ids)
     canonical_id_set = set(canonical_ids)
-
-    # Duplicate document_id in existing document
     if len(legacy_id_set) != len(legacy_ids):
         raise MigrationError(f"Stem '{stem}': duplicate document_id in existing document")
-
-    # Identity set mismatch
     if legacy_id_set != canonical_id_set:
         diff = sorted(legacy_id_set ^ canonical_id_set)
         raise MigrationError(
             f"Stem '{stem}': document_id set mismatch (symmetric difference: {diff})"
         )
 
-    # Shared columns excluding document_id (the join key)
-    legacy_cols = set(legacy_table.schema.names)
-    canonical_cols = set(canonical_table.schema.names)
-    shared_cols = sorted((legacy_cols & canonical_cols) - {"document_id"})
 
-    # Build lookup dictionaries keyed by document_id
-    select_cols = [*shared_cols, "document_id"]
-    legacy_rows_list = legacy_table.select(select_cols).to_pylist()
-    canonical_rows_list = canonical_table.select(select_cols).to_pylist()
-
-    legacy_by_id: dict[str, dict[str, Any]] = {r["document_id"]: r for r in legacy_rows_list}
-    canonical_by_id: dict[str, dict[str, Any]] = {r["document_id"]: r for r in canonical_rows_list}
-
-    for doc_id in sorted(canonical_id_set):
-        l_row = legacy_by_id[doc_id]
-        c_row = canonical_by_id[doc_id]
-        for col in shared_cols:
-            lv = l_row[col]
-            cv = c_row[col]
-            if lv != cv:
-                raise MigrationError(
-                    f"Stem '{stem}': shared-value conflict for document_id "
-                    f"'{doc_id}' in column '{col}'"
-                )
+def _validate_shared_row(
+    stem: str,
+    document_id: str,
+    shared_cols: list[str],
+    legacy_row: dict[str, Any],
+    canonical_row: dict[str, Any],
+) -> None:
+    """Reject the first shared-column value conflict for one document."""
+    for column in shared_cols:
+        if legacy_row[column] != canonical_row[column]:
+            raise MigrationError(
+                f"Stem '{stem}': shared-value conflict for document_id "
+                f"'{document_id}' in column '{column}'"
+            )
 
 
 def _assert_canonical_preserves_legacy(
@@ -314,32 +337,38 @@ def _validate_stem_path(stem: str, docs_dir: Path) -> Path:
     Rejects empty stems, path separators, ``..``, and any stem whose
     resolved target escapes the documents directory.
     """
+    _validate_stem_name(stem)
+    target = docs_dir / f"{stem}.parquet"
+    _validate_target_inside_docs(stem, target, docs_dir)
+    return target
+
+
+def _validate_stem_name(stem: str) -> None:
+    """Reject empty, parent, or separator-containing stem names."""
     if not stem or stem in (".", ".."):
         raise MigrationError(f"Invalid stem name: '{stem}'")
     if "/" in stem or "\\" in stem:
         raise MigrationError(f"Stem '{stem}': must not contain path separators")
 
-    target = docs_dir / f"{stem}.parquet"
+
+def _validate_target_inside_docs(stem: str, target: Path, docs_dir: Path) -> None:
+    """Reject a resolved target that escapes the documents directory."""
     resolved_target = target.resolve()
     resolved_docs = docs_dir.resolve()
-
     try:
         resolved_target.relative_to(resolved_docs)
     except ValueError:
         raise MigrationError(f"Stem '{stem}': target path escapes documents directory") from None
 
-    return target
 
-
-def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
-    """Classify a single stem and build its plan entry."""
-    article_path = processed_dir / "articles" / f"{stem}.parquet"
-    doc_path = processed_dir / "wikipedia" / "documents" / f"{stem}.parquet"
-
+def _missing_stem_plan(
+    stem: str,
+    article_path: Path,
+    doc_path: Path,
+) -> StemPlan | None:
+    """Classify stems whose source or target file is absent."""
     has_article = article_path.is_file()
     has_doc = doc_path.is_file()
-
-    # Document without article → BLOCKED
     if has_doc and not has_article:
         try:
             doc_hash = _file_content_hash(doc_path)
@@ -350,23 +379,24 @@ def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
             "document exists without corresponding article",
             document_hash=doc_hash,
         )
-
-    # No article and no document (shouldn't happen with union discovery)
     if not has_article:
         return _blocked_plan(stem, "no article file found")
+    return None
 
-    # Read and validate article
+
+def _article_plan_inputs(
+    stem: str,
+    article_path: Path,
+) -> tuple[str, pa.Table] | StemPlan:
+    """Read, hash, and convert one article source for planning."""
     try:
         article_table = _read_article_table(article_path, stem)
     except MigrationError as exc:
         return _blocked_plan(stem, str(exc))
-
     try:
         article_hash = _file_content_hash(article_path)
     except OSError as exc:
         return _blocked_plan(stem, f"unreadable article file ({type(exc).__name__})")
-
-    # Build canonical table from validated article
     try:
         canonical_table = build_wikipedia_document_table(article_table)
     except WikipediaDocumentConversionError as exc:
@@ -375,18 +405,71 @@ def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
             f"article conversion failed: {exc}",
             article_hash=article_hash,
         )
+    return article_hash, canonical_table
 
-    # No existing document → CREATE_MISSING
-    if not has_doc:
-        return _ready_plan(
+
+def _canonical_document_plan(
+    stem: str,
+    document_table: pa.Table,
+    canonical_table: pa.Table,
+    *,
+    article_hash: str,
+    document_hash: str,
+) -> StemPlan:
+    """Classify an existing canonical document after preservation checks."""
+    try:
+        _assert_canonical_preserves_legacy(document_table, canonical_table, stem)
+    except MigrationError as exc:
+        return _blocked_plan(
             stem,
-            MigrationOperation.CREATE_MISSING,
-            canonical_table,
+            str(exc),
             article_hash=article_hash,
-            document_hash=None,
+            document_hash=document_hash,
         )
+    return _ready_plan(
+        stem,
+        MigrationOperation.ALREADY_CANONICAL,
+        document_table,
+        article_hash=article_hash,
+        document_hash=document_hash,
+    )
 
-    # Read existing document
+
+def _legacy_document_plan(
+    stem: str,
+    document_table: pa.Table,
+    canonical_table: pa.Table,
+    *,
+    article_hash: str,
+    document_hash: str,
+) -> StemPlan:
+    """Classify an existing legacy document after shared-value checks."""
+    try:
+        _check_shared_values(document_table, canonical_table, stem)
+    except MigrationError as exc:
+        return _blocked_plan(
+            stem,
+            str(exc),
+            article_hash=article_hash,
+            document_hash=document_hash,
+        )
+    return _ready_plan(
+        stem,
+        MigrationOperation.UPGRADE_LEGACY,
+        canonical_table,
+        article_hash=article_hash,
+        document_hash=document_hash,
+    )
+
+
+def _existing_document_plan(
+    stem: str,
+    doc_path: Path,
+    canonical_table: pa.Table,
+    *,
+    article_hash: str,
+) -> StemPlan:
+    """Classify a document file that already exists for a stem."""
     try:
         doc_hash = _file_content_hash(doc_path)
     except OSError as exc:
@@ -396,7 +479,7 @@ def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
             article_hash=article_hash,
         )
     try:
-        doc_table = pq.read_table(doc_path)  # type: ignore[no-untyped-call]
+        document_table = pq.read_table(doc_path)  # type: ignore[no-untyped-call]
     except Exception as exc:
         return _blocked_plan(
             stem,
@@ -404,55 +487,54 @@ def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
             article_hash=article_hash,
             document_hash=doc_hash,
         )
-
-    canonical_schema = wikipedia_document_schema()
-    legacy_schema = document_schema()
-
-    # Check exact canonical schema (names, types, order, metadata)
-    if doc_table.schema.equals(canonical_schema, check_metadata=True):
-        try:
-            _assert_canonical_preserves_legacy(doc_table, canonical_table, stem)
-        except MigrationError as exc:
-            return _blocked_plan(
-                stem,
-                str(exc),
-                article_hash=article_hash,
-                document_hash=doc_hash,
-            )
-        else:
-            return _ready_plan(
-                stem,
-                MigrationOperation.ALREADY_CANONICAL,
-                doc_table,
-                article_hash=article_hash,
-                document_hash=doc_hash,
-            )
-
-    # Check exact legacy schema (names, types, order, metadata)
-    if doc_table.schema.equals(legacy_schema, check_metadata=True):
-        try:
-            _check_shared_values(doc_table, canonical_table, stem)
-        except MigrationError as exc:
-            return _blocked_plan(
-                stem,
-                str(exc),
-                article_hash=article_hash,
-                document_hash=doc_hash,
-            )
-        return _ready_plan(
+    if document_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
+        return _canonical_document_plan(
             stem,
-            MigrationOperation.UPGRADE_LEGACY,
+            document_table,
             canonical_table,
             article_hash=article_hash,
             document_hash=doc_hash,
         )
-
-    # Unexpected schema
+    if document_table.schema.equals(document_schema(), check_metadata=True):
+        return _legacy_document_plan(
+            stem,
+            document_table,
+            canonical_table,
+            article_hash=article_hash,
+            document_hash=doc_hash,
+        )
     return _blocked_plan(
         stem,
-        f"unexpected document schema ({len(doc_table.schema)} columns)",
+        f"unexpected document schema ({len(document_table.schema)} columns)",
         article_hash=article_hash,
         document_hash=doc_hash,
+    )
+
+
+def _classify_stem(stem: str, processed_dir: Path) -> StemPlan:
+    """Classify a single stem and build its plan entry."""
+    article_path = processed_dir / "articles" / f"{stem}.parquet"
+    doc_path = processed_dir / "wikipedia" / "documents" / f"{stem}.parquet"
+    missing_plan = _missing_stem_plan(stem, article_path, doc_path)
+    if missing_plan is not None:
+        return missing_plan
+    article_inputs = _article_plan_inputs(stem, article_path)
+    if isinstance(article_inputs, StemPlan):
+        return article_inputs
+    article_hash, canonical_table = article_inputs
+    if not doc_path.is_file():
+        return _ready_plan(
+            stem,
+            MigrationOperation.CREATE_MISSING,
+            canonical_table,
+            article_hash=article_hash,
+            document_hash=None,
+        )
+    return _existing_document_plan(
+        stem,
+        doc_path,
+        canonical_table,
+        article_hash=article_hash,
     )
 
 
@@ -478,25 +560,47 @@ def _transition_action(planned: StemPlan, current: StemPlan) -> str:
         if current.operation == MigrationOperation.ALREADY_CANONICAL:
             return _APPLY_SKIP
         return _APPLY_WRITE
+    if _became_canonical(planned, current):
+        return _APPLY_SKIP
+    _raise_transition_conflict(planned, current)
+    raise AssertionError("unreachable")
 
-    became_canonical = (
+
+def _became_canonical(planned: StemPlan, current: StemPlan) -> bool:
+    """Return whether another process safely completed this stem."""
+    return (
         planned.operation in {MigrationOperation.CREATE_MISSING, MigrationOperation.UPGRADE_LEGACY}
         and current.operation == MigrationOperation.ALREADY_CANONICAL
         and planned.article_hash == current.article_hash
         and planned.row_count == current.row_count
         and planned.canonical_digest == current.canonical_digest
     )
-    if became_canonical:
-        return _APPLY_SKIP
 
-    if planned.article_hash != current.article_hash:
-        raise MigrationError(f"Stem '{planned.stem}': article file changed after planning")
-    if current.operation == MigrationOperation.BLOCKED and "unreadable" in current.reason:
-        raise MigrationError(f"Stem '{planned.stem}': {current.reason}")
-    if planned.operation == MigrationOperation.CREATE_MISSING and current.document_hash is not None:
-        raise MigrationError(f"Stem '{planned.stem}': conflicting target appeared after planning")
-    if planned.document_hash != current.document_hash:
-        raise MigrationError(f"Stem '{planned.stem}': document file changed after planning")
+
+def _raise_transition_conflict(planned: StemPlan, current: StemPlan) -> None:
+    """Raise the first deterministic conflict found after re-planning."""
+    checks = (
+        (
+            planned.article_hash != current.article_hash,
+            f"Stem '{planned.stem}': article file changed after planning",
+        ),
+        (
+            current.operation == MigrationOperation.BLOCKED and "unreadable" in current.reason,
+            f"Stem '{planned.stem}': {current.reason}",
+        ),
+        (
+            planned.operation == MigrationOperation.CREATE_MISSING
+            and current.document_hash is not None,
+            f"Stem '{planned.stem}': conflicting target appeared after planning",
+        ),
+        (
+            planned.document_hash != current.document_hash,
+            f"Stem '{planned.stem}': document file changed after planning",
+        ),
+    )
+    for changed, message in checks:
+        if changed:
+            raise MigrationError(message)
 
     raise MigrationError(f"Stem '{planned.stem}': migration plan changed after validation")
 
@@ -504,6 +608,15 @@ def _transition_action(planned: StemPlan, current: StemPlan) -> str:
 def _rebuild_table_for_write(sp: StemPlan, processed_dir: Path, target: Path) -> pa.Table:
     """Rebuild and verify one canonical table immediately before replacement."""
     article_path = processed_dir / "articles" / f"{sp.stem}.parquet"
+    _validate_article_before_write(sp, article_path)
+    _validate_target_before_write(sp, target)
+    table = build_wikipedia_document_table(_read_article_table(article_path, sp.stem))
+    _validate_canonical_output(sp, table)
+    return table
+
+
+def _validate_article_before_write(sp: StemPlan, article_path: Path) -> None:
+    """Verify the article source has not changed since planning."""
     try:
         if _file_content_hash(article_path) != sp.article_hash:
             raise MigrationError(f"Stem '{sp.stem}': article file changed before write")
@@ -512,25 +625,34 @@ def _rebuild_table_for_write(sp: StemPlan, processed_dir: Path, target: Path) ->
             f"Stem '{sp.stem}': article file unreadable before write ({type(exc).__name__})"
         ) from exc
 
+
+def _validate_target_before_write(sp: StemPlan, target: Path) -> None:
+    """Verify the planned target state before rebuilding its table."""
     if sp.operation == MigrationOperation.CREATE_MISSING:
         if target.exists():
             raise MigrationError(f"Stem '{sp.stem}': target appeared before write")
     elif sp.operation == MigrationOperation.UPGRADE_LEGACY:
-        if not target.is_file():
-            raise MigrationError(f"Stem '{sp.stem}': document disappeared before write")
-        try:
-            current_hash = _file_content_hash(target)
-        except OSError as exc:
-            raise MigrationError(
-                f"Stem '{sp.stem}': document unreadable before write ({type(exc).__name__})"
-            ) from exc
-        if current_hash != sp.document_hash:
-            raise MigrationError(f"Stem '{sp.stem}': document changed before write")
+        _validate_upgrade_target(sp, target)
 
-    table = build_wikipedia_document_table(_read_article_table(article_path, sp.stem))
+
+def _validate_upgrade_target(sp: StemPlan, target: Path) -> None:
+    """Verify an existing legacy document has not changed."""
+    if not target.is_file():
+        raise MigrationError(f"Stem '{sp.stem}': document disappeared before write")
+    try:
+        current_hash = _file_content_hash(target)
+    except OSError as exc:
+        raise MigrationError(
+            f"Stem '{sp.stem}': document unreadable before write ({type(exc).__name__})"
+        ) from exc
+    if current_hash != sp.document_hash:
+        raise MigrationError(f"Stem '{sp.stem}': document changed before write")
+
+
+def _validate_canonical_output(sp: StemPlan, table: pa.Table) -> None:
+    """Verify rebuilt canonical rows match the immutable plan metadata."""
     if table.num_rows != sp.row_count or _table_digest(table) != sp.canonical_digest:
         raise MigrationError(f"Stem '{sp.stem}': canonical output changed before write")
-    return table
 
 
 # ---------------------------------------------------------------------------
@@ -600,53 +722,16 @@ def apply_migration(plan: MigrationPlan) -> ApplyResult:
     MigrationError
         If the plan contains blocked stems or any stem fails revalidation.
     """
-    if not plan.is_safe_to_apply:
-        blocked = list(plan.blocked_stems)
-        raise MigrationError(
-            f"Plan is not safe to apply: {len(blocked)} blocked stem(s): {blocked}"
-        )
-
     processed_dir = plan.processed_dir
     docs_dir = processed_dir / "wikipedia" / "documents"
-    _validate_documents_root(processed_dir, docs_dir)
-
-    # Phase 1: Validate all stem paths before any I/O
-    safe_targets: dict[str, Path] = {}
-    for sp in plan.stems:
-        safe_targets[sp.stem] = _validate_stem_path(sp.stem, docs_dir)
-
-    # Phase 2: Re-plan all stems before any writes (zero writes on failure).
-    # The caller-supplied plan contains metadata only and is never a source
-    # of rows written to disk.
-    current_plan = plan_migration(
+    safe_targets = _validate_apply_inputs(plan, processed_dir, docs_dir)
+    current_plan, actions = _revalidated_actions(plan, processed_dir)
+    created_stems, upgraded_stems, skipped_stems = _execute_actions(
+        current_plan,
+        actions,
         processed_dir,
-        stems={stem_plan.stem for stem_plan in plan.stems},
+        safe_targets,
     )
-    if tuple(sp.stem for sp in current_plan.stems) != tuple(sp.stem for sp in plan.stems):
-        raise MigrationError("Migration plan stem set changed after validation")
-
-    actions: list[tuple[str, str]] = []
-    for planned, current in zip(plan.stems, current_plan.stems, strict=True):
-        action = _transition_action(planned, current)
-        actions.append((current.stem, action))
-
-    # Phase 3: Execute writes
-    created_stems: list[str] = []
-    upgraded_stems: list[str] = []
-    skipped_stems: list[str] = []
-
-    for sp, (_stem, action) in zip(current_plan.stems, actions, strict=True):
-        if action == _APPLY_SKIP:
-            skipped_stems.append(sp.stem)
-            continue
-
-        canonical_table = _rebuild_table_for_write(sp, processed_dir, safe_targets[sp.stem])
-        _atomic_write_parquet(safe_targets[sp.stem], canonical_table)
-
-        if sp.operation == MigrationOperation.CREATE_MISSING:
-            created_stems.append(sp.stem)
-        else:
-            upgraded_stems.append(sp.stem)
 
     return ApplyResult(
         planned=len(plan.stems),
@@ -659,3 +744,85 @@ def apply_migration(plan: MigrationPlan) -> ApplyResult:
         skipped_stems=tuple(skipped_stems),
         blocked_stems=(),
     )
+
+
+def _validate_apply_inputs(
+    plan: MigrationPlan,
+    processed_dir: Path,
+    docs_dir: Path,
+) -> dict[str, Path]:
+    """Validate plan safety and all target paths before any writes."""
+    if not plan.is_safe_to_apply:
+        blocked = list(plan.blocked_stems)
+        raise MigrationError(
+            f"Plan is not safe to apply: {len(blocked)} blocked stem(s): {blocked}"
+        )
+    _validate_documents_root(processed_dir, docs_dir)
+    return {
+        stem_plan.stem: _validate_stem_path(stem_plan.stem, docs_dir) for stem_plan in plan.stems
+    }
+
+
+def _revalidated_actions(
+    plan: MigrationPlan,
+    processed_dir: Path,
+) -> tuple[MigrationPlan, list[tuple[str, str]]]:
+    """Re-plan every stem and compute safe actions without writing."""
+    current_plan = plan_migration(
+        processed_dir,
+        stems={stem_plan.stem for stem_plan in plan.stems},
+    )
+    _ensure_plan_stems_match(plan, current_plan)
+    return current_plan, _transition_actions(plan, current_plan)
+
+
+def _ensure_plan_stems_match(plan: MigrationPlan, current_plan: MigrationPlan) -> None:
+    """Reject a changed stem set during apply-time revalidation."""
+    planned_stems = tuple(stem_plan.stem for stem_plan in plan.stems)
+    current_stems = tuple(stem_plan.stem for stem_plan in current_plan.stems)
+    if current_stems != planned_stems:
+        raise MigrationError("Migration plan stem set changed after validation")
+
+
+def _transition_actions(
+    plan: MigrationPlan,
+    current_plan: MigrationPlan,
+) -> list[tuple[str, str]]:
+    """Compute one safe action for each revalidated stem pair."""
+    return [
+        (current.stem, _transition_action(planned, current))
+        for planned, current in zip(plan.stems, current_plan.stems, strict=True)
+    ]
+
+
+def _execute_actions(
+    current_plan: MigrationPlan,
+    actions: list[tuple[str, str]],
+    processed_dir: Path,
+    safe_targets: dict[str, Path],
+) -> tuple[list[str], list[str], list[str]]:
+    """Execute validated migration actions and collect affected stems."""
+    created_stems: list[str] = []
+    upgraded_stems: list[str] = []
+    skipped_stems: list[str] = []
+    for stem_plan, (_stem, action) in zip(current_plan.stems, actions, strict=True):
+        if action == _APPLY_SKIP:
+            skipped_stems.append(stem_plan.stem)
+            continue
+        target = safe_targets[stem_plan.stem]
+        canonical_table = _rebuild_table_for_write(stem_plan, processed_dir, target)
+        _atomic_write_parquet(target, canonical_table)
+        _record_applied_stem(stem_plan, created_stems, upgraded_stems)
+    return created_stems, upgraded_stems, skipped_stems
+
+
+def _record_applied_stem(
+    stem_plan: StemPlan,
+    created_stems: list[str],
+    upgraded_stems: list[str],
+) -> None:
+    """Append one written stem to its operation-specific result list."""
+    if stem_plan.operation == MigrationOperation.CREATE_MISSING:
+        created_stems.append(stem_plan.stem)
+    else:
+        upgraded_stems.append(stem_plan.stem)

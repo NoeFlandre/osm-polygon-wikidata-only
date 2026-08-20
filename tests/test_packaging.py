@@ -89,6 +89,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "trackio:",
         "mutation:",
         "crap:",
+        "crap-upload:",
         "quality-strength:",
         "check:",
     ):

@@ -24,6 +24,12 @@ crap-sync:
     uv run radon cc -j src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py src/osm_polygon_wikidata_only/enrichment/text_cleaning.py src/osm_polygon_wikidata_only/cli/sync_application.py > /tmp/osm-polygon-wikidata-crap-complexity.json
     uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-crap-complexity.json --maximum 6
 
+# Enforce a CRAP score below 6 for durable upload-queue helpers.
+crap-upload:
+    uv run pytest -q tests/io/test_upload_queue_durability.py tests/io/test_upload_queue_amendment_8.py tests/io/test_upload_queue_real_legacy.py tests/hf/test_upload_operation_helpers.py --cov=osm_polygon_wikidata_only.hf.upload_queue --cov-branch --cov-report=json:/tmp/osm-polygon-wikidata-upload-crap-coverage.json
+    uv run radon cc -j src/osm_polygon_wikidata_only/hf/upload_queue.py > /tmp/osm-polygon-wikidata-upload-crap-complexity.json
+    uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-upload-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-upload-crap-complexity.json --maximum 6
+
 # Run mutmut with two workers to keep peak Mac memory bounded. The explicit
 # source scope contains only pure deterministic helpers, and the gate refuses
 # any survivor, timeout, or untested mutant.
@@ -31,11 +37,11 @@ mutation:
     uv run mutmut run --max-children 2
     uv run mutmut results --all=true | uv run python scripts/quality/mutation_gate.py
 
-# Run both opt-in quality-strength checks; these are intentionally separate
+# Run opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap crap-sync
+quality-strength: mutation crap crap-sync crap-upload
 
-quality-advanced: crap crap-sync mutation
+quality-advanced: crap crap-sync crap-upload mutation
 
 lint:
     uv run ruff check src tests scripts
