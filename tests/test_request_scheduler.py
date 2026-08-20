@@ -638,3 +638,49 @@ def test_concurrent_snapshots_are_thread_safe() -> None:
     stop.set()
     for thread in threads:
         thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_in_flight": 0}, "max_in_flight must be between 1 and 16"),
+        ({"max_in_flight": 17}, "max_in_flight must be between 1 and 16"),
+        ({"requests_per_minute": 0}, "requests_per_minute must be positive"),
+        (
+            {"requests_per_minute": 200, "max_requests_per_minute": 199},
+            "max_requests_per_minute must not be below the initial rate",
+        ),
+        (
+            {"minimum_requests_per_minute": 0},
+            "minimum_requests_per_minute must be positive and no greater than the initial rate",
+        ),
+        (
+            {"requests_per_minute": 200, "minimum_requests_per_minute": 201},
+            "minimum_requests_per_minute must be positive and no greater than the initial rate",
+        ),
+        ({"successes_per_increase": 0}, "successes_per_increase must be positive"),
+        ({"host_throttle_window_s": 0}, "host_throttle_window_s must be positive"),
+        ({"host_throttle_threshold": 0}, "host_throttle_threshold must be at least 1"),
+        (
+            {"active_host_window_s": 0},
+            "active_host_window_s must be positive",
+        ),
+        (
+            {"minimum_systemic_hosts": 0},
+            "minimum_systemic_hosts must be at least 1",
+        ),
+        (
+            {"systemic_host_fraction": 0},
+            "systemic_host_fraction must be between 0 (exclusive) and 1",
+        ),
+        (
+            {"systemic_host_fraction": 1.1},
+            "systemic_host_fraction must be between 0 (exclusive) and 1",
+        ),
+    ],
+)
+def test_scheduler_rejects_invalid_configuration(kwargs: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError) as error:
+        AdaptiveRequestScheduler(**kwargs)  # type: ignore[arg-type]
+
+    assert str(error.value) == message
