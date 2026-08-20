@@ -22,6 +22,54 @@ class RegionSyncState:
     action: SyncAction
 
 
+def _action_for_stem(
+    stem: str,
+    *,
+    core_stems: set[str],
+    augmentation_stems: set[str],
+    force: bool,
+    pending_stems: set[str],
+    recovery_stems: set[str],
+) -> SyncAction:
+    """Choose the highest-priority action for one region."""
+    if force or stem not in core_stems:
+        return SyncAction.PROCESS
+    return _action_for_existing_stem(
+        stem,
+        augmentation_stems=augmentation_stems,
+        pending_stems=pending_stems,
+        recovery_stems=recovery_stems,
+    )
+
+
+def _action_for_existing_stem(
+    stem: str,
+    *,
+    augmentation_stems: set[str],
+    pending_stems: set[str],
+    recovery_stems: set[str],
+) -> SyncAction:
+    """Choose an action after core artifacts are known to exist."""
+    if stem not in augmentation_stems:
+        return SyncAction.AUGMENT
+    if stem in recovery_stems:
+        return SyncAction.RECOVERY
+    if stem in pending_stems:
+        return SyncAction.PUBLISH
+    return SyncAction.COMPLETE
+
+
+def _sync_priority(action: SyncAction) -> int:
+    """Return deterministic execution priority."""
+    return {
+        SyncAction.RECOVERY: 0,
+        SyncAction.AUGMENT: 1,
+        SyncAction.PUBLISH: 2,
+        SyncAction.PROCESS: 3,
+        SyncAction.COMPLETE: 4,
+    }[action]
+
+
 def plan_sync_states(
     pbfs: list[Path],
     *,
@@ -65,28 +113,22 @@ def plan_sync_states(
     """
     pending = pending_stems or set()
     recovery = recovery_stems or set()
-    states: list[RegionSyncState] = []
-    for pbf in pbfs:
-        stem = pbf.name.removesuffix(".osm.pbf")
-        if force or stem not in core_stems:
-            action = SyncAction.PROCESS
-        elif stem not in augmentation_stems:
-            action = SyncAction.AUGMENT
-        elif stem in recovery:
-            action = SyncAction.RECOVERY
-        elif stem in pending:
-            action = SyncAction.PUBLISH
-        else:
-            action = SyncAction.COMPLETE
-        states.append(RegionSyncState(stem, pbf, action))
-    priority = {
-        SyncAction.RECOVERY: 0,
-        SyncAction.AUGMENT: 1,
-        SyncAction.PUBLISH: 2,
-        SyncAction.PROCESS: 3,
-        SyncAction.COMPLETE: 4,
-    }
-    return sorted(states, key=lambda state: (priority[state.action], state.stem))
+    states = [
+        RegionSyncState(
+            stem := pbf.name.removesuffix(".osm.pbf"),
+            pbf,
+            _action_for_stem(
+                stem,
+                core_stems=core_stems,
+                augmentation_stems=augmentation_stems,
+                force=force,
+                pending_stems=pending,
+                recovery_stems=recovery,
+            ),
+        )
+        for pbf in pbfs
+    ]
+    return sorted(states, key=lambda state: (_sync_priority(state.action), state.stem))
 
 
 __all__ = ["RegionSyncState", "SyncAction", "plan_sync_states"]

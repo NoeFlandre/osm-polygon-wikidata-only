@@ -17,18 +17,16 @@ def _plural_hosts(count: int) -> str:
     return "host" if count == 1 else "hosts"
 
 
-def format_sync_progress(
-    *,
+def _base_progress_parts(
     region: str,
     region_index: int,
     region_total: int,
     elapsed_s: float,
     augmentation: AugmentationProgressSnapshot,
     scheduler: RequestSchedulerSnapshot,
-    auth: WikimediaAuthSnapshot | None = None,
-) -> str:
-    """Format one concise, factual operator heartbeat."""
-    parts = [
+) -> list[str]:
+    """Build the always-present heartbeat fields."""
+    return [
         f"Sync progress {region_index}/{region_total} {region}: "
         f"{int(max(0.0, elapsed_s) // 60)}m elapsed",
         f"{augmentation.phase} {augmentation.completed}/{augmentation.total}",
@@ -37,15 +35,25 @@ def format_sync_progress(
         f"({scheduler.utilization_percent:.0f}%)",
         f"in-flight {scheduler.in_flight}/{scheduler.max_in_flight}",
     ]
-    if scheduler.current_requests_per_minute < scheduler.maximum_requests_per_minute:
-        parts.append(f"active ceiling {scheduler.current_requests_per_minute:.0f} rpm")
-    if auth is not None and (
+
+
+def _auth_progress_part(auth: WikimediaAuthSnapshot | None) -> str | None:
+    """Format authentication host counts when they are meaningful."""
+    if auth is None or not (
         auth.credentials_configured or auth.authenticated_hosts or auth.anonymous_hosts
     ):
-        parts.append(
-            f"authenticated hosts {auth.authenticated_hosts}, "
-            f"anonymous hosts {auth.anonymous_hosts}"
-        )
+        return None
+    return (
+        f"authenticated hosts {auth.authenticated_hosts}, "
+        f"anonymous hosts {auth.anonymous_hosts}"
+    )
+
+
+def _throttle_progress_parts(scheduler: RequestSchedulerSnapshot) -> list[str]:
+    """Format adaptive request-ceiling and cooldown details."""
+    parts: list[str] = []
+    if scheduler.current_requests_per_minute < scheduler.maximum_requests_per_minute:
+        parts.append(f"active ceiling {scheduler.current_requests_per_minute:.0f} rpm")
     if scheduler.throttle_events > 0:
         parts.append(
             f"429s last minute {scheduler.throttle_events} "
@@ -59,6 +67,32 @@ def format_sync_progress(
         )
     if scheduler.cooldown_remaining_s > 0:
         parts.append(f"cooldown {math.ceil(scheduler.cooldown_remaining_s)}s")
+    return parts
+
+
+def format_sync_progress(
+    *,
+    region: str,
+    region_index: int,
+    region_total: int,
+    elapsed_s: float,
+    augmentation: AugmentationProgressSnapshot,
+    scheduler: RequestSchedulerSnapshot,
+    auth: WikimediaAuthSnapshot | None = None,
+) -> str:
+    """Format one concise, factual operator heartbeat."""
+    parts = _base_progress_parts(
+        region,
+        region_index,
+        region_total,
+        elapsed_s,
+        augmentation,
+        scheduler,
+    )
+    auth_part = _auth_progress_part(auth)
+    if auth_part is not None:
+        parts.append(auth_part)
+    parts.extend(_throttle_progress_parts(scheduler))
     return "; ".join(parts)
 
 
