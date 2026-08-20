@@ -20,6 +20,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_retirement import (
     prepare_local_retirement,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "processed"
 STEM = "monaco-latest"
@@ -57,6 +58,49 @@ def test_prepare_repoints_manifest_without_deleting_legacy(tmp_path: Path) -> No
     ]
     assert "articles_path" not in entry
     assert entry["wikipedia_documents_path"] == f"wikipedia/documents/{STEM}.parquet"
+
+
+def test_prepare_updates_canonical_link_references_and_augmentation_manifest(
+    tmp_path: Path,
+) -> None:
+    data_root = _seed(tmp_path)
+    links_path = data_root.processed_links / f"{STEM}.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "polygon_id": f"{STEM}:relation:1",
+                    "document_id": "Q235:wikipedia:en:1:1",
+                    "project": "wikipedia",
+                    "wikidata": "Q235",
+                    "language": "en",
+                    "source_pbf": f"{STEM}.osm.pbf",
+                    "region": STEM,
+                    "osm_type": "relation",
+                    "osm_id": 1,
+                    "page_id": 1,
+                    "revision_id": 1,
+                }
+            ],
+            schema=polygon_document_link_schema(),
+        ),
+        links_path,
+    )
+    legacy = data_root.processed_articles / f"{STEM}.parquet"
+    canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
+    manifest = data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps({STEM: {"core_hashes": {str(legacy): "legacy-hash"}}}), encoding="utf-8"
+    )
+
+    prepare_local_retirement(data_root, STEM)
+
+    links = pq.read_table(links_path)  # type: ignore[no-untyped-call]
+    assert links["document_id"].to_pylist() == ["Q235:wikipedia:en:1:1"]
+    hashes = json.loads(manifest.read_text(encoding="utf-8"))[STEM]["core_hashes"]
+    assert str(legacy) not in hashes
+    assert str(canonical) in hashes
 
 
 def test_finalize_deletes_only_after_lossless_checks(tmp_path: Path) -> None:

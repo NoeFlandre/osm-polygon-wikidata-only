@@ -118,24 +118,8 @@ def _area_and_centroid_for_geom(
     if not rings:
         raise GeometryError("Geometry has no rings.")
 
-    # Reference latitude for the projection: unweighted vertex mean of
-    # the first (outer) ring. This gives an O(dx) accurate centroid.
-    ref_lat = sum(v[1] for v in rings[0][:-1]) / max(1, len(rings[0]) - 1)
-    lat0_rad = math.radians(ref_lat)
-    cos_lat0 = math.cos(lat0_rad)
-    if abs(cos_lat0) < 1e-12:
-        # Polar area: fall back to a degenerate value rather than /0.
-        cos_lat0 = 1e-12
-
-    total_cross = 0.0
-    total_sx = 0.0
-    total_sy = 0.0
-
-    for ring in rings:
-        c, sx, sy, _ = _ring_signed_area_and_centroid(ring, lat0_rad, cos_lat0)
-        total_cross += c
-        total_sx += sx
-        total_sy += sy
+    ref_lat, lat0_rad, cos_lat0 = _projection_for_rings(rings)
+    total_cross, total_sx, total_sy = _ring_moments(rings, lat0_rad, cos_lat0)
 
     # ``total_cross`` is 2 * signed_area_in_m2.
     signed_area_m2 = 0.5 * total_cross
@@ -145,15 +129,36 @@ def _area_and_centroid_for_geom(
         ref_lon = sum(v[0] for v in rings[0][:-1]) / max(1, len(rings[0]) - 1)
         return 0.0, ref_lon, ref_lat
 
-    # Centroid in projected absolute meters (origin at prime meridian / equator).
+    return _centroid_from_moments(signed_area_m2, total_sx, total_sy, cos_lat0)
+
+
+def _projection_for_rings(rings: list[list[list[float]]]) -> tuple[float, float, float]:
+    ref_lat = sum(v[1] for v in rings[0][:-1]) / max(1, len(rings[0]) - 1)
+    lat0_rad = math.radians(ref_lat)
+    cos_lat0 = math.cos(lat0_rad)
+    return ref_lat, lat0_rad, cos_lat0 if abs(cos_lat0) >= 1e-12 else 1e-12
+
+
+def _ring_moments(
+    rings: list[list[list[float]]], lat0_rad: float, cos_lat0: float
+) -> tuple[float, float, float]:
+    moments = [_ring_signed_area_and_centroid(ring, lat0_rad, cos_lat0) for ring in rings]
+    return (
+        sum(moment[0] for moment in moments),
+        sum(moment[1] for moment in moments),
+        sum(moment[2] for moment in moments),
+    )
+
+
+def _centroid_from_moments(
+    signed_area_m2: float,
+    total_sx: float,
+    total_sy: float,
+    cos_lat0: float,
+) -> tuple[float, float, float]:
     cx_proj = total_sx / (6.0 * signed_area_m2)
     cy_proj = total_sy / (6.0 * signed_area_m2)
-
     area_m2 = abs(signed_area_m2)
-    # Convert projected centroid back to (lon, lat). Because the
-    # projected coordinates were computed in *absolute* radians-into-
-    # meters, ``cx_proj`` already equals ``R * cos(lat0) * centroid_lon_rad``
-    # — no extra reference addition is required.
     lon_rad = cx_proj / (EARTH_RADIUS_M * cos_lat0)
     lat_rad = cy_proj / EARTH_RADIUS_M
     return area_m2, math.degrees(lon_rad), math.degrees(lat_rad)
@@ -195,14 +200,17 @@ def merge_multi_polygon(geometries: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Concatenate several GeoJSON Polygon/MultiPolygon geometries into one MultiPolygon."""
     parts: list[list[list[list[float]]]] = []
     for geom in geometries:
-        t = geom.get("type")
-        coords = geom.get("coordinates")
-        if t == "Polygon":
-            assert isinstance(coords, list)
-            parts.append(coords)
-        elif t == "MultiPolygon":
-            assert isinstance(coords, list)
-            parts.extend(coords)
-        else:
-            raise GeometryError(f"Cannot merge geometry of type {t!r}.")
+        parts.extend(_geometry_parts(geom))
     return {"type": "MultiPolygon", "coordinates": parts}
+
+
+def _geometry_parts(geom: dict[str, Any]) -> list[list[list[list[float]]]]:
+    geometry_type = geom.get("type")
+    coords = geom.get("coordinates")
+    if geometry_type == "Polygon":
+        assert isinstance(coords, list)
+        return [coords]
+    if geometry_type == "MultiPolygon":
+        assert isinstance(coords, list)
+        return coords
+    raise GeometryError(f"Cannot merge geometry of type {geometry_type!r}.")

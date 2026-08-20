@@ -42,27 +42,33 @@ class PublicationOp:
     snapshot_path: Path | None = None
 
     def __post_init__(self) -> None:
-        if self.action not in {"add", "delete"}:
-            raise ValueError(f"PublicationOp.action must be 'add' or 'delete', got {self.action!r}")
-        if self.action == "add" and self.local_path is None:
-            raise ValueError(
-                f"PublicationOp(action='add', path_in_repo={self.path_in_repo!r}) "
-                "requires a local_path"
-            )
-        if self.action == "delete" and self.local_path is not None:
-            raise ValueError(
-                f"PublicationOp(action='delete', path_in_repo={self.path_in_repo!r}) "
-                "must not carry a local_path"
-            )
-        # ``snapshot_path`` is queue-only state and MUST NOT appear on
-        # delete ops -- there is no immutable bytes to upload. The
-        # field is only meaningful for add ops (where the queue
-        # machinery sets it after taking a durable snapshot).
-        if self.action == "delete" and self.snapshot_path is not None:
-            raise ValueError(
-                f"PublicationOp(action='delete', path_in_repo={self.path_in_repo!r}) "
-                "must not carry a snapshot_path"
-            )
+        _validate_action(self.action)
+        _validate_local_path(self.action, self.path_in_repo, self.local_path)
+        _validate_snapshot_path(self.action, self.path_in_repo, self.snapshot_path)
+
+
+def _validate_action(action: str) -> None:
+    if action not in {"add", "delete"}:
+        raise ValueError(f"PublicationOp.action must be 'add' or 'delete', got {action!r}")
+
+
+def _validate_local_path(action: str, path_in_repo: str, local_path: Path | None) -> None:
+    if action == "add" and local_path is None:
+        raise ValueError(
+            f"PublicationOp(action='add', path_in_repo={path_in_repo!r}) requires a local_path"
+        )
+    if action == "delete" and local_path is not None:
+        raise ValueError(
+            f"PublicationOp(action='delete', path_in_repo={path_in_repo!r}) must not carry a local_path"
+        )
+
+
+def _validate_snapshot_path(action: str, path_in_repo: str, snapshot_path: Path | None) -> None:
+    if action == "delete" and snapshot_path is not None:
+        raise ValueError(
+            f"PublicationOp(action='delete', path_in_repo={path_in_repo!r}) "
+            "must not carry a snapshot_path"
+        )
 
 
 def add_op(local_path: str | Path, *, path_in_repo: str) -> PublicationOp:

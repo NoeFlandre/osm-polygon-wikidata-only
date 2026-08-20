@@ -39,6 +39,21 @@ def aggregate_geographic_text_coverage(
     """
     if min_polygons_per_cell < 1:
         raise CoverageMapError(f"min_polygons_per_cell must be >= 1; got {min_polygons_per_cell}")
+    polygons_dir, articles_dir, links_dir = _coverage_input_dirs(processed_root)
+    qualifying_article_ids = load_qualifying_article_ids(articles_dir)
+    covered_polygon_ids = load_covered_polygon_ids(links_dir, qualifying_article_ids)
+    polygon_cells = load_polygon_cells(polygons_dir, h3_resolution=h3_resolution)
+    cells = _build_coverage_cells(polygon_cells, covered_polygon_ids, min_polygons_per_cell)
+    LOGGER.info(
+        "Aggregated %d H3 cell(s); %d covered polygon(s) of %d total.",
+        len(cells),
+        sum(c.covered_polygon_count for c in cells),
+        sum(c.polygon_count for c in cells),
+    )
+    return cells
+
+
+def _coverage_input_dirs(processed_root: Path) -> tuple[Path, Path, Path]:
     polygons_dir = require_directory(processed_root / "polygons", label="polygons")
     canonical_documents_dir = processed_root / "wikipedia" / "documents"
     legacy_articles_dir = processed_root / "articles"
@@ -47,39 +62,40 @@ def aggregate_geographic_text_coverage(
         label=("wikipedia/documents" if canonical_documents_dir.exists() else "articles"),
     )
     links_dir = require_directory(processed_root / "polygon_articles", label="polygon_articles")
+    return polygons_dir, articles_dir, links_dir
 
-    qualifying_article_ids = load_qualifying_article_ids(articles_dir)
-    covered_polygon_ids = load_covered_polygon_ids(links_dir, qualifying_article_ids)
-    polygon_cells = load_polygon_cells(polygons_dir, h3_resolution=h3_resolution)
 
+def _build_coverage_cells(
+    polygon_cells: list[tuple[str, str]],
+    covered_polygon_ids: set[str],
+    min_polygons_per_cell: int,
+) -> list[CoverageCell]:
     counts: dict[str, int] = {}
     covered_counts: dict[str, int] = {}
     for polygon_id, cell in polygon_cells:
         counts[cell] = counts.get(cell, 0) + 1
         if polygon_id in covered_polygon_ids:
             covered_counts[cell] = covered_counts.get(cell, 0) + 1
+    return [
+        _coverage_cell(h3_cell, counts[h3_cell], covered_counts, min_polygons_per_cell)
+        for h3_cell in sorted(counts)
+    ]
 
-    cells: list[CoverageCell] = []
-    for h3_cell in sorted(counts):
-        polygon_count = counts[h3_cell]
-        covered_polygon_count = covered_counts.get(h3_cell, 0)
-        coverage_rate = covered_polygon_count / polygon_count if polygon_count else 0.0
-        cells.append(
-            CoverageCell(
-                h3_cell=h3_cell,
-                polygon_count=polygon_count,
-                covered_polygon_count=covered_polygon_count,
-                coverage_rate=coverage_rate,
-                is_low_sample=polygon_count < min_polygons_per_cell,
-            )
-        )
-    LOGGER.info(
-        "Aggregated %d H3 cell(s); %d covered polygon(s) of %d total.",
-        len(cells),
-        sum(c.covered_polygon_count for c in cells),
-        sum(c.polygon_count for c in cells),
+
+def _coverage_cell(
+    h3_cell: str,
+    polygon_count: int,
+    covered_counts: dict[str, int],
+    min_polygons_per_cell: int,
+) -> CoverageCell:
+    covered_polygon_count = covered_counts.get(h3_cell, 0)
+    return CoverageCell(
+        h3_cell=h3_cell,
+        polygon_count=polygon_count,
+        covered_polygon_count=covered_polygon_count,
+        coverage_rate=covered_polygon_count / polygon_count if polygon_count else 0.0,
+        is_low_sample=polygon_count < min_polygons_per_cell,
     )
-    return cells
 
 
 def aggregate_geographic_polygon_count(

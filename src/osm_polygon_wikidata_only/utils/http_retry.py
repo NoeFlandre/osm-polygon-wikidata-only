@@ -31,12 +31,18 @@ def retry_after_seconds(
     value = error.headers.get("Retry-After") if error.headers is not None else None
     if not value:
         return default_s
+    numeric = _numeric_retry_delay(value, max_s)
+    return numeric if numeric is not None else _date_retry_delay(value, max_s, default_s)
 
+
+def _numeric_retry_delay(value: str, max_s: float) -> float | None:
     try:
         return min(max_s, max(0.0, float(value)))
     except ValueError:
-        pass
+        return None
 
+
+def _date_retry_delay(value: str, max_s: float, default_s: float) -> float:
     try:
         dt = parsedate_to_datetime(value)
         if dt.tzinfo is None:

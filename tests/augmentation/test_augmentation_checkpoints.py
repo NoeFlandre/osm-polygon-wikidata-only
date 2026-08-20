@@ -143,6 +143,15 @@ def test_section_batch_identity_helpers_validate_known_unique_sections() -> None
     assert not _section_ids_are_unique([section, section])
 
 
+def test_section_batch_rows_accepts_typed_rows_and_rejects_malformed_payloads() -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import _section_batch_rows
+
+    section = _section()
+    assert _section_batch_rows(None) is None
+    assert _section_batch_rows([section.to_dict()]) == [section]
+    assert _section_batch_rows([{"section_id": "missing-required-fields"}]) is None
+
+
 def test_checkpoint_payload_helpers_reject_malformed_rows(tmp_path: Path) -> None:
     from osm_polygon_wikidata_only.augmentation.checkpoints import (
         _read_json_object,

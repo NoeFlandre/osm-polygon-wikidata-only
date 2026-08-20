@@ -155,20 +155,35 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
     request ids, file paths, and JSON request bodies are stripped
     before being shown to the operator.
     """
-    status_code: int | None = None
-    server_message: str | None = None
+    status_code, server_message = _error_details(error)
+    message = _sanitize_server_message(server_message)
+    if _is_auth_error(status_code, message):
+        return _auth_upload_error(repo_id, message)
+    return UploadError(f"Hugging Face upload to {repo_id} failed: {message}")
+
+
+def _error_details(error: Exception) -> tuple[int | None, str]:
     response = getattr(error, "response", None)
-    if response is not None:
-        status_code = getattr(response, "status_code", None)
-        try:
-            server_message = response.text
-        except Exception:  # pragma: no cover - defensive
-            server_message = None
-    if server_message is None:
-        server_message = getattr(error, "server_message", None) or str(error)
-    server_message = _sanitize_server_message(server_message or "")
-    lowered = server_message.lower()
-    auth_markers = (
+    if response is None:
+        return _fallback_error_details(error)
+    status_code = getattr(response, "status_code", None)
+    return status_code, _response_message(response, error)
+
+
+def _fallback_error_details(error: Exception) -> tuple[None, str]:
+    return None, str(getattr(error, "server_message", None) or error)
+
+
+def _response_message(response: Any, error: Exception) -> str:
+    try:
+        message = response.text
+    except Exception:  # pragma: no cover - defensive
+        message = None
+    return str(message or getattr(error, "server_message", None) or error)
+
+
+def _is_auth_error(status_code: int | None, message: str) -> bool:
+    markers = (
         "invalid username",
         "invalid user token",
         "invalid token",
@@ -176,14 +191,16 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
         "401 unauthorized",
         "token is required",
     )
-    is_auth = status_code in (401, 403) or any(marker in lowered for marker in auth_markers)
-    if is_auth:
-        return UploadError(
-            f"Hugging Face rejected the upload to {repo_id}: {server_message}. "
-            "Verify your HF_TOKEN is a write token from the account that owns "
-            f"{repo_id}, or pass --hf-token (or --repo-id) explicitly."
-        )
-    return UploadError(f"Hugging Face upload to {repo_id} failed: {server_message}")
+    lowered = message.lower()
+    return status_code in (401, 403) or any(marker in lowered for marker in markers)
+
+
+def _auth_upload_error(repo_id: str, message: str) -> UploadError:
+    return UploadError(
+        f"Hugging Face rejected the upload to {repo_id}: {message}. "
+        "Verify your HF_TOKEN is a write token from the account that owns "
+        f"{repo_id}, or pass --hf-token (or --repo-id) explicitly."
+    )
 
 
 def _commit_message(commit_message: str | None, *, default_prefix: str) -> str:
@@ -404,40 +421,50 @@ def _build_operations(
     """
     from huggingface_hub import CommitOperationAdd, CommitOperationDelete
 
+    if ops is not None:
+        return _build_publication_operations(ops, CommitOperationAdd, CommitOperationDelete)
+    assert files is not None
+    return _build_file_operations(files, CommitOperationAdd)
+
+
+def _build_publication_operations(
+    ops: list[PublicationOp], add_cls: Any, delete_cls: Any
+) -> tuple[list[Any], set[str], set[str]]:
+    out: list[Any] = []
     add_paths: set[str] = set()
     delete_paths: set[str] = set()
-    out: list[Any] = []
-    if ops is not None:
-        for op in ops:
-            if op.action == "add":
-                assert op.local_path is not None
-                if not op.local_path.exists():
-                    raise UploadError(f"Local file does not exist: {op.local_path}")
-                out.append(
-                    CommitOperationAdd(
-                        path_in_repo=op.path_in_repo,
-                        path_or_fileobj=str(op.local_path),
-                    )
-                )
-                add_paths.add(op.path_in_repo)
-            elif op.action == "delete":
-                out.append(CommitOperationDelete(path_in_repo=op.path_in_repo))
-                delete_paths.add(op.path_in_repo)
-            else:  # pragma: no cover - dataclass enforces the union
-                raise UploadError(f"Unknown action: {op.action!r}")
-    else:
-        assert files is not None
-        for local_path, remote_path in files:
-            if not local_path.exists():
-                raise UploadError(f"Local file does not exist: {local_path}")
-            out.append(
-                CommitOperationAdd(
-                    path_in_repo=remote_path,
-                    path_or_fileobj=str(local_path),
-                )
-            )
-            add_paths.add(remote_path)
+    for op in ops:
+        operation = _translate_publication_op(op, add_cls, delete_cls)
+        out.append(operation)
+        if op.action == "add":
+            add_paths.add(op.path_in_repo)
+        else:
+            delete_paths.add(op.path_in_repo)
     return out, add_paths, delete_paths
+
+
+def _translate_publication_op(op: PublicationOp, add_cls: Any, delete_cls: Any) -> Any:
+    if op.action == "add":
+        assert op.local_path is not None
+        if not op.local_path.exists():
+            raise UploadError(f"Local file does not exist: {op.local_path}")
+        return add_cls(path_in_repo=op.path_in_repo, path_or_fileobj=str(op.local_path))
+    if op.action == "delete":
+        return delete_cls(path_in_repo=op.path_in_repo)
+    raise UploadError(f"Unknown action: {op.action!r}")
+
+
+def _build_file_operations(
+    files: list[tuple[Path, str]], add_cls: Any
+) -> tuple[list[Any], set[str], set[str]]:
+    out: list[Any] = []
+    add_paths: set[str] = set()
+    for local_path, remote_path in files:
+        if not local_path.exists():
+            raise UploadError(f"Local file does not exist: {local_path}")
+        out.append(add_cls(path_in_repo=remote_path, path_or_fileobj=str(local_path)))
+        add_paths.add(remote_path)
+    return out, add_paths, set()
 
 
 def upload_manifest(

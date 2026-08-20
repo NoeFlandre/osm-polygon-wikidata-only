@@ -80,6 +80,18 @@ def test_index_lookup_by_title_page_and_qid(tmp_path: Path) -> None:
     assert path.is_file()
 
 
+def test_persistent_index_deletes_stale_paths_and_invalidates_row_cache(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.v1_index import _PersistentV1Index
+
+    index = _PersistentV1Index(tmp_path / "cache", ())
+    index._row_cache["stale"] = {"document_id": "stale"}
+    try:
+        index._delete_stale_paths({"removed.parquet"})
+        assert not index._row_cache
+    finally:
+        index.close()
+
+
 def test_index_rejects_wrong_schema(tmp_path: Path) -> None:
     path = tmp_path / "wikipedia" / "documents" / "region.parquet"
     path.parent.mkdir(parents=True)

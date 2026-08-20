@@ -40,18 +40,44 @@ def generate_v2_map_assets(
     This keeps manually refreshed V2 assets consistent with the sync path.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    if land_geojson_path is None and land_cache_dir is None:
-        sibling_cache = processed_v2.parent / "cache"
-        sibling_land = sibling_cache / WORLD_LAND_FILENAME
-        if sibling_land.is_file() and sibling_land.stat().st_size > 0:
-            land_cache_dir = sibling_cache
-            land_geojson_path = sibling_land
-    if land_geojson_path is None and land_cache_dir is not None:
-        try:
-            land_geojson_path = ensure_world_land(land_cache_dir)
-        except Exception as error:
-            LOGGER.warning("V2 maps will omit Natural Earth land context: %s", error)
+    land_geojson_path, land_cache_dir = _resolve_land_context(
+        processed_v2, land_geojson_path, land_cache_dir
+    )
+    coverage_path = _render_coverage(processed_v2, output_dir, land_geojson_path)
+    presence_path, density_path = _render_text_maps(
+        processed_v2, output_dir, land_geojson_path, land_cache_dir
+    )
+    return coverage_path, presence_path, density_path
 
+
+def _resolve_land_context(
+    processed_v2: Path,
+    land_geojson_path: Path | None,
+    land_cache_dir: Path | None,
+) -> tuple[Path | None, Path | None]:
+    if land_geojson_path is not None:
+        return land_geojson_path, land_cache_dir
+    if land_cache_dir is None:
+        sibling = _existing_sibling_land(processed_v2)
+        if sibling is not None:
+            return sibling, sibling.parent
+        return None, None
+    try:
+        return ensure_world_land(land_cache_dir), land_cache_dir
+    except Exception as error:
+        LOGGER.warning("V2 maps will omit Natural Earth land context: %s", error)
+        return None, land_cache_dir
+
+
+def _existing_sibling_land(processed_v2: Path) -> Path | None:
+    sibling_cache = processed_v2.parent / "cache"
+    sibling_land = sibling_cache / WORLD_LAND_FILENAME
+    if sibling_land.is_file() and sibling_land.stat().st_size > 0:
+        return sibling_land
+    return None
+
+
+def _render_coverage(processed_v2: Path, output_dir: Path, land_geojson_path: Path | None) -> Path:
     coverage_path = output_dir / "coverage_map.png"
     lons, lats = load_centroids_from_parquet(processed_v2 / "polygons")
     generate_coverage_map(
@@ -61,7 +87,15 @@ def generate_v2_map_assets(
         land_geojson_path=land_geojson_path,
         title="V2 dataset coverage",
     )
+    return coverage_path
 
+
+def _render_text_maps(
+    processed_v2: Path,
+    output_dir: Path,
+    land_geojson_path: Path | None,
+    land_cache_dir: Path | None,
+) -> tuple[Path, Path]:
     links_dir = processed_v2 / "polygon_document_links"
     presence_snapshot = load_text_presence(processed_v2, links_dir=links_dir)
 
@@ -80,7 +114,7 @@ def generate_v2_map_assets(
         land_cache_dir=land_cache_dir,
         snapshot=presence_snapshot,
     )
-    return coverage_path, presence_path, density_path
+    return presence_path, density_path
 
 
 __all__ = ["generate_v2_map_assets"]

@@ -34,6 +34,24 @@ def test_absent_delete_filter_is_a_noop_without_delete_paths() -> None:
     ]
 
 
+def test_existing_delete_paths_filters_remote_absences_and_translates_errors() -> None:
+    class Hub:
+        def file_exists(self, _repo_id: str, path: str, *, repo_type: str) -> bool:
+            assert repo_type == "dataset"
+            return path == "present.parquet"
+
+    assert operations._existing_delete_paths(
+        Hub(), "owner/repo", {"present.parquet", "absent.parquet"}
+    ) == {"present.parquet"}
+
+    class FailingHub:
+        def file_exists(self, *_args: object, **_kwargs: object) -> bool:
+            raise RuntimeError("request failed")
+
+    with pytest.raises(UploadError, match="request failed"):
+        operations._existing_delete_paths(FailingHub(), "owner/repo", {"present.parquet"})
+
+
 def test_upload_queue_reads_only_current_envelopes(tmp_path: Path) -> None:
     from osm_polygon_wikidata_only.hf.upload_queue import (
         QUEUE_CONTRACT_VERSION,

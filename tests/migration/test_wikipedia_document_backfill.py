@@ -347,6 +347,44 @@ class TestPlanningClassification:
         assert plan.is_safe_to_apply
 
 
+def test_validate_upgrade_target_accepts_unchanged_document_and_rejects_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from osm_polygon_wikidata_only.augmentation import wikipedia_document_migration as migration
+
+    target = tmp_path / "document.parquet"
+    target.write_bytes(b"document")
+    plan = migration.StemPlan(
+        stem="stem-a",
+        operation=migration.MigrationOperation.UPGRADE_LEGACY,
+        reason="",
+        article_hash="article-hash",
+        document_hash=migration._file_content_hash(target),
+        row_count=1,
+        canonical_digest="digest",
+    )
+
+    migration._validate_upgrade_target(plan, target)
+
+    target.write_bytes(b"changed")
+    with pytest.raises(migration.MigrationError, match="changed before write"):
+        migration._validate_upgrade_target(plan, target)
+
+    target.unlink()
+    with pytest.raises(migration.MigrationError, match="disappeared before write"):
+        migration._validate_upgrade_target(plan, target)
+
+    target.write_bytes(b"document")
+    monkeypatch.setattr(
+        migration,
+        "_file_content_hash",
+        lambda _path: (_ for _ in ()).throw(OSError("read failed")),
+    )
+    with pytest.raises(migration.MigrationError, match="unreadable before write"):
+        migration._validate_upgrade_target(plan, target)
+
+
 class TestPlanningValidation:
     def test_preserves_all_30_article_columns(self, tmp_path: Path) -> None:
         processed = _build_processed_dir(

@@ -25,13 +25,23 @@ def verify_repo_authorization(
     _verify: Any = None,
 ) -> str:
     """Verify the token's owner matches ``repo_id``'s namespace."""
-    if "/" not in repo_id:
-        raise UploadError(f"repo_id must be of the form 'namespace/name', got {repo_id!r}")
-    namespace = repo_id.split("/", 1)[0]
+    namespace = _repo_namespace(repo_id)
     if _verify is None:
         _verify = verify_hf_token
+    username = _verified_owner(explicit, _verify)
+    _require_namespace_match(username, namespace, repo_id)
+    return str(username)
+
+
+def _repo_namespace(repo_id: str) -> str:
+    if "/" not in repo_id:
+        raise UploadError(f"repo_id must be of the form 'namespace/name', got {repo_id!r}")
+    return repo_id.split("/", 1)[0]
+
+
+def _verified_owner(explicit: str | None, verify: Any) -> str:
     try:
-        username = _verify(explicit)
+        username = verify(explicit)
     except UploadError:
         raise
     if username is None:
@@ -39,10 +49,14 @@ def verify_repo_authorization(
             "No Hugging Face token available. Set HF_TOKEN, run `huggingface-cli login`, "
             "or pass --hf-token."
         )
-    if username != namespace:
-        raise UploadError(
-            f"HF_TOKEN authenticates as '{username}', but --repo-id '{repo_id}' lives in the "
-            f"'{namespace}' namespace. Either use a write token issued by '{namespace}' "
-            f"or pass --repo-id '{username}/osm-polygon-wikidata-only' to push under your own namespace."
-        )
     return str(username)
+
+
+def _require_namespace_match(username: str, namespace: str, repo_id: str) -> None:
+    if username == namespace:
+        return
+    raise UploadError(
+        f"HF_TOKEN authenticates as '{username}', but --repo-id '{repo_id}' lives in the "
+        f"'{namespace}' namespace. Either use a write token issued by '{namespace}' "
+        f"or pass --repo-id '{username}/osm-polygon-wikidata-only' to push under your own namespace."
+    )

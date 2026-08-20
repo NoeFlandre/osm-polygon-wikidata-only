@@ -43,39 +43,55 @@ def _assert_references_resolve(data_root: DataRoot, stem: str) -> None:
     documents = pq.read_table(documents_path, columns=["article_id", "document_id"])  # type: ignore[no-untyped-call]
     article_ids = set(documents["article_id"].to_pylist())
     document_ids = set(documents["document_id"].to_pylist())
-    if links_path.exists():
-        link_schema = pq.read_schema(links_path)  # type: ignore[no-untyped-call]
-        if "article_id" in link_schema.names:
-            links = pq.read_table(links_path, columns=["article_id"])  # type: ignore[no-untyped-call]
-            unresolved = any(
-                article_id not in article_ids for article_id in links["article_id"].to_pylist()
-            )
-        else:
-            links = pq.read_table(  # type: ignore[no-untyped-call]
-                links_path, columns=["document_id", "project"]
-            )
-            unresolved = any(
-                project == "wikipedia" and document_id not in document_ids
-                for document_id, project in zip(
-                    links["document_id"].to_pylist(),
-                    links["project"].to_pylist(),
-                    strict=True,
-                )
-            )
-        if unresolved:
-            raise MigrationError(
-                f"Stem {stem!r} has polygon links unresolved by canonical documents"
-            )
-    if sections_path.exists():
-        sections = pq.read_table(sections_path, columns=["document_id"])  # type: ignore[no-untyped-call]
-        if any(
-            document_id not in document_ids for document_id in sections["document_id"].to_pylist()
-        ):
-            raise MigrationError(f"Stem {stem!r} has sections unresolved by canonical documents")
+    _assert_link_references_resolve(links_path, article_ids, document_ids, stem)
+    _assert_section_references_resolve(sections_path, document_ids, stem)
 
 
-def prepare_local_retirement(data_root: DataRoot, stem: str) -> None:
-    """Verify losslessness and atomically repoint manifests to canonical data."""
+def _assert_link_references_resolve(
+    links_path: Path,
+    article_ids: set[object],
+    document_ids: set[object],
+    stem: str,
+) -> None:
+    if not links_path.exists():
+        return
+    link_schema = pq.read_schema(links_path)  # type: ignore[no-untyped-call]
+    if "article_id" in link_schema.names:
+        unresolved = _unresolved_article_links(links_path, article_ids)
+    else:
+        unresolved = _unresolved_document_links(links_path, document_ids)
+    if unresolved:
+        raise MigrationError(f"Stem {stem!r} has polygon links unresolved by canonical documents")
+
+
+def _unresolved_article_links(links_path: Path, article_ids: set[object]) -> bool:
+    links = pq.read_table(links_path, columns=["article_id"])  # type: ignore[no-untyped-call]
+    return any(article_id not in article_ids for article_id in links["article_id"].to_pylist())
+
+
+def _unresolved_document_links(links_path: Path, document_ids: set[object]) -> bool:
+    links = pq.read_table(links_path, columns=["document_id", "project"])  # type: ignore[no-untyped-call]
+    return any(
+        project == "wikipedia" and document_id not in document_ids
+        for document_id, project in zip(
+            links["document_id"].to_pylist(), links["project"].to_pylist(), strict=True
+        )
+    )
+
+
+def _assert_section_references_resolve(
+    sections_path: Path,
+    document_ids: set[object],
+    stem: str,
+) -> None:
+    if not sections_path.exists():
+        return
+    sections = pq.read_table(sections_path, columns=["document_id"])  # type: ignore[no-untyped-call]
+    if any(document_id not in document_ids for document_id in sections["document_id"].to_pylist()):
+        raise MigrationError(f"Stem {stem!r} has sections unresolved by canonical documents")
+
+
+def _validate_retirement_inputs(data_root: DataRoot, stem: str) -> tuple[Path, Path]:
     canonical = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
     legacy = data_root.processed_articles / f"{stem}.parquet"
     if not canonical.exists() or not pq.read_schema(canonical).equals(  # type: ignore[no-untyped-call]
@@ -85,27 +101,45 @@ def prepare_local_retirement(data_root: DataRoot, stem: str) -> None:
     if legacy.exists():
         _assert_legacy_rows_preserved(canonical, legacy, stem)
     _assert_references_resolve(data_root, stem)
-    processed_manifest = data_root.processed_manifests / "processed_pbfs.json"
-    if processed_manifest.exists():
-        payload = json.loads(processed_manifest.read_text(encoding="utf-8"))
-        key = f"{stem}.osm.pbf"
-        entry = payload.get(key)
-        if isinstance(entry, dict):
-            entry.pop("articles_path", None)
-            entry["wikipedia_documents_path"] = f"wikipedia/documents/{stem}.parquet"
-            atomic_write_text(processed_manifest, dumps(payload) + "\n")
+    return canonical, legacy
 
+
+def _update_processed_manifest(
+    data_root: DataRoot, stem: str, canonical: Path, legacy: Path
+) -> None:
+    processed_manifest = data_root.processed_manifests / "processed_pbfs.json"
+    if not processed_manifest.exists():
+        return
+    payload = json.loads(processed_manifest.read_text(encoding="utf-8"))
+    entry = payload.get(f"{stem}.osm.pbf")
+    if isinstance(entry, dict):
+        entry.pop("articles_path", None)
+        entry["wikipedia_documents_path"] = f"wikipedia/documents/{stem}.parquet"
+        atomic_write_text(processed_manifest, dumps(payload) + "\n")
+
+
+def _update_augmentation_manifest(
+    data_root: DataRoot, stem: str, canonical: Path, legacy: Path
+) -> None:
     augmentation_manifest = (
         data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     )
-    if augmentation_manifest.exists():
-        payload = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
-        entry = payload.get(stem)
-        if isinstance(entry, dict) and isinstance(entry.get("core_hashes"), dict):
-            hashes = entry["core_hashes"]
-            hashes.pop(str(legacy), None)
-            hashes[str(canonical)] = sha256_file(canonical)
-            atomic_write_text(augmentation_manifest, dumps(payload) + "\n")
+    if not augmentation_manifest.exists():
+        return
+    payload = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
+    entry = payload.get(stem)
+    if isinstance(entry, dict) and isinstance(entry.get("core_hashes"), dict):
+        hashes = entry["core_hashes"]
+        hashes.pop(str(legacy), None)
+        hashes[str(canonical)] = sha256_file(canonical)
+        atomic_write_text(augmentation_manifest, dumps(payload) + "\n")
+
+
+def prepare_local_retirement(data_root: DataRoot, stem: str) -> None:
+    """Verify losslessness and atomically repoint manifests to canonical data."""
+    canonical, legacy = _validate_retirement_inputs(data_root, stem)
+    _update_processed_manifest(data_root, stem, canonical, legacy)
+    _update_augmentation_manifest(data_root, stem, canonical, legacy)
 
 
 def finalize_local_retirement(data_root: DataRoot, stem: str) -> None:

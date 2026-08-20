@@ -219,6 +219,16 @@ def test_build_clients_rejects_invalid_rate_ceiling(tmp_path: Path, value: str) 
     assert "secret-value" not in str(captured.value)
 
 
+def test_parse_positive_rate_accepts_trimmed_finite_positive_number() -> None:
+    assert dependencies._parse_positive_rate(" 300.5 ") == pytest.approx(300.5)
+
+
+@pytest.mark.parametrize("value", ["", "not-a-number", "nan", "inf", "0", "-1"])
+def test_parse_positive_rate_rejects_non_positive_or_non_finite_values(value: str) -> None:
+    with pytest.raises(WikimediaConfigurationError, match="positive number"):
+        dependencies._parse_positive_rate(value)
+
+
 def test_build_clients_rejects_partial_credentials(tmp_path: Path) -> None:
     with pytest.raises(WikimediaConfigurationError, match="WIKIMEDIA_BOT_PASSWORD"):
         dependencies.build_clients(

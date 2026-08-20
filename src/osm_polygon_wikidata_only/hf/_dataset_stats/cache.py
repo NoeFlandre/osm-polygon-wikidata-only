@@ -59,6 +59,7 @@ import json
 import logging
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import cast
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 
@@ -123,24 +124,33 @@ def load_cache_index(data_root_cache: Path) -> dict[str, dict[str, object]]:
     path = index_path(data_root_cache)
     if not path.exists():
         return {}
-    try:
-        decoded = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        LOGGER.warning("Stats cache index unreadable; treating as empty: %s", path)
-        return {}
-    if not isinstance(decoded, dict):
+    decoded = _read_cache_index(path)
+    if decoded is None:
         return {}
     if not _index_is_compatible(decoded):
         LOGGER.warning(
             "Stats cache index contract version mismatch: rebuilding from scratch: %s", path
         )
         return {}
+    return _cache_entries(decoded)
+
+
+def _read_cache_index(path: Path) -> dict[str, object] | None:
+    try:
+        decoded = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        LOGGER.warning("Stats cache index unreadable; treating as empty: %s", path)
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _cache_entries(decoded: dict[str, object]) -> dict[str, dict[str, object]]:
     out: dict[str, dict[str, object]] = {}
     for key, value in decoded.items():
         if key == "__contract_version__":
             continue
         if isinstance(value, dict):
-            out[key] = value
+            out[key] = cast(dict[str, object], value)
     return out
 
 

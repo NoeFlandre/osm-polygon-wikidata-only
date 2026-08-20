@@ -9,6 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.hf import coverage_map
 from osm_polygon_wikidata_only.hf.coverage_map import (
     WORLD_LAND_FILENAME,
     ensure_world_land,
@@ -161,6 +162,20 @@ def test_generate_coverage_map_empty_points(tmp_path: Path) -> None:
     generate_coverage_map([], [], out)
     assert out.exists()
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_draw_land_feature_ignores_empty_and_unsupported_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Axes:
+        def add_patch(self, _patch: object) -> None:
+            raise AssertionError("empty or unsupported geometry must not draw")
+
+    monkeypatch.setattr(coverage_map.mpatches, "Polygon", lambda *_args, **_kwargs: None)
+    axes = Axes()
+    coverage_map._draw_land_feature(axes, {"geometry": {"type": "Point", "coordinates": [0, 0]}})
+    coverage_map._draw_land_feature(axes, {"geometry": {"type": "Polygon", "coordinates": []}})
+    coverage_map._draw_land_feature(axes, {"geometry": {"type": "MultiPolygon", "coordinates": []}})
 
 
 def test_generate_coverage_map_creates_parent_dirs(tmp_path: Path) -> None:

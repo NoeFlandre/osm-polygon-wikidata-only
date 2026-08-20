@@ -126,17 +126,23 @@ def _has_json_content(value: object) -> bool:
     if value is None:
         return False
     if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return False
-        try:
-            parsed = json.loads(text)
-        except (ValueError, TypeError):
-            return False
-        return isinstance(parsed, (list, dict)) and len(parsed) > 0
-    if isinstance(value, (list, dict)):
-        return len(value) > 0
-    return False
+        return _json_text_has_content(value)
+    return _json_collection_has_content(value)
+
+
+def _json_text_has_content(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return False
+    return _json_collection_has_content(parsed)
+
+
+def _json_collection_has_content(value: object) -> bool:
+    return isinstance(value, (list, dict)) and len(value) > 0
 
 
 def _section_row_metrics(
@@ -464,12 +470,13 @@ def _scan_facts_file(processed_dir: Path, parquet_path: Path) -> PerFileSummary:
 def _kind_for_rel(rel: str) -> str:
     """Return the augmentation kind for a sidecar path relative to
     ``<processed>/``."""
-    if rel.startswith("wikipedia/documents/") or rel.startswith("wikivoyage/documents/"):
-        return KIND_DOCUMENT
-    if rel.startswith("wikipedia/sections/") or rel.startswith("wikivoyage/sections/"):
-        return KIND_SECTION
-    if rel.startswith("wikidata/facts/"):
-        return KIND_FACT
+    for kind, prefixes in (
+        (KIND_DOCUMENT, ("wikipedia/documents/", "wikivoyage/documents/")),
+        (KIND_SECTION, ("wikipedia/sections/", "wikivoyage/sections/")),
+        (KIND_FACT, ("wikidata/facts/",)),
+    ):
+        if rel.startswith(prefixes):
+            return kind
     return ""
 
 
@@ -507,126 +514,167 @@ def _merge_project_text(
     (``False``) from a present-but-empty one (``True`` with no
     summaries).
     """
-    rows = 0
-    non_empty = 0
-    empty_or_null = 0
-    total_chars = 0
-    total_words = 0
-    total_tokens = 0
-    document_ids: set[str] = set()
-    section_ids: set[str] = set()
-    qids: set[str] = set()
-    languages: Counter[str] = Counter()
-    region_count = 0
-    for summary in summaries:
-        region_count += 1
-        if summary.scan_failed:
-            continue
-        rows += summary.rows
-        non_empty += summary.non_empty
-        empty_or_null += summary.empty_or_null
-        total_chars += summary.total_chars
-        total_words += summary.total_words
-        total_tokens += summary.total_tokens_estimate
-        document_ids.update(summary.document_ids)
-        section_ids.update(summary.section_ids)
-        qids.update(summary.qids)
-        for lang, count in summary.languages.items():
-            languages[lang] += count
-
-    if summaries and summaries[0].kind == KIND_SECTION:
-        unique_section_ids = len(section_ids)
-        unique_documents = len(document_ids)
-        avg = (rows / unique_documents) if unique_documents > 0 else 0.0
-    else:
-        unique_section_ids = 0
-        unique_documents = len(document_ids)
-        avg = 0.0
-
-    non_empty_rate = (non_empty / rows) if rows > 0 else 0.0
-    by_code = sorted(languages.items(), key=lambda item: (-item[1], item[0]))
-    top_languages = tuple(by_code[:TOP_LANGUAGES_LIMIT])
+    metrics = _merge_project_text_metrics(summaries)
+    unique_section_ids, unique_documents, avg = _section_metrics(summaries, metrics)
+    non_empty_rate = metrics["non_empty"] / metrics["rows"] if metrics["rows"] > 0 else 0.0
+    top_languages = _top_counts(metrics["languages"])
     return ProjectTextStats(
         subdir_present=subdir_present,
-        rows=rows,
+        rows=metrics["rows"],
         unique_documents=unique_documents,
         unique_section_ids=unique_section_ids,
-        unique_qids=len(qids),
-        language_count=len(languages),
-        region_count=region_count,
-        non_empty=non_empty,
-        empty_or_null=empty_or_null,
+        unique_qids=len(metrics["qids"]),
+        language_count=len(metrics["languages"]),
+        region_count=len(summaries),
+        non_empty=metrics["non_empty"],
+        empty_or_null=metrics["empty_or_null"],
         non_empty_rate=non_empty_rate,
-        total_chars=total_chars,
-        total_words=total_words,
-        total_tokens_estimate=total_tokens,
+        total_chars=metrics["total_chars"],
+        total_words=metrics["total_words"],
+        total_tokens_estimate=metrics["total_tokens"],
         avg_sections_per_doc=avg,
         top_languages=top_languages,
     )
 
 
-def _merge_wikidata_facts(
-    summaries: list[PerFileSummary], *, subdir_present: bool
-) -> WikidataFactStats:
-    rows = 0
-    fact_ids: set[str] = set()
-    subjects: set[str] = set()
-    properties: set[str] = set()
-    property_labels: dict[str, str] = {}
-    property_counts: Counter[str] = Counter()
-    with_prop_en = 0
-    with_value_en = 0
-    with_qualifiers = 0
-    with_references = 0
-    unavailable_qualifiers = 0
-    unavailable_references = 0
-    value_types: Counter[str] = Counter()
+def _merge_project_text_metrics(summaries: list[PerFileSummary]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "rows": 0,
+        "non_empty": 0,
+        "empty_or_null": 0,
+        "total_chars": 0,
+        "total_words": 0,
+        "total_tokens": 0,
+        "document_ids": set(),
+        "section_ids": set(),
+        "qids": set(),
+        "languages": Counter(),
+    }
     for summary in summaries:
         if summary.scan_failed:
             continue
-        rows += summary.fact_rows
-        fact_ids.update(summary.fact_ids)
-        subjects.update(summary.subject_qids)
-        properties.update(summary.property_ids)
-        for pid, label in summary.property_labels.items():
-            if pid not in property_labels:
-                property_labels[pid] = label
-        for pid, count in summary.property_counts.items():
-            property_counts[pid] += count
-        with_prop_en += summary.with_property_en_label
-        with_value_en += summary.with_value_en_label
-        with_qualifiers += summary.with_qualifiers
-        with_references += summary.with_references
-        unavailable_qualifiers += summary.unavailable_qualifiers
-        unavailable_references += summary.unavailable_references
-        for value_type, count in summary.value_type_counts.items():
-            value_types[value_type] += count
+        _add_project_summary(metrics, summary)
+    return metrics
 
-    sorted_properties = sorted(property_counts.items(), key=lambda item: (-item[1], item[0]))[
-        :TOP_PROPERTIES_LIMIT
-    ]
-    top_properties = tuple(
-        (pid, property_labels.get(pid, ""), count) for pid, count in sorted_properties
-    )
-    value_type_distribution = tuple(
-        sorted(value_types.items(), key=lambda item: (-item[1], item[0]))
-    )
+
+def _add_project_summary(metrics: dict[str, Any], summary: PerFileSummary) -> None:
+    metrics["rows"] += summary.rows
+    metrics["non_empty"] += summary.non_empty
+    metrics["empty_or_null"] += summary.empty_or_null
+    metrics["total_chars"] += summary.total_chars
+    metrics["total_words"] += summary.total_words
+    metrics["total_tokens"] += summary.total_tokens_estimate
+    metrics["document_ids"].update(summary.document_ids)
+    metrics["section_ids"].update(summary.section_ids)
+    metrics["qids"].update(summary.qids)
+    for language, count in summary.languages.items():
+        metrics["languages"][language] += count
+
+
+def _section_metrics(
+    summaries: list[PerFileSummary], metrics: dict[str, Any]
+) -> tuple[int, int, float]:
+    unique_documents = len(metrics["document_ids"])
+    if summaries and summaries[0].kind == KIND_SECTION:
+        unique_sections = len(metrics["section_ids"])
+        average = metrics["rows"] / unique_documents if unique_documents else 0.0
+    else:
+        unique_sections = 0
+        average = 0.0
+    return unique_sections, unique_documents, average
+
+
+def _top_counts(counts: Counter[str]) -> tuple[tuple[str, int], ...]:
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return tuple(ordered[:TOP_LANGUAGES_LIMIT])
+
+
+def _merge_wikidata_facts(
+    summaries: list[PerFileSummary], *, subdir_present: bool
+) -> WikidataFactStats:
+    metrics = _merge_fact_metrics(summaries)
+    top_properties = _top_properties(metrics["property_counts"], metrics["property_labels"])
+    value_type_distribution = _sorted_counts(metrics["value_types"])
     return WikidataFactStats(
         subdir_present=subdir_present,
-        rows=rows,
-        unique_facts=len(fact_ids),
-        unique_subjects=len(subjects),
-        distinct_property_ids=len(properties),
-        with_property_en_label=with_prop_en,
-        with_value_en_label=with_value_en,
-        with_qualifiers=with_qualifiers,
-        with_references=with_references,
-        unavailable_qualifiers=unavailable_qualifiers,
-        unavailable_references=unavailable_references,
+        rows=metrics["rows"],
+        unique_facts=len(metrics["fact_ids"]),
+        unique_subjects=len(metrics["subjects"]),
+        distinct_property_ids=len(metrics["properties"]),
+        with_property_en_label=metrics["with_prop_en"],
+        with_value_en_label=metrics["with_value_en"],
+        with_qualifiers=metrics["with_qualifiers"],
+        with_references=metrics["with_references"],
+        unavailable_qualifiers=metrics["unavailable_qualifiers"],
+        unavailable_references=metrics["unavailable_references"],
         region_count=len(summaries),
         value_type_distribution=value_type_distribution,
         top_properties=top_properties,
     )
+
+
+def _merge_fact_metrics(summaries: list[PerFileSummary]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "rows": 0,
+        "fact_ids": set(),
+        "subjects": set(),
+        "properties": set(),
+        "property_labels": {},
+        "property_counts": Counter(),
+        "with_prop_en": 0,
+        "with_value_en": 0,
+        "with_qualifiers": 0,
+        "with_references": 0,
+        "unavailable_qualifiers": 0,
+        "unavailable_references": 0,
+        "value_types": Counter(),
+    }
+    for summary in summaries:
+        if summary.scan_failed:
+            continue
+        _add_fact_summary(metrics, summary)
+    return metrics
+
+
+def _add_fact_summary(metrics: dict[str, Any], summary: PerFileSummary) -> None:
+    metrics["rows"] += summary.fact_rows
+    metrics["fact_ids"].update(summary.fact_ids)
+    metrics["subjects"].update(summary.subject_qids)
+    metrics["properties"].update(summary.property_ids)
+    for pid, label in summary.property_labels.items():
+        metrics["property_labels"].setdefault(pid, label)
+    for pid, count in summary.property_counts.items():
+        metrics["property_counts"][pid] += count
+    for name in (
+        "with_prop_en",
+        "with_value_en",
+        "with_qualifiers",
+        "with_references",
+        "unavailable_qualifiers",
+        "unavailable_references",
+    ):
+        field = {
+            "with_prop_en": "with_property_en_label",
+            "with_value_en": "with_value_en_label",
+            "with_qualifiers": "with_qualifiers",
+            "with_references": "with_references",
+            "unavailable_qualifiers": "unavailable_qualifiers",
+            "unavailable_references": "unavailable_references",
+        }[name]
+        metrics[name] += getattr(summary, field)
+    for value_type, count in summary.value_type_counts.items():
+        metrics["value_types"][value_type] += count
+
+
+def _top_properties(
+    counts: Counter[str], labels: dict[str, str]
+) -> tuple[tuple[str, str, int], ...]:
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:TOP_PROPERTIES_LIMIT]
+    return tuple((pid, labels.get(pid, ""), count) for pid, count in ordered)
+
+
+def _sorted_counts(counts: Counter[str]) -> tuple[tuple[str, int], ...]:
+    return tuple(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
 # ---------------------------------------------------------------------------
@@ -654,14 +702,23 @@ def _fully_or_partial(processed: Path, cores: set[str]) -> tuple[set[str], set[s
     fully: set[str] = set()
     partial: set[str] = set()
     for stem in sorted(cores):
-        present = sum(
-            1 for rel in AUGMENTATION_SUBDIRS if (processed / rel / f"{stem}.parquet").exists()
-        )
-        if present == len(AUGMENTATION_SUBDIRS):
-            fully.add(stem)
-        elif present > 0:
-            partial.add(stem)
+        _classify_augmentation_stem(processed, stem, fully, partial)
     return fully, partial
+
+
+def _classify_augmentation_stem(
+    processed: Path,
+    stem: str,
+    fully: set[str],
+    partial: set[str],
+) -> None:
+    present = sum(
+        1 for rel in AUGMENTATION_SUBDIRS if (processed / rel / f"{stem}.parquet").exists()
+    )
+    if present == len(AUGMENTATION_SUBDIRS):
+        fully.add(stem)
+    elif present > 0:
+        partial.add(stem)
 
 
 # ---------------------------------------------------------------------------
@@ -725,111 +782,137 @@ def compute_augmentation_stats(
     """
     processed_dir = Path(processed_dir)
     cache_index_dir = Path(cache_index_dir)
-
     cores = _core_stems(processed_dir)
     fully, partial = _fully_or_partial(processed_dir, cores)
     orphans = sorted(_all_sidecar_stems(processed_dir) - cores)
+    new_index, by_subdir, unreadable = _scan_augmentation_files(
+        processed_dir,
+        load_cache_index(cache_index_dir),
+    )
+    write_cache_index(cache_index_dir, new_index)
+    return _build_augmentation_stats(
+        processed_dir,
+        cache_index_dir,
+        cores,
+        fully,
+        partial,
+        orphans,
+        by_subdir,
+        unreadable,
+    )
 
-    existing_index = load_cache_index(cache_index_dir)
 
+def _empty_subdir_summaries() -> dict[str, list[PerFileSummary]]:
+    return {prefix: [] for prefix in AUGMENTATION_SUBDIRS}
+
+
+def _scan_augmentation_files(
+    processed_dir: Path,
+    existing_index: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[PerFileSummary]], int]:
     new_index: dict[str, dict[str, Any]] = {}
-    by_subdir: dict[str, list[PerFileSummary]] = {
-        "wikipedia/documents": [],
-        "wikipedia/sections": [],
-        "wikivoyage/documents": [],
-        "wikivoyage/sections": [],
-        "wikidata/facts": [],
-    }
+    by_subdir = _empty_subdir_summaries()
     unreadable = 0
-    # ``subdir_present`` is True iff at least one readable, valid
-    # Parquet sidecar was located inside the sub-directory. Directory
-    # existence alone is not enough: a sidecar sub-directory may
-    # exist but contain no Parquets (and is therefore rendered as
-    # "No data exists yet.").
-    present_subdirs: set[str] = set()
-
-    live_paths = _scan_paths(processed_dir, AUGMENTATION_SUBDIRS)
-    for parquet_path in live_paths:
+    for parquet_path in _scan_paths(processed_dir, AUGMENTATION_SUBDIRS):
         rel = _relative_path(processed_dir, parquet_path)
-        fp = _file_fingerprint(parquet_path)
-        cached = existing_index.get(rel)
-        summary: PerFileSummary | None
-        if (
-            cached is not None
-            and cached.get("fingerprint") == fp
-            and cached.get("scan_failed") is not True
-        ):
-            summary = _summary_from_json(cached)
-            # Defensive: a malformed cache entry is dropped and the
-            # file is re-scanned. A successfully recovered scan
-            # (``scan_failed=False``) is preserved across the refresh.
-            if summary is None:
-                summary = _scan_one_file(processed_dir, parquet_path)
-        else:
-            summary = _scan_one_file(processed_dir, parquet_path)
+        summary = _load_or_scan_summary(processed_dir, parquet_path, existing_index.get(rel))
         if summary is None:
             continue
         new_index[rel] = _summary_to_json(summary)
-        if summary.scan_failed:
-            unreadable += 1
-        else:
-            present_subdirs.add(rel.split("/", 1)[0] + "/" + rel.split("/", 2)[1])
-        for subdir_prefix in by_subdir:
-            if rel.startswith(subdir_prefix + "/"):
-                by_subdir[subdir_prefix].append(summary)
-                break
+        unreadable += int(summary.scan_failed)
+        _append_summary(by_subdir, rel, summary)
+    return new_index, by_subdir, unreadable
 
-    subdir_present_flags = {sub: sub in present_subdirs for sub in by_subdir}
 
-    wikipedia_documents = _merge_project_text(
-        by_subdir["wikipedia/documents"],
-        subdir_present=subdir_present_flags["wikipedia/documents"],
-    )
-    wikipedia_sections = _merge_project_text(
-        by_subdir["wikipedia/sections"],
-        subdir_present=subdir_present_flags["wikipedia/sections"],
-    )
-    wikivoyage_documents = _merge_project_text(
-        by_subdir["wikivoyage/documents"],
-        subdir_present=subdir_present_flags["wikivoyage/documents"],
-    )
-    wikivoyage_sections = _merge_project_text(
-        by_subdir["wikivoyage/sections"],
-        subdir_present=subdir_present_flags["wikivoyage/sections"],
-    )
-    wikidata_facts = _merge_wikidata_facts(
-        by_subdir["wikidata/facts"],
-        subdir_present=subdir_present_flags["wikidata/facts"],
-    )
+def _load_or_scan_summary(
+    processed_dir: Path,
+    parquet_path: Path,
+    cached: dict[str, Any] | None,
+) -> PerFileSummary | None:
+    fingerprint = _file_fingerprint(parquet_path)
+    if (
+        cached is not None
+        and cached.get("fingerprint") == fingerprint
+        and cached.get("scan_failed") is not True
+    ):
+        summary = _summary_from_json(cached)
+        return summary if summary is not None else _scan_one_file(processed_dir, parquet_path)
+    return _scan_one_file(processed_dir, parquet_path)
 
+
+def _subdir_prefix(rel: str) -> str:
+    parts = rel.split("/", 2)
+    return "/".join(parts[:2])
+
+
+def _append_summary(
+    by_subdir: dict[str, list[PerFileSummary]],
+    rel: str,
+    summary: PerFileSummary,
+) -> None:
+    for prefix, summaries in by_subdir.items():
+        if rel.startswith(prefix + "/"):
+            summaries.append(summary)
+            return
+
+
+def _build_augmentation_stats(
+    processed_dir: Path,
+    cache_index_dir: Path,
+    cores: set[str],
+    fully: set[str],
+    partial: set[str],
+    orphans: list[str],
+    by_subdir: dict[str, list[PerFileSummary]],
+    unreadable: int,
+) -> AugmentationStats:
+    present = {prefix: _has_readable_summary(summaries) for prefix, summaries in by_subdir.items()}
+    projects = {
+        "wikipedia_documents": _merge_project_text(
+            by_subdir["wikipedia/documents"], subdir_present=present["wikipedia/documents"]
+        ),
+        "wikipedia_sections": _merge_project_text(
+            by_subdir["wikipedia/sections"], subdir_present=present["wikipedia/sections"]
+        ),
+        "wikivoyage_documents": _merge_project_text(
+            by_subdir["wikivoyage/documents"], subdir_present=present["wikivoyage/documents"]
+        ),
+        "wikivoyage_sections": _merge_project_text(
+            by_subdir["wikivoyage/sections"], subdir_present=present["wikivoyage/sections"]
+        ),
+    }
+    facts = _merge_wikidata_facts(
+        by_subdir["wikidata/facts"], subdir_present=present["wikidata/facts"]
+    )
     core_bytes = _core_bytes(processed_dir)
-    aug_bytes = sum(
-        summary.file_size_bytes for summaries in by_subdir.values() for summary in summaries
-    )
-    total_bytes = core_bytes + aug_bytes
-
-    write_cache_index(cache_index_dir, new_index)
-
+    augmentation_bytes = _augmentation_bytes(by_subdir)
     return AugmentationStats(
         core_region_count=len(cores),
         fully_augmented_count=len(fully),
         partial_augmented_count=len(partial),
         not_augmented_count=len(cores) - len(fully) - len(partial),
         orphan_sidecar_stems=tuple(orphans),
-        wikipedia_documents=wikipedia_documents,
-        wikipedia_sections=wikipedia_sections,
-        wikivoyage_documents=wikivoyage_documents,
-        wikivoyage_sections=wikivoyage_sections,
-        wikidata_facts=wikidata_facts,
+        wikipedia_documents=projects["wikipedia_documents"],
+        wikipedia_sections=projects["wikipedia_sections"],
+        wikivoyage_documents=projects["wikivoyage_documents"],
+        wikivoyage_sections=projects["wikivoyage_sections"],
+        wikidata_facts=facts,
         core_parquet_bytes=core_bytes,
-        augmentation_parquet_bytes=aug_bytes,
-        total_parquet_bytes=total_bytes,
+        augmentation_parquet_bytes=augmentation_bytes,
+        total_parquet_bytes=core_bytes + augmentation_bytes,
         unreadable_file_count=unreadable,
         combined_languages=compute_combined_language_stats(
-            processed_dir,
-            cache_index_dir=cache_index_dir,
+            processed_dir, cache_index_dir=cache_index_dir
         ),
     )
+
+
+def _augmentation_bytes(by_subdir: dict[str, list[PerFileSummary]]) -> int:
+    return sum(summary.file_size_bytes for summaries in by_subdir.values() for summary in summaries)
+
+
+def _has_readable_summary(summaries: list[PerFileSummary]) -> bool:
+    return any(not summary.scan_failed for summary in summaries)
 
 
 __all__ = [

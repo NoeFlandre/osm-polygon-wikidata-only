@@ -60,6 +60,15 @@ class CachedWikidataClient(WikidataClient):
     def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
         """Resolve cache misses together while preserving input order."""
         requested = list(qids)
+        resolved, misses, cache_hits = self._read_cached_entities(requested)
+        self._telemetry.last_batch_cache_hits = cache_hits
+        fetched = self._fetch_entities(misses)
+        self._cache_fetched_entities(misses, fetched, resolved)
+        return [resolved.get(qid) for qid in requested]
+
+    def _read_cached_entities(
+        self, requested: list[str]
+    ) -> tuple[dict[str, WikidataEntity | None], list[str], int]:
         resolved: dict[str, WikidataEntity | None] = {}
         misses: list[str] = []
         cache_hits = 0
@@ -67,46 +76,59 @@ class CachedWikidataClient(WikidataClient):
             if not is_valid_qid(qid):
                 resolved[qid] = None
                 continue
-            key = f"wikidata/{qid}.json"
-            hit = self._cache.get(key)
-            if hit is None:
+            hit, entity = self._read_cached_qid(qid)
+            if not hit:
                 misses.append(qid)
-            elif hit.status == "ok" and isinstance(hit.parsed_result, dict):
-                resolved[qid] = _entity_from_dict(hit.parsed_result)
-                cache_hits += 1
-            elif hit.status == "not_found":
-                resolved[qid] = None
-                cache_hits += 1
             else:
-                misses.append(qid)
+                resolved[qid] = entity
+                cache_hits += 1
+        return resolved, misses, cache_hits
 
-        self._telemetry.last_batch_cache_hits = cache_hits
-        batch_get = getattr(self._inner, "get_entities", None)
+    def _read_cached_qid(self, qid: str) -> tuple[bool, WikidataEntity | None]:
+        cached = self._cache.get(f"wikidata/{qid}.json")
+        if cached is None:
+            return False, None
+        if cached.status == "ok" and isinstance(cached.parsed_result, dict):
+            return True, _entity_from_dict(cached.parsed_result)
+        if cached.status == "not_found":
+            return True, None
+        return False, None
+
+    def _fetch_entities(self, misses: list[str]) -> list[WikidataEntity | None]:
         if not misses:
-            fetched: list[WikidataEntity | None] = []
-        elif callable(batch_get):
-            fetched = batch_get(misses)
-        else:
-            fetched = [self._inner.get_entity(qid) for qid in misses]
+            return []
+        batch_get = getattr(self._inner, "get_entities", None)
+        if callable(batch_get):
+            return batch_get(misses)
+        return [self._inner.get_entity(qid) for qid in misses]
+
+    def _cache_fetched_entities(
+        self,
+        misses: list[str],
+        fetched: list[WikidataEntity | None],
+        resolved: dict[str, WikidataEntity | None],
+    ) -> None:
         for qid, entity in zip(misses, fetched, strict=True):
-            key = f"wikidata/{qid}.json"
-            if entity is None:
-                self._cache.set(
-                    key,
-                    payload=None,
-                    status="not_found",
-                    ttl_s=self._failed_ttl_s,
-                    response_metadata={"reason": "wikidata_entity_missing"},
-                )
-            else:
-                self._cache.set(
-                    key,
-                    payload=_entity_to_dict(entity),
-                    request_url=self._endpoint_for(qid),
-                    status="ok",
-                )
+            self._cache_entity(qid, entity)
             resolved[qid] = entity
-        return [resolved.get(qid) for qid in requested]
+
+    def _cache_entity(self, qid: str, entity: WikidataEntity | None) -> None:
+        key = f"wikidata/{qid}.json"
+        if entity is None:
+            self._cache.set(
+                key,
+                payload=None,
+                status="not_found",
+                ttl_s=self._failed_ttl_s,
+                response_metadata={"reason": "wikidata_entity_missing"},
+            )
+        else:
+            self._cache.set(
+                key,
+                payload=_entity_to_dict(entity),
+                request_url=self._endpoint_for(qid),
+                status="ok",
+            )
 
     def _endpoint_for(self, qid: str) -> str:
         if isinstance(self._inner, HttpWikidataClient):

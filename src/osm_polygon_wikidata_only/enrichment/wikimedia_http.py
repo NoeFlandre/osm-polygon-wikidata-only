@@ -99,8 +99,27 @@ class PooledWikimediaOpener:
         if self._closed:
             raise RuntimeError("Wikimedia HTTP transport is closed")
         content = cast(bytes | None, request.data)
+        response = self._request_response(request, content, timeout)
+        body = response.content
+        headers = _decoded_headers(response.headers)
+        if response.is_error:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                response.status_code,
+                response.reason_phrase,
+                headers,
+                io.BytesIO(body),
+            )
+        return _BufferedResponse(body, headers)
+
+    def _request_response(
+        self,
+        request: urllib.request.Request,
+        content: bytes | None,
+        timeout: float,
+    ) -> httpx.Response:
         try:
-            response = self._client.request(
+            return self._client.request(
                 request.get_method(),
                 request.full_url,
                 headers=dict(request.header_items()),
@@ -122,18 +141,6 @@ class PooledWikimediaOpener:
             # LocalProtocolError and UnsupportedProtocol represent permanent
             # client/request defects and must remain non-retryable.
             raise urllib.error.URLError(error) from error
-
-        body = response.content
-        headers = _decoded_headers(response.headers)
-        if response.is_error:
-            raise urllib.error.HTTPError(
-                request.full_url,
-                response.status_code,
-                response.reason_phrase,
-                headers,
-                io.BytesIO(body),
-            )
-        return _BufferedResponse(body, headers)
 
     def close(self) -> None:
         """Release pooled sockets; safe to call more than once."""

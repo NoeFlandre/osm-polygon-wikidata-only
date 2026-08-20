@@ -92,19 +92,17 @@ def load_qualifying_article_ids(articles_dir: Path) -> set[str]:
     """Return the set of article IDs whose ``full_text`` is non-empty and non-whitespace."""
     qualifying: set[str] = set()
     for parquet_path in sorted_parquets(articles_dir):
-        for row in read_required_columns(
-            parquet_path, ("article_id", "full_text"), label="articles"
-        ):
-            text = row.get("full_text")
-            if text is None:
-                continue
-            if not isinstance(text, str):
-                continue
-            if not text.strip():
-                continue
-            article_id = row.get("article_id")
-            if article_id:
-                qualifying.add(str(article_id))
+        qualifying.update(_qualifying_ids_from_file(parquet_path))
+    return qualifying
+
+
+def _qualifying_ids_from_file(parquet_path: Path) -> set[str]:
+    qualifying: set[str] = set()
+    for row in read_required_columns(parquet_path, ("article_id", "full_text"), label="articles"):
+        text = row.get("full_text")
+        article_id = row.get("article_id")
+        if isinstance(text, str) and text.strip() and article_id:
+            qualifying.add(str(article_id))
     return qualifying
 
 
@@ -115,17 +113,17 @@ def load_covered_polygon_ids(
     """Return the set of polygon IDs linked to at least one qualifying article."""
     covered: set[str] = set()
     for parquet_path in sorted_parquets(links_dir):
-        for row in read_required_columns(
-            parquet_path, ("polygon_id", "article_id"), label="polygon_articles"
-        ):
-            article_id = row.get("article_id")
-            if article_id is None:
-                continue
-            if str(article_id) not in qualifying_article_ids:
-                continue
-            polygon_id = row.get("polygon_id")
-            if polygon_id:
-                covered.add(str(polygon_id))
+        covered.update(_covered_ids_from_file(parquet_path, qualifying_article_ids))
+    return covered
+
+
+def _covered_ids_from_file(path: Path, qualifying_article_ids: set[str]) -> set[str]:
+    covered: set[str] = set()
+    for row in read_required_columns(path, ("polygon_id", "article_id"), label="polygon_articles"):
+        article_id = row.get("article_id")
+        polygon_id = row.get("polygon_id")
+        if article_id is not None and str(article_id) in qualifying_article_ids and polygon_id:
+            covered.add(str(polygon_id))
     return covered
 
 
@@ -144,32 +142,40 @@ def load_polygon_cells(
     """
     rows: list[tuple[str, str]] = []
     for parquet_path in sorted_parquets(polygons_dir):
-        table_rows = read_required_columns(
-            parquet_path, ("polygon_id", "lat", "lon"), label="polygons"
-        )
-        for row_index, row in enumerate(table_rows):
-            polygon_id = row.get("polygon_id")
-            lat = row.get("lat")
-            lon = row.get("lon")
-            if not polygon_id:
-                raise CoverageMapError(
-                    f"polygons parquet {parquet_path} row {row_index} is missing "
-                    f"polygon_id; cannot include it in the visualization denominator."
-                )
-            if lat is None or lon is None:
-                raise CoverageMapError(
-                    f"polygons parquet {parquet_path} row {row_index} (polygon_id="
-                    f"{polygon_id}) has null lat or lon; cannot include it in the "
-                    f"visualization denominator."
-                )
-            try:
-                cell = assign_h3_cell(lat, lon, resolution=h3_resolution)
-            except CoverageMapError as error:
-                raise CoverageMapError(
-                    f"polygons parquet {parquet_path} row {row_index} (polygon_id="
-                    f"{polygon_id}) has invalid coordinates (lat={lat}, lon={lon}): "
-                    f"{error}"
-                ) from error
-            rows.append((str(polygon_id), cell))
+        rows.extend(_polygon_cells_from_file(parquet_path, h3_resolution))
     rows.sort(key=lambda pair: pair[0])
     return rows
+
+
+def _polygon_cells_from_file(path: Path, h3_resolution: int) -> list[tuple[str, str]]:
+    table_rows = read_required_columns(path, ("polygon_id", "lat", "lon"), label="polygons")
+    rows: list[tuple[str, str]] = []
+    for row_index, row in enumerate(table_rows):
+        rows.append(_polygon_cell(path, row_index, row, h3_resolution))
+    return rows
+
+
+def _polygon_cell(
+    path: Path, row_index: int, row: dict[str, Any], h3_resolution: int
+) -> tuple[str, str]:
+    polygon_id = row.get("polygon_id")
+    lat = row.get("lat")
+    lon = row.get("lon")
+    if not polygon_id:
+        raise CoverageMapError(
+            f"polygons parquet {path} row {row_index} is missing polygon_id; "
+            "cannot include it in the visualization denominator."
+        )
+    if lat is None or lon is None:
+        raise CoverageMapError(
+            f"polygons parquet {path} row {row_index} (polygon_id={polygon_id}) "
+            "has null lat or lon; cannot include it in the visualization denominator."
+        )
+    try:
+        cell = assign_h3_cell(lat, lon, resolution=h3_resolution)
+    except CoverageMapError as error:
+        raise CoverageMapError(
+            f"polygons parquet {path} row {row_index} (polygon_id={polygon_id}) "
+            f"has invalid coordinates (lat={lat}, lon={lon}): {error}"
+        ) from error
+    return str(polygon_id), cell

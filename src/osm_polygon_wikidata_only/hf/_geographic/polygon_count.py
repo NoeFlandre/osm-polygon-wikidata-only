@@ -129,38 +129,44 @@ def render_count_map(
     if not coerced and not allow_empty:
         raise CoverageMapError("Cannot render count map: no H3 cells supplied.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = _count_map_axes(land_features)
+    cmap, norm = _count_scale(coerced)
+    for cell in coerced:
+        draw_count_cell(ax, cell, cmap=cmap, norm=norm)
+    _decorate_count_map(fig, ax, cmap, norm, title, caption, colorbar_label)
+    _save_count_map(fig, output_path)
 
+    LOGGER.info("Wrote geographic polygon count map to %s", output_path)
+    return RenderResult(output_path=output_path, caption=caption)
+
+
+def _count_map_axes(land_features: Sequence[Any] | None) -> tuple[Any, Any]:
     fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
     fig.set_facecolor("white")
     init_axes(ax)
     if land_features:
         draw_landmasses(ax, land_features)
+    return fig, ax
 
-    counts = [cell.polygon_count for cell in coerced] or [1]
+
+def _count_scale(cells: Sequence[PolygonCountCell]) -> tuple[mcolors.Colormap, mcolors.LogNorm]:
+    counts = [cell.polygon_count for cell in cells] or [1]
     minimum = max(min(counts), 1)
     maximum = max(max(counts), minimum + 1)
-    cmap = plt.get_cmap(_COUNT_COLORMAP_NAME)
-    norm = mcolors.LogNorm(vmin=minimum, vmax=maximum)
-    for cell in coerced:
-        draw_count_cell(ax, cell, cmap=cmap, norm=norm)
+    return plt.get_cmap(_COUNT_COLORMAP_NAME), mcolors.LogNorm(vmin=minimum, vmax=maximum)
 
-    fig.suptitle(
-        title,
-        fontsize=14,
-        color="#222222",
-        y=0.98,
-    )
-    fig.text(
-        0.5,
-        0.02,
-        caption,
-        ha="center",
-        va="bottom",
-        fontsize=7,
-        color="#444444",
-        wrap=True,
-    )
 
+def _decorate_count_map(
+    fig: Any,
+    ax: Any,
+    cmap: mcolors.Colormap,
+    norm: mcolors.LogNorm,
+    title: str,
+    caption: str,
+    colorbar_label: str,
+) -> None:
+    fig.suptitle(title, fontsize=14, color="#222222", y=0.98)
+    fig.text(0.5, 0.02, caption, ha="center", va="bottom", fontsize=7, color="#444444", wrap=True)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     colorbar = fig.colorbar(sm, ax=ax, fraction=0.025, pad=0.02)
@@ -168,14 +174,13 @@ def render_count_map(
     colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_count_tick))
     colorbar.ax.tick_params(labelsize=7)
 
+
+def _save_count_map(fig: Any, output_path: Path) -> None:
     try:
         fig.tight_layout(rect=(0, 0.06, 1, 0.95))
         atomic_save_png(fig, output_path)
     finally:
         plt.close(fig)
-
-    LOGGER.info("Wrote geographic polygon count map to %s", output_path)
-    return RenderResult(output_path=output_path, caption=caption)
 
 
 def generate_geographic_polygon_count(

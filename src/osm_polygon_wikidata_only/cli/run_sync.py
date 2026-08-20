@@ -104,6 +104,18 @@ class _RemoteReconciliation:
     core_repaired: bool
 
 
+@dataclass(slots=True)
+class _PreparedSyncPlan:
+    """Inputs and derived state needed by the sync application."""
+
+    pbfs: list[Path]
+    input_stems: set[str]
+    all_pending_stems: set[str]
+    states: list[RegionSyncState]
+    remote_state: _RemoteReconciliation
+    core_will_be_repaired: bool
+
+
 def _recovery_audit_stems(
     *,
     input_stems: set[str],
@@ -191,6 +203,196 @@ def _run_pre_publication_migration(
         prepare_local_retirement(data_root, stem)
 
 
+def _prepare_sync_plan(
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+    push_enabled: bool,
+    dry_run: bool,
+    remote_inventory: RemoteInventory | None,
+    hub: HfHub | None,
+) -> _PreparedSyncPlan:
+    """Prepare local migration, remote reconciliation, and sync states."""
+    from osm_polygon_wikidata_only.pipeline.containment_migration import (
+        load_retired_children,
+        load_retired_parent_children,
+        prepare_safe_rules,
+    )
+
+    _prepare_containment_rules(
+        enabled=push_enabled,
+        data_path=data_root.path,
+        dry_run=dry_run,
+        prepare_safe_rules=prepare_safe_rules,
+    )
+    retired_children = load_retired_children(data_root.processed)
+    pbfs = _active_pbfs(collect_pbfs([args.input]), retired_children)
+    input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
+    _run_pre_publication_migration(data_root, input_stems)
+
+    planner_cls, canonical_region_paths = _remote_reconciliation_helpers(push_enabled)
+    remote_state = _prepare_remote_reconciliation(
+        enabled=push_enabled,
+        data_root=data_root,
+        settings=settings,
+        input_stems=input_stems,
+        hub=hub,
+        inventory_override=remote_inventory,
+        validate_augmentation=_validate_local_augmentation_state,
+        load_retired_parent_children=load_retired_parent_children,
+        canonical_region_paths=canonical_region_paths,
+        planner_cls=planner_cls,
+    )
+    entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
+    core_stems = {name.removesuffix(".osm.pbf") for name in entries}
+    current_augmentation = _current_augmentation_for_plan(
+        push_enabled,
+        remote_state.augmentation_current,
+        data_root,
+        core_stems,
+    )
+    all_pending_stems = _pending_stems_for_plan(
+        data_root,
+        remote_state.stems_with_gaps,
+        push_enabled=push_enabled,
+    )
+    states = _plan_sync_states(
+        pbfs,
+        input_stems=input_stems,
+        core_stems=core_stems,
+        current_augmentation=current_augmentation,
+        force=settings.force or not settings.skip_existing,
+        pending_stems=all_pending_stems,
+        recovery_stems=set(),
+        processed_path=data_root.processed,
+        plan_link_migration=plan_link_migration,
+    )
+    return _PreparedSyncPlan(
+        pbfs=pbfs,
+        input_stems=input_stems,
+        all_pending_stems=all_pending_stems,
+        states=states,
+        remote_state=remote_state,
+        core_will_be_repaired=_core_will_be_repaired(
+            states,
+            remote_state.plan,
+            push_enabled=push_enabled,
+        ),
+    )
+
+
+def _remote_reconciliation_helpers(
+    enabled: bool,
+) -> tuple[Any, Callable[[str], dict[str, str]] | None]:
+    if not enabled:
+        return None, None
+    # Keep these imports lazy so local-only callers do not capture temporary
+    # test replacements in later push-enabled runs.
+    from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
+    from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
+
+    return ReconciliationPlanner, canonical_region_paths
+
+
+def _current_augmentation_for_plan(
+    push_enabled: bool,
+    remote_current: dict[str, bool],
+    data_root: DataRoot,
+    core_stems: set[str],
+) -> set[str]:
+    current = (
+        remote_current
+        if push_enabled
+        else _validate_local_augmentation_state(data_root, sorted(core_stems))
+    )
+    return {stem for stem, is_current in current.items() if is_current}
+
+
+def _pending_stems_for_plan(
+    data_root: DataRoot,
+    stems_with_gaps: set[str],
+    *,
+    push_enabled: bool,
+) -> set[str]:
+    pending = load_pending_publications(data_root)
+    return pending | stems_with_gaps if push_enabled else pending
+
+
+def _core_will_be_repaired(
+    states: list[RegionSyncState],
+    reconciliation_plan: Any | None,
+    *,
+    push_enabled: bool,
+) -> bool:
+    if not push_enabled or reconciliation_plan is None:
+        return False
+    missing = set(reconciliation_plan.missing)
+    return any(_core_repair_required(state.action, state.stem, missing) for state in states)
+
+
+def _build_augmentation_client(data_root: DataRoot, runtime: Any) -> AugmentationWikimediaClient:
+    return AugmentationWikimediaClient(
+        runtime.settings,
+        JsonFileCache(data_root.cache / "augmentation", contract_version="text-sidecars-v1"),
+        scheduler=runtime.scheduler,
+        session=runtime.session,
+    )
+
+
+def _assemble_containment_retirement_upload(
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+    parent_children: dict[str, tuple[str, ...]],
+) -> list[PublicationOp]:
+    from osm_polygon_wikidata_only.hf.publication import (
+        assemble_containment_retirement_upload,
+    )
+
+    return assemble_containment_retirement_upload(
+        data_root=data_root,
+        repo_id=repo_id,
+        parent_children=parent_children,
+        world_land_warning=None,
+    )
+
+
+def _enqueue_containment_retirement(
+    data_root: DataRoot,
+    settings: Settings,
+    parent_children: dict[str, tuple[str, ...]],
+    upload_queue: BackgroundUploadQueue | None,
+    *,
+    push_enabled: bool,
+) -> bool:
+    if not push_enabled or not parent_children or upload_queue is None:
+        return False
+    operations = _assemble_containment_retirement_upload(
+        data_root=data_root,
+        repo_id=settings.repo_id,
+        parent_children=parent_children,
+    )
+    upload_queue.submit(operations, "Retire losslessly contained regional dataset shards")
+    LOGGER.info(
+        "Enqueued containment retirement for %d child region(s)",
+        sum(len(children) for children in parent_children.values()),
+    )
+    return True
+
+
+def _log_sync_plan(states: list[RegionSyncState]) -> None:
+    counts = {action: sum(state.action is action for state in states) for action in SyncAction}
+    LOGGER.info(
+        "Unified sync plan: %d recovery audit, %d augmentation backlog, %d publish, %d core missing, %d complete",
+        counts[SyncAction.RECOVERY],
+        counts[SyncAction.AUGMENT],
+        counts[SyncAction.PUBLISH],
+        counts[SyncAction.PROCESS],
+        counts[SyncAction.COMPLETE],
+    )
+
+
 def execute(
     args: argparse.Namespace,
     *,
@@ -221,146 +423,65 @@ def execute(
     """
     push_enabled = bool(getattr(args, "push", False))
     dry_run = bool(getattr(args, "dry_run", False))
-    from osm_polygon_wikidata_only.pipeline.containment_migration import (
-        load_retired_children,
-        load_retired_parent_children,
-        prepare_safe_rules,
-    )
-
-    _prepare_containment_rules(
-        enabled=push_enabled,
-        data_path=data_root.path,
-        dry_run=dry_run,
-        prepare_safe_rules=prepare_safe_rules,
-    )
-
-    retired_children = load_retired_children(data_root.processed)
-    pbfs = _active_pbfs(collect_pbfs([args.input]), retired_children)
-    input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
-
-    _run_pre_publication_migration(data_root, input_stems)
-
-    # Construct remote collaborators after migration is applied
-    runtime = build_wikimedia_runtime(settings, data_root=data_root)
-    augmentation_client = AugmentationWikimediaClient(
-        runtime.settings,
-        JsonFileCache(data_root.cache / "augmentation", contract_version="text-sidecars-v1"),
-        scheduler=runtime.scheduler,
-        session=runtime.session,
-    )
-
-    planner_cls = None
-    canonical_region_paths = None
-    if push_enabled:
-        # Keep these imports lazy.  Some local-only callers replace the
-        # manifest loader while exercising the shell; importing reconciliation
-        # during that window would capture the temporary replacement and leak
-        # it into later push-enabled runs.
-        from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
-        from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
-
-        planner_cls = ReconciliationPlanner
-
-    remote_state = _prepare_remote_reconciliation(
-        enabled=push_enabled,
+    prepared = _prepare_sync_plan(
+        args,
         data_root=data_root,
         settings=settings,
-        input_stems=input_stems,
+        push_enabled=push_enabled,
+        dry_run=dry_run,
+        remote_inventory=_remote_inventory,
         hub=_hub,
-        inventory_override=_remote_inventory,
-        validate_augmentation=_validate_local_augmentation_state,
-        load_retired_parent_children=load_retired_parent_children,
-        canonical_region_paths=canonical_region_paths,
-        planner_cls=planner_cls,
     )
-    reconciliation_plan = remote_state.plan
-    stems_with_gaps = remote_state.stems_with_gaps
-    core_repaired = remote_state.core_repaired
-    augmentation_current = remote_state.augmentation_current
-    containment_publications = remote_state.containment_publications
-    core_will_be_repaired = False
-
-    # 5. Plan sync states
-    all_pending_stems = load_pending_publications(data_root)
-    if push_enabled:
-        all_pending_stems = all_pending_stems | stems_with_gaps
-
-    entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
-    core_stems = {name.removesuffix(".osm.pbf") for name in entries}
-    if push_enabled:
-        current_augmentation = {stem for stem, current in augmentation_current.items() if current}
-    else:
-        local_current = _validate_local_augmentation_state(data_root, sorted(core_stems))
-        current_augmentation = {stem for stem, current in local_current.items() if current}
-
-    states = _plan_sync_states(
-        pbfs,
-        input_stems=input_stems,
-        core_stems=core_stems,
-        current_augmentation=current_augmentation,
-        force=settings.force or not settings.skip_existing,
-        pending_stems=all_pending_stems,
-        recovery_stems=set(),
-        processed_path=data_root.processed,
-        plan_link_migration=plan_link_migration,
-    )
-    if push_enabled and reconciliation_plan is not None:
-        missing = set(reconciliation_plan.missing)
-        for state in states:
-            core_will_be_repaired = core_will_be_repaired or _core_repair_required(
-                state.action,
-                state.stem,
-                missing,
-            )
-
+    runtime = build_wikimedia_runtime(settings, data_root=data_root)
+    augmentation_client = _build_augmentation_client(data_root, runtime)
     upload_queue = _build_upload_queue(
         push=push_enabled,
-        dry_run=getattr(args, "dry_run", False),
+        dry_run=dry_run,
         settings=settings,
         data_root=data_root,
         num_threads=getattr(args, "upload_threads", 2),
         _hub=_hub,
     )
-
-    containment_enqueued = False
-    if push_enabled and containment_publications:
-        from osm_polygon_wikidata_only.hf.publication import (
-            assemble_containment_retirement_upload,
-        )
-
-        containment_ops = assemble_containment_retirement_upload(
-            data_root=data_root,
-            repo_id=settings.repo_id,
-            parent_children=containment_publications,
-            world_land_warning=None,
-        )
-        if upload_queue is not None:
-            upload_queue.submit(
-                containment_ops,
-                "Retire losslessly contained regional dataset shards",
-            )
-            containment_enqueued = True
-            LOGGER.info(
-                "Enqueued containment retirement for %d child region(s)",
-                sum(len(children) for children in containment_publications.values()),
-            )
-
-    counts = {action: sum(state.action is action for state in states) for action in SyncAction}
-    LOGGER.info(
-        "Unified sync plan: %d recovery audit, %d augmentation backlog, %d publish, %d core missing, %d complete",
-        counts[SyncAction.RECOVERY],
-        counts[SyncAction.AUGMENT],
-        counts[SyncAction.PUBLISH],
-        counts[SyncAction.PROCESS],
-        counts[SyncAction.COMPLETE],
+    containment_enqueued = _enqueue_containment_retirement(
+        data_root,
+        settings,
+        prepared.remote_state.containment_publications,
+        upload_queue,
+        push_enabled=push_enabled,
+    )
+    _log_sync_plan(prepared.states)
+    return _run_sync_application(
+        args,
+        data_root=data_root,
+        settings=settings,
+        runtime=runtime,
+        augmentation_client=augmentation_client,
+        prepared=prepared,
+        push_enabled=push_enabled,
+        dry_run=dry_run,
+        upload_queue=upload_queue,
+        containment_enqueued=containment_enqueued,
+        publish_builder=build_upload_files,
     )
 
-    # Capture settings + clients once so the bound extraction/process
-    # collaborators do not need to look them up at call time.
+
+def _run_sync_application(
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+    runtime: Any,
+    augmentation_client: AugmentationWikimediaClient,
+    prepared: _PreparedSyncPlan,
+    push_enabled: bool,
+    dry_run: bool,
+    upload_queue: BackgroundUploadQueue | None,
+    containment_enqueued: bool,
+    publish_builder: Callable[..., list[PublicationOp]] | None,
+) -> int:
     wikidata_client = runtime.wikidata
     wikipedia_client = runtime.wikipedia
     runtime_cache = runtime.cache
-
     from osm_polygon_wikidata_only.pipeline.processor import (
         extract_pbf as _extract_pbf,
     )
@@ -395,16 +516,16 @@ def execute(
             settings=settings,
             runtime=runtime,
             augmentation_client=augmentation_client,
-            states=states,
+            states=prepared.states,
             push_enabled=push_enabled,
             dry_run=dry_run,
-            pending_stems=all_pending_stems,
-            stems_with_gaps=stems_with_gaps,
-            reconciliation_plan=reconciliation_plan,
+            pending_stems=prepared.all_pending_stems,
+            stems_with_gaps=prepared.remote_state.stems_with_gaps,
+            reconciliation_plan=prepared.remote_state.plan,
             upload_queue=upload_queue,
-            publish_builder=build_upload_files,
-            core_will_be_repaired=core_will_be_repaired,
-            core_repaired=core_repaired,
+            publish_builder=publish_builder,
+            core_will_be_repaired=prepared.core_will_be_repaired,
+            core_repaired=prepared.remote_state.core_repaired,
             containment_enqueued=containment_enqueued,
         ),
         services=SyncApplicationServices(
@@ -566,18 +687,16 @@ def _prepare_remote_reconciliation(
     """Prepare remote reconciliation inputs without work on local-only runs."""
     if not enabled:
         return _RemoteReconciliation(None, None, {}, set(), {}, False)
-    if canonical_region_paths is None or planner_cls is None:
-        raise RuntimeError("Remote reconciliation helpers are required when push is enabled")
+    canonical_region_paths, planner_cls = _require_remote_helpers(
+        canonical_region_paths, planner_cls
+    )
 
     augmentation_current = validate_augmentation(data_root, sorted(input_stems))
-    inventory = (
-        inventory_override
-        if inventory_override is not None
-        else RemoteInventory.fetch(
-            repo_id=settings.repo_id,
-            hub=hub,
-            token=settings.hf_token,
-        )
+    inventory = _remote_inventory(
+        inventory_override,
+        repo_id=settings.repo_id,
+        hub=hub,
+        token=settings.hf_token,
     )
     retired_groups = load_retired_parent_children(data_root.processed)
     containment_publications = _containment_publications_for_remote(
@@ -615,6 +734,27 @@ def _prepare_remote_reconciliation(
         containment_publications,
         core_repaired,
     )
+
+
+def _require_remote_helpers(
+    canonical_region_paths: Callable[[str], dict[str, str]] | None,
+    planner_cls: Any,
+) -> tuple[Callable[[str], dict[str, str]], Any]:
+    if canonical_region_paths is None or planner_cls is None:
+        raise RuntimeError("Remote reconciliation helpers are required when push is enabled")
+    return canonical_region_paths, planner_cls
+
+
+def _remote_inventory(
+    override: RemoteInventory | None,
+    *,
+    repo_id: str,
+    hub: HfHub | None,
+    token: str | None,
+) -> RemoteInventory:
+    if override is not None:
+        return override
+    return RemoteInventory.fetch(repo_id=repo_id, hub=hub, token=token)
 
 
 def _prepare_containment_rules(

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -90,8 +90,43 @@ def candidate_to_v2_row(
     if parsed is None:
         return None
     geom, computed = parsed
+    cleaned_tags = _clean_tags(tags)
+    return _build_v2_row(
+        osm_type=osm_type,
+        osm_id=osm_id,
+        source_pbf_stem=source_pbf_stem,
+        region=region,
+        source_pbf=source_pbf,
+        extracted_at=extracted_at,
+        qids=qids,
+        refs=refs,
+        rejections=rejections,
+        geom=geom,
+        computed=computed,
+        cleaned_tags=cleaned_tags,
+    )
+
+
+def _clean_tags(tags: dict[str, str]) -> dict[str, str]:
+    return {key: value for key, value in tags.items() if key != "wikidata"}
+
+
+def _build_v2_row(
+    *,
+    osm_type: str,
+    osm_id: int,
+    source_pbf_stem: str,
+    region: str,
+    source_pbf: str,
+    extracted_at: str | None,
+    qids: Sequence[str],
+    refs: Sequence[Any],
+    rejections: Sequence[Any],
+    geom: dict[str, Any],
+    computed: Any,
+    cleaned_tags: dict[str, str],
+) -> dict[str, Any]:
     lat, lon = computed.lat, computed.lon
-    cleaned_tags = {key: value for key, value in tags.items() if key != "wikidata"}
     name = cleaned_tags.get("name", "")
     bbox = bbox_from_geom(geom)
     row: dict[str, Any] = {
@@ -126,6 +161,14 @@ def candidate_to_v2_row(
         "best_language": "",
         "extraction_version": __version__,
         "extracted_at": extracted_at or utc_now_iso(),
+    }
+    row.update(_wikipedia_tag_metadata(refs, rejections))
+    row["discovery_sources"] = _discovery_sources(qids, refs)
+    return row
+
+
+def _wikipedia_tag_metadata(refs: Sequence[Any], rejections: Sequence[Any]) -> dict[str, str]:
+    return {
         "wikipedia_tag_refs": json_dumps(
             [
                 {
@@ -147,18 +190,17 @@ def candidate_to_v2_row(
                 for rejection in rejections
             ]
         ),
-        "discovery_sources": json_dumps(
-            sorted(
-                source
-                for source, present in (
-                    ("wikidata", bool(qids)),
-                    ("wikipedia_tag", bool(refs)),
-                )
-                if present
-            )
-        ),
     }
-    return row
+
+
+def _discovery_sources(qids: Sequence[str], refs: Sequence[Any]) -> str:
+    return json_dumps(
+        sorted(
+            source
+            for source, present in (("wikidata", bool(qids)), ("wikipedia_tag", bool(refs)))
+            if present
+        )
+    )
 
 
 def extract_v2_pbf(
@@ -179,69 +221,153 @@ def extract_v2_pbf(
     stem = V2PbfStem.from_path(pbf_path)
     started = time.perf_counter()
     extracted_at = utc_now_iso()
-    checkpoint = (
-        ExtractionCheckpoint(
-            checkpoint_dir,
-            pbf_path,
-            limit=getattr(settings, "limit", None),
-        )
-        if checkpoint_dir is not None
-        else None
-    )
+    checkpoint = _new_checkpoint(checkpoint_dir, pbf_path, getattr(settings, "limit", None))
     rows = checkpoint.load_rows() if checkpoint is not None else []
     seen = {str(row.get("polygon_id", "")) for row in rows}
     pending_checkpoint: list[dict[str, Any]] = []
     limit = getattr(settings, "limit", None)
-    if checkpoint is not None and checkpoint.complete:
-        LOGGER.info(
-            "V2 extraction resumed from completed checkpoint for %s (%d polygons)",
-            pbf_path.name,
-            len(rows),
-        )
+    if _checkpoint_is_complete(checkpoint, pbf_path, len(rows)):
         return V2ExtractedPbf(stem, tuple(rows), time.perf_counter() - started)
     reader = PBFReader(pbf_path, include_wikipedia_tagged=True)
 
     def add(candidate: PolygonCandidate) -> None:
-        if limit is not None and len(rows) >= limit:
-            return
-        row = candidate_to_v2_row(
+        _append_extraction_row(
             candidate,
-            source_pbf_stem=stem.stem,
-            region=stem.region,
-            source_pbf=pbf_path.name,
+            rows=rows,
+            seen=seen,
+            pending_checkpoint=pending_checkpoint,
+            limit=limit,
+            stem=stem,
+            pbf_path=pbf_path,
             extracted_at=extracted_at,
+            checkpoint=checkpoint,
+            checkpoint_every=checkpoint_every,
         )
-        if row is None or str(row["polygon_id"]) in seen:
-            return
-        rows.append(row)
-        seen.add(str(row["polygon_id"]))
-        pending_checkpoint.append(row)
-        if checkpoint is not None and len(pending_checkpoint) >= max(1, checkpoint_every):
-            checkpoint.append(pending_checkpoint)
-            LOGGER.info(
-                "V2 extraction checkpoint %s: %d polygons saved",
-                pbf_path.name,
-                len(rows),
-            )
-            pending_checkpoint.clear()
 
     try:
-        stream = getattr(reader, "iter_polygon_candidates", None)
-        if callable(stream):
-            typed = cast(Callable[[Callable[[PolygonCandidate], None]], None], stream)
-            typed(add)
-        else:
-            for candidate in reader.collect_polygon_candidates():
-                add(candidate)
+        _consume_candidates(reader, add)
     except BaseException:
-        if checkpoint is not None:
-            checkpoint.append(pending_checkpoint)
+        _flush_checkpoint(checkpoint, pending_checkpoint)
         raise
+    _finish_checkpoint(checkpoint, pending_checkpoint)
+    LOGGER.info("V2 extracted %d polygons from %s", len(rows), pbf_path.name)
+    return V2ExtractedPbf(stem, tuple(rows), time.perf_counter() - started)
+
+
+def _new_checkpoint(
+    checkpoint_dir: Path | None,
+    pbf_path: Path,
+    limit: int | None,
+) -> ExtractionCheckpoint | None:
+    if checkpoint_dir is None:
+        return None
+    return ExtractionCheckpoint(checkpoint_dir, pbf_path, limit=limit)
+
+
+def _checkpoint_is_complete(
+    checkpoint: ExtractionCheckpoint | None,
+    pbf_path: Path,
+    row_count: int,
+) -> bool:
+    if checkpoint is None or not checkpoint.complete:
+        return False
+    LOGGER.info(
+        "V2 extraction resumed from completed checkpoint for %s (%d polygons)",
+        pbf_path.name,
+        row_count,
+    )
+    return True
+
+
+def _flush_checkpoint(
+    checkpoint: ExtractionCheckpoint | None,
+    pending_checkpoint: list[dict[str, Any]],
+) -> None:
+    if checkpoint is not None:
+        checkpoint.append(pending_checkpoint)
+
+
+def _finish_checkpoint(
+    checkpoint: ExtractionCheckpoint | None,
+    pending_checkpoint: list[dict[str, Any]],
+) -> None:
     if checkpoint is not None:
         checkpoint.append(pending_checkpoint)
         checkpoint.mark_complete()
-    LOGGER.info("V2 extracted %d polygons from %s", len(rows), pbf_path.name)
-    return V2ExtractedPbf(stem, tuple(rows), time.perf_counter() - started)
+
+
+def _append_extraction_row(
+    candidate: PolygonCandidate,
+    *,
+    rows: list[dict[str, Any]],
+    seen: set[str],
+    pending_checkpoint: list[dict[str, Any]],
+    limit: int | None,
+    stem: V2PbfStem,
+    pbf_path: Path,
+    extracted_at: str,
+    checkpoint: ExtractionCheckpoint | None,
+    checkpoint_every: int,
+) -> None:
+    if _limit_reached(limit, len(rows)):
+        return
+    row = candidate_to_v2_row(
+        candidate,
+        source_pbf_stem=stem.stem,
+        region=stem.region,
+        source_pbf=pbf_path.name,
+        extracted_at=extracted_at,
+    )
+    if row is None:
+        return
+    polygon_key = str(row["polygon_id"])
+    if polygon_key in seen:
+        return
+    rows.append(row)
+    seen.add(polygon_key)
+    pending_checkpoint.append(row)
+    _checkpoint_if_due(
+        checkpoint,
+        pending_checkpoint,
+        checkpoint_every,
+        pbf_path,
+        len(rows),
+    )
+
+
+def _limit_reached(limit: int | None, row_count: int) -> bool:
+    return limit is not None and row_count >= limit
+
+
+def _checkpoint_if_due(
+    checkpoint: ExtractionCheckpoint | None,
+    pending_checkpoint: list[dict[str, Any]],
+    checkpoint_every: int,
+    pbf_path: Path,
+    row_count: int,
+) -> None:
+    if checkpoint is None or len(pending_checkpoint) < max(1, checkpoint_every):
+        return
+    checkpoint.append(pending_checkpoint)
+    LOGGER.info(
+        "V2 extraction checkpoint %s: %d polygons saved",
+        pbf_path.name,
+        row_count,
+    )
+    pending_checkpoint.clear()
+
+
+def _consume_candidates(
+    reader: PBFReader,
+    add: Callable[[PolygonCandidate], None],
+) -> None:
+    stream = getattr(reader, "iter_polygon_candidates", None)
+    if callable(stream):
+        typed = cast(Callable[[Callable[[PolygonCandidate], None]], None], stream)
+        typed(add)
+        return
+    for candidate in reader.collect_polygon_candidates():
+        add(candidate)
 
 
 __all__ = [

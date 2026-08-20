@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from radon.complexity import cc_visit
 
 from scripts.quality.crap_score import (
     CrapEntry,
@@ -66,3 +69,130 @@ def test_entries_from_reports_scores_uncovered_functions_as_zero() -> None:
     )
 
     assert entries == [CrapEntry("module.py", "uncovered", 5, 0.0, 9)]
+
+
+def test_entries_from_reports_falls_back_to_line_coverage_for_helpers() -> None:
+    """Helpers absent from coverage's function map still use executed lines."""
+    entries = entries_from_reports(
+        {
+            "files": {
+                "module.py": {
+                    "executed_lines": [10, 11],
+                    "missing_lines": [12],
+                    "functions": {},
+                }
+            }
+        },
+        {
+            "module.py": [
+                {
+                    "type": "function",
+                    "name": "helper",
+                    "complexity": 3,
+                    "lineno": 10,
+                    "endline": 12,
+                }
+            ]
+        },
+    )
+
+    assert entries == [CrapEntry("module.py", "helper", 3, 2 / 3, 10)]
+
+
+def test_retry_entrypoint_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/utils/retry.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "with_retries"
+    }
+
+    assert functions["with_retries"] < 6
+
+
+def test_sync_execute_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/cli/run_sync.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "execute"
+    }
+
+    assert functions["execute"] < 6
+
+
+def test_continent_assignment_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/hf/continent_stats.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "assign_continents"
+    }
+
+    assert functions["assign_continents"] < 6
+
+
+def test_polygon_link_row_coercion_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/domain/polygon_document_links.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "_coerce_row"
+    }
+
+    assert functions["_coerce_row"] < 6
+
+
+def test_polygon_link_validation_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/domain/polygon_document_links.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "validate_polygon_document_links"
+    }
+
+    assert functions["validate_polygon_document_links"] < 6
+
+
+def test_json_file_cache_get_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/io/cache.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "get"
+    }
+
+    assert functions["get"] < 6
+
+
+def test_retirement_reference_validation_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/augmentation/wikipedia_retirement.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "_assert_references_resolve"
+    }
+
+    assert functions["_assert_references_resolve"] < 6
+
+
+def test_section_parser_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/augmentation/sections.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "_build_sections"
+    }
+
+    assert functions["_build_sections"] < 6
+
+
+def test_v2_land_path_resolution_stays_below_complexity_six() -> None:
+    source_path = Path("src/osm_polygon_wikidata_only/v2/maps.py")
+    functions = {
+        block.name: block.complexity
+        for block in cc_visit(source_path.read_text(encoding="utf-8"))
+        if block.name == "_resolve_land_context"
+    }
+
+    assert functions["_resolve_land_context"] < 6

@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
-from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
+from osm_polygon_wikidata_only.cli.dependencies import WikimediaRuntime, build_wikimedia_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
@@ -33,54 +33,14 @@ def execute_v2(
 ) -> int:
     """Run V2 with the normal shared Wikimedia runtime and uploader."""
     runtime = build_wikimedia_runtime(settings, data_root=data_root)
-    section_client = AugmentationWikimediaClient(
-        settings,
-        JsonFileCache(
-            data_root.v2_cache / "sections",
-            contract_version=V2_CACHE_CONTRACT_VERSION,
-        ),
-        scheduler=runtime.scheduler,
-        session=runtime.session,
-    )
+    section_client = _build_section_client(settings, data_root, runtime)
     # ``commands.main`` supplies the V2 default, while an explicit
     # ``--repo-id`` remains an intentional operator override.
     repo_id = settings.repo_id
     hub = StubHfHub() if args.dry_run else None
-    remote_inventory = None
-    if args.push:
-        try:
-            remote_inventory = RemoteInventory.fetch(
-                repo_id,
-                hub=hub,
-                token=settings.hf_token,
-            )
-        except UploadError as error:
-            LOGGER.info("V2 Hub repository is new or not listable yet: %s", error)
-
-    def upload(ops: list[PublicationOp], message: str) -> None:
-        upload_files(
-            repo_id,
-            ops=ops,
-            hub=hub,
-            token=settings.hf_token,
-            commit_message=args.commit_message or message,
-            num_threads=args.upload_threads,
-        )
-
-    trackio_publish = None
-    if args.push and not args.dry_run:
-
-        def publish_snapshot(stats: V2CardStats) -> None:
-            from osm_polygon_wikidata_only.hf.v2_trackio_snapshot import (
-                publish_v2_trackio_snapshot,
-            )
-
-            publish_v2_trackio_snapshot(
-                output_dir=data_root.cache / "trackio" / V2_TRACKIO_RUN_NAME,
-                stats=stats,
-            )
-
-        trackio_publish = publish_snapshot
+    remote_inventory = _fetch_inventory(args, repo_id, settings, hub)
+    upload = _build_uploader(args, repo_id, settings, hub)
+    trackio_publish = _build_trackio_publisher(args, data_root)
 
     return run_v2_sync(
         Path(args.input),
@@ -94,6 +54,69 @@ def execute_v2(
         remote_inventory=remote_inventory,
         trackio_publish=trackio_publish,
     )
+
+
+def _build_section_client(
+    settings: Settings, data_root: DataRoot, runtime: WikimediaRuntime
+) -> AugmentationWikimediaClient:
+    return AugmentationWikimediaClient(
+        settings,
+        JsonFileCache(data_root.v2_cache / "sections", contract_version=V2_CACHE_CONTRACT_VERSION),
+        scheduler=runtime.scheduler,
+        session=runtime.session,
+    )
+
+
+def _fetch_inventory(
+    args: argparse.Namespace,
+    repo_id: str,
+    settings: Settings,
+    hub: StubHfHub | None,
+) -> RemoteInventory | None:
+    if not args.push:
+        return None
+    try:
+        return RemoteInventory.fetch(repo_id, hub=hub, token=settings.hf_token)
+    except UploadError as error:
+        LOGGER.info("V2 Hub repository is new or not listable yet: %s", error)
+        return None
+
+
+def _build_uploader(
+    args: argparse.Namespace,
+    repo_id: str,
+    settings: Settings,
+    hub: StubHfHub | None,
+):
+    if not args.push:
+        return None
+
+    def upload(ops: list[PublicationOp], message: str) -> None:
+        upload_files(
+            repo_id,
+            ops=ops,
+            hub=hub,
+            token=settings.hf_token,
+            commit_message=args.commit_message or message,
+            num_threads=args.upload_threads,
+        )
+
+    return upload
+
+
+def _build_trackio_publisher(args: argparse.Namespace, data_root: DataRoot):
+    if not args.push or args.dry_run:
+        return None
+
+    def publish_snapshot(stats: V2CardStats) -> None:
+        from osm_polygon_wikidata_only.hf.v2_trackio_snapshot import publish_v2_trackio_snapshot
+
+        publish_v2_trackio_snapshot(
+            output_dir=data_root.cache / "trackio" / V2_TRACKIO_RUN_NAME,
+            stats=stats,
+        )
+
+    return publish_snapshot
 
 
 __all__ = ["execute_v2"]

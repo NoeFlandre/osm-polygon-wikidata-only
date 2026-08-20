@@ -45,21 +45,38 @@ def effective_paths(processed_dir: Path) -> tuple[Path, ...]:
 
 def read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow]:
     """Read and schema-check one complete V1 shard for the in-memory index."""
+    table = _read_table(path)
+    _validate_table_schema(table.schema, path, legacy_articles)
+    return _rows_from_table(table, path, legacy_articles)
+
+
+def _read_table(path: Path) -> Any:
     try:
         with _open_parquet_file(path) as parquet_file:
-            table = parquet_file.read()
+            return parquet_file.read()
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
-    expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
-    if not table.schema.equals(expected_schema, check_metadata=True):
-        label = "legacy article" if legacy_articles else "V1 document"
-        raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
+
+
+def _validate_table_schema(schema: Any, path: Path, legacy_articles: bool) -> None:
+    expected = article_schema() if legacy_articles else wikipedia_document_schema()
+    if schema.equals(expected, check_metadata=True):
+        return
+    label = "legacy article" if legacy_articles else "V1 document"
+    raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
+
+
+def _rows_from_table(table: Any, path: Path, legacy_articles: bool) -> list[DocumentRow]:
     if legacy_articles:
-        try:
-            return [wikipedia_document_from_article_row(row).to_dict() for row in table.to_pylist()]
-        except Exception as exc:
-            raise ValueError(f"V1 legacy article shard is invalid: {path}: {exc}") from exc
+        return _legacy_rows(table, path)
     return [dict(row) for row in table.to_pylist()]
+
+
+def _legacy_rows(table: Any, path: Path) -> list[DocumentRow]:
+    try:
+        return [wikipedia_document_from_article_row(row).to_dict() for row in table.to_pylist()]
+    except Exception as exc:
+        raise ValueError(f"V1 legacy article shard is invalid: {path}: {exc}") from exc
 
 
 def _index_columns(legacy_articles: bool) -> tuple[str, ...]:
@@ -73,10 +90,7 @@ def validated_parquet_file(path: Path, *, legacy_articles: bool):
     parquet_file: pq.ParquetFile | None = None
     try:
         parquet_file = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
-        expected_schema = article_schema() if legacy_articles else wikipedia_document_schema()
-        if not parquet_file.schema_arrow.equals(expected_schema, check_metadata=True):
-            label = "legacy article" if legacy_articles else "V1 document"
-            raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
+        _validate_table_schema(parquet_file.schema_arrow, path, legacy_articles)
         opened = parquet_file
         parquet_file = None
         return opened
@@ -101,18 +115,33 @@ def scan_index_row_group(
     validated: pq.ParquetFile | None = None
     try:
         validated = parquet_file or validated_parquet_file(path, legacy_articles=legacy_articles)
-        table = validated.read_row_group(
-            row_group,
-            columns=list(_index_columns(legacy_articles)),
-        )
+        return _read_index_rows(validated, path, legacy_articles, row_group)
+    finally:
+        if owns_parquet_file and validated is not None:
+            validated.close()
+
+
+def _read_row_group(
+    parquet_file: pq.ParquetFile,
+    row_group: int,
+    legacy_articles: bool,
+) -> Any:
+    return parquet_file.read_row_group(row_group, columns=list(_index_columns(legacy_articles)))
+
+
+def _read_index_rows(
+    parquet_file: pq.ParquetFile,
+    path: Path,
+    legacy_articles: bool,
+    row_group: int,
+) -> list[tuple[str, str, str, int, int, str, int, int]]:
+    try:
+        table = _read_row_group(parquet_file, row_group, legacy_articles)
         return index_rows_from_table(table, legacy_articles=legacy_articles, row_group=row_group)
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
-    finally:
-        if owns_parquet_file and validated is not None:
-            validated.close()
 
 
 def index_rows_from_table(

@@ -544,6 +544,87 @@ def test_http_wikipedia_429_returns_rate_limited_not_throttle_warning(
     assert scheduler.throttle_calls == [("en.wikipedia.org", 7.0)]
 
 
+@pytest.mark.parametrize(
+    ("code", "fallback", "status"),
+    [
+        (404, False, "article_not_found"),
+        (429, False, "rate_limited"),
+        (503, True, "rate_limited"),
+        (500, True, "http_error"),
+    ],
+)
+def test_wikipedia_http_error_mapping_is_explicit(code: int, fallback: bool, status: str) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia import transport
+
+    result = transport._article_http_error(_http_error(code), fallback=fallback)
+
+    assert result.status == status
+    assert result.article is None
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_wikipedia_network_error_mapping_preserves_fallback_context(fallback: bool) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia import transport
+
+    result = transport._article_network_error(ConnectionError("offline"), fallback=fallback)
+
+    assert result.status == "http_error"
+    assert result.article is None
+    expected = "parse fallback failed: offline" if fallback else "offline"
+    assert result.error == expected
+
+
+@pytest.mark.parametrize("has_article", [False, True])
+def test_empty_fallback_result_preserves_available_article(has_article: bool) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia import transport
+
+    article = object() if has_article else None
+    result = transport._empty_fallback_result(transport.FetchResult("empty_text", article))
+
+    assert result.status == "empty_text"
+    assert result.article is article
+    assert result.error == "extract and exact-revision parse were empty"
+
+
+def test_wikipedia_lead_batch_error_falls_back_to_full_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia import transport
+
+    client = transport.HttpWikipediaClient.__new__(transport.HttpWikipediaClient)
+    fallback = {"Alpha": transport.FetchResult("article_not_found", None)}
+    monkeypatch.setattr(client, "_fetch_full_text_batch", lambda *_args: fallback)
+    monkeypatch.setattr(
+        client,
+        "_request_article_data",
+        lambda *_args, **_kwargs: (None, transport.FetchResult("http_error", None)),
+    )
+
+    assert client._fetch_lead_batch("en", "enwiki", ["Alpha"]) == fallback
+
+
+def test_wikipedia_lead_batch_parse_error_falls_back_to_full_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia import transport
+
+    client = transport.HttpWikipediaClient.__new__(transport.HttpWikipediaClient)
+    fallback = {"Alpha": transport.FetchResult("article_not_found", None)}
+    monkeypatch.setattr(client, "_fetch_full_text_batch", lambda *_args: fallback)
+    monkeypatch.setattr(
+        client,
+        "_request_article_data",
+        lambda *_args, **_kwargs: ({"query": {}}, None),
+    )
+    monkeypatch.setattr(
+        transport,
+        "_parse_wikipedia_batch_response",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad payload")),
+    )
+
+    assert client._fetch_lead_batch("en", "enwiki", ["Alpha"]) == fallback
+
+
 # ---------------------------------------------------------------------------
 # HTTP client: action API fallback on empty_text
 # ---------------------------------------------------------------------------

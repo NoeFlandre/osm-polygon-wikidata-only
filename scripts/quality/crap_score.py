@@ -84,14 +84,23 @@ def entries_from_reports(
                 raise ValueError("Radon function classname is malformed")
             if not isinstance(line, int) or isinstance(line, bool):
                 raise ValueError("Radon function line is malformed")
+            endline = block.get("endline", line)
+            if not isinstance(endline, int) or isinstance(endline, bool) or endline < line:
+                raise ValueError("Radon function endline is malformed")
             qualified_name = f"{classname}.{name}" if classname else name
-            function = _function_coverage(coverage_files, raw_path, qualified_name)
+            file_data = _coverage_file(coverage_files, raw_path)
+            function = _function_coverage(file_data, qualified_name)
+            coverage = (
+                _function_coverage_fraction(function)
+                if function
+                else _line_coverage_fraction(file_data, line, endline)
+            )
             entries.append(
                 CrapEntry(
                     raw_path,
                     qualified_name,
                     complexity,
-                    _function_coverage_fraction(function),
+                    coverage,
                     line,
                 )
             )
@@ -110,16 +119,44 @@ def _mapping_value(value: Mapping[str, object], key: str) -> dict[str, object]:
     return _mapping(value.get(key), f"report {key}")
 
 
-def _function_coverage(files: Mapping[str, object], path: str, name: str) -> dict[str, object]:
+def _coverage_file(files: Mapping[str, object], path: str) -> dict[str, object]:
     raw_file = files.get(path)
     if raw_file is None:
         suffix = Path(path).as_posix()
         matches = [value for candidate, value in files.items() if str(candidate).endswith(suffix)]
         raw_file = matches[0] if len(matches) == 1 else None
-    file_data = _mapping(raw_file, f"coverage file {path}")
+    return _mapping(raw_file, f"coverage file {path}")
+
+
+def _function_coverage(file_data: Mapping[str, object], name: str) -> dict[str, object]:
     functions = _mapping_value(file_data, "functions")
     function = functions.get(name)
-    return {} if function is None else _mapping(function, f"coverage function {path}:{name}")
+    return {} if function is None else _mapping(function, f"coverage function {name}")
+
+
+def _line_coverage_fraction(file_data: Mapping[str, object], start: int, end: int) -> float:
+    """Estimate function coverage from executed/missing line data.
+
+    Coverage.py can omit tiny helpers from its function map while still
+    recording their executed lines. Restricting the calculation to lines
+    coverage.py classified as executable keeps the fallback faithful to the
+    report instead of counting docstrings and blank lines as misses.
+    """
+    executed = _line_numbers(file_data.get("executed_lines", []), "executed_lines")
+    missing = _line_numbers(file_data.get("missing_lines", []), "missing_lines")
+    scope = set(range(start, end + 1))
+    executable = (executed | missing) & scope
+    if not executable:
+        return 0.0
+    return len(executed & executable) / len(executable)
+
+
+def _line_numbers(value: object, label: str) -> set[int]:
+    if not isinstance(value, list) or any(
+        isinstance(line, bool) or not isinstance(line, int) for line in value
+    ):
+        raise ValueError(f"coverage {label} must be a list of line numbers")
+    return {cast(int, line) for line in value}
 
 
 def _function_coverage_fraction(function: Mapping[str, object]) -> float:

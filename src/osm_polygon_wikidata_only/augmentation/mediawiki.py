@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.text_cleaning import (
@@ -59,18 +59,107 @@ class _TransientMediaWikiApiError(MediaWikiApiError):
     """A retryable structured Wikimedia API error."""
 
 
+def _build_scheduler(rate: float, authenticated: bool) -> AdaptiveRequestScheduler:
+    return AdaptiveRequestScheduler(
+        max_in_flight=3,
+        requests_per_minute=rate,
+        max_requests_per_minute=rate,
+        minimum_requests_per_minute=min(200.0 if authenticated else 60.0, rate),
+        active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+        minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+        systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+    )
+
+
+def _build_session(
+    scheduler: AdaptiveRequestScheduler,
+    settings: Settings,
+    credentials: Any,
+) -> WikimediaSession:
+    return WikimediaSession(
+        scheduler=scheduler,
+        timeout_s=settings.request_timeout_s,
+        user_agent=settings.user_agent,
+        credentials=credentials,
+    )
+
+
+def _log_throttled_http_error(
+    host: str,
+    error: urllib.error.HTTPError,
+    delay: float | None,
+) -> None:
+    if error.code in (429, 503):
+        LOGGER.warning(
+            "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
+            host,
+            error.code,
+            delay if delay is not None else 0.0,
+        )
+
+
+def _normalize_entities(raw_entities: object) -> dict[str, dict[str, Any]]:
+    if isinstance(raw_entities, dict):
+        return _normalize_entity_map(cast(dict[object, object], raw_entities))
+    return _normalize_entity_list(raw_entities)
+
+
+def _normalize_entity_map(raw_entities: dict[object, object]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for response_qid, entity in raw_entities.items():
+        if not isinstance(entity, dict) or not entity.get("id"):
+            continue
+        normalized = cast(dict[str, Any], dict(entity))
+        normalized["id"] = str(response_qid)
+        out[str(response_qid)] = normalized
+    return out
+
+
+def _normalize_entity_list(raw_entities: object) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw_entities, list):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for entity in raw_entities:
+        if not isinstance(entity, dict) or not entity.get("id"):
+            continue
+        normalized = cast(dict[str, Any], dict(entity))
+        out[str(normalized["id"])] = normalized
+    return out
+
+
+def _project_host(project: str, language: str) -> str:
+    site = "wikipedia" if project == "wikipedia" else "wikivoyage"
+    return f"{language}.{site}.org"
+
+
+def _parsed_html_text(data: dict[str, Any]) -> str:
+    parsed = data.get("parse", {})
+    text = parsed.get("text", "") if isinstance(parsed, dict) else ""
+    if isinstance(text, dict):
+        text = text.get("*", "")
+    return str(text)
+
+
 def _raise_for_api_error(data: dict[str, Any]) -> None:
     error = data.get("error")
     if not isinstance(error, Mapping):
         return
-    code = str(error.get("code") or "unknown")
-    info = str(error.get("info") or "No error details supplied")
-    exception = (
-        _TransientMediaWikiApiError
-        if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_")
-        else MediaWikiApiError
-    )
+    code, info = _api_error_details(error)
+    exception = _api_error_exception(code)
     raise exception(f"Wikimedia API error {code}: {info}", code=code, info=info)
+
+
+def _api_error_details(error: Mapping[str, Any]) -> tuple[str, str]:
+    return (
+        str(error.get("code") or "unknown"),
+        str(error.get("info") or "No error details supplied"),
+    )
+
+
+def _api_error_exception(code: str) -> type[MediaWikiApiError]:
+    if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_"):
+        return _TransientMediaWikiApiError
+    return MediaWikiApiError
 
 
 class AugmentationWikimediaClient:
@@ -90,34 +179,32 @@ class AugmentationWikimediaClient:
         rate = 1_200.0 if credentials else 180.0
         effective = replace(settings, request_timeout_s=max(settings.request_timeout_s, 60.0))
         self._settings = effective
-        self._scheduler = scheduler or AdaptiveRequestScheduler(
-            max_in_flight=3,
-            requests_per_minute=rate,
-            max_requests_per_minute=rate,
-            minimum_requests_per_minute=min(200.0 if credentials else 60.0, rate),
-            active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
-            minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
-            systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
-        )
-        self._session = session or WikimediaSession(
-            scheduler=self._scheduler,
-            timeout_s=effective.request_timeout_s,
-            user_agent=effective.user_agent,
-            credentials=credentials,
-        )
+        self._scheduler = scheduler or _build_scheduler(rate, bool(credentials))
+        self._session = session or _build_session(self._scheduler, effective, credentials)
         self._cache = cache
 
     def get_json(self, url: str, *, key: str) -> dict[str, Any]:
         # Cache hits short-circuit BEFORE any URL validation or transport
         # invocation: even a malformed cached URL must not be re-parsed.
+        cached = self._cached_json(key)
+        if cached is not None:
+            return cached
+        parsed, _host = self._request_json(url)
+        self._cache.set(key, parsed, request_url=url, status="ok")
+        return parsed
+
+    def _cached_json(self, key: str) -> dict[str, Any] | None:
         hit = self._cache.get(key)
-        if hit is not None and hit.status == "ok" and isinstance(hit.parsed_result, dict):
-            try:
-                _raise_for_api_error(hit.parsed_result)
-            except MediaWikiApiError:
-                self._cache.delete(key)
-            else:
-                return hit.parsed_result
+        if hit is None or hit.status != "ok" or not isinstance(hit.parsed_result, dict):
+            return None
+        try:
+            _raise_for_api_error(hit.parsed_result)
+        except MediaWikiApiError:
+            self._cache.delete(key)
+            return None
+        return hit.parsed_result
+
+    def _request_json(self, url: str) -> tuple[dict[str, Any], str]:
         parsed_url = urllib.parse.urlparse(url)
         if parsed_url.scheme != "https":
             raise ValueError(f"Only HTTPS Wikimedia URLs are allowed: {url}")
@@ -126,19 +213,11 @@ class AugmentationWikimediaClient:
             url,
             headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"},
         )
+        delay_state: list[float | None] = [None]
 
-        # The helper parses Retry-After exactly once per throttled attempt
-        # and reports the parsed delay to the callback. We capture that
-        # delay here and reuse it in the warning below, so the scheduler
-        # notification and the logged warning always agree on the same
-        # value (matters for HTTP-date headers, where re-parsing after a
-        # sleep would yield a different number of seconds).
-        captured_delay: float | None = None
-
-        def on_throttled(h: str, delay: float) -> None:
-            nonlocal captured_delay
-            captured_delay = delay
-            self._scheduler.report_host_throttled(h, delay)
+        def on_throttled(throttled_host: str, delay: float) -> None:
+            delay_state[0] = delay
+            self._scheduler.report_host_throttled(throttled_host, delay)
 
         def read() -> dict[str, Any]:
             try:
@@ -174,16 +253,9 @@ class AugmentationWikimediaClient:
                 on_retry=transient_retry_log_callback(f"Wikimedia host {host}", logger=LOGGER),
             )
         except urllib.error.HTTPError as error:
-            if error.code in (429, 503):
-                LOGGER.warning(
-                    "Wikimedia throttled %s (HTTP %d); retrying after %.1fs",
-                    host,
-                    error.code,
-                    captured_delay if captured_delay is not None else 0.0,
-                )
+            _log_throttled_http_error(host, error, delay_state[0])
             raise
-        self._cache.set(key, parsed, request_url=url, status="ok")
-        return parsed
+        return parsed, host
 
     def entities(self, qids: Iterable[str], *, props: str) -> dict[str, dict[str, Any]]:
         # Callers pass canonical QIDs, never raw OSM tag values. Filter again
@@ -193,43 +265,28 @@ class AugmentationWikimediaClient:
         ids = sorted({qid for qid in qids if is_valid_qid(qid)})
         out: dict[str, dict[str, Any]] = {}
         for start in range(0, len(ids), 50):
-            chunk = ids[start : start + 50]
-            params = urllib.parse.urlencode(
-                {
-                    "action": "wbgetentities",
-                    "ids": "|".join(chunk),
-                    "props": props,
-                    "format": "json",
-                    "formatversion": "2",
-                    "maxlag": "5",
-                }
-            )
-            data = self.get_json(
-                f"https://www.wikidata.org/w/api.php?{params}",
-                key=f"entities/{props.replace('|', '-')}/{'-'.join(chunk)}.json",
-            )
-            raw_entities = data.get("entities", [])
-            if isinstance(raw_entities, dict):
-                for response_qid, entity in raw_entities.items():
-                    if not isinstance(entity, dict) or not entity.get("id"):
-                        continue
-                    # Redirected entities retain the requested QID as the
-                    # response-map key but expose the destination as ``id``.
-                    # Joins in this dataset are keyed by the original OSM QID,
-                    # so preserve that requested identity while keeping the
-                    # redirect metadata and destination claims intact.
-                    requested_qid = str(response_qid)
-                    normalized = dict(entity)
-                    normalized["id"] = requested_qid
-                    out[requested_qid] = normalized
-            else:
-                for entity in raw_entities:
-                    if isinstance(entity, dict) and entity.get("id"):
-                        out[str(entity["id"])] = entity
+            out.update(self._entity_chunk(ids[start : start + 50], props))
         return out
 
+    def _entity_chunk(self, chunk: list[str], props: str) -> dict[str, dict[str, Any]]:
+        params = urllib.parse.urlencode(
+            {
+                "action": "wbgetentities",
+                "ids": "|".join(chunk),
+                "props": props,
+                "format": "json",
+                "formatversion": "2",
+                "maxlag": "5",
+            }
+        )
+        data = self.get_json(
+            f"https://www.wikidata.org/w/api.php?{params}",
+            key=f"entities/{props.replace('|', '-')}/{'-'.join(chunk)}.json",
+        )
+        return _normalize_entities(data.get("entities", []))
+
     def parse_html(self, project: str, language: str, revision_id: int) -> str:
-        host = f"{language}.{'wikipedia' if project == 'wikipedia' else 'wikivoyage'}.org"
+        host = _project_host(project, language)
         params = urllib.parse.urlencode(
             {
                 "action": "parse",
@@ -254,11 +311,7 @@ class AugmentationWikimediaClient:
                 host,
             )
             return ""
-        parsed = data.get("parse", {})
-        text = parsed.get("text", "") if isinstance(parsed, dict) else ""
-        if isinstance(text, dict):
-            text = text.get("*", "")
-        return str(text)
+        return _parsed_html_text(data)
 
     def wikivoyage_document(
         self, qid: str, language: str, site: str, title: str

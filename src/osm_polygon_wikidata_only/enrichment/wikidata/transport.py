@@ -123,11 +123,16 @@ class HttpWikidataClient(WikidataClient):
     def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
         """Resolve several QIDs in one Action API request, preserving order."""
         requested = list(qids)
-        valid = [qid for qid in dict.fromkeys(requested) if is_valid_qid(qid)]
+        valid = _valid_qids(requested)
         if not valid:
             return [None for _ in requested]
         url = self._build_url("|".join(valid))
-        data = with_retries(
+        data = self._fetch_with_retries(url)
+        parsed = _parse_requested_entities(data, valid)
+        return [parsed.get(qid) for qid in requested]
+
+    def _fetch_with_retries(self, url: str) -> dict[str, Any]:
+        return with_retries(
             lambda: self._request_batch(url),
             attempts=self._settings.request_max_retries,
             base_delay=self._settings.request_base_delay_s,
@@ -135,34 +140,13 @@ class HttpWikidataClient(WikidataClient):
             should_retry=_is_retryable_wikidata_error,
             on_retry=transient_retry_log_callback("Wikidata", logger=LOGGER),
         )
-        entities = data.get("entities")
-        if not isinstance(entities, Mapping):
-            raise WikidataError("Wikidata response field 'entities' must be an object")
-        parsed: dict[str, WikidataEntity | None] = {}
-        for qid in valid:
-            if qid not in entities:
-                raise WikidataError(f"Wikidata response omitted requested entity {qid}")
-            raw = entities[qid]
-            if not isinstance(raw, Mapping):
-                raise WikidataError(f"Wikidata response entity {qid} must be an object")
-            parsed[qid] = (
-                None
-                if "missing" in raw
-                else parse_wikidata_entity(qid, {"entities": {qid: dict(raw)}})
-            )
-        return [parsed.get(qid) for qid in requested]
 
     def _request_batch(self, url: str) -> dict[str, Any]:
         data = self._http_get(url)
         error = data.get("error")
         if not isinstance(error, Mapping):
             return data
-        code = str(error.get("code") or "unknown")
-        info = str(error.get("info") or "No error details supplied")
-        message = f"Wikidata API error {code}: {info}"
-        if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_"):
-            raise _TransientWikidataApiError(message)
-        raise WikidataError(message)
+        raise _wikidata_api_exception(error)
 
     def _build_url(self, qid: str) -> str:
         params = {
@@ -194,6 +178,45 @@ class HttpWikidataClient(WikidataClient):
             )
         except _NonObjectJsonError as error:
             raise ValueError(f"Expected JSON object from {url}, got {error.value_type}") from None
+
+
+def _valid_qids(requested: list[str]) -> list[str]:
+    return [qid for qid in dict.fromkeys(requested) if is_valid_qid(qid)]
+
+
+def _parse_requested_entities(
+    data: dict[str, Any], valid: list[str]
+) -> dict[str, WikidataEntity | None]:
+    entities = data.get("entities")
+    if not isinstance(entities, Mapping):
+        raise WikidataError("Wikidata response field 'entities' must be an object")
+    parsed: dict[str, WikidataEntity | None] = {}
+    for qid in valid:
+        parsed[qid] = _parse_entity(qid, entities)
+    return parsed
+
+
+def _parse_entity(
+    qid: str,
+    entities: Mapping[str, Any],
+) -> WikidataEntity | None:
+    if qid not in entities:
+        raise WikidataError(f"Wikidata response omitted requested entity {qid}")
+    raw = entities[qid]
+    if not isinstance(raw, Mapping):
+        raise WikidataError(f"Wikidata response entity {qid} must be an object")
+    if "missing" in raw:
+        return None
+    return parse_wikidata_entity(qid, {"entities": {qid: dict(raw)}})
+
+
+def _wikidata_api_exception(error: Mapping[str, Any]) -> WikidataError:
+    code = str(error.get("code") or "unknown")
+    info = str(error.get("info") or "No error details supplied")
+    message = f"Wikidata API error {code}: {info}"
+    if code in _TRANSIENT_API_ERROR_CODES or code.startswith("internal_api_error_"):
+        return _TransientWikidataApiError(message)
+    return WikidataError(message)
 
 
 __all__ = ["HttpWikidataClient", "InMemoryWikidataClient", "WikidataError"]

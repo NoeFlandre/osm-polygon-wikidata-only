@@ -206,22 +206,18 @@ class WikimediaSession:
         with state.lock:
             if state.authenticated or state.auth_skipped:
                 return
-            try:
-                self._authenticate(state.opener, scheme, netloc)
-            except WikimediaAuthenticationError as error:
-                # A Wikimedia Bot Password is created against the central
-                # SUL account and can authenticate on any Wikimedia wiki
-                # where the account is attached, but the API ``login``
-                # (and the resulting authenticated session cookies) is
-                # performed per-host. A rejection therefore means this
-                # specific host either does not have the bot's account
-                # attached or does not accept the credentials. We mark the
-                # host as "no auth possible" and continue anonymously so
-                # the rest of the pipeline keeps running.
-                state.auth_skipped = True
-                self._log_authentication_fallback(netloc, error)
-                return
-            state.authenticated = True
+            self._authenticate_host(state, scheme, netloc)
+
+    def _authenticate_host(self, state: _HostSession, scheme: str, netloc: str) -> None:
+        try:
+            self._authenticate(state.opener, scheme, netloc)
+        except WikimediaAuthenticationError as error:
+            # A host-specific rejection is non-fatal: keep the request
+            # anonymous while retaining the verified state distinction.
+            state.auth_skipped = True
+            self._log_authentication_fallback(netloc, error)
+            return
+        state.authenticated = True
 
     def _log_authentication_fallback(
         self, netloc: str, error: WikimediaAuthenticationError
@@ -254,24 +250,13 @@ class WikimediaSession:
             states = list(self._hosts.values())
         authenticated = anonymous = pending = 0
         for state in states:
-            if not state.lock.acquire(blocking=False):
-                # Another thread is currently authenticating this host;
-                # do not wait and do not classify it as anonymous.
+            classification = self._classify_host(state)
+            if classification == "authenticated":
+                authenticated += 1
+            elif classification == "anonymous":
+                anonymous += 1
+            else:
                 pending += 1
-                continue
-            try:
-                if state.authenticated:
-                    authenticated += 1
-                elif state.auth_skipped or self._credentials is None:
-                    anonymous += 1
-                else:
-                    # Credentials configured but neither flag set yet
-                    # (auth not started or just failed without setting
-                    # auth_skipped). Either way, not safe to call it
-                    # anonymous.
-                    pending += 1
-            finally:
-                state.lock.release()
         return WikimediaAuthSnapshot(
             credentials_configured=self._credentials is not None,
             authenticated_hosts=authenticated,
@@ -279,12 +264,34 @@ class WikimediaSession:
             pending_hosts=pending,
         )
 
+    def _classify_host(self, state: _HostSession) -> str:
+        if not state.lock.acquire(blocking=False):
+            return "pending"
+        try:
+            if state.authenticated:
+                return "authenticated"
+            if state.auth_skipped or self._credentials is None:
+                return "anonymous"
+            return "pending"
+        finally:
+            state.lock.release()
+
     def _authenticate(self, opener: _Opener, scheme: str, netloc: str) -> None:
         credentials = self._credentials
         if credentials is None:
             return
         endpoint = f"{scheme}://{netloc}/w/api.php"
-        token_parameters = urllib.parse.urlencode(
+        try:
+            token = self._request_login_token(opener, endpoint)
+            login_data = self._request_login(opener, endpoint, credentials, token)
+            _require_login_success(login_data)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            raise WikimediaAuthenticationError(
+                f"Wikimedia Bot Password authentication failed for {netloc}"
+            ) from None
+
+    def _request_login_token(self, opener: _Opener, endpoint: str) -> str:
+        parameters = urllib.parse.urlencode(
             {
                 "action": "query",
                 "format": "json",
@@ -293,53 +300,54 @@ class WikimediaSession:
                 "type": "login",
             }
         )
-        try:
-            token_data = self._read_json(
-                opener,
-                urllib.request.Request(
-                    f"{endpoint}?{token_parameters}",
-                    headers={"User-Agent": self._user_agent, "Accept": "application/json"},
-                ),
-            )
-            query = token_data.get("query")
-            if not isinstance(query, dict):
-                raise ValueError("missing query")
-            tokens = query.get("tokens")
-            if not isinstance(tokens, dict):
-                raise ValueError("missing tokens")
-            token = tokens.get("logintoken")
-            if not isinstance(token, str) or not token:
-                raise ValueError("missing login token")
-            login_body = urllib.parse.urlencode(
-                {
-                    "action": "login",
-                    "format": "json",
-                    "formatversion": "2",
-                    "lgname": credentials.username,
-                    "lgpassword": credentials.password,
-                    "lgtoken": token,
-                }
-            ).encode()
-            login_data = self._read_json(
-                opener,
-                urllib.request.Request(
-                    endpoint,
-                    data=login_body,
-                    headers={
-                        "User-Agent": self._user_agent,
-                        "Accept": "application/json",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    },
-                    method="POST",
-                ),
-            )
-            login = login_data.get("login")
-            if not isinstance(login, dict) or login.get("result") != "Success":
-                raise ValueError("login rejected")
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            raise WikimediaAuthenticationError(
-                f"Wikimedia Bot Password authentication failed for {netloc}"
-            ) from None
+        token_data = self._read_json(
+            opener,
+            urllib.request.Request(
+                f"{endpoint}?{parameters}",
+                headers={"User-Agent": self._user_agent, "Accept": "application/json"},
+            ),
+        )
+        query = token_data.get("query")
+        if not isinstance(query, dict):
+            raise ValueError("missing query")
+        tokens = query.get("tokens")
+        if not isinstance(tokens, dict):
+            raise ValueError("missing tokens")
+        token = tokens.get("logintoken")
+        if not isinstance(token, str) or not token:
+            raise ValueError("missing login token")
+        return token
+
+    def _request_login(
+        self,
+        opener: _Opener,
+        endpoint: str,
+        credentials: WikimediaCredentials,
+        token: str,
+    ) -> dict[str, object]:
+        login_body = urllib.parse.urlencode(
+            {
+                "action": "login",
+                "format": "json",
+                "formatversion": "2",
+                "lgname": credentials.username,
+                "lgpassword": credentials.password,
+                "lgtoken": token,
+            }
+        ).encode()
+        return self._read_json(
+            opener,
+            urllib.request.Request(
+                endpoint,
+                data=login_body,
+                headers={
+                    "User-Agent": self._user_agent,
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                method="POST",
+            ),
+        )
 
     def _read_json(self, opener: _Opener, request: urllib.request.Request) -> dict[str, object]:
         body, _ = self._read(opener, request)
@@ -370,15 +378,31 @@ def load_wikimedia_credentials(
 ) -> WikimediaCredentials | None:
     """Load an optional all-or-nothing Bot Password pair."""
     source = os.environ if environ is None else environ
-    username = source.get(WIKIMEDIA_BOT_USERNAME, "").strip()
-    password = source.get(WIKIMEDIA_BOT_PASSWORD, "").strip()
+    username, password = _credential_values(source)
     if not username and not password:
         return None
+    return _validated_credentials(username, password)
+
+
+def _validated_credentials(username: str, password: str) -> WikimediaCredentials:
     if not username:
         raise WikimediaConfigurationError(f"Missing {WIKIMEDIA_BOT_USERNAME}")
     if not password:
         raise WikimediaConfigurationError(f"Missing {WIKIMEDIA_BOT_PASSWORD}")
     return WikimediaCredentials(username=username, password=password)
+
+
+def _credential_values(source: Mapping[str, str]) -> tuple[str, str]:
+    return (
+        source.get(WIKIMEDIA_BOT_USERNAME, "").strip(),
+        source.get(WIKIMEDIA_BOT_PASSWORD, "").strip(),
+    )
+
+
+def _require_login_success(login_data: Mapping[str, object]) -> None:
+    login = login_data.get("login")
+    if not isinstance(login, dict) or login.get("result") != "Success":
+        raise ValueError("login rejected")
 
 
 __all__ = [

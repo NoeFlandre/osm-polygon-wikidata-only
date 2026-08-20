@@ -99,3 +99,12 @@ def test_bbox_handles_polygon_with_hole() -> None:
     # The hole is included in the bbox span (correct, since the hole
     # is still part of the polygon's footprint).
     assert bbox_from_geom(geom) == [0.0, 0.0, 10.0, 10.0]
+
+
+def test_coordinate_pair_normalizes_valid_values_and_rejects_bad_shapes() -> None:
+    from osm_polygon_wikidata_only.domain import analysis
+
+    assert analysis._coordinate_pair(["1.5", 2]) == (1.5, 2.0)
+    assert analysis._coordinate_pair([1]) is None
+    assert analysis._coordinate_pair(["not-a-number", 2]) is None
+    assert analysis._coordinate_pair("not-a-pair") is None

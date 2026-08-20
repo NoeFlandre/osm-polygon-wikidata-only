@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -23,34 +23,63 @@ def assign_continents(
     assignments = np.full(len(points), "Unassigned", dtype=object)
     point_array = np.asarray(points, dtype=float)
     for feature in features:
-        continent = str(feature.get("properties", {}).get("CONTINENT") or "Unassigned")
-        geometry = feature.get("geometry", {})
-        coordinates = geometry.get("coordinates") or []
-        polygons = coordinates if geometry.get("type") == "MultiPolygon" else [coordinates]
+        continent, polygons = _feature_polygons(feature)
         for polygon in polygons:
-            if not polygon:
-                continue
-            outer = np.asarray(polygon[0], dtype=float)
-            if outer.size == 0:
-                continue
-            unassigned = assignments == "Unassigned"
-            candidates = (
-                unassigned
-                & (point_array[:, 0] >= outer[:, 0].min())
-                & (point_array[:, 0] <= outer[:, 0].max())
-                & (point_array[:, 1] >= outer[:, 1].min())
-                & (point_array[:, 1] <= outer[:, 1].max())
-            )
-            indexes = np.flatnonzero(candidates)
-            if indexes.size == 0:
-                continue
-            inside = MatplotlibPath(outer).contains_points(point_array[indexes], radius=1e-9)
-            for hole in polygon[1:]:
-                inside &= ~MatplotlibPath(np.asarray(hole, dtype=float)).contains_points(
-                    point_array[indexes], radius=-1e-9
-                )
-            assignments[indexes[inside]] = continent
+            _assign_polygon(assignments, point_array, polygon, continent)
     return [str(value) for value in assignments]
+
+
+def _feature_polygons(feature: dict[str, Any]) -> tuple[str, Sequence[Any]]:
+    continent = str(feature.get("properties", {}).get("CONTINENT") or "Unassigned")
+    geometry = feature.get("geometry", {})
+    coordinates = geometry.get("coordinates") or []
+    polygons = coordinates if geometry.get("type") == "MultiPolygon" else [coordinates]
+    return continent, polygons
+
+
+def _assign_polygon(
+    assignments: np.ndarray,
+    point_array: np.ndarray,
+    polygon: Any,
+    continent: str,
+) -> None:
+    if not polygon:
+        return
+    outer = np.asarray(polygon[0], dtype=float)
+    if outer.size == 0:
+        return
+    indexes = _candidate_indexes(assignments, point_array, outer)
+    if indexes.size == 0:
+        return
+    inside = _inside_polygon(point_array[indexes], polygon)
+    assignments[indexes[inside]] = continent
+
+
+def _candidate_indexes(
+    assignments: np.ndarray,
+    point_array: np.ndarray,
+    outer: np.ndarray,
+) -> np.ndarray:
+    unassigned = assignments == "Unassigned"
+    candidates = (
+        unassigned
+        & (point_array[:, 0] >= outer[:, 0].min())
+        & (point_array[:, 0] <= outer[:, 0].max())
+        & (point_array[:, 1] >= outer[:, 1].min())
+        & (point_array[:, 1] <= outer[:, 1].max())
+    )
+    return np.flatnonzero(candidates)
+
+
+def _inside_polygon(point_array: np.ndarray, polygon: Any) -> np.ndarray:
+    inside = MatplotlibPath(np.asarray(polygon[0], dtype=float)).contains_points(
+        point_array, radius=1e-9
+    )
+    for hole in polygon[1:]:
+        inside &= ~MatplotlibPath(np.asarray(hole, dtype=float)).contains_points(
+            point_array, radius=-1e-9
+        )
+    return inside
 
 
 def render_continent_stats(rows: Sequence[tuple[str, int, int, int, int, int]]) -> str:
@@ -104,54 +133,21 @@ def compute_continent_stats(
     processed_root: Path, country_geojson_path: Path
 ) -> list[tuple[str, int, int, int, int, int]]:
     """Compute deterministic document and polygon coverage by continent."""
-    data = json.loads(country_geojson_path.read_text(encoding="utf-8"))
-    features = data.get("features")
-    if not isinstance(features, list):
-        raise ValueError(f"Natural Earth file has no feature list: {country_geojson_path}")
-
-    polygon_rows: list[dict[str, Any]] = []
-    for path in sorted_parquets(processed_root / "polygons"):
-        polygon_rows.extend(
-            read_required_columns(path, ("polygon_id", "wikidata", "lon", "lat"), label="polygons")
-        )
-    assignments = assign_continents(
-        [(float(row["lon"]), float(row["lat"])) for row in polygon_rows], features
-    )
-    polygon_continent = {
-        str(row["polygon_id"]): continent
-        for row, continent in zip(polygon_rows, assignments, strict=True)
-    }
-    polygon_counts: dict[str, int] = defaultdict(int)
-    for _row, continent in zip(polygon_rows, assignments, strict=True):
-        polygon_counts[continent] += 1
-
+    features = _load_continent_features(country_geojson_path)
+    polygon_rows = _load_polygon_rows(processed_root)
+    assignments = _assign_polygon_rows(polygon_rows, features)
+    polygon_continent = _polygon_continents(polygon_rows, assignments)
+    polygon_counts = _count_assignments(assignments)
     presence = load_text_presence(processed_root)
-    wikipedia_docs: dict[str, set[str]] = defaultdict(set)
-    for link in read_document_links(processed_root):
-        link_continent = polygon_continent.get(link.polygon_id)
-        if (
-            link.project == "wikipedia"
-            and link.document_id in presence.wikipedia_document_ids
-            and link_continent
-        ):
-            wikipedia_docs[link_continent].add(link.document_id)
-
-    wikivoyage_docs: dict[str, set[str]] = defaultdict(set)
-    for link in read_document_links(processed_root):
-        link_continent = polygon_continent.get(link.polygon_id)
-        if (
-            link.project == "wikivoyage"
-            and link.document_id in presence.wikivoyage_document_ids
-            and link_continent
-        ):
-            wikivoyage_docs[link_continent].add(link.document_id)
-
-    wiki_polygon_counts: dict[str, int] = defaultdict(int)
-    combined_counts: dict[str, int] = defaultdict(int)
-    for polygon_id in presence.wikipedia_covered_polygon_ids:
-        wiki_polygon_counts[polygon_continent[polygon_id]] += 1
-    for polygon_id in presence.combined_covered_polygon_ids:
-        combined_counts[polygon_continent[polygon_id]] += 1
+    wikipedia_docs, wikivoyage_docs = _document_counts(
+        read_document_links(processed_root), polygon_continent, presence
+    )
+    wiki_polygon_counts = _covered_polygon_counts(
+        presence.wikipedia_covered_polygon_ids, polygon_continent
+    )
+    combined_counts = _covered_polygon_counts(
+        presence.combined_covered_polygon_ids, polygon_continent
+    )
     return [
         (
             continent,
@@ -163,6 +159,73 @@ def compute_continent_stats(
         )
         for continent in sorted(polygon_counts)
     ]
+
+
+def _load_continent_features(country_geojson_path: Path) -> list[dict[str, Any]]:
+    data = json.loads(country_geojson_path.read_text(encoding="utf-8"))
+    features = data.get("features")
+    if not isinstance(features, list):
+        raise ValueError(f"Natural Earth file has no feature list: {country_geojson_path}")
+    return features
+
+
+def _load_polygon_rows(processed_root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted_parquets(processed_root / "polygons"):
+        rows.extend(
+            read_required_columns(path, ("polygon_id", "wikidata", "lon", "lat"), label="polygons")
+        )
+    return rows
+
+
+def _assign_polygon_rows(
+    polygon_rows: Sequence[dict[str, Any]], features: Sequence[dict[str, Any]]
+) -> list[str]:
+    points = [(float(row["lon"]), float(row["lat"])) for row in polygon_rows]
+    return assign_continents(points, features)
+
+
+def _polygon_continents(
+    polygon_rows: Sequence[dict[str, Any]], assignments: Sequence[str]
+) -> dict[str, str]:
+    return {
+        str(row["polygon_id"]): continent
+        for row, continent in zip(polygon_rows, assignments, strict=True)
+    }
+
+
+def _count_assignments(assignments: Sequence[str]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for continent in assignments:
+        counts[continent] += 1
+    return counts
+
+
+def _document_counts(
+    links: Sequence[Any], polygon_continent: dict[str, str], presence: Any
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    wikipedia_docs: dict[str, set[str]] = defaultdict(set)
+    wikivoyage_docs: dict[str, set[str]] = defaultdict(set)
+    document_ids = {
+        "wikipedia": presence.wikipedia_document_ids,
+        "wikivoyage": presence.wikivoyage_document_ids,
+    }
+    target_sets = {"wikipedia": wikipedia_docs, "wikivoyage": wikivoyage_docs}
+    for link in links:
+        continent = polygon_continent.get(link.polygon_id)
+        if continent is None or link.document_id not in document_ids.get(link.project, set()):
+            continue
+        target_sets[link.project][continent].add(link.document_id)
+    return wikipedia_docs, wikivoyage_docs
+
+
+def _covered_polygon_counts(
+    polygon_ids: Collection[str], polygon_continent: dict[str, str]
+) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for polygon_id in polygon_ids:
+        counts[polygon_continent[polygon_id]] += 1
+    return counts
 
 
 __all__ = ["assign_continents", "compute_continent_stats", "render_continent_stats"]

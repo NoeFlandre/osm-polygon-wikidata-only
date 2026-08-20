@@ -167,30 +167,51 @@ def resolve_data_root(
     # Explicit or env-var candidates MUST point to an existing directory.
     # This avoids silently falling back to the recommended local path when
     # a user typo'd an explicit value.
-    explicit_candidates: list[tuple[str, Path]] = []
-    if explicit is not None:
-        explicit_candidates.append(("explicit --data-root", Path(explicit).expanduser()))
-    if (env := os.environ.get(ENV_VAR)) is not None:
-        explicit_candidates.append((f"${ENV_VAR}", Path(env).expanduser()))
+    explicit_candidates = _explicit_candidates(explicit)
 
     if explicit_candidates:
-        for source, candidate in explicit_candidates:
-            if not candidate.exists():
-                raise DataRootError(f"Data root {candidate} ({source}) does not exist.")
-        # All explicit candidates exist; validate and pick the first.
-        for source, candidate in explicit_candidates:
-            if not candidate.is_dir():
-                raise DataRootError(
-                    f"Data root candidate {candidate} ({source}) is not a directory."
-                )
-            if _is_inside(candidate, repo_root):
-                raise DataRootError(
-                    f"Data root {candidate} ({source}) is inside the repository "
-                    f"({repo_root}). Refusing to write artifacts into the repo."
-                )
-            return DataRoot(candidate)
+        _require_candidates_exist(explicit_candidates)
+        return _validate_candidates(explicit_candidates, repo_root)
 
     raise DataRootError(
         "Could not resolve a data root. Provide one via --data-root, set "
         f"the {ENV_VAR} environment variable, and keep it outside the source repository."
     )
+
+
+def _explicit_candidates(
+    explicit: str | os.PathLike[str] | None,
+) -> list[tuple[str, Path]]:
+    candidates: list[tuple[str, Path]] = []
+    if explicit is not None:
+        candidates.append(("explicit --data-root", Path(explicit).expanduser()))
+    env = os.environ.get(ENV_VAR)
+    if env is not None:
+        candidates.append((f"${ENV_VAR}", Path(env).expanduser()))
+    return candidates
+
+
+def _require_candidates_exist(candidates: list[tuple[str, Path]]) -> None:
+    for source, candidate in candidates:
+        if not candidate.exists():
+            raise DataRootError(f"Data root {candidate} ({source}) does not exist.")
+
+
+def _validate_candidates(
+    candidates: list[tuple[str, Path]],
+    repo_root: Path,
+) -> DataRoot:
+    for source, candidate in candidates:
+        _validate_candidate(candidate, source, repo_root)
+        return DataRoot(candidate)
+    raise AssertionError("at least one data-root candidate is required")
+
+
+def _validate_candidate(candidate: Path, source: str, repo_root: Path) -> None:
+    if not candidate.is_dir():
+        raise DataRootError(f"Data root candidate {candidate} ({source}) is not a directory.")
+    if _is_inside(candidate, repo_root):
+        raise DataRootError(
+            f"Data root {candidate} ({source}) is inside the repository "
+            f"({repo_root}). Refusing to write artifacts into the repo."
+        )

@@ -82,32 +82,10 @@ class RejectionRecord:
     cascaded_sections: int = 0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.shard, str) or not self.shard:
-            raise ValueError(f"Rejection shard must be a non-empty string, got {self.shard!r}")
-        if self.source_table not in SUPPORTED_SOURCE_TABLES:
-            raise ValueError(
-                f"Unsupported source_table {self.source_table!r}; "
-                f"must be one of {sorted(SUPPORTED_SOURCE_TABLES)}"
-            )
-        if not isinstance(self.identifier, str) or not self.identifier:
-            raise ValueError(
-                f"Rejection identifier must be a non-empty string, got {self.identifier!r}"
-            )
-        if not isinstance(self.reason, str) or not self.reason:
-            raise ValueError(f"Rejection reason must be a non-empty string, got {self.reason!r}")
-        if not _is_valid_qid(self.wikidata):
-            raise ValueError(
-                f"Rejection observed wikidata must be a valid QID, got {self.wikidata!r}"
-            )
-        if self.expected is not None and not _is_valid_qid(self.expected):
-            raise ValueError(
-                f"Rejection expected wikidata must be a valid QID or None, got {self.expected!r}"
-            )
-        if not isinstance(self.cascaded_sections, int) or self.cascaded_sections < 0:
-            raise ValueError(
-                f"Rejection cascaded_sections must be a non-negative int, "
-                f"got {self.cascaded_sections!r}"
-            )
+        _validate_rejection_strings(self.shard, self.identifier, self.reason)
+        _validate_source_table(self.source_table)
+        _validate_rejection_qids(self.wikidata, self.expected)
+        _validate_cascaded_sections(self.cascaded_sections)
 
     @property
     def identity(self) -> tuple[str, str, str, str, str | None]:
@@ -123,6 +101,42 @@ class RejectionRecord:
             "reason": self.reason,
             "cascaded_sections": self.cascaded_sections,
         }
+
+
+def _validate_rejection_strings(shard: object, identifier: object, reason: object) -> None:
+    _require_nonempty_string(shard, "shard")
+    _require_nonempty_string(identifier, "identifier")
+    _require_nonempty_string(reason, "reason")
+
+
+def _require_nonempty_string(value: object, name: str) -> None:
+    if isinstance(value, str) and value:
+        return
+    raise ValueError(f"Rejection {name} must be a non-empty string, got {value!r}")
+
+
+def _validate_source_table(source_table: str) -> None:
+    if source_table not in SUPPORTED_SOURCE_TABLES:
+        raise ValueError(
+            f"Unsupported source_table {source_table!r}; "
+            f"must be one of {sorted(SUPPORTED_SOURCE_TABLES)}"
+        )
+
+
+def _validate_rejection_qids(wikidata: str, expected: str | None) -> None:
+    if not _is_valid_qid(wikidata):
+        raise ValueError(f"Rejection observed wikidata must be a valid QID, got {wikidata!r}")
+    if expected is not None and not _is_valid_qid(expected):
+        raise ValueError(
+            f"Rejection expected wikidata must be a valid QID or None, got {expected!r}"
+        )
+
+
+def _validate_cascaded_sections(cascaded_sections: object) -> None:
+    if not isinstance(cascaded_sections, int) or cascaded_sections < 0:
+        raise ValueError(
+            f"Rejection cascaded_sections must be a non-negative int, got {cascaded_sections!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +275,27 @@ def plan_integrity_normalization(data_root: DataRoot, stem: str) -> IntegrityPla
     Returns a deterministic plan with the retained tables and the
     rejection records. Does NOT modify any file on disk.
     """
+    valid_qids, documents_rows, sections_rows = _load_normalization_rows(data_root, stem)
+    retained_documents, rejected_document_ids, rejections = _retain_documents(
+        stem, valid_qids, documents_rows
+    )
+    retained_sections, cascades_by_document = _retain_sections(rejected_document_ids, sections_rows)
+    rejections = _attach_cascade_counts(rejections, cascades_by_document)
+
+    rejections_sorted = merge_records(rejections)
+    return IntegrityPlan(
+        stem=stem,
+        data_root=data_root,
+        retained_documents=retained_documents,
+        retained_sections=retained_sections,
+        rejections=rejections_sorted,
+    )
+
+
+def _load_normalization_rows(
+    data_root: DataRoot,
+    stem: str,
+) -> tuple[set[str], list[dict[str, Any]], list[dict[str, Any]]]:
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not polygons_path.is_file():
         raise FileNotFoundError(f"Polygons parquet missing: {polygons_path}")
@@ -273,24 +308,32 @@ def plan_integrity_normalization(data_root: DataRoot, stem: str) -> IntegrityPla
     sections_path = data_root.processed / "wikivoyage" / "sections" / f"{stem}.parquet"
     if not documents_path.is_file():
         raise FileNotFoundError(f"wikivoyage/documents parquet missing: {documents_path}")
-    documents_table = pq.read_table(documents_path, columns=list(DOCUMENT_COLUMNS))  # type: ignore[no-untyped-call]
-    documents_rows = documents_table.to_pylist()
+    documents_rows = pq.read_table(documents_path, columns=list(DOCUMENT_COLUMNS)).to_pylist()  # type: ignore[no-untyped-call]
+    sections_rows = _read_sections(sections_path)
+    return valid_qids, documents_rows, sections_rows
 
-    if sections_path.is_file():
-        sections_table = pq.read_table(sections_path, columns=list(SECTION_COLUMNS))  # type: ignore[no-untyped-call]
-        sections_rows = sections_table.to_pylist()
-    else:
-        sections_rows = []
 
-    retained_documents: list[dict[str, Any]] = []
-    rejected_document_ids: set[str] = set()
+def _read_sections(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return pq.read_table(path, columns=list(SECTION_COLUMNS)).to_pylist()  # type: ignore[no-untyped-call]
+
+
+def _retain_documents(
+    stem: str,
+    valid_qids: set[str],
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[str], list[RejectionRecord]]:
+    retained: list[dict[str, Any]] = []
+    rejected_ids: set[str] = set()
     rejections: list[RejectionRecord] = []
-
-    for row in documents_rows:
+    for row in rows:
         document_id = str(row.get("document_id", ""))
         wikidata = str(row.get("wikidata", ""))
-        if wikidata not in valid_qids:
-            rejected_document_ids.add(document_id)
+        if wikidata in valid_qids:
+            retained.append({col: row.get(col) for col in DOCUMENT_COLUMNS})
+        else:
+            rejected_ids.add(document_id)
             rejections.append(
                 RejectionRecord(
                     shard=stem,
@@ -299,24 +342,31 @@ def plan_integrity_normalization(data_root: DataRoot, stem: str) -> IntegrityPla
                     wikidata=wikidata,
                     expected=None,
                     reason="wikidata_absent_from_polygons",
-                    cascaded_sections=0,
                 )
             )
-            continue
-        retained_documents.append({col: row.get(col) for col in DOCUMENT_COLUMNS})
+    return retained, rejected_ids, rejections
 
-    retained_sections: list[dict[str, Any]] = []
-    cascaded_count = 0
-    cascades_by_document: dict[str, int] = {}
-    for row in sections_rows:
+
+def _retain_sections(
+    rejected_ids: set[str],
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    retained: list[dict[str, Any]] = []
+    cascades: dict[str, int] = {}
+    for row in rows:
         document_id = str(row.get("document_id", ""))
-        if document_id in rejected_document_ids:
-            cascaded_count += 1
-            cascades_by_document[document_id] = cascades_by_document.get(document_id, 0) + 1
-            continue
-        retained_sections.append({col: row.get(col) for col in SECTION_COLUMNS})
+        if document_id in rejected_ids:
+            cascades[document_id] = cascades.get(document_id, 0) + 1
+        else:
+            retained.append({col: row.get(col) for col in SECTION_COLUMNS})
+    return retained, cascades
 
-    rejections = [
+
+def _attach_cascade_counts(
+    rejections: list[RejectionRecord],
+    cascades: dict[str, int],
+) -> list[RejectionRecord]:
+    return [
         RejectionRecord(
             shard=record.shard,
             source_table=record.source_table,
@@ -324,19 +374,10 @@ def plan_integrity_normalization(data_root: DataRoot, stem: str) -> IntegrityPla
             wikidata=record.wikidata,
             expected=record.expected,
             reason=record.reason,
-            cascaded_sections=cascades_by_document.get(record.identifier, 0),
+            cascaded_sections=cascades.get(record.identifier, 0),
         )
         for record in rejections
     ]
-
-    rejections_sorted = merge_records(rejections)
-    return IntegrityPlan(
-        stem=stem,
-        data_root=data_root,
-        retained_documents=retained_documents,
-        retained_sections=retained_sections,
-        rejections=rejections_sorted,
-    )
 
 
 def apply_integrity_normalization(plan: IntegrityPlan) -> None:
@@ -351,34 +392,43 @@ def apply_integrity_normalization(plan: IntegrityPlan) -> None:
     preserved across runs.
     """
     data_root = plan.data_root
+    _write_retained_table(
+        data_root.processed / "wikivoyage" / "documents" / f"{plan.stem}.parquet",
+        plan.retained_documents,
+        DOCUMENT_COLUMNS,
+        document_schema(),
+    )
+    _write_retained_table(
+        data_root.processed / "wikivoyage" / "sections" / f"{plan.stem}.parquet",
+        plan.retained_sections,
+        SECTION_COLUMNS,
+        section_schema(),
+    )
+    _write_integrity_ledgers(data_root, plan.stem, plan.rejections)
 
-    documents_path = data_root.processed / "wikivoyage" / "documents" / f"{plan.stem}.parquet"
-    sections_path = data_root.processed / "wikivoyage" / "sections" / f"{plan.stem}.parquet"
 
-    # Stage documents.
-    if plan.retained_documents:
-        documents_table = pa.Table.from_pylist(plan.retained_documents, schema=document_schema())
-    else:
-        documents_table = pa.table({col: [] for col in DOCUMENT_COLUMNS}, schema=document_schema())
-    _atomic_overwrite_parquet(documents_path, documents_table)
+def _write_retained_table(
+    path: Path,
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    schema: pa.Schema,
+) -> None:
+    table = (
+        pa.Table.from_pylist(rows, schema=schema)
+        if rows
+        else pa.table({column: [] for column in columns}, schema=schema)
+    )
+    _atomic_overwrite_parquet(path, table)
 
-    # Stage sections.
-    if plan.retained_sections:
-        sections_table = pa.Table.from_pylist(plan.retained_sections, schema=section_schema())
-    else:
-        sections_table = pa.table({col: [] for col in SECTION_COLUMNS}, schema=section_schema())
-    _atomic_overwrite_parquet(sections_path, sections_table)
 
-    # Merge per-stem rejection records into the cumulative ledger. The
-    # existing cumulative ledger (if any) is one of the sources so prior
-    # stem histories are preserved. The cumulative ledger is the LAST
-    # commit in this transaction.
+def _write_integrity_ledgers(
+    data_root: DataRoot,
+    stem: str,
+    rejections: list[RejectionRecord],
+) -> None:
     ledger_path = data_root.processed / "integrity" / LEDGER_FILENAME
-    stem_ledger_path = data_root.processed / "integrity" / f"{plan.stem}.json"
-    save_ledger(stem_ledger_path, plan.rejections)
-    # ``merge_ledger_files`` merges from sources + saves target. We
-    # include the existing ledger as one source so prior history is
-    # preserved across runs.
+    stem_ledger_path = data_root.processed / "integrity" / f"{stem}.json"
+    save_ledger(stem_ledger_path, rejections)
     sources: list[Path] = [stem_ledger_path]
     if ledger_path.is_file():
         sources.append(ledger_path)

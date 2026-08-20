@@ -58,18 +58,27 @@ def load_centroids_from_parquet(polygons_dir: Path) -> tuple[list[float], list[f
     if not polygons_dir.exists():
         return lons, lats
     for parquet_path in sorted(polygons_dir.glob("*.parquet")):
-        try:
-            table = pq.read_table(parquet_path, columns=["lon", "lat"])  # type: ignore[no-untyped-call]
-        except (OSError, KeyError) as e:
-            LOGGER.warning("Skipping %s: %s", parquet_path, e)
+        file_lons, file_lats = _load_centroid_file(parquet_path)
+        lons.extend(file_lons)
+        lats.extend(file_lats)
+    return lons, lats
+
+
+def _load_centroid_file(parquet_path: Path) -> tuple[list[float], list[float]]:
+    try:
+        table = pq.read_table(parquet_path, columns=["lon", "lat"])  # type: ignore[no-untyped-call]
+    except (OSError, KeyError) as error:
+        LOGGER.warning("Skipping %s: %s", parquet_path, error)
+        return [], []
+    lons: list[float] = []
+    lats: list[float] = []
+    for row_lon, row_lat in zip(
+        table.column("lon").to_pylist(), table.column("lat").to_pylist(), strict=True
+    ):
+        if row_lon is None or row_lat is None:
             continue
-        for row_lon, row_lat in zip(
-            table.column("lon").to_pylist(), table.column("lat").to_pylist(), strict=True
-        ):
-            if row_lon is None or row_lat is None:
-                continue
-            lons.append(float(row_lon))
-            lats.append(float(row_lat))
+        lons.append(float(row_lon))
+        lats.append(float(row_lat))
     return lons, lats
 
 
@@ -132,62 +141,92 @@ def generate_coverage_map(
     dense clusters darken naturally.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     fig.set_facecolor("white")
-    ax.set_facecolor(_OCEAN_COLOR)
+    _configure_coverage_axes(ax, land_geojson_path)
+    _draw_coverage_points(ax, lons, lats, point_size, point_color, point_edge)
+    _decorate_coverage_axes(ax, title, len(lons))
+    _save_coverage_map(fig, output_path)
 
+    LOGGER.info("Wrote coverage map (%d points) to %s", len(lons), output_path)
+    return output_path
+
+
+def _configure_coverage_axes(ax: Any, land_geojson_path: Path | None) -> None:
+    ax.set_facecolor(_OCEAN_COLOR)
     ax.set_xlim(-180, 180)
     ax.set_ylim(-90, 90)
     ax.set_xticks(range(-180, 181, 30))
     ax.set_yticks(range(-90, 91, 30))
     ax.grid(True, color="#ffffff", linewidth=0.3, alpha=0.4)
     ax.tick_params(colors="#666666", labelsize=7)
-
     if land_geojson_path is not None and land_geojson_path.exists():
         _draw_landmasses(ax, land_geojson_path)
 
-    if lons and lats:
-        ax.scatter(
-            lons,
-            lats,
-            s=point_size,
-            c=point_color,
-            edgecolors=point_edge,
-            linewidths=0.1,
-            alpha=_POINT_ALPHA,
-            zorder=3,
-        )
 
-    polygon_label = "polygon" if len(lons) == 1 else "polygons"
+def _draw_coverage_points(
+    ax: Any,
+    lons: list[float],
+    lats: list[float],
+    point_size: float,
+    point_color: str,
+    point_edge: str,
+) -> None:
+    if not lons or not lats:
+        return
+    ax.scatter(
+        lons,
+        lats,
+        s=point_size,
+        c=point_color,
+        edgecolors=point_edge,
+        linewidths=0.1,
+        alpha=_POINT_ALPHA,
+        zorder=3,
+    )
+
+
+def _decorate_coverage_axes(ax: Any, title: str, point_count: int) -> None:
+    polygon_label = "polygon" if point_count == 1 else "polygons"
     ax.set_title(
-        f"{title} - {len(lons):,} {polygon_label} plotted",
+        f"{title} - {point_count:,} {polygon_label} plotted",
         fontsize=11,
         color="#333333",
         pad=10,
     )
     ax.set_aspect("equal", adjustable="box")
 
+
+def _save_coverage_map(fig: Any, output_path: Path) -> None:
     fig.tight_layout()
     fig.savefig(str(output_path), format="png", facecolor="white")
     plt.close(fig)
-
-    LOGGER.info("Wrote coverage map (%d points) to %s", len(lons), output_path)
-    return output_path
 
 
 def _draw_landmasses(ax: Any, geojson_path: Path) -> None:
     """Parse a GeoJSON file and draw filled landmass polygons."""
     data: dict[str, Any] = json.loads(geojson_path.read_text(encoding="utf-8"))
     for feature in data.get("features", []):
-        geom = feature.get("geometry", {})
-        gtype = geom.get("type")
-        coords = geom.get("coordinates")
-        if gtype == "Polygon" and coords:
-            _draw_polygon_rings(ax, coords)
-        elif gtype == "MultiPolygon" and coords:
-            for polygon_coords in coords:
-                _draw_polygon_rings(ax, polygon_coords)
+        _draw_land_feature(ax, feature)
+
+
+def _draw_land_feature(ax: Any, feature: dict[str, Any]) -> None:
+    geom = feature.get("geometry", {})
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    if gtype == "Polygon" and coords:
+        _draw_land_polygon(ax, coords)
+    elif gtype == "MultiPolygon" and coords:
+        _draw_land_multipolygon(ax, coords)
+
+
+def _draw_land_polygon(ax: Any, coords: list[list[list[float]]]) -> None:
+    _draw_polygon_rings(ax, coords)
+
+
+def _draw_land_multipolygon(ax: Any, coords: list[list[list[list[float]]]]) -> None:
+    for polygon_coords in coords:
+        _draw_polygon_rings(ax, polygon_coords)
 
 
 def _draw_polygon_rings(ax: Any, rings: list[list[list[float]]]) -> None:

@@ -68,6 +68,22 @@ def test_publication_op_rejects_snapshot_path_on_delete(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("action", "local_path", "message"),
+    [
+        ("add", None, "requires a local_path"),
+        ("delete", Path("canonical.parquet"), "must not carry a local_path"),
+    ],
+)
+def test_publication_op_enforces_local_path_by_action(
+    action: str, local_path: Path | None, message: str
+) -> None:
+    PublicationOp, _add, _delete = _import_publication_op()
+
+    with pytest.raises(ValueError, match=message):
+        PublicationOp(action=action, path_in_repo="data.parquet", local_path=local_path)
+
+
 def test_ordinary_publication_assemblers_do_not_set_snapshot_path() -> None:
     """No assembler helper in ``hf.publication`` should construct a
     ``PublicationOp`` with a non-None ``snapshot_path``. The

@@ -27,6 +27,10 @@ def resolve_hf_token(explicit: str | None) -> str | None:
     """
     if explicit:
         return explicit
+    return _load_hf_token()
+
+
+def _load_hf_token() -> str | None:
     try:
         from huggingface_hub import get_token
     except ImportError:  # pragma: no cover
@@ -59,24 +63,29 @@ def verify_hf_token(explicit: str | None, *, _whoami: Any = None) -> str | None:
     if not token:
         return None
     configure_hf_http_transport()
-    if _whoami is None:
-        try:
-            from huggingface_hub import HfApi
-        except ImportError as e:  # pragma: no cover
-            raise UploadError(
-                "huggingface_hub is required to verify a token. "
-                "Install with `uv add huggingface_hub`."
-            ) from e
-
-        def _whoami(tok: str) -> dict[str, Any]:
-            return HfApi(token=tok).whoami()
-
     try:
-        info = _whoami(token)
+        info = _whoami_client(_whoami)(token)
     except Exception as error:
         raise UploadError(
             f"Hugging Face rejected HF_TOKEN: {error}. "
             "Generate a fresh write token at https://huggingface.co/settings/tokens."
         ) from error
+    return _verified_name(info)
+
+
+def _whoami_client(whoami: Any) -> Any:
+    if whoami is not None:
+        return whoami
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as error:  # pragma: no cover
+        raise UploadError(
+            "huggingface_hub is required to verify a token. Install with `uv add huggingface_hub`."
+        ) from error
+
+    return lambda token: HfApi(token=token).whoami()
+
+
+def _verified_name(info: object) -> str:
     name = info.get("name") if isinstance(info, dict) else None
     return str(name) if name else "unknown"

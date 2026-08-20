@@ -94,27 +94,7 @@ class StubHfHub:
         repo_type: str,
         num_threads: int,
     ) -> str:
-        ops: list[dict[str, Any]] = []
-        for operation in operations:
-            if isinstance(operation, PublicationOp):
-                ops.append(
-                    {
-                        "action": operation.action,
-                        "path_in_repo": operation.path_in_repo,
-                    }
-                )
-            else:  # real ``CommitOperationAdd`` / ``CommitOperationDelete``
-                # or similar duck-typed shape. Detect by class name
-                # because ``huggingface_hub.CommitOperationDelete``
-                # exposes no ``.action`` attribute.
-                cls_name = type(operation).__name__
-                action = "delete" if "Delete" in cls_name else "add"
-                ops.append(
-                    {
-                        "action": action,
-                        "path_in_repo": getattr(operation, "path_in_repo", None),
-                    }
-                )
+        ops = [_serialize_operation(operation) for operation in operations]
         self.commits.append(
             {
                 "repo_id": repo_id,
@@ -125,12 +105,7 @@ class StubHfHub:
                 "num_threads": num_threads,
             }
         )
-        if self.remote_files is not None:
-            for op in ops:
-                if op["action"] == "add":
-                    self.remote_files.add(op["path_in_repo"])
-                else:
-                    self.remote_files.discard(op["path_in_repo"])
+        _apply_remote_operations(self.remote_files, ops)
         return str(uuid4())
 
     def create_repo(
@@ -144,3 +119,24 @@ class StubHfHub:
             {"repo_id": repo_id, "repo_type": repo_type, "exist_ok": exist_ok}
         )
         return repo_id
+
+
+def _serialize_operation(operation: Any) -> dict[str, Any]:
+    if isinstance(operation, PublicationOp):
+        return {"action": operation.action, "path_in_repo": operation.path_in_repo}
+    cls_name = type(operation).__name__
+    action = "delete" if "Delete" in cls_name else "add"
+    return {"action": action, "path_in_repo": getattr(operation, "path_in_repo", None)}
+
+
+def _apply_remote_operations(
+    remote_files: set[str] | None,
+    operations: list[dict[str, Any]],
+) -> None:
+    if remote_files is None:
+        return
+    for operation in operations:
+        if operation["action"] == "add":
+            remote_files.add(operation["path_in_repo"])
+        else:
+            remote_files.discard(operation["path_in_repo"])

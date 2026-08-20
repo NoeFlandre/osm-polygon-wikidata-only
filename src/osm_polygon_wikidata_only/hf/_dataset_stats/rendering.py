@@ -16,7 +16,15 @@ just renders whatever it is given.
 
 from __future__ import annotations
 
-from .models import AugmentationStats, CombinedLanguageStats, DatasetStats, ProjectTextStats
+from collections.abc import Sequence
+
+from .models import (
+    AugmentationStats,
+    CombinedLanguageStats,
+    DatasetStats,
+    ProjectTextStats,
+    WikidataFactStats,
+)
 
 __all__ = ["render_stats_section"]
 
@@ -33,67 +41,64 @@ def render_stats_section(
     the headline table is extended with concise augmentation totals
     and additional sections are appended after the legacy three.
     """
-    parts: list[str] = []
-    parts.append("## Dataset snapshot\n")
-    parts.append(_render_headline_table(stats, augmentation_stats))
+    parts = ["## Dataset snapshot\n", _render_headline_table(stats, augmentation_stats)]
     if augmentation_stats is None:
-        parts.append("\n## Wikipedia coverage funnel\n")
-        parts.append(_render_funnel_table(stats))
-    parts.append("\n## Language distribution\n")
-    parts.append(
-        _render_combined_language_section(augmentation_stats.combined_languages)
-        if augmentation_stats is not None
-        and augmentation_stats.combined_languages.documents_per_language
-        else _render_language_section(stats)
+        parts.extend(["\n## Wikipedia coverage funnel\n", _render_funnel_table(stats)])
+    parts.extend(
+        ["\n## Language distribution\n", _render_language_distribution(stats, augmentation_stats)]
     )
     if augmentation_stats is not None:
-        parts.append("\n## Storage accounting\n")
-        parts.append(_render_storage_size_rows(augmentation_stats))
-        parts.append("\n## Wikipedia text corpus\n")
-        parts.append(
-            _render_project_section(
-                "Documents",
-                augmentation_stats.wikipedia_documents,
-                kind="documents",
-            )
-            + "\n"
-            + _render_project_section(
-                "Sections",
-                augmentation_stats.wikipedia_sections,
-                kind="sections",
-            )
-            + "\n"
-            + "### Languages\n\n"
-            + _render_top_languages(augmentation_stats.wikipedia_documents)
-            + "\n"
-        )
-        parts.append("\n## Wikivoyage text corpus\n")
-        parts.append(
-            _render_project_section(
-                "Documents",
-                augmentation_stats.wikivoyage_documents,
-                kind="documents",
-            )
-            + "\n"
-            + _render_project_section(
-                "Sections",
-                augmentation_stats.wikivoyage_sections,
-                kind="sections",
-            )
-            + "\n"
-            + "### Languages\n\n"
-            + _render_top_languages(augmentation_stats.wikivoyage_documents)
-            + "\n"
-        )
-        parts.append("\n## Wikidata facts\n")
-        parts.append(_render_wikidata_facts_section(augmentation_stats) + "\n")
-        if augmentation_stats.unreadable_file_count > 0:
-            parts.append(
-                "\n> Statistics exclude "
-                f"{augmentation_stats.unreadable_file_count} unreadable sidecar "
-                "file(s); see generation logs.\n"
-            )
+        parts.extend(_render_augmentation_sections(augmentation_stats))
     return "\n".join(parts) + "\n"
+
+
+def _render_language_distribution(
+    stats: DatasetStats,
+    augmentation_stats: AugmentationStats | None,
+) -> str:
+    if (
+        augmentation_stats is not None
+        and augmentation_stats.combined_languages.documents_per_language
+    ):
+        return _render_combined_language_section(augmentation_stats.combined_languages)
+    return _render_language_section(stats)
+
+
+def _render_augmentation_sections(stats: AugmentationStats) -> list[str]:
+    parts = [
+        "\n## Storage accounting\n",
+        _render_storage_size_rows(stats),
+        "\n## Wikipedia text corpus\n",
+        _render_project_corpus(stats.wikipedia_documents, stats.wikipedia_sections),
+        "\n## Wikivoyage text corpus\n",
+        _render_project_corpus(stats.wikivoyage_documents, stats.wikivoyage_sections),
+        "\n## Wikidata facts\n",
+        _render_wikidata_facts_section(stats) + "\n",
+    ]
+    note = _render_unreadable_note(stats)
+    if note:
+        parts.append(note)
+    return parts
+
+
+def _render_project_corpus(documents: ProjectTextStats, sections: ProjectTextStats) -> str:
+    return (
+        _render_project_section("Documents", documents, kind="documents")
+        + "\n"
+        + _render_project_section("Sections", sections, kind="sections")
+        + "\n### Languages\n\n"
+        + _render_top_languages(documents)
+        + "\n"
+    )
+
+
+def _render_unreadable_note(stats: AugmentationStats) -> str:
+    if stats.unreadable_file_count <= 0:
+        return ""
+    return (
+        "\n> Statistics exclude "
+        f"{stats.unreadable_file_count} unreadable sidecar file(s); see generation logs.\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +123,25 @@ def _render_headline_table(
     and a precise, project-broken-down word total, so the legacy rows
     would be redundant or ambiguous.
     """
+    rows = _headline_rows(stats, augmentation_stats)
+    lines = ["| Metric | Value |", "| --- | ---: |"]
+    lines.extend(f"| {label} | {value} |" for label, value in rows)
+    if augmentation_stats is not None:
+        lines.extend(
+            [
+                "",
+                "Wikipedia + Wikivoyage document words sums the full Wikipedia "
+                "and Wikivoyage documents and excludes section rows because "
+                "sections duplicate document text.",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _headline_rows(
+    stats: DatasetStats,
+    augmentation_stats: AugmentationStats | None,
+) -> list[tuple[str, str]]:
     rows = [
         ("Polygons", _fmt_int(stats.polygon_count)),
         ("Unique Wikidata entities", _fmt_int(stats.unique_wikidata_count)),
@@ -184,20 +208,7 @@ def _render_headline_table(
                 ),
             ]
         )
-    lines = ["| Metric | Value |", "| --- | ---: |"]
-    for label, value in rows:
-        lines.append(f"| {label} | {value} |")
-    if augmentation_stats is not None:
-        # Concise explanation of the combined document-word total:
-        # it sums full Wikipedia + Wikivoyage documents and excludes
-        # section rows, which duplicate document text.
-        lines.append("")
-        lines.append(
-            "Wikipedia + Wikivoyage document words sums the full Wikipedia "
-            "and Wikivoyage documents and excludes section rows because "
-            "sections duplicate document text."
-        )
-    return "\n".join(lines)
+    return rows
 
 
 def _document_corpus_words(aug: AugmentationStats) -> int:
@@ -237,39 +248,50 @@ def _render_language_section(stats: DatasetStats) -> str:
     top_articles = list(stats.articles_per_language.items())[:20]
     top_polygons = dict(stats.polygons_per_language)
 
-    lines = ["Top 20 languages by Wikipedia document count:", ""]
-    lines.append("| Language | Wikipedia documents | % of total | Polygons |")
-    lines.append("| --- | ---: | ---: | ---: |")
     total_articles = max(stats.article_count, 1)
+    lines = _language_table_lines(top_articles, top_polygons, total_articles)
+    lines.extend(_language_concentration_lines(stats.articles_per_language, total_articles))
+    lines.extend(_language_tail_lines(stats))
+    return "\n".join(lines)
+
+
+def _language_table_lines(
+    top_articles: list[tuple[str, int]], top_polygons: dict[str, int], total: int
+) -> list[str]:
+    lines = [
+        "Top 20 languages by Wikipedia document count:",
+        "",
+        "| Language | Wikipedia documents | % of total | Polygons |",
+        "| --- | ---: | ---: | ---: |",
+    ]
     for lang, count in top_articles:
-        pct = (count / total_articles) * 100.0
-        poly_count = top_polygons.get(lang, 0)
-        lines.append(f"| {lang} | {_fmt_int(count)} | {_fmt_pct(pct)} | {_fmt_int(poly_count)} |")
-
-    lines.append("")
-    lines.append("**Concentration:**")
-    for n in (1, 5, 10, 20):
-        top_n_sum = sum(c for _, c in list(stats.articles_per_language.items())[:n])
-        pct = (top_n_sum / total_articles) * 100.0
         lines.append(
-            f"- Top {n} language{'s' if n > 1 else ''}: {_fmt_pct(pct)} of all Wikipedia documents"
+            f"| {lang} | {_fmt_int(count)} | {_fmt_pct(count / total * 100.0)} | "
+            f"{_fmt_int(top_polygons.get(lang, 0))} |"
         )
+    return lines
 
-    lines.append("")
-    lines.append("**Long-tail:**")
-    lines.append(f"- {stats.language_count} language(s) total")
-    tail_counts = _count_long_tail(stats.articles_per_language, stats.polygons_per_language)
-    for threshold_key, threshold_label in (
-        ("articles_lt1", "1"),
-        ("articles_lt5", "5"),
-        ("articles_lt10", "10"),
-    ):
+
+def _language_concentration_lines(articles_per_language: dict[str, int], total: int) -> list[str]:
+    lines = ["", "**Concentration:**"]
+    for n in (1, 5, 10, 20):
+        count = sum(value for _, value in list(articles_per_language.items())[:n])
         lines.append(
-            f"- {tail_counts[threshold_key]} language(s) appear in fewer than "
-            f"{threshold_label} Wikipedia document(s)"
+            f"- Top {n} language{'s' if n > 1 else ''}: "
+            f"{_fmt_pct(count / total * 100.0)} of all Wikipedia documents"
+        )
+    return lines
+
+
+def _language_tail_lines(stats: DatasetStats) -> list[str]:
+    tail_counts = _count_long_tail(stats.articles_per_language, stats.polygons_per_language)
+    lines = ["", "**Long-tail:**", f"- {stats.language_count} language(s) total"]
+    for key, label in (("articles_lt1", "1"), ("articles_lt5", "5"), ("articles_lt10", "10")):
+        lines.append(
+            f"- {tail_counts[key]} language(s) appear in fewer than {label} Wikipedia document(s)"
         )
     lines.append(f"- {tail_counts['polygons_lt5']} language(s) appear in fewer than 5 polygons")
-    return "\n".join(lines)
+    return lines
 
 
 def _render_combined_language_section(stats: CombinedLanguageStats) -> str:
@@ -277,6 +299,7 @@ def _render_combined_language_section(stats: CombinedLanguageStats) -> str:
     if not stats.documents_per_language:
         return "No language data yet.\n"
     polygons = dict(stats.polygons_per_language)
+    denominator = max(stats.document_count, 1)
     lines = [
         "Top 20 languages across Wikipedia and Wikivoyage documents:",
         "",
@@ -288,57 +311,70 @@ def _render_combined_language_section(stats: CombinedLanguageStats) -> str:
         "| Language | Documents | % of total | Polygons with non-empty text |",
         "| --- | ---: | ---: | ---: |",
     ]
-    denominator = max(stats.document_count, 1)
-    for language, count in stats.documents_per_language[:20]:
+    lines.extend(
+        _combined_language_table_lines(stats.documents_per_language, polygons, denominator)
+    )
+    lines.extend(_combined_concentration_lines(stats.documents_per_language, denominator))
+    lines.extend(_combined_tail_lines(stats))
+    return "\n".join(lines)
+
+
+def _combined_language_table_lines(
+    documents: Sequence[tuple[str, int]], polygons: dict[str, int], denominator: int
+) -> list[str]:
+    lines: list[str] = []
+    for language, count in documents[:20]:
         lines.append(
-            f"| {language} | {_fmt_int(count)} | "
-            f"{_fmt_pct(count / denominator * 100.0)} | "
+            f"| {language} | {_fmt_int(count)} | {_fmt_pct(count / denominator * 100.0)} | "
             f"{_fmt_int(polygons.get(language, 0))} |"
         )
-    lines.extend(["", "**Concentration:**"])
+    return lines
+
+
+def _combined_concentration_lines(
+    documents: Sequence[tuple[str, int]], denominator: int
+) -> list[str]:
+    lines = ["", "**Concentration:**"]
     for n in (1, 5, 10, 20):
-        count = sum(value for _, value in stats.documents_per_language[:n])
+        count = sum(value for _, value in documents[:n])
         lines.append(
             f"- Top {n} language{'s' if n > 1 else ''}: "
             f"{_fmt_pct(count / denominator * 100.0)} of all Wikipedia + Wikivoyage documents"
         )
-    lines.extend(
-        [
-            "",
-            "**Long-tail:**",
-            f"- {stats.language_count} language(s) total",
-            f"- {sum(count < 5 for _, count in stats.documents_per_language)} language(s) "
-            "appear in fewer than 5 Wikipedia + Wikivoyage documents",
-            f"- {sum(count < 10 for _, count in stats.documents_per_language)} language(s) "
-            "appear in fewer than 10 Wikipedia + Wikivoyage documents",
-            f"- {sum(count < 5 for _, count in stats.polygons_per_language)} language(s) "
-            "appear in fewer than 5 polygons with non-empty text",
-        ]
-    )
-    return "\n".join(lines)
+    return lines
+
+
+def _combined_tail_lines(stats: CombinedLanguageStats) -> list[str]:
+    documents = stats.documents_per_language
+    return [
+        "",
+        "**Long-tail:**",
+        f"- {stats.language_count} language(s) total",
+        f"- {sum(count < 5 for _, count in documents)} language(s) appear in fewer than 5 "
+        "Wikipedia + Wikivoyage documents",
+        f"- {sum(count < 10 for _, count in documents)} language(s) appear in fewer than 10 "
+        "Wikipedia + Wikivoyage documents",
+        f"- {sum(count < 5 for _, count in stats.polygons_per_language)} language(s) appear in "
+        "fewer than 5 polygons with non-empty text",
+    ]
 
 
 def _count_long_tail(
     articles_per_language: dict[str, int],
     polygons_per_language: dict[str, int],
 ) -> dict[str, int]:
-    out: dict[str, int] = {
-        "articles_lt1": 0,
-        "articles_lt5": 0,
-        "articles_lt10": 0,
-        "polygons_lt5": 0,
+    return {
+        **_article_tail_counts(articles_per_language),
+        "polygons_lt5": sum(count < 5 for count in polygons_per_language.values()),
     }
-    for count in articles_per_language.values():
-        if count < 1:
-            out["articles_lt1"] += 1
-        if count < 5:
-            out["articles_lt5"] += 1
-        if count < 10:
-            out["articles_lt10"] += 1
-    for count in polygons_per_language.values():
-        if count < 5:
-            out["polygons_lt5"] += 1
-    return out
+
+
+def _article_tail_counts(articles_per_language: dict[str, int]) -> dict[str, int]:
+    return {
+        "articles_lt1": sum(count < 1 for count in articles_per_language.values()),
+        "articles_lt5": sum(count < 5 for count in articles_per_language.values()),
+        "articles_lt10": sum(count < 10 for count in articles_per_language.values()),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -437,26 +473,43 @@ def _render_top_languages(project: ProjectTextStats) -> str:
 
 def _render_wikidata_facts_section(stats: AugmentationStats) -> str:
     facts = stats.wikidata_facts
-    lines: list[str] = []
     if not facts.subdir_present:
-        lines.append("No data exists yet.")
-        return "\n".join(lines)
+        return "No data exists yet."
     if facts.rows == 0:
-        lines.append("This sidecar is present but empty.")
-        return "\n".join(lines)
-    lines.append("| Metric | Value |")
-    lines.append("| --- | ---: |")
-    lines.append(f"| Fact rows | {_fmt_int(facts.rows)} |")
-    lines.append(f"| Unique facts | {_fmt_int(facts.unique_facts)} |")
-    lines.append(f"| Unique subjects | {_fmt_int(facts.unique_subjects)} |")
-    lines.append(f"| Distinct properties | {_fmt_int(facts.distinct_property_ids)} |")
-    lines.append(f"| Non-empty English property label | {_fmt_int(facts.with_property_en_label)} |")
-    lines.append(f"| Non-empty English value label | {_fmt_int(facts.with_value_en_label)} |")
-    lines.append(f"| With qualifiers | {_fmt_int(facts.with_qualifiers)} |")
-    lines.append(f"| With references | {_fmt_int(facts.with_references)} |")
-    lines.append(f"| Unreadable qualifier JSON | {_fmt_int(facts.unavailable_qualifiers)} |")
-    lines.append(f"| Unreadable references JSON | {_fmt_int(facts.unavailable_references)} |")
-    lines.append(f"| Regions / files represented | {_fmt_int(facts.region_count)} |")
+        return "This sidecar is present but empty."
+    lines = _fact_metric_lines(facts)
+    lines.extend(_fact_distribution_lines(facts))
+    lines.extend(_fact_property_lines(facts))
+    lines.extend(
+        [
+            "",
+            "English labels are requested where available; multilingual labels are "
+            "preserved verbatim in the Parquet column `property_labels`.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _fact_metric_lines(facts: WikidataFactStats) -> list[str]:
+    return [
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| Fact rows | {_fmt_int(facts.rows)} |",
+        f"| Unique facts | {_fmt_int(facts.unique_facts)} |",
+        f"| Unique subjects | {_fmt_int(facts.unique_subjects)} |",
+        f"| Distinct properties | {_fmt_int(facts.distinct_property_ids)} |",
+        f"| Non-empty English property label | {_fmt_int(facts.with_property_en_label)} |",
+        f"| Non-empty English value label | {_fmt_int(facts.with_value_en_label)} |",
+        f"| With qualifiers | {_fmt_int(facts.with_qualifiers)} |",
+        f"| With references | {_fmt_int(facts.with_references)} |",
+        f"| Unreadable qualifier JSON | {_fmt_int(facts.unavailable_qualifiers)} |",
+        f"| Unreadable references JSON | {_fmt_int(facts.unavailable_references)} |",
+        f"| Regions / files represented | {_fmt_int(facts.region_count)} |",
+    ]
+
+
+def _fact_distribution_lines(facts: WikidataFactStats) -> list[str]:
+    lines: list[str] = []
     if facts.value_type_distribution:
         lines.append("")
         lines.append("**Value-type distribution:**")
@@ -465,20 +518,21 @@ def _render_wikidata_facts_section(stats: AugmentationStats) -> str:
         lines.append("| --- | ---: |")
         for value_type, count in facts.value_type_distribution:
             lines.append(f"| {value_type} | {_fmt_int(count)} |")
-    lines.append("")
-    lines.append("**Top properties:**")
-    lines.append("")
-    lines.append("| Property ID | English label | Facts |")
-    lines.append("| --- | --- | ---: |")
+    return lines
+
+
+def _fact_property_lines(facts: WikidataFactStats) -> list[str]:
+    lines = [
+        "",
+        "**Top properties:**",
+        "",
+        "| Property ID | English label | Facts |",
+        "| --- | --- | ---: |",
+    ]
     for property_id, label, count in facts.top_properties:
         display_label = label if label else "(no English label)"
         lines.append(f"| {property_id} | {display_label} | {_fmt_int(count)} |")
-    lines.append("")
-    lines.append(
-        "English labels are requested where available; multilingual labels are "
-        "preserved verbatim in the Parquet column `property_labels`."
-    )
-    return "\n".join(lines)
+    return lines
 
 
 # ---------------------------------------------------------------------------

@@ -396,45 +396,49 @@ class RegionFetchCheckpoint:
         self._prepare()
 
     def _prepare(self) -> None:
-        try:
-            raw = json_loads(self.metadata_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, ValueError, TypeError):
-            raw = None
-        invalid = (
-            not isinstance(raw, dict)
-            or raw.get("contract_version") != CHECKPOINT_CONTRACT_VERSION
-            or raw.get("v2_contract_version") != V2_CONTRACT_VERSION
-            or raw.get("fetch_full_text") != self.fetch_full_text
+        raw = self._read_metadata()
+        if self._needs_reset(raw):
+            self._reset_metadata()
+
+    def _needs_reset(self, raw: object) -> bool:
+        return not self._metadata_is_valid(raw) or (
+            isinstance(raw, dict) and self._fingerprint_changed(cast(dict[str, Any], raw))
         )
-        if invalid:
-            self.clear()
-            self.root.mkdir(parents=True, exist_ok=True)
-            self.direct_root.mkdir(exist_ok=True)
-            self.sections_root.mkdir(exist_ok=True)
-            raw = {
-                "contract_version": CHECKPOINT_CONTRACT_VERSION,
-                "v2_contract_version": V2_CONTRACT_VERSION,
-                "input_fingerprint": self.input_fingerprint,
-                "fetch_full_text": self.fetch_full_text,
-            }
-            _atomic_write_json(self.metadata_path, raw)
-        elif (
+
+    def _read_metadata(self) -> object:
+        try:
+            return json_loads(self.metadata_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return None
+
+    def _metadata_is_valid(self, raw: object) -> bool:
+        return (
+            isinstance(raw, dict)
+            and raw.get("contract_version") == CHECKPOINT_CONTRACT_VERSION
+            and raw.get("v2_contract_version") == V2_CONTRACT_VERSION
+            and raw.get("fetch_full_text") == self.fetch_full_text
+        )
+
+    def _fingerprint_changed(self, raw: dict[str, Any]) -> bool:
+        return (
             self.input_fingerprint is not None
             and raw.get("input_fingerprint") != self.input_fingerprint
-        ):
-            self.clear()
-            self.root.mkdir(parents=True, exist_ok=True)
-            self.direct_root.mkdir(exist_ok=True)
-            self.sections_root.mkdir(exist_ok=True)
-            _atomic_write_json(
-                self.metadata_path,
-                {
-                    "contract_version": CHECKPOINT_CONTRACT_VERSION,
-                    "v2_contract_version": V2_CONTRACT_VERSION,
-                    "input_fingerprint": self.input_fingerprint,
-                    "fetch_full_text": self.fetch_full_text,
-                },
-            )
+        )
+
+    def _reset_metadata(self) -> None:
+        self.clear()
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.direct_root.mkdir(exist_ok=True)
+        self.sections_root.mkdir(exist_ok=True)
+        _atomic_write_json(self.metadata_path, self._metadata_payload())
+
+    def _metadata_payload(self) -> dict[str, Any]:
+        return {
+            "contract_version": CHECKPOINT_CONTRACT_VERSION,
+            "v2_contract_version": V2_CONTRACT_VERSION,
+            "input_fingerprint": self.input_fingerprint,
+            "fetch_full_text": self.fetch_full_text,
+        }
 
     @property
     def has_work(self) -> bool:

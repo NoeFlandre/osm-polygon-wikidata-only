@@ -75,36 +75,40 @@ class LocalValidationProgress:
         """
         total = len(self.stems)
         self.log(f"Validating finalized local state: {total} {self.phase_label}")
-
-        results: dict[str, bool] = {}
         started_at = self.clock()
-        last_logged_at = started_at
-        emit_periodic = total >= self.quiet_threshold
-        # Roughly cap periodic emission at ~8 progress events for any
-        # single run, so even a clock that never advances produces a
-        # bounded number of progress lines.
-        checkpoint = max(1, total // 8) if emit_periodic else 0
-
-        for index, stem in enumerate(self.stems, start=1):
-            results[stem] = self.validator(stem)
-            if not emit_periodic:
-                continue
-            now = self.clock()
-            elapsed_since_last = now - last_logged_at
-            if elapsed_since_last >= self.progress_interval_s or (
-                checkpoint and index % checkpoint == 0 and index < total
-            ):
-                self.log(
-                    f"Local validation progress: {index}/{total} {self.phase_label}; "
-                    f"{_format_minutes(now - started_at)} elapsed"
-                )
-                last_logged_at = now
+        results = self._run_stems(total, started_at)
 
         elapsed = self.clock() - started_at
         self.log(
             f"Local validation complete: {total} {self.phase_label} in {_format_minutes(elapsed)}"
         )
         return results
+
+    def _run_stems(self, total: int, started_at: float) -> dict[str, bool]:
+        results: dict[str, bool] = {}
+        last_logged_at = started_at
+        emit_periodic = total >= self.quiet_threshold
+        checkpoint = max(1, total // 8) if emit_periodic else 0
+        for index, stem in enumerate(self.stems, start=1):
+            results[stem] = self.validator(stem)
+            if not emit_periodic:
+                continue
+            now = self.clock()
+            if self._should_log(index, total, now - last_logged_at, checkpoint):
+                self.log(
+                    f"Local validation progress: {index}/{total} {self.phase_label}; "
+                    f"{_format_minutes(now - started_at)} elapsed"
+                )
+                last_logged_at = now
+        return results
+
+    def _should_log(
+        self, index: int, total: int, elapsed_since_last: float, checkpoint: int
+    ) -> bool:
+        return bool(
+            elapsed_since_last >= self.progress_interval_s
+            or (checkpoint and index % checkpoint == 0 and index < total)
+        )
 
 
 __all__ = ["LocalValidationProgress"]

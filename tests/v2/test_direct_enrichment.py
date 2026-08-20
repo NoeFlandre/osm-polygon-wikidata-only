@@ -87,6 +87,48 @@ def _write_v1(root: Path) -> None:
     pq.write_table(pa.Table.from_pylist([_v1_row()], schema=wikipedia_document_schema()), path)
 
 
+def test_pending_outcome_handles_deferred_errors_and_fetches_missing_results() -> None:
+    from osm_polygon_wikidata_only.v2 import direct_enrichment
+
+    ref = WikipediaTagRef("en", "New page", "wikipedia", "en:New page")
+    error = RuntimeError("temporary")
+
+    deferred = direct_enrichment._resolve_pending_outcome(
+        0,
+        ref,
+        error,
+        InMemoryWikipediaClient({}),
+        fetch_full_text=True,
+        wait_for_index=False,
+    )
+    assert deferred[0].status == "deferred_error"
+    assert deferred[2] is error
+
+    with pytest.raises(RuntimeError, match="temporary"):
+        direct_enrichment._resolve_pending_outcome(
+            0,
+            ref,
+            error,
+            InMemoryWikipediaClient({}),
+            fetch_full_text=True,
+            wait_for_index=True,
+        )
+
+    client = InMemoryWikipediaClient(
+        {("enwiki", "New page"): FetchResult("article_not_found", None)}
+    )
+    fetched = direct_enrichment._resolve_pending_outcome(
+        0,
+        ref,
+        None,
+        client,
+        fetch_full_text=False,
+        wait_for_index=False,
+    )
+    assert fetched[0].status == "article_not_found"
+    assert fetched[1] == FetchResult("article_not_found", None)
+
+
 def test_matching_v1_page_is_reused_without_fetch(tmp_path: Path) -> None:
     _write_v1(tmp_path)
     index = build_v1_reuse_index(tmp_path)

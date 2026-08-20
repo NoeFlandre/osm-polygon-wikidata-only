@@ -21,6 +21,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WIKIMEDIA_MAX_IN_FLIGHT,
     WIKIMEDIA_REQUESTS_PER_MINUTE,
     WikimediaConfigurationError,
+    WikimediaCredentials,
     WikimediaSession,
     load_wikimedia_credentials,
 )
@@ -93,6 +94,24 @@ def build_wikimedia_runtime(
 ) -> WikimediaRuntime:
     """Build the single Wikimedia transport and all core clients."""
     source = os.environ if environ is None else environ
+    credentials, effective, ceiling = _runtime_settings(settings, source)
+    scheduler = _build_scheduler(effective, ceiling, authenticated=credentials is not None)
+    session = WikimediaSession(
+        scheduler=scheduler,
+        timeout_s=effective.request_timeout_s,
+        user_agent=effective.user_agent,
+        credentials=credentials,
+    )
+    _log_runtime_mode(credentials, effective, ceiling)
+    wikidata, wikipedia = _build_core_clients(effective, scheduler, session)
+    if not effective.cache_enabled:
+        return WikimediaRuntime(effective, scheduler, session, wikidata, wikipedia, None)
+    return _build_cached_runtime(data_root, effective, scheduler, session, wikidata, wikipedia)
+
+
+def _runtime_settings(
+    settings: Settings, source: Mapping[str, str]
+) -> tuple[WikimediaCredentials | None, Settings, float]:
     credentials = load_wikimedia_credentials(source)
     authenticated = credentials is not None
     ceiling = _request_rate_ceiling(source, authenticated=authenticated)
@@ -100,16 +119,19 @@ def build_wikimedia_runtime(
     if not authenticated:
         ceiling = min(ceiling, settings.wikimedia_requests_per_minute)
     effective = _effective_settings(
-        settings,
-        authenticated=authenticated,
-        ceiling=ceiling,
-        max_in_flight=max_in_flight,
+        settings, authenticated=authenticated, ceiling=ceiling, max_in_flight=max_in_flight
     )
+    return credentials, effective, ceiling
+
+
+def _build_scheduler(
+    effective: Settings, ceiling: float, *, authenticated: bool
+) -> AdaptiveRequestScheduler:
     minimum_rate = min(
         AUTH_MIN_REQUESTS_PER_MINUTE if authenticated else 60.0,
         effective.wikimedia_requests_per_minute,
     )
-    scheduler = AdaptiveRequestScheduler(
+    return AdaptiveRequestScheduler(
         max_in_flight=effective.wikimedia_max_in_flight,
         requests_per_minute=effective.wikimedia_requests_per_minute,
         max_requests_per_minute=ceiling,
@@ -118,19 +140,15 @@ def build_wikimedia_runtime(
         minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
         systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
     )
-    session = WikimediaSession(
-        scheduler=scheduler,
-        timeout_s=effective.request_timeout_s,
-        user_agent=effective.user_agent,
-        credentials=credentials,
-    )
+
+
+def _log_runtime_mode(
+    credentials: WikimediaCredentials | None, effective: Settings, ceiling: float
+) -> None:
     if credentials is not None:
         LOGGER.info(
-            "Wikimedia API mode: credentials configured for %s; "
-            "verification occurs per host; "
-            "rate ceiling=%.0f rpm; "
-            "in-flight=%d; "
-            "authenticated host interval=%.2fs; "
+            "Wikimedia API mode: credentials configured for %s; verification occurs per host; "
+            "rate ceiling=%.0f rpm; in-flight=%d; authenticated host interval=%.2fs; "
             "anonymous intervals: Wikipedia=%.2fs, Wikidata=%.2fs, augmentation=%.2fs. "
             "The ceiling is a client-side limit, not a guaranteed server allowance.",
             credentials.username,
@@ -141,41 +159,46 @@ def build_wikimedia_runtime(
             effective.wikidata_min_interval_s,
             effective.augmentation_min_interval_s,
         )
-    else:
-        LOGGER.info(
-            "Wikimedia API mode: anonymous (rate ceiling: %.0f requests/minute, "
-            "in-flight=%d, host interval: %.2fs)",
-            ceiling,
-            effective.wikimedia_max_in_flight,
-            effective.wikipedia_min_interval_s,
-        )
-    wikidata: WikidataClient = HttpWikidataClient(
-        effective,
-        scheduler=scheduler,
-        session=session,
+        return
+    LOGGER.info(
+        "Wikimedia API mode: anonymous (rate ceiling: %.0f requests/minute, "
+        "in-flight=%d, host interval: %.2fs)",
+        ceiling,
+        effective.wikimedia_max_in_flight,
+        effective.wikipedia_min_interval_s,
     )
-    wikipedia: WikipediaClient = HttpWikipediaClient(
-        effective,
-        scheduler=scheduler,
-        session=session,
+
+
+def _build_core_clients(
+    effective: Settings,
+    scheduler: AdaptiveRequestScheduler,
+    session: WikimediaSession,
+) -> tuple[WikidataClient, WikipediaClient]:
+    return (
+        HttpWikidataClient(effective, scheduler=scheduler, session=session),
+        HttpWikipediaClient(effective, scheduler=scheduler, session=session),
     )
-    if not effective.cache_enabled:
-        return WikimediaRuntime(effective, scheduler, session, wikidata, wikipedia, None)
+
+
+def _build_cached_runtime(
+    data_root: DataRoot,
+    effective: Settings,
+    scheduler: AdaptiveRequestScheduler,
+    session: WikimediaSession,
+    wikidata: WikidataClient,
+    wikipedia: WikipediaClient,
+) -> WikimediaRuntime:
     try:
-        wikidata = CachedWikidataClient(
-            wikidata,
-            JsonFileCache(data_root.cache_wikidata),
-        )
-        wikipedia = CachedWikipediaClient(
-            wikipedia,
-            JsonFileCache(data_root.cache_wikipedia),
+        cached_wikidata = CachedWikidataClient(wikidata, JsonFileCache(data_root.cache_wikidata))
+        cached_wikipedia = CachedWikipediaClient(
+            wikipedia, JsonFileCache(data_root.cache_wikipedia)
         )
         return WikimediaRuntime(
             effective,
             scheduler,
             session,
-            wikidata,
-            wikipedia,
+            cached_wikidata,
+            cached_wikipedia,
             JsonFileCache(data_root.cache),
         )
     except OSError as error:
@@ -229,6 +252,11 @@ def _request_rate_ceiling(environ: Mapping[str, str], *, authenticated: bool) ->
     raw_value = environ.get(WIKIMEDIA_REQUESTS_PER_MINUTE)
     if raw_value is None:
         return 1_200 if authenticated else 180
+    value = _parse_positive_rate(raw_value)
+    return value if authenticated else 180
+
+
+def _parse_positive_rate(raw_value: str) -> float:
     try:
         value = float(raw_value.strip())
     except ValueError as error:
@@ -239,7 +267,7 @@ def _request_rate_ceiling(environ: Mapping[str, str], *, authenticated: bool) ->
         raise WikimediaConfigurationError(
             f"{WIKIMEDIA_REQUESTS_PER_MINUTE} must be a positive number"
         )
-    return value if authenticated else 180
+    return value
 
 
 __all__ = [

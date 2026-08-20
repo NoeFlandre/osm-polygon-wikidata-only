@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.cli.run_sync import (
     _active_pbfs,
     _containment_publications_for_remote,
     _core_repair_required,
+    _enqueue_containment_retirement,
     _migration_stems_to_persist,
     _plan_sync_states,
     _prepare_containment_rules,
@@ -162,3 +163,61 @@ def test_containment_publications_keep_children_present_on_remote() -> None:
         inventory=inventory,
         canonical_region_paths=paths,
     ) == {"parent": ("child",)}
+
+
+@pytest.mark.parametrize(
+    ("push_enabled", "parent_children", "queue"),
+    [
+        (False, {"parent": ("child",)}, object()),
+        (True, {}, object()),
+        (True, {"parent": ("child",)}, None),
+    ],
+)
+def test_enqueue_containment_retirement_skips_ineligible_runs(
+    tmp_path: Path,
+    push_enabled: bool,
+    parent_children: dict[str, tuple[str, ...]],
+    queue: object | None,
+) -> None:
+    assert (
+        _enqueue_containment_retirement(
+            data_root=SimpleNamespace(processed=tmp_path),
+            settings=SimpleNamespace(repo_id="org/repo"),
+            parent_children=parent_children,
+            upload_queue=queue,
+            push_enabled=push_enabled,
+        )
+        is False
+    )
+
+
+def test_enqueue_containment_retirement_submits_one_remote_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    submitted: list[tuple[object, str]] = []
+
+    def assemble(**kwargs: object) -> list[str]:
+        assert kwargs["repo_id"] == "org/repo"
+        assert kwargs["parent_children"] == {"parent": ("child", "other")}
+        return ["operation"]
+
+    class Queue:
+        def submit(self, operations: object, description: str) -> None:
+            submitted.append((operations, description))
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.cli.run_sync._assemble_containment_retirement_upload",
+        assemble,
+    )
+
+    assert (
+        _enqueue_containment_retirement(
+            data_root=SimpleNamespace(processed=tmp_path),
+            settings=SimpleNamespace(repo_id="org/repo"),
+            parent_children={"parent": ("child", "other")},
+            upload_queue=Queue(),
+            push_enabled=True,
+        )
+        is True
+    )
+    assert submitted == [(["operation"], "Retire losslessly contained regional dataset shards")]

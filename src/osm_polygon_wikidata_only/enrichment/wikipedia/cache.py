@@ -88,36 +88,62 @@ class CachedWikipediaClient(WikipediaClient):
     ) -> dict[str, FetchResult]:
         """Serve cached titles and fetch only the missing titles as a batch."""
         requested = list(dict.fromkeys(titles))
+        results, missing = self._cached_batch(requested, site, fetch_full_text)
+        fetched = self._fetch_missing(language, site, missing, fetch_full_text)
+        self._store_missing(
+            results,
+            fetched,
+            missing,
+            language,
+            site,
+            fetch_full_text,
+        )
+        return results
+
+    def _cached_batch(
+        self, titles: list[str], site: str, fetch_full_text: bool
+    ) -> tuple[dict[str, FetchResult], list[str]]:
         results: dict[str, FetchResult] = {}
         missing: list[str] = []
-        for title in requested:
-            key = self._cache_key(site, title, fetch_full_text)
-            cached = self._cached_result(key)
+        for title in titles:
+            cached = self._cached_result(self._cache_key(site, title, fetch_full_text))
             if cached is None:
                 missing.append(title)
             else:
                 results[title] = cached
+        return results, missing
 
+    def _fetch_missing(
+        self,
+        language: str,
+        site: str,
+        missing: list[str],
+        fetch_full_text: bool,
+    ) -> dict[str, FetchResult]:
         batch_fetch = getattr(self._inner, "fetch_articles", None)
         if callable(batch_fetch):
-            fetched = batch_fetch(language, site, missing, fetch_full_text=fetch_full_text)
-        else:
-            fetched = {
-                title: self._inner.fetch_article(
-                    language, site, title, fetch_full_text=fetch_full_text
-                )
-                for title in missing
-            }
+            return batch_fetch(language, site, missing, fetch_full_text=fetch_full_text)
+        return {
+            title: self._inner.fetch_article(language, site, title, fetch_full_text=fetch_full_text)
+            for title in missing
+        }
+
+    def _store_missing(
+        self,
+        results: dict[str, FetchResult],
+        fetched: dict[str, FetchResult],
+        missing: list[str],
+        language: str,
+        site: str,
+        fetch_full_text: bool,
+    ) -> None:
         for title in missing:
-            result = fetched.get(title)
-            if result is None:
-                result = self._inner.fetch_article(
-                    language, site, title, fetch_full_text=fetch_full_text
-                )
+            result = fetched.get(title) or self._inner.fetch_article(
+                language, site, title, fetch_full_text=fetch_full_text
+            )
             key = self._cache_key(site, title, fetch_full_text)
             self._store_result(key, result, language, site, title, fetch_full_text)
             results[title] = result
-        return results
 
     def _cached_result(self, key: str) -> FetchResult | None:
         hit = self._cache.get(key)

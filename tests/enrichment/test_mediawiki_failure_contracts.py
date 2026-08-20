@@ -69,6 +69,43 @@ def test_api_payload_without_error_is_accepted() -> None:
     mediawiki._raise_for_api_error({"query": {"pages": {}}})
 
 
+def test_entity_list_normalization_keeps_only_identified_mappings() -> None:
+    assert mediawiki._normalize_entity_list("not-a-list") == {}
+    assert mediawiki._normalize_entity_list(
+        [{"id": "Q1", "labels": {}}, {"labels": {}}, "invalid"]
+    ) == {"Q1": {"id": "Q1", "labels": {}}}
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"parse": {"text": "plain"}}, "plain"),
+        ({"parse": {"text": {"*": "expanded"}}}, "expanded"),
+        ({"parse": {"text": 42}}, "42"),
+        ({"parse": []}, ""),
+    ],
+)
+def test_parsed_html_text_normalizes_mediawiki_text_shapes(
+    payload: dict[str, object], expected: str
+) -> None:
+    assert mediawiki._parsed_html_text(payload) == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"query": {"pages": [{"pageid": 1}]}}, {"pageid": 1}),
+        ({"query": {"pages": [{"missing": True}]}}, None),
+        ({"query": {"pages": []}}, None),
+        ({}, None),
+    ],
+)
+def test_first_voyage_page_handles_missing_and_empty_queries(
+    payload: dict[str, object], expected: dict[str, object] | None
+) -> None:
+    assert mediawiki._first_voyage_page(payload) == expected
+
+
 def test_permanent_api_error_is_not_cached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

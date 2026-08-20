@@ -9,6 +9,7 @@ upload path.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -499,3 +500,34 @@ def test_write_readme_snapshot_writes_to_destination_atomic(
         "article_count": 1,
         "unique_wikidata_count": 1,
     }
+
+
+def test_write_readme_snapshot_includes_integrity_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid integrity audit is carried into the public card."""
+    _core, data_root = _stub_process_result(tmp_path)
+    audit_path = data_root.processed / "integrity" / "integrity_audit.json"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "join-integrity-v2",
+                "totals": {
+                    "polygon_articles_rejected": 1,
+                    "wikivoyage_documents_rejected": 2,
+                    "wikivoyage_sections_cascaded": 3,
+                    "shards_with_rejections": ["region-latest"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.render_dataset_card",
+        lambda **kwargs: kwargs["rejections_section"] or "",
+    )
+    destination = tmp_path / "out.md"
+    write_readme_snapshot(data_root, REPO_ID, destination)
+    assert "## Join-integrity audit" in destination.read_text(encoding="utf-8")
+    assert "join-integrity-v2" in destination.read_text(encoding="utf-8")

@@ -53,6 +53,46 @@ def publish_trackio_snapshot(
     # Keep Trackio's local SQLite database and media on the configured data
     # root. The production command passes the Seagate-backed cache directory.
     os.environ.setdefault("TRACKIO_DIR", str(output_dir / ".trackio"))
+    chart_paths_by_name, manifest_path = _write_snapshot_artifacts(
+        output_dir, snapshot, project=project, run_name=run_name
+    )
+    trackio_module = _resolve_trackio(trackio_module)
+    resolved_space_id = space_id or os.environ.get("TRACKIO_SPACE_ID")
+    _log_snapshot(
+        trackio_module,
+        snapshot,
+        chart_paths_by_name,
+        project=project,
+        run_name=run_name,
+        dataset_repo_id=dataset_repo_id,
+        resolved_space_id=resolved_space_id,
+        presentation_url=presentation_url,
+    )
+
+    sync = getattr(trackio_module, "sync", None)
+    if resolved_space_id is not None and callable(sync):
+        sync(
+            project=project,
+            space_id=resolved_space_id,
+            dataset_id=dataset_id,
+            sdk="static",
+            force=True,
+        )
+
+    return TrackioSnapshotArtifacts(
+        output_dir=output_dir,
+        chart_paths=tuple(chart_paths_by_name.values()),
+        manifest_path=manifest_path,
+    )
+
+
+def _write_snapshot_artifacts(
+    output_dir: Path,
+    snapshot: FinalDatasetSnapshot,
+    *,
+    project: str,
+    run_name: str,
+) -> tuple[dict[str, Path], Path]:
     chart_paths_by_name = render_snapshot_charts(output_dir, snapshot)
     manifest_path = output_dir / "snapshot.json"
     atomic_write_text(
@@ -70,23 +110,34 @@ def publish_trackio_snapshot(
         )
         + "\n",
     )
+    return chart_paths_by_name, manifest_path
 
-    if trackio_module is None:
-        import trackio as trackio_module
 
-    resolved_space_id = space_id or os.environ.get("TRACKIO_SPACE_ID")
+def _resolve_trackio(trackio_module: Any | None) -> Any:
+    if trackio_module is not None:
+        return trackio_module
+    import trackio as trackio_module
+
+    return trackio_module
+
+
+def _log_snapshot(
+    trackio_module: Any,
+    snapshot: FinalDatasetSnapshot,
+    chart_paths_by_name: dict[str, Path],
+    *,
+    project: str,
+    run_name: str,
+    dataset_repo_id: str,
+    resolved_space_id: str | None,
+    presentation_url: str | None,
+) -> None:
     _reset_frozen_run(trackio_module, project=project, run_name=run_name)
     run = trackio_module.init(
         project=project,
         name=run_name,
-        # Log locally first. ``sync(..., sdk='static')`` below is the public,
-        # free dashboard path and avoids requiring a running Gradio Space.
         space_id=None,
-        config={
-            "snapshot": run_name,
-            "dataset": dataset_repo_id,
-            "static": True,
-        },
+        config={"snapshot": run_name, "dataset": dataset_repo_id, "static": True},
         resume="never",
         embed=False,
         auto_log_cpu=False,
@@ -95,58 +146,62 @@ def publish_trackio_snapshot(
     )
     del run
     try:
-        metrics: dict[str, Any] = dict(snapshot.metrics())
-        metrics.update(
-            {
-                "report/summary": trackio_module.Markdown(
-                    render_snapshot_markdown(
-                        snapshot,
-                        run_name=run_name,
-                        space_url=(
-                            f"https://huggingface.co/spaces/{resolved_space_id}"
-                            if resolved_space_id
-                            else ""
-                        ),
-                        presentation_url=presentation_url,
-                    )
-                ),
-                "report/table": trackio_module.Table(
-                    columns=["Metric", "Value"],
-                    data=[list(row) for row in snapshot.table_rows()],
-                ),
-                "plot/text_coverage_funnel": trackio_module.Image(
-                    chart_paths_by_name["text_coverage_funnel"],
-                    caption="Text coverage funnel",
-                ),
-                "plot/top_10_wikipedia_languages": trackio_module.Image(
-                    chart_paths_by_name["top_10_wikipedia_languages"],
-                    caption="Top 10 Wikipedia languages plus Other languages",
-                ),
-                "plot/dataset_composition": trackio_module.Image(
-                    chart_paths_by_name["dataset_composition"],
-                    caption="Dataset composition on a logarithmic scale",
-                ),
-            }
+        trackio_module.log(
+            _snapshot_metrics(
+                trackio_module,
+                snapshot,
+                chart_paths_by_name,
+                run_name=run_name,
+                resolved_space_id=resolved_space_id,
+                presentation_url=presentation_url,
+            ),
+            step=0,
         )
-        trackio_module.log(metrics, step=0)
     finally:
         trackio_module.finish()
 
-    sync = getattr(trackio_module, "sync", None)
-    if resolved_space_id is not None and callable(sync):
-        sync(
-            project=project,
-            space_id=resolved_space_id,
-            dataset_id=dataset_id,
-            sdk="static",
-            force=True,
-        )
 
-    return TrackioSnapshotArtifacts(
-        output_dir=output_dir,
-        chart_paths=tuple(chart_paths_by_name.values()),
-        manifest_path=manifest_path,
+def _snapshot_metrics(
+    trackio_module: Any,
+    snapshot: FinalDatasetSnapshot,
+    chart_paths_by_name: dict[str, Path],
+    *,
+    run_name: str,
+    resolved_space_id: str | None,
+    presentation_url: str | None,
+) -> dict[str, Any]:
+    metrics: dict[str, Any] = dict(snapshot.metrics())
+    metrics.update(
+        {
+            "report/summary": trackio_module.Markdown(
+                render_snapshot_markdown(
+                    snapshot,
+                    run_name=run_name,
+                    space_url=(
+                        f"https://huggingface.co/spaces/{resolved_space_id}"
+                        if resolved_space_id
+                        else ""
+                    ),
+                    presentation_url=presentation_url,
+                )
+            ),
+            "report/table": trackio_module.Table(
+                columns=["Metric", "Value"], data=[list(row) for row in snapshot.table_rows()]
+            ),
+            "plot/text_coverage_funnel": trackio_module.Image(
+                chart_paths_by_name["text_coverage_funnel"], caption="Text coverage funnel"
+            ),
+            "plot/top_10_wikipedia_languages": trackio_module.Image(
+                chart_paths_by_name["top_10_wikipedia_languages"],
+                caption="Top 10 Wikipedia languages plus Other languages",
+            ),
+            "plot/dataset_composition": trackio_module.Image(
+                chart_paths_by_name["dataset_composition"],
+                caption="Dataset composition on a logarithmic scale",
+            ),
+        }
     )
+    return metrics
 
 
 def _reset_frozen_run(trackio_module: Any, *, project: str, run_name: str) -> None:

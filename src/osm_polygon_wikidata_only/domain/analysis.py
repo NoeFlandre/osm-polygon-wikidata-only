@@ -79,44 +79,50 @@ def bbox_from_geom(geom: dict[str, Any]) -> list[float]:
     Supports both Polygon and MultiPolygon. Returns an empty list if
     the geometry has no usable coordinates.
     """
-    t = geom.get("type")
+    geometry_type = geom.get("type")
     coords = geom.get("coordinates")
-    if not coords or t not in {"Polygon", "MultiPolygon"}:
+    if not coords or geometry_type not in {"Polygon", "MultiPolygon"}:
         return []
-
-    min_lon = float("inf")
-    min_lat = float("inf")
-    max_lon = float("-inf")
-    max_lat = float("-inf")
-
-    def _walk(points: list[Any]) -> None:
-        nonlocal min_lon, min_lat, max_lon, max_lat
-        for pt in points:
-            if not isinstance(pt, (list, tuple)) or len(pt) < 2:
-                continue
-            try:
-                lon, lat = float(pt[0]), float(pt[1])
-            except (TypeError, ValueError):
-                continue
-            if lon < min_lon:
-                min_lon = lon
-            if lon > max_lon:
-                max_lon = lon
-            if lat < min_lat:
-                min_lat = lat
-            if lat > max_lat:
-                max_lat = lat
-
-    if t == "Polygon":
-        for ring in coords:
-            _walk(ring)
-    else:  # MultiPolygon
-        for poly in coords:
-            if not poly:
-                continue
-            for ring in poly:
-                _walk(ring)
-
-    if min_lon == float("inf"):
+    bounds = _geometry_bounds(coords, geometry_type)
+    if bounds is None:
         return []
-    return [min_lon, min_lat, max_lon, max_lat]
+    return list(bounds)
+
+
+def _geometry_bounds(
+    coords: Any,
+    geometry_type: str,
+) -> tuple[float, float, float, float] | None:
+    points = _geometry_points(coords, geometry_type)
+    values: list[tuple[float, float]] = []
+    for point in points:
+        parsed = _coordinate_pair(point)
+        if parsed is not None:
+            values.append(parsed)
+    if not values:
+        return None
+    longitudes, latitudes = zip(*values, strict=True)
+    return min(longitudes), min(latitudes), max(longitudes), max(latitudes)
+
+
+def _geometry_points(coords: Any, geometry_type: str) -> list[Any]:
+    if geometry_type == "Polygon":
+        return _polygon_points(coords)
+    return _multipolygon_points(coords)
+
+
+def _polygon_points(coords: Any) -> list[Any]:
+    return [point for ring in coords for point in ring]
+
+
+def _multipolygon_points(coords: Any) -> list[Any]:
+    return [point for polygon in coords if polygon for ring in polygon for point in ring]
+
+
+def _coordinate_pair(point: Any) -> tuple[float, float] | None:
+    if not isinstance(point, (list, tuple)) or len(point) < 2:
+        return None
+    try:
+        return float(point[0]), float(point[1])
+    except (TypeError, ValueError):
+        return None

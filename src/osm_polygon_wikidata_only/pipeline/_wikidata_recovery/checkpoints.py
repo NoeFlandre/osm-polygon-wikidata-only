@@ -73,20 +73,30 @@ class RecoveryCheckpointStore:
         if not metadata_path.is_file():
             return None
         try:
-            raw = loads(metadata_path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
-                return None
-            if raw.get("contract_version") != CHECKPOINT_CONTRACT_VERSION:
-                return None
-            qids = tuple(str(value) for value in raw.get("qids", ()))
+            qids = self._load_qids(metadata_path)
             if qids != expected_qids:
                 return None
-            documents = self._read(directory / "documents.parquet", wikipedia_document_schema())
-            sections = self._read(directory / "sections.parquet", section_schema())
-            facts = self._read(directory / "facts.parquet", fact_schema())
+            documents, sections, facts = self._load_tables(directory)
         except (OSError, ValueError, TypeError, pa.ArrowException):
             return None
         return RecoveryBatchArtifacts(qids, tuple(documents), tuple(sections), tuple(facts))
+
+    @staticmethod
+    def _load_qids(metadata_path: Path) -> tuple[str, ...]:
+        raw = loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("checkpoint metadata must be an object")
+        if raw.get("contract_version") != CHECKPOINT_CONTRACT_VERSION:
+            raise ValueError("checkpoint contract version mismatch")
+        return tuple(str(value) for value in raw.get("qids", ()))
+
+    def _load_tables(
+        self, directory: Path
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        documents = self._read(directory / "documents.parquet", wikipedia_document_schema())
+        sections = self._read(directory / "sections.parquet", section_schema())
+        facts = self._read(directory / "facts.parquet", fact_schema())
+        return documents, sections, facts
 
     def save(self, index: int, artifacts: RecoveryBatchArtifacts) -> Path:
         target = self._batch_path(index)

@@ -14,8 +14,9 @@ import socket
 import threading
 import urllib.error
 from collections.abc import Callable
+from dataclasses import dataclass
 from itertools import count
-from typing import TypeVar
+from typing import TypeVar, cast
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +26,15 @@ T = TypeVar("T")
 
 class _RetryCancelled(BaseException):
     """Internal signal used to release retrying worker threads on shutdown."""
+
+
+@dataclass(frozen=True, slots=True)
+class _AttemptResult[T]:
+    """Result of one operation attempt after retry filtering."""
+
+    succeeded: bool
+    value: T | None = None
+    error: BaseException | None = None
 
 
 _RETRY_CANCELLATION = threading.Event()
@@ -66,12 +76,24 @@ def is_transient_network_error(error: BaseException) -> bool:
     statuses are not transient and must still reach the caller.
     """
     if isinstance(error, urllib.error.HTTPError):
-        return error.code in _TRANSIENT_HTTP_STATUS_CODES
+        return _is_transient_http_error(error)
     if isinstance(error, urllib.error.ContentTooShortError):
         return True
     if isinstance(error, urllib.error.URLError):
-        reason = error.reason
-        return isinstance(reason, BaseException) and is_transient_network_error(reason)
+        return _is_transient_url_error(error)
+    return _is_transient_exception(error)
+
+
+def _is_transient_http_error(error: urllib.error.HTTPError) -> bool:
+    return error.code in _TRANSIENT_HTTP_STATUS_CODES
+
+
+def _is_transient_url_error(error: urllib.error.URLError) -> bool:
+    reason = error.reason
+    return isinstance(reason, BaseException) and is_transient_network_error(reason)
+
+
+def _is_transient_exception(error: BaseException) -> bool:
     if isinstance(error, (socket.gaierror, TimeoutError, ConnectionError)):
         return True
     return isinstance(error, OSError) and error.errno in _TRANSIENT_ERRNOS
@@ -141,35 +163,134 @@ def with_retries[T](
     Sleep = ``min(base_delay * 2 ** (i - 1), max_delay)`` plus uniform
     jitter in ``[0, base_delay)`` to avoid thundering-herd retries.
     """
-    if attempts is not None and attempts < 1:
-        raise ValueError("attempts must be >= 1")
+    _validate_retry_arguments(attempts)
+    return _run_retry_loop(
+        func,
+        attempts=attempts,
+        base_delay=base_delay,
+        max_delay=max_delay,
+        retry_on=retry_on,
+        should_retry=should_retry,
+        on_retry=on_retry,
+    )
+
+
+def _run_retry_loop[T](
+    func: Callable[[], T],
+    *,
+    attempts: int | None,
+    base_delay: float,
+    max_delay: float,
+    retry_on: tuple[type[BaseException], ...],
+    should_retry: Callable[[BaseException], bool] | None,
+    on_retry: Callable[[int, BaseException, float], None] | None,
+) -> T:
     last_exc: BaseException | None = None
     backoff_delay = min(base_delay, max_delay)
-    attempt_numbers = count(1) if attempts is None else range(1, attempts + 1)
-    for i in attempt_numbers:
-        if _RETRY_CANCELLATION.is_set():
-            raise _RetryCancelled
-        try:
-            return func()
-        except retry_on as e:
-            if should_retry is not None and not should_retry(e):
-                raise
-            last_exc = e
-            if attempts is not None and i == attempts:
-                break
-            delay = backoff_delay
-            delay += random.uniform(0, base_delay)
-            LOGGER.debug(
-                "Retry %d/%s after %.2fs due to %s: %s",
-                i,
-                attempts if attempts is not None else "unbounded",
-                delay,
-                type(e).__name__,
-                e,
-            )
-            if on_retry is not None:
-                on_retry(i, e, delay)
-            _wait_for_retry(delay)
-            backoff_delay = min(backoff_delay * 2, max_delay)
+    for attempt in _attempt_numbers(attempts):
+        _raise_if_cancelled()
+        result = _run_attempt(func, retry_on, should_retry)
+        if result.succeeded:
+            return cast(T, result.value)
+        last_exc = result.error
+        next_delay = _next_retry_delay(
+            attempt,
+            result.error,
+            attempts,
+            backoff_delay,
+            base_delay,
+            max_delay,
+            on_retry,
+        )
+        if next_delay is None:
+            break
+        backoff_delay = next_delay
     assert last_exc is not None
     raise last_exc
+
+
+def _run_attempt[T](
+    func: Callable[[], T],
+    retry_on: tuple[type[BaseException], ...],
+    should_retry: Callable[[BaseException], bool] | None,
+) -> _AttemptResult[T]:
+    try:
+        return _AttemptResult(True, value=func())
+    except retry_on as error:
+        if _should_reraise(error, should_retry):
+            raise
+        return _AttemptResult(False, error=error)
+
+
+def _next_retry_delay(
+    attempt: int,
+    error: BaseException | None,
+    attempts: int | None,
+    backoff_delay: float,
+    base_delay: float,
+    max_delay: float,
+    on_retry: Callable[[int, BaseException, float], None] | None,
+) -> float | None:
+    if _is_final_attempt(attempt, attempts):
+        return None
+    assert error is not None
+    return _schedule_retry(
+        attempt,
+        error,
+        attempts,
+        backoff_delay,
+        base_delay,
+        max_delay,
+        on_retry,
+    )
+
+
+def _validate_retry_arguments(attempts: int | None) -> None:
+    if attempts is not None and attempts < 1:
+        raise ValueError("attempts must be >= 1")
+
+
+def _attempt_numbers(attempts: int | None) -> range | count:
+    return count(1) if attempts is None else range(1, attempts + 1)
+
+
+def _raise_if_cancelled() -> None:
+    if _RETRY_CANCELLATION.is_set():
+        raise _RetryCancelled
+
+
+def _should_reraise(
+    error: BaseException,
+    should_retry: Callable[[BaseException], bool] | None,
+) -> bool:
+    return should_retry is not None and not should_retry(error)
+
+
+def _is_final_attempt(attempt: int, attempts: int | None) -> bool:
+    return attempts is not None and attempt == attempts
+
+
+def _schedule_retry(
+    attempt: int,
+    error: BaseException,
+    attempts: int | None,
+    backoff_delay: float,
+    base_delay: float,
+    max_delay: float,
+    on_retry: Callable[[int, BaseException, float], None] | None,
+) -> float:
+    if _is_final_attempt(attempt, attempts):
+        return backoff_delay
+    delay = backoff_delay + random.uniform(0, base_delay)
+    LOGGER.debug(
+        "Retry %d/%s after %.2fs due to %s: %s",
+        attempt,
+        attempts if attempts is not None else "unbounded",
+        delay,
+        type(error).__name__,
+        error,
+    )
+    if on_retry is not None:
+        on_retry(attempt, error, delay)
+    _wait_for_retry(delay)
+    return min(backoff_delay * 2, max_delay)

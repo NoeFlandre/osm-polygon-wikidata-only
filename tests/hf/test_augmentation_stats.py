@@ -16,20 +16,32 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
+from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmentation_module
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
+    _augmentation_bytes,
+    _has_readable_summary,
+    _load_or_scan_summary,
     compute_augmentation_stats,
 )
 from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     AugmentationStats,
+    PerFileSummary,
     ProjectTextStats,
     WikidataFactStats,
 )
-from osm_polygon_wikidata_only.hf._dataset_stats.rendering import _fmt_int
+from osm_polygon_wikidata_only.hf._dataset_stats.rendering import (
+    _article_tail_counts,
+    _fmt_int,
+    _fmt_size,
+    _render_unreadable_note,
+)
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     DatasetStats,
     render_stats_section,
@@ -1539,6 +1551,52 @@ def _sample_augmentation_stats() -> AugmentationStats:
     )
 
 
+def test_stats_rendering_and_cache_helpers_cover_boundary_cases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Small helpers retain their documented edge behavior."""
+    assert _article_tail_counts({"none": 0, "few": 4, "some": 9, "many": 10}) == {
+        "articles_lt1": 1,
+        "articles_lt5": 2,
+        "articles_lt10": 3,
+    }
+    assert [_fmt_size(value) for value in (0, 1024, 1024**2, 1024**3, 1024**4, 1024**5)] == [
+        "0.0 B",
+        "1.0 KB",
+        "1.0 MB",
+        "1.0 GB",
+        "1.0 TB",
+        "1.0 PB",
+    ]
+
+    clean = _sample_augmentation_stats()
+    unreadable = replace(clean, unreadable_file_count=2)
+    assert _render_unreadable_note(clean) == ""
+    assert "2 unreadable sidecar file(s)" in _render_unreadable_note(unreadable)
+
+    summary = PerFileSummary(
+        relative_path="wikipedia/documents/example.parquet",
+        fingerprint="fingerprint",
+        file_size_bytes=17,
+        kind="documents",
+    )
+    failed = replace(summary, scan_failed=True)
+    assert _augmentation_bytes({"wikipedia/documents": [summary, failed]}) == 34
+    assert _has_readable_summary([summary, failed]) is True
+    assert _has_readable_summary([failed]) is False
+
+    parquet_path = tmp_path / "example.parquet"
+    parquet_path.write_bytes(b"cached")
+    fingerprint = augmentation_module._file_fingerprint(parquet_path)
+    cached_summary = replace(summary, fingerprint=fingerprint)
+    cached = augmentation_module._summary_to_json(cached_summary)
+    assert _load_or_scan_summary(tmp_path, parquet_path, cached) == cached_summary
+
+    scanned = replace(summary, fingerprint="rescanned")
+    monkeypatch.setattr(augmentation_module, "_scan_one_file", lambda *_args: scanned)
+    assert _load_or_scan_summary(tmp_path, parquet_path, None) is scanned
+
+
 # --- cache contract ----------------------------------------------------
 
 
@@ -1913,6 +1971,38 @@ def test_cache_index_written_atomically(tmp_path: Path, monkeypatch) -> None:
     assert any(call[0] == index_path for call in calls), (
         "write_cache_index must call atomic_write_text on the index path"
     )
+
+
+def test_cache_index_filters_contract_and_non_mapping_entries() -> None:
+    from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
+
+    assert cachemod._cache_entries(
+        {
+            "__contract_version__": cachemod.CACHE_CONTRACT_VERSION,
+            "documents.parquet": {"rows": 2},
+            "invalid-list": ["not", "a", "cache"],
+            "invalid-null": None,
+        }
+    ) == {"documents.parquet": {"rows": 2}}
+
+
+def test_scan_paths_skips_missing_subdirectories_and_sorts_files(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
+
+    (tmp_path / "documents").mkdir()
+    (tmp_path / "documents" / "z.parquet").touch()
+    (tmp_path / "documents" / "a.parquet").touch()
+    (tmp_path / "sections").mkdir()
+    (tmp_path / "sections" / "only.parquet").touch()
+
+    assert [
+        path.relative_to(tmp_path).as_posix()
+        for path in cachemod._scan_paths(tmp_path, ["missing", "sections", "documents"])
+    ] == [
+        "documents/a.parquet",
+        "documents/z.parquet",
+        "sections/only.parquet",
+    ]
 
 
 def test_cache_write_cleanups_sibling_on_interruption(tmp_path: Path, monkeypatch) -> None:

@@ -110,49 +110,63 @@ def render_geographic_text_coverage(
     """Render the coverage PNG and atomically write it to ``output_path``."""
     coerced = coerce_coverage_cells(cells)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = _coverage_axes(land_features)
+    cmap, norm = _coverage_scale()
+    for cell in coerced:
+        draw_coverage_cell(ax, cell, cmap=cmap, norm=norm)
+    caption = _coverage_caption(coerced, min_polygons_per_cell)
+    _decorate_coverage_figure(fig, ax, cmap, norm, caption)
+    _save_coverage_figure(fig, output_path)
 
+    LOGGER.info("Wrote geographic Wikipedia text coverage map to %s", output_path)
+    return RenderResult(output_path=output_path, caption=caption)
+
+
+def _coverage_axes(land_features: Sequence[Any] | None) -> tuple[Any, Any]:
     fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
     fig.set_facecolor("white")
     init_axes(ax)
     if land_features:
         draw_landmasses(ax, land_features)
+    return fig, ax
 
-    cmap = plt.get_cmap(_COVERAGE_COLORMAP_NAME)
-    norm = mcolors.Normalize(vmin=_VMIN, vmax=_VMAX)
-    for cell in coerced:
-        draw_coverage_cell(ax, cell, cmap=cmap, norm=norm)
 
-    covered_total = sum(c.covered_polygon_count for c in coerced)
-    polygon_total = sum(c.polygon_count for c in coerced)
+def _coverage_scale() -> tuple[mcolors.Colormap, mcolors.Normalize]:
+    return plt.get_cmap(_COVERAGE_COLORMAP_NAME), mcolors.Normalize(vmin=_VMIN, vmax=_VMAX)
+
+
+def _coverage_caption(cells: Sequence[CoverageCell], min_polygons_per_cell: int) -> str:
+    covered_total, polygon_total, low_sample_count = _coverage_totals(cells)
     overall_pct = 100.0 * covered_total / polygon_total if polygon_total > 0 else 0.0
-    low_sample_count = sum(1 for c in coerced if c.is_low_sample)
-    caption = (
+    return (
         "Geographic Wikipedia Text Coverage. Colour encodes the share of "
         "dataset polygons (already conditional on an OSM `wikidata=*` tag) "
         "linked to at least one Wikipedia article with non-empty text, "
         f"from 0% to 100%. Grey cells hold fewer than {min_polygons_per_cell} "
         "polygons and are not statistically meaningful. "
-        f"{polygon_total:,} polygons across {len(coerced):,} H3 cells "
+        f"{polygon_total:,} polygons across {len(cells):,} H3 cells "
         f"({covered_total:,} covered, {overall_pct:.1f}% overall; "
         f"{low_sample_count:,} low-sample)."
     )
-    fig.suptitle(
-        "Geographic Wikipedia Text Coverage",
-        fontsize=14,
-        color="#222222",
-        y=0.98,
-    )
-    fig.text(
-        0.5,
-        0.02,
-        caption,
-        ha="center",
-        va="bottom",
-        fontsize=7,
-        color="#444444",
-        wrap=True,
+
+
+def _coverage_totals(cells: Sequence[CoverageCell]) -> tuple[int, int, int]:
+    return (
+        sum(c.covered_polygon_count for c in cells),
+        sum(c.polygon_count for c in cells),
+        sum(1 for c in cells if c.is_low_sample),
     )
 
+
+def _decorate_coverage_figure(
+    fig: Any,
+    ax: Any,
+    cmap: mcolors.Colormap,
+    norm: mcolors.Normalize,
+    caption: str,
+) -> None:
+    fig.suptitle("Geographic Wikipedia Text Coverage", fontsize=14, color="#222222", y=0.98)
+    fig.text(0.5, 0.02, caption, ha="center", va="bottom", fontsize=7, color="#444444", wrap=True)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     colorbar = fig.colorbar(sm, ax=ax, fraction=0.025, pad=0.02)
@@ -160,14 +174,13 @@ def render_geographic_text_coverage(
     colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_percent_tick))
     colorbar.ax.tick_params(labelsize=7)
 
+
+def _save_coverage_figure(fig: Any, output_path: Path) -> None:
     try:
         fig.tight_layout(rect=(0, 0.06, 1, 0.95))
         atomic_save_png(fig, output_path)
     finally:
         plt.close(fig)
-
-    LOGGER.info("Wrote geographic Wikipedia text coverage map to %s", output_path)
-    return RenderResult(output_path=output_path, caption=caption)
 
 
 def generate_geographic_text_coverage(

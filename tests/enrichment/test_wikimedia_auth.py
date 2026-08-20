@@ -112,6 +112,23 @@ def test_absent_bot_password_environment_keeps_anonymous_mode() -> None:
     assert load_wikimedia_credentials({}) is None
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"login": None}, {"login": {}}, {"login": {"result": "Failed"}}],
+)
+def test_login_success_validator_rejects_non_success_payloads(payload: dict[str, object]) -> None:
+    from osm_polygon_wikidata_only.enrichment import wikimedia_auth
+
+    with pytest.raises(ValueError, match="login rejected"):
+        wikimedia_auth._require_login_success(payload)
+
+
+def test_login_success_validator_accepts_success_payload() -> None:
+    from osm_polygon_wikidata_only.enrichment import wikimedia_auth
+
+    wikimedia_auth._require_login_success({"login": {"result": "Success"}})
+
+
 def test_complete_bot_password_environment_loads_credentials() -> None:
     credentials = load_wikimedia_credentials(
         {

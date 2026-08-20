@@ -132,19 +132,36 @@ def _validate_qid(value: object, field: str) -> str:
 
 def _validate_language(value: object, field: str) -> str:
     """Validate that value is a non-empty language string without colons or whitespace."""
+    language = _require_language_string(value, field)
+    _validate_language_format(language, field)
+    return language
+
+
+def _require_language_string(value: object, field: str) -> str:
     if not isinstance(value, str):
         raise WikipediaDocumentConversionError(
             f"Field '{field}': expected str, got {type(value).__name__}"
         )
+    return value
+
+
+def _validate_language_format(value: str, field: str) -> None:
+    _validate_language_whitespace(value, field)
+    _validate_language_colon(value, field)
+
+
+def _validate_language_whitespace(value: str, field: str) -> None:
     if not value or value.strip() != value or any(c.isspace() for c in value):
         raise WikipediaDocumentConversionError(
             f"Field '{field}': language must be non-empty and have no whitespace, got {value!r}"
         )
+
+
+def _validate_language_colon(value: str, field: str) -> None:
     if ":" in value:
         raise WikipediaDocumentConversionError(
             f"Field '{field}': language must not contain ':', got '{value}'"
         )
-    return value
 
 
 def _validate_positive_int(value: object, field: str) -> int:
@@ -418,9 +435,27 @@ def build_wikipedia_document_table(article_table: pa.Table) -> pa.Table:
         On schema/metadata mismatches, duplicate IDs, or conversion failures.
     """
     expected = article_schema()
-    actual = article_table.schema
+    _validate_article_table_schema(article_table, expected)
+    if article_table.num_rows == 0:
+        return _empty_wikipedia_document_table()
+    _validate_unique_article_ids(article_table)
+    docs = _convert_article_rows(article_table.to_pylist())
+    return _sort_documents(pa.Table.from_pylist(docs, schema=wikipedia_document_schema()))
 
-    # Reject duplicate column names
+
+def _validate_article_table_schema(article_table: pa.Table, expected: pa.Schema) -> None:
+    actual = article_table.schema
+    _validate_column_names(actual, expected)
+    _validate_column_order(actual, expected)
+    _validate_column_fields(actual, expected)
+
+
+def _validate_column_names(actual: pa.Schema, expected: pa.Schema) -> None:
+    _validate_no_duplicate_columns(actual)
+    _validate_expected_columns(actual, expected)
+
+
+def _validate_no_duplicate_columns(actual: pa.Schema) -> None:
     name_counts = Counter(actual.names)
     duplicated = sorted(name for name, count in name_counts.items() if count > 1)
     if duplicated:
@@ -428,93 +463,90 @@ def build_wikipedia_document_table(article_table: pa.Table) -> pa.Table:
             f"Duplicate column name(s) in input table: {duplicated}"
         )
 
-    # Reject unknown extra columns
+
+def _validate_expected_columns(actual: pa.Schema, expected: pa.Schema) -> None:
     expected_names = set(expected.names)
     actual_names = set(actual.names)
     extra = sorted(actual_names - expected_names)
     if extra:
         raise WikipediaDocumentConversionError(f"Unknown extra column(s) in input table: {extra}")
-
-    # Reject missing columns
     missing = sorted(expected_names - actual_names)
     if missing:
         raise WikipediaDocumentConversionError(
             f"Missing required column(s) in input table: {missing}"
         )
 
-    # Reject incorrect field ordering
+
+def _validate_column_order(actual: pa.Schema, expected: pa.Schema) -> None:
     if tuple(actual.names) != tuple(expected.names):
         raise WikipediaDocumentConversionError(
             f"Input table column order does not match article_schema(). "
             f"Expected {list(expected.names)}, got {list(actual.names)}"
         )
 
-    # Reject wrong types and mismatched metadata
-    for i, expected_field in enumerate(expected):
-        actual_field = actual.field(i)
-        if actual_field.type != expected_field.type:
-            raise WikipediaDocumentConversionError(
-                f"Type mismatch for column '{expected_field.name}': "
-                f"expected {expected_field.type}, got {actual_field.type}"
-            )
-        if actual_field.metadata != expected_field.metadata:
-            raise WikipediaDocumentConversionError(
-                f"Metadata mismatch for column '{expected_field.name}': "
-                f"expected {expected_field.metadata}, got {actual_field.metadata}"
-            )
 
-    # Handle empty table
-    if article_table.num_rows == 0:
-        return pa.table(
-            {
-                col: pa.array([], type=wikipedia_document_schema().field(col).type)
-                for col in WIKIPEDIA_DOCUMENT_COLUMNS
-            },
-            schema=wikipedia_document_schema(),
+def _validate_column_fields(actual: pa.Schema, expected: pa.Schema) -> None:
+    for index, expected_field in enumerate(expected):
+        actual_field = actual.field(index)
+        _validate_column_type(actual_field, expected_field)
+        _validate_column_metadata(actual_field, expected_field)
+
+
+def _validate_column_type(actual: pa.Field, expected: pa.Field) -> None:
+    if actual.type != expected.type:
+        raise WikipediaDocumentConversionError(
+            f"Type mismatch for column '{expected.name}': "
+            f"expected {expected.type}, got {actual.type}"
         )
 
-    # Check for duplicate article_ids (single-pass, O(n))
-    article_ids = article_table.column("article_id").to_pylist()
+
+def _validate_column_metadata(actual: pa.Field, expected: pa.Field) -> None:
+    if actual.metadata != expected.metadata:
+        raise WikipediaDocumentConversionError(
+            f"Metadata mismatch for column '{expected.name}': "
+            f"expected {expected.metadata}, got {actual.metadata}"
+        )
+
+
+def _empty_wikipedia_document_table() -> pa.Table:
+    schema = wikipedia_document_schema()
+    return pa.table(
+        {col: pa.array([], type=schema.field(col).type) for col in WIKIPEDIA_DOCUMENT_COLUMNS},
+        schema=schema,
+    )
+
+
+def _validate_unique_article_ids(article_table: pa.Table) -> None:
     seen: set[str] = set()
-    duplicates: list[str] = []
-    for aid in article_ids:
-        if aid in seen:
-            duplicates.append(aid)
-        seen.add(aid)
+    duplicates: set[str] = set()
+    for article_id in article_table.column("article_id").to_pylist():
+        if article_id in seen:
+            duplicates.add(article_id)
+        seen.add(article_id)
     if duplicates:
         raise WikipediaDocumentConversionError(
-            f"Duplicate article_id values found: {sorted(set(duplicates))}"
+            f"Duplicate article_id values found: {sorted(duplicates)}"
         )
 
-    # Convert row by row
-    rows = article_table.to_pylist()
-    docs: list[dict[str, Any]] = []
-    # NOTE: With strict identity validation (valid QID, non-empty language
-    # without ':', positive page_id and revision_id), and the deterministic
-    # document_id format `{wikidata}:wikipedia:{language}:{page_id}:{revision_id}`,
-    # two valid unique article_ids cannot produce the same document_id.
-    # The article_id is `{wikidata}:{language}:{page_id}:{revision_id}` which
-    # is a bijection with document_id when ':' cannot appear in language.
-    # This check is retained as a defensive invariant.
-    doc_id_set: set[str] = set()
 
+def _convert_article_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    doc_id_set: set[str] = set()
     for row in rows:
         doc = wikipedia_document_from_article_row(row)
-        if doc.document_id in doc_id_set:
-            raise WikipediaDocumentConversionError(
-                f"Duplicate document_id generated: '{doc.document_id}'"
-            )
+        _validate_unique_document_id(doc.document_id, doc_id_set)
         doc_id_set.add(doc.document_id)
         docs.append(doc.to_dict())
+    return docs
 
-    # Build table with exact schema
-    out_schema = wikipedia_document_schema()
-    result = pa.Table.from_pylist(docs, schema=out_schema)
 
-    # Sort deterministically by document_id
-    result = result.sort_by([("document_id", "ascending")])
+def _validate_unique_document_id(document_id: str, seen: set[str]) -> None:
+    if document_id in seen:
+        raise WikipediaDocumentConversionError(f"Duplicate document_id generated: '{document_id}'")
 
-    return result
+
+def _sort_documents(table: pa.Table) -> pa.Table:
+    return table.sort_by([("document_id", "ascending")])
 
 
 __all__ = [

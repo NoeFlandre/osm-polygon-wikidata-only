@@ -106,23 +106,10 @@ class HttpWikipediaClient(WikipediaClient):
         fetch_full_text: bool = True,
     ) -> FetchResult:
         url = self._build_url(language, title, fetch_full_text=fetch_full_text)
-        try:
-            data = with_retries(
-                lambda: self._http_get(url),
-                attempts=self._settings.request_max_retries,
-                base_delay=self._settings.request_base_delay_s,
-                retry_on=(urllib.error.URLError, TimeoutError, OSError),
-                should_retry=is_transient_network_error,
-                on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
-            )
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return FetchResult("article_not_found", None, str(e))
-            if e.code in (429, 503):
-                return FetchResult("rate_limited", None, str(e))
-            return FetchResult("http_error", None, f"HTTP {e.code}: {e}")
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            return FetchResult("http_error", None, str(e))
+        data, error = self._request_article_data(url, fallback=False)
+        if error is not None:
+            return error
+        assert data is not None
         result = parse_wikipedia_response(
             language,
             site,
@@ -132,54 +119,22 @@ class HttpWikipediaClient(WikipediaClient):
             wikidata_description=wikidata_description,
             fetch_full_text=fetch_full_text,
         )
-        if result.status != "empty_text" or not fetch_full_text:
+        if not _needs_parse_fallback(result, fetch_full_text):
             return result
         revision_id = revision_id_from_query(data)
         if revision_id <= 0:
             return result
         fallback_url = self._build_parse_url(language, revision_id)
-        try:
-            fallback_data = with_retries(
-                lambda: self._http_get(fallback_url),
-                attempts=self._settings.request_max_retries,
-                base_delay=self._settings.request_base_delay_s,
-                retry_on=(urllib.error.URLError, TimeoutError, OSError),
-                should_retry=is_transient_network_error,
-                on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
-            )
-        except urllib.error.HTTPError as error:
-            status = "rate_limited" if error.code in (429, 503) else "http_error"
-            return FetchResult(status, None, f"parse fallback HTTP {error.code}: {error}")
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
-            return FetchResult("http_error", None, f"parse fallback failed: {error}")
-        parsed_text = plain_text_from_parse_response(fallback_data)
-        if not parsed_text:
-            if result.article is not None:
-                return FetchResult(
-                    "empty_text",
-                    result.article,
-                    "extract and exact-revision parse were empty",
-                )
-            return FetchResult("empty_text", None, "extract and exact-revision parse were empty")
-        fallback_result = parse_wikipedia_response(
+        return self._parse_fallback(
             language,
             site,
             title,
-            query_with_extract(data, parsed_text),
+            data,
+            result,
+            fallback_url,
             wikidata_label=wikidata_label,
             wikidata_description=wikidata_description,
-            fetch_full_text=True,
         )
-        if fallback_result.article is not None:
-            return FetchResult(
-                fallback_result.status,
-                replace(
-                    fallback_result.article,
-                    source_api="mediawiki_action_api_parse_fallback",
-                ),
-                fallback_result.error,
-            )
-        return fallback_result
 
     def fetch_articles(
         self,
@@ -197,30 +152,81 @@ class HttpWikipediaClient(WikipediaClient):
             # TextExtracts only returns multiple extracts for lead-only
             # (`exintro`) requests. Full-text batches silently omit all but
             # one extract, so preserve complete per-article retrieval here.
-            return {
-                title: self.fetch_article(language, site, title, fetch_full_text=True)
-                for title in requested
-            }
-        url = self._build_url(language, "|".join(requested), fetch_full_text=fetch_full_text)
+            return self._fetch_full_text_batch(language, site, requested)
+        return self._fetch_lead_batch(language, site, requested)
+
+    def _request_article_data(
+        self, url: str, *, fallback: bool
+    ) -> tuple[dict[str, Any] | None, FetchResult | None]:
         try:
-            data = with_retries(
-                lambda: self._http_get(url),
-                attempts=self._settings.request_max_retries,
-                base_delay=self._settings.request_base_delay_s,
-                retry_on=(urllib.error.URLError, TimeoutError, OSError),
-                should_retry=is_transient_network_error,
-                on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
+            return (
+                with_retries(
+                    lambda: self._http_get(url),
+                    attempts=self._settings.request_max_retries,
+                    base_delay=self._settings.request_base_delay_s,
+                    retry_on=(urllib.error.URLError, TimeoutError, OSError),
+                    should_retry=is_transient_network_error,
+                    on_retry=transient_retry_log_callback("Wikipedia", logger=LOGGER),
+                ),
+                None,
             )
+        except urllib.error.HTTPError as error:
+            return None, _article_http_error(error, fallback=fallback)
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            return None, _article_network_error(error, fallback=fallback)
+
+    def _parse_fallback(
+        self,
+        language: str,
+        site: str,
+        title: str,
+        data: dict[str, Any],
+        result: FetchResult,
+        fallback_url: str,
+        *,
+        wikidata_label: str,
+        wikidata_description: str,
+    ) -> FetchResult:
+        fallback_data, error = self._request_article_data(fallback_url, fallback=True)
+        if error is not None:
+            return error
+        assert fallback_data is not None
+        parsed_text = plain_text_from_parse_response(fallback_data)
+        if not parsed_text:
+            return _empty_fallback_result(result)
+        fallback_result = parse_wikipedia_response(
+            language,
+            site,
+            title,
+            query_with_extract(data, parsed_text),
+            wikidata_label=wikidata_label,
+            wikidata_description=wikidata_description,
+            fetch_full_text=True,
+        )
+        return _mark_fallback_result(fallback_result)
+
+    def _fetch_full_text_batch(
+        self, language: str, site: str, requested: list[str]
+    ) -> dict[str, FetchResult]:
+        return {
+            title: self.fetch_article(language, site, title, fetch_full_text=True)
+            for title in requested
+        }
+
+    def _fetch_lead_batch(
+        self, language: str, site: str, requested: list[str]
+    ) -> dict[str, FetchResult]:
+        url = self._build_url(language, "|".join(requested), fetch_full_text=False)
+        data, error = self._request_article_data(url, fallback=False)
+        if error is not None:
+            return self._fetch_full_text_batch(language, site, requested)
+        try:
+            assert data is not None
             return _parse_wikipedia_batch_response(
-                language, site, requested, data, fetch_full_text=fetch_full_text
+                language, site, requested, data, fetch_full_text=False
             )
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
-            # A batch is only an optimization. Reuse the established per-title
-            # path so a malformed or transient batch response cannot drop work.
-            return {
-                title: self.fetch_article(language, site, title, fetch_full_text=fetch_full_text)
-                for title in requested
-            }
+        except ValueError:
+            return self._fetch_full_text_batch(language, site, requested)
 
     def _build_url(self, language: str, title: str, *, fetch_full_text: bool) -> str:
         endpoint = MEDIAWIKI_API_URL_TEMPLATE.format(lang=language)
@@ -278,6 +284,44 @@ class HttpWikipediaClient(WikipediaClient):
             )
         except _NonObjectJsonError as error:
             raise ValueError(f"Expected JSON object from {url}, got {error.value_type}") from None
+
+
+def _needs_parse_fallback(result: FetchResult, fetch_full_text: bool) -> bool:
+    return result.status == "empty_text" and fetch_full_text
+
+
+def _article_http_error(error: urllib.error.HTTPError, *, fallback: bool) -> FetchResult:
+    if fallback:
+        status = "rate_limited" if error.code in (429, 503) else "http_error"
+        return FetchResult(status, None, f"parse fallback HTTP {error.code}: {error}")
+    if error.code == 404:
+        return FetchResult("article_not_found", None, str(error))
+    if error.code in (429, 503):
+        return FetchResult("rate_limited", None, str(error))
+    return FetchResult("http_error", None, f"HTTP {error.code}: {error}")
+
+
+def _article_network_error(error: BaseException, *, fallback: bool) -> FetchResult:
+    if fallback:
+        return FetchResult("http_error", None, f"parse fallback failed: {error}")
+    return FetchResult("http_error", None, str(error))
+
+
+def _empty_fallback_result(result: FetchResult) -> FetchResult:
+    message = "extract and exact-revision parse were empty"
+    if result.article is not None:
+        return FetchResult("empty_text", result.article, message)
+    return FetchResult("empty_text", None, message)
+
+
+def _mark_fallback_result(result: FetchResult) -> FetchResult:
+    if result.article is None:
+        return result
+    return FetchResult(
+        result.status,
+        replace(result.article, source_api="mediawiki_action_api_parse_fallback"),
+        result.error,
+    )
 
 
 __all__ = ["HttpWikipediaClient", "InMemoryWikipediaClient"]

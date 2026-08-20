@@ -44,6 +44,44 @@ def test_failed_write_leaves_no_temporary_files_or_manifest(tmp_path: Path, monk
     assert not (tmp_path / "manifests" / "processed_pbfs.json").exists()
 
 
+def test_mid_transaction_failure_restores_existing_region(tmp_path: Path, monkeypatch) -> None:
+    """A failure after the first replacement restores every prior artifact."""
+    import osm_polygon_wikidata_only.v2.storage as storage
+
+    initial = write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
+    paths = (
+        initial.polygons_path,
+        initial.documents_path,
+        initial.sections_path,
+        initial.links_path,
+        initial.manifest_path,
+    )
+    before = {path: path.read_bytes() for path in paths}
+    original_replace = storage.os.replace
+    calls = 0
+
+    def fail_on_second_replacement(source: str | bytes, destination: str | bytes) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 6:  # four backups, then the second staged replacement
+            raise OSError("injected replacement failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(storage.os, "replace", fail_on_second_replacement)
+    with pytest.raises(OSError, match="injected replacement failure"):
+        write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
+
+    assert calls >= 6
+    assert {path: path.read_bytes() for path in paths} == before
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+@pytest.mark.parametrize("stem", ["", ".", "..", "../escape", "nested/name", r"nested\\name"])
+def test_write_region_rejects_unsafe_stems(tmp_path: Path, stem: str) -> None:
+    with pytest.raises(ValueError, match="Invalid V2 stem"):
+        write_v2_region(tmp_path, stem, polygons=[], documents=[], links=[])
+
+
 def test_second_identical_write_is_byte_stable(tmp_path: Path) -> None:
     first = write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
     hashes_before = first.file_hashes

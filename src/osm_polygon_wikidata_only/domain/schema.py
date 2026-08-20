@@ -208,23 +208,36 @@ def _arrow_schema(columns: tuple[str, ...], descriptions: dict[str, str]) -> pa.
     All columns are stored as strings / numeric scalars because we want
     byte-stable, simple parquet files that any tool can read.
     """
-    fields: list[pa.Field] = []
-    for col in columns:
-        if (
-            col.endswith("_count")
-            or col.endswith("_chars")
-            or col.endswith("_words")
-            or col.endswith("_tokens_estimate")
-        ) or col in {"page_id", "revision_id", "osm_id", "thumbnail_width", "thumbnail_height"}:
-            dtype = pa.int64()
-        elif col in {"lat", "lon", "area_m2", "area_km2"}:
-            dtype = pa.float64()
-        elif col.startswith("has_") or col == "is_best_language" or col == "text_available":
-            dtype = pa.bool_()
-        else:
-            dtype = pa.string()
-        fields.append(pa.field(col, dtype, metadata={"description": descriptions.get(col, "")}))
-    return pa.schema(fields)
+    return pa.schema(
+        [
+            pa.field(col, _column_dtype(col), metadata={"description": descriptions.get(col, "")})
+            for col in columns
+        ]
+    )
+
+
+def _column_dtype(col: str) -> pa.DataType:
+    if _is_integer_column(col):
+        return pa.int64()
+    if col in {"lat", "lon", "area_m2", "area_km2"}:
+        return pa.float64()
+    if _is_boolean_column(col):
+        return pa.bool_()
+    return pa.string()
+
+
+def _is_integer_column(col: str) -> bool:
+    return col.endswith(("_count", "_chars", "_words", "_tokens_estimate")) or col in {
+        "page_id",
+        "revision_id",
+        "osm_id",
+        "thumbnail_width",
+        "thumbnail_height",
+    }
+
+
+def _is_boolean_column(col: str) -> bool:
+    return col.startswith("has_") or col in {"is_best_language", "text_available"}
 
 
 def polygon_schema() -> pa.schema:
@@ -245,22 +258,17 @@ def empty_row(columns: tuple[str, ...]) -> dict[str, Any]:
     Useful for building an empty parquet file with the correct schema
     when a PBF produces no rows.
     """
-    row: dict[str, Any] = {}
-    for col in columns:
-        if (
-            col.endswith("_count")
-            or col.endswith("_chars")
-            or col.endswith("_words")
-            or col.endswith("_tokens_estimate")
-        ) or col in {"page_id", "revision_id", "osm_id", "thumbnail_width", "thumbnail_height"}:
-            row[col] = 0
-        elif col in {"lat", "lon", "area_m2", "area_km2"}:
-            row[col] = 0.0
-        elif col.startswith("has_") or col == "is_best_language" or col == "text_available":
-            row[col] = False
-        else:
-            row[col] = ""
-    return row
+    return {col: _empty_value(col) for col in columns}
+
+
+def _empty_value(col: str) -> Any:
+    if _is_integer_column(col):
+        return 0
+    if col in {"lat", "lon", "area_m2", "area_km2"}:
+        return 0.0
+    if _is_boolean_column(col):
+        return False
+    return ""
 
 
 __all__ = [

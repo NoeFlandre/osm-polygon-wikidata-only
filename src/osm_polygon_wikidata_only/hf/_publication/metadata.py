@@ -89,33 +89,59 @@ def assemble_containment_retirement_upload(
     """Assemble one atomic parent replacement + contained-child retirement."""
     if not parent_children:
         raise PublicationValidationError("Containment retirement requires at least one parent")
-    operations: list[PublicationOp] = []
-    for parent in sorted(parent_children):
-        for local_relative, remote in canonical_region_paths(parent).items():
-            local = data_root.processed / local_relative
-            if not local.is_file():
-                raise FileNotFoundError(f"Canonical containment parent artifact missing: {local}")
-            operations.append(add_op(local, path_in_repo=remote))
-        for child in sorted(parent_children[parent]):
-            for remote in canonical_region_paths(child).values():
-                operations.append(delete_op(remote))
-
-    retirement_manifest = data_root.processed / "manifests" / "containment_retirements.json"
-    if not retirement_manifest.is_file():
-        raise FileNotFoundError("Local containment retirement manifest is missing")
-
+    operations = _containment_operations(data_root, parent_children)
+    retirement_manifest = _require_retirement_manifest(data_root)
     metadata_ops = hooks.metadata_only_upload(
-        data_root=data_root,
-        repo_id=repo_id,
-        world_land_warning=world_land_warning,
+        data_root=data_root, repo_id=repo_id, world_land_warning=world_land_warning
     )
-    readme = metadata_ops[-1]
-    if readme.path_in_repo != "README.md":
-        raise PublicationValidationError("Metadata publication must end with README.md")
+    readme = _require_readme_operation(metadata_ops)
     operations.extend(metadata_ops[:-1])
     operations.append(add_op(retirement_manifest, path_in_repo=REMOTE_CONTAINMENT_RETIREMENT_FILE))
     operations.append(readme)
     return operations
+
+
+def _containment_operations(
+    data_root: DataRoot,
+    parent_children: dict[str, tuple[str, ...]],
+) -> list[PublicationOp]:
+    operations: list[PublicationOp] = []
+    for parent in sorted(parent_children):
+        operations.extend(_parent_operations(data_root, parent))
+        operations.extend(_child_delete_operations(parent_children[parent]))
+    return operations
+
+
+def _parent_operations(data_root: DataRoot, parent: str) -> list[PublicationOp]:
+    operations: list[PublicationOp] = []
+    for local_relative, remote in canonical_region_paths(parent).items():
+        local = data_root.processed / local_relative
+        if not local.is_file():
+            raise FileNotFoundError(f"Canonical containment parent artifact missing: {local}")
+        operations.append(add_op(local, path_in_repo=remote))
+    return operations
+
+
+def _child_delete_operations(children: tuple[str, ...]) -> list[PublicationOp]:
+    return [
+        delete_op(remote)
+        for child in sorted(children)
+        for remote in canonical_region_paths(child).values()
+    ]
+
+
+def _require_retirement_manifest(data_root: DataRoot):
+    retirement_manifest = data_root.processed / "manifests" / "containment_retirements.json"
+    if not retirement_manifest.is_file():
+        raise FileNotFoundError("Local containment retirement manifest is missing")
+    return retirement_manifest
+
+
+def _require_readme_operation(metadata_ops: list[PublicationOp]) -> PublicationOp:
+    readme = metadata_ops[-1]
+    if readme.path_in_repo != "README.md":
+        raise PublicationValidationError("Metadata publication must end with README.md")
+    return readme
 
 
 __all__ = ["assemble_containment_retirement_upload", "assemble_metadata_only_upload"]
