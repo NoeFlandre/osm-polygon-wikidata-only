@@ -566,35 +566,36 @@ class RegionFetchCheckpoint:
             self.root.parent.rmdir()
 
 
+def _remove_matching_files(directory: Path, patterns: tuple[str, ...]) -> None:
+    """Delete checkpoint-owned files matching the supplied patterns."""
+    for pattern in patterns:
+        for path in directory.glob(pattern):
+            path.unlink(missing_ok=True)
+
+
+def _remove_empty_directory(directory: Path) -> None:
+    with suppress(OSError):
+        directory.rmdir()
+
+
+def _clear_checkpoint_directory(directory: Path, patterns: tuple[str, ...]) -> None:
+    _remove_matching_files(directory, patterns)
+    _remove_empty_directory(directory)
+
+
 def clear_v2_checkpoints(root: Path, stem: str) -> None:
     """Remove one region's extraction and fetch checkpoints if present."""
     extraction_root = Path(root) / "extraction" / stem
-    for path in extraction_root.glob("chunk-*.parquet"):
-        path.unlink(missing_ok=True)
-    for path in (*extraction_root.glob("*.tmp"), *extraction_root.glob(".*.tmp")):
-        path.unlink(missing_ok=True)
-    (extraction_root / "metadata.json").unlink(missing_ok=True)
-    with suppress(OSError):
-        extraction_root.rmdir()
-    with suppress(OSError):
-        extraction_root.parent.rmdir()
+    _clear_checkpoint_directory(
+        extraction_root,
+        ("chunk-*.parquet", "*.tmp", ".*.tmp", "metadata.json"),
+    )
+    _remove_empty_directory(extraction_root.parent)
     fetch_root = Path(root) / "fetch" / stem
     for directory in (fetch_root / "direct", fetch_root / "sections"):
-        for path in (
-            *directory.glob("*.json"),
-            *directory.glob("*.tmp"),
-            *directory.glob(".*.tmp"),
-        ):
-            path.unlink(missing_ok=True)
-        with suppress(OSError):
-            directory.rmdir()
-    for path in (*fetch_root.glob("*.tmp"), *fetch_root.glob(".*.tmp")):
-        path.unlink(missing_ok=True)
-    (fetch_root / "metadata.json").unlink(missing_ok=True)
-    with suppress(OSError):
-        fetch_root.rmdir()
-    with suppress(OSError):
-        fetch_root.parent.rmdir()
+        _clear_checkpoint_directory(directory, ("*.json", "*.tmp", ".*.tmp"))
+    _clear_checkpoint_directory(fetch_root, ("*.tmp", ".*.tmp", "metadata.json"))
+    _remove_empty_directory(fetch_root.parent)
 
 
 __all__ = [

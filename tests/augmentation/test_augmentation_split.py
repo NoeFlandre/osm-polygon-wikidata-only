@@ -580,6 +580,21 @@ def test_build_wikidata_facts_calls_labels_with_property_plus_value_ids() -> Non
     assert snapshot.completed == snapshot.total == 1
 
 
+def test_fact_label_ids_include_properties_and_entity_values() -> None:
+    from osm_polygon_wikidata_only.augmentation.steps import FACT_PROPERTIES, _fact_label_ids
+
+    assert _fact_label_ids(
+        {
+            "Q1": {
+                "claims": {
+                    "P31": [{"mainsnak": {"datavalue": {"value": {"id": "Q6256"}}}}],
+                    "P999": [{"mainsnak": {"datavalue": {"value": {"id": "Q999"}}}}],
+                }
+            }
+        }
+    ) == FACT_PROPERTIES | {"Q6256"}
+
+
 # ---------------------------------------------------------------------------
 # write_sidecars
 # ---------------------------------------------------------------------------

@@ -57,10 +57,96 @@ _SECONDARY_INDEX_SQL = {
         "CREATE INDEX IF NOT EXISTS documents_qid ON documents(qid, document_id)",
     ),
 }
+_QUERY_SQL = {
+    "page": """
+        SELECT document_id, source_path, legacy, row_group, row_index
+        FROM documents WHERE language=? AND page_id=?
+        ORDER BY document_id, source_path
+    """,
+    "title": """
+        SELECT document_id, source_path, legacy, row_group, row_index
+        FROM documents WHERE language=? AND title_key=?
+        ORDER BY document_id, source_path
+    """,
+    "qid": """
+        SELECT document_id, source_path, legacy, row_group, row_index
+        FROM documents WHERE qid=?
+        ORDER BY document_id, source_path
+    """,
+}
 
 
 def _title_key(language: str, title: str) -> tuple[str, str]:
     return language.casefold(), " ".join(title.replace("_", " ").split()).casefold()
+
+
+def _normalized_title_keys(keys: Sequence[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
+    """Normalize title lookup keys while retaining first-seen order."""
+    return tuple(dict.fromkeys(_title_key(language, title) for language, title in keys))
+
+
+def _group_title_rows(
+    rows: Sequence[sqlite3.Row],
+) -> tuple[dict[tuple[str, str], tuple[sqlite3.Row, ...]], tuple[sqlite3.Row, ...]]:
+    """Group title query rows and keep one reference per document identity."""
+    grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+    references_by_document: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        key = (str(row["language"]), str(row["title_key"]))
+        grouped.setdefault(key, []).append(row)
+        references_by_document.setdefault(str(row["document_id"]), row)
+    return {key: tuple(value) for key, value in grouped.items()}, tuple(
+        references_by_document.values()
+    )
+
+
+def _title_chunk_results(
+    chunk: Sequence[tuple[str, str]],
+    grouped: Mapping[tuple[str, str], Sequence[sqlite3.Row]],
+    materialized: Mapping[str, DocumentRow],
+) -> dict[tuple[str, str], tuple[DocumentRow, ...]]:
+    """Build deterministic lookup results for a fetched title chunk."""
+    results: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
+    for key in chunk:
+        document_ids = {str(row["document_id"]) for row in grouped.get(key, ())}
+        results[key] = tuple(materialized[document_id] for document_id in sorted(document_ids))
+    return results
+
+
+def _partition_title_cache(
+    normalized: Sequence[tuple[str, str]],
+    cached: Mapping[tuple[str, str], tuple[DocumentRow, ...]],
+    *,
+    complete: bool,
+) -> tuple[dict[tuple[str, str], tuple[DocumentRow, ...]], tuple[tuple[str, str], ...]]:
+    """Split normalized title keys into cached hits and ordered misses."""
+    if not complete:
+        return {}, tuple(normalized)
+    results: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
+    missing: list[tuple[str, str]] = []
+    for key in normalized:
+        result = cached.get(key)
+        if result is None:
+            missing.append(key)
+        else:
+            results[key] = result
+    return results, tuple(missing)
+
+
+def _resumable_row_group(
+    previous: tuple[int, int, int, int, bool, int, int] | None,
+    fingerprint: tuple[int, int, int, int, bool],
+    total_row_groups: int,
+) -> int:
+    """Return the next safe row group for a matching scan checkpoint."""
+    if (
+        previous is None
+        or previous[:5] != fingerprint
+        or previous[5] != total_row_groups
+        or not 0 <= previous[6] <= total_row_groups
+    ):
+        return 0
+    return previous[6]
 
 
 def _count_distinct_documents(connection: sqlite3.Connection) -> int:
@@ -86,6 +172,98 @@ def _store_cached_row_count(connection: sqlite3.Connection, row_count: int) -> N
         "INSERT OR REPLACE INTO index_metadata(key, value) VALUES ('row_count', ?)",
         (str(row_count),),
     )
+
+
+def _first_query_rows_by_document(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
+    """Keep the first deterministic reference for each document identity."""
+    by_document: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        by_document.setdefault(str(row["document_id"]), row)
+    return by_document
+
+
+def _group_materialization_references(
+    references: tuple[sqlite3.Row, ...],
+    row_cache: OrderedDict[str, DocumentRow],
+    result: dict[str, DocumentRow],
+) -> dict[tuple[str, bool, int], list[sqlite3.Row]]:
+    """Separate cached rows from Parquet row-group reads."""
+    grouped: dict[tuple[str, bool, int], list[sqlite3.Row]] = {}
+    for reference in references:
+        document_id = str(reference["document_id"])
+        cached = row_cache.get(document_id)
+        if cached is not None:
+            row_cache.move_to_end(document_id)
+            result[document_id] = cached
+            continue
+        group = (
+            str(reference["source_path"]),
+            bool(reference["legacy"]),
+            int(reference["row_group"]),
+        )
+        grouped.setdefault(group, []).append(reference)
+    return grouped
+
+
+def _materialize_group(
+    source_path: str,
+    legacy: bool,
+    row_group: int,
+    references: list[sqlite3.Row],
+    row_cache: OrderedDict[str, DocumentRow],
+    row_cache_limit: int,
+) -> dict[str, DocumentRow]:
+    """Materialize one Parquet row group into the bounded document cache."""
+    with pq.ParquetFile(source_path) as parquet_file:
+        table = parquet_file.read_row_group(row_group)
+        raw_rows = table.to_pylist()
+    result: dict[str, DocumentRow] = {}
+    for reference in references:
+        document_id = str(reference["document_id"])
+        row = raw_rows[int(reference["row_index"])]
+        normalized = wikipedia_document_from_article_row(row).to_dict() if legacy else dict(row)
+        row_cache[document_id] = normalized
+        row_cache.move_to_end(document_id)
+        while len(row_cache) > row_cache_limit:
+            row_cache.popitem(last=False)
+        result[document_id] = normalized
+    return result
+
+
+def _current_index_files(files: tuple[Path, ...]) -> dict[str, tuple[Path, bool]]:
+    return {str(path.resolve()): (path, path.parent.name == "articles") for path in files}
+
+
+def _known_index_files(
+    connection: sqlite3.Connection,
+) -> dict[str, tuple[int, int, int, int, bool]]:
+    return {
+        str(row["path"]): (
+            int(row["size"]),
+            int(row["mtime_ns"]),
+            int(row["ctime_ns"]),
+            int(row["inode"]),
+            bool(row["legacy"]),
+        )
+        for row in connection.execute("SELECT * FROM file_state")
+    }
+
+
+def _index_scan_progress(
+    connection: sqlite3.Connection,
+) -> dict[str, tuple[int, int, int, int, bool, int, int]]:
+    return {
+        str(row["path"]): (
+            int(row["size"]),
+            int(row["mtime_ns"]),
+            int(row["ctime_ns"]),
+            int(row["inode"]),
+            bool(row["legacy"]),
+            int(row["total_row_groups"]),
+            int(row["next_row_group"]),
+        )
+        for row in connection.execute("SELECT * FROM scan_progress")
+    }
 
 
 class _PersistentV1Index:
@@ -385,337 +563,497 @@ class _PersistentV1Index:
                 (resolved, *fingerprint, total_row_groups, row_group + 1),
             )
 
-    def _sync(self, files: tuple[Path, ...]) -> bool:
-        connection = self._writer_connection
-        current = {str(path.resolve()): (path, path.parent.name == "articles") for path in files}
-        known = {
-            str(row["path"]): (
-                int(row["size"]),
-                int(row["mtime_ns"]),
-                int(row["ctime_ns"]),
-                int(row["inode"]),
-                bool(row["legacy"]),
-            )
-            for row in connection.execute("SELECT * FROM file_state")
-        }
-        progress = {
-            str(row["path"]): (
-                int(row["size"]),
-                int(row["mtime_ns"]),
-                int(row["ctime_ns"]),
-                int(row["inode"]),
-                bool(row["legacy"]),
-                int(row["total_row_groups"]),
-                int(row["next_row_group"]),
-            )
-            for row in connection.execute("SELECT * FROM scan_progress")
-        }
+    def _remove_stale_paths(
+        self,
+        current: Mapping[str, tuple[Path, bool]],
+        known: Mapping[str, tuple[int, int, int, int, bool]],
+    ) -> set[str]:
+        """Remove cached rows for shards no longer present in the file set."""
         stale = set(known) - set(current)
-        row_count_invalidated = bool(stale)
-        if stale:
-            with connection:
-                for path in stale:
-                    connection.execute("DELETE FROM documents WHERE source_path=?", (path,))
-                    connection.execute("DELETE FROM file_state WHERE path=?", (path,))
-                    connection.execute("DELETE FROM scan_progress WHERE path=?", (path,))
-                connection.execute("DELETE FROM index_metadata WHERE key='row_count'")
-            self._row_cache.clear()
+        if not stale:
+            return stale
+        self._delete_stale_paths(stale)
+        return stale
 
-        changed = 0
-        for position, path in enumerate(files, start=1):
-            if self._stop.is_set():
-                LOGGER.info(
-                    "V2 V1 reuse index stopped after %d/%d shards; completed work is resumable",
-                    position - 1,
-                    len(files),
+    def _delete_stale_paths(self, stale: set[str]) -> None:
+        connection = self._writer_connection
+        with connection:
+            for path in stale:
+                connection.execute("DELETE FROM documents WHERE source_path=?", (path,))
+                connection.execute("DELETE FROM file_state WHERE path=?", (path,))
+                connection.execute("DELETE FROM scan_progress WHERE path=?", (path,))
+            connection.execute("DELETE FROM index_metadata WHERE key='row_count'")
+        self._row_cache.clear()
+
+    def _invalidate_row_count(self, already_invalidated: bool) -> bool:
+        """Invalidate the cached count once before scanning changed data."""
+        if already_invalidated:
+            return True
+        with self._writer_connection:
+            self._writer_connection.execute("DELETE FROM index_metadata WHERE key='row_count'")
+        return True
+
+    def _unchanged_shard(
+        self,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        known: Mapping[str, tuple[int, int, int, int, bool]],
+        progress: Mapping[str, tuple[int, int, int, int, bool, int, int]],
+    ) -> bool:
+        """Return whether a shard is already indexed with the same fingerprint."""
+        if known.get(resolved) != fingerprint:
+            return False
+        if resolved in progress:
+            with self._writer_connection:
+                self._writer_connection.execute(
+                    "DELETE FROM scan_progress WHERE path=?", (resolved,)
                 )
-                return False
-            resolved = str(path.resolve())
-            fingerprint = (*self._fingerprint(path), path.parent.name == "articles")
-            if known.get(resolved) == fingerprint:
-                if resolved in progress:
-                    with connection:
-                        connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
-                continue
-            if not row_count_invalidated:
-                with connection:
-                    connection.execute("DELETE FROM index_metadata WHERE key='row_count'")
-                row_count_invalidated = True
-            LOGGER.info(
-                "V2 V1 reuse index: scanning shard %d/%d (%s)", position, len(files), path.name
-            )
-            legacy_articles = bool(fingerprint[-1])
-            parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
-            total_row_groups = parquet_file.num_row_groups
-            previous = progress.get(resolved)
-            matching_progress = (
-                previous is not None
-                and previous[:5] == fingerprint
-                and previous[5] == total_row_groups
-                and 0 <= previous[6] <= total_row_groups
-            )
-            start_row_group = previous[6] if matching_progress and previous is not None else 0
-            if start_row_group == 0:
-                with connection:
-                    connection.execute("DELETE FROM documents WHERE source_path=?", (resolved,))
-                    connection.execute("DELETE FROM file_state WHERE path=?", (resolved,))
-                    connection.execute(
-                        """
-                        INSERT OR REPLACE INTO scan_progress(
-                            path, size, mtime_ns, ctime_ns, inode, legacy,
-                            total_row_groups, next_row_group
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-                        """,
-                        (resolved, *fingerprint, total_row_groups),
-                    )
-                self._row_cache.clear()
-            reader = self._index_reader_executor
-            if reader is None:
-                reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="v2-index-reader")
-                self._index_reader_executor = reader
-            next_group: Future[list[tuple[str, str, str, int, int, str, int, int]]] | None = None
-            try:
-                if start_row_group < total_row_groups:
-                    next_group = reader.submit(
-                        _scan_index_row_group,
-                        path,
-                        legacy_articles=legacy_articles,
-                        row_group=start_row_group,
-                        parquet_file=parquet_file,
-                    )
-                for row_group in range(start_row_group, total_row_groups):
-                    if self._stop.is_set():
-                        if next_group is not None:
-                            next_group.cancel()
-                        LOGGER.info(
-                            "V2 V1 reuse index stopped in shard %d/%d at row group %d/%d; "
-                            "completed work is resumable",
-                            position,
-                            len(files),
-                            row_group,
-                            total_row_groups,
-                        )
-                        return False
-                    if next_group is None:  # pragma: no cover - loop invariant
-                        raise RuntimeError("V2 index reader lost the next row group")
-                    indexed = next_group.result()
-                    next_group = None
-                    if row_group + 1 < total_row_groups and not self._stop.is_set():
-                        next_group = reader.submit(
-                            _scan_index_row_group,
-                            path,
-                            legacy_articles=legacy_articles,
-                            row_group=row_group + 1,
-                            parquet_file=parquet_file,
-                        )
-                    self._commit_indexed_row_group(
-                        connection,
-                        indexed,
-                        resolved=resolved,
-                        fingerprint=fingerprint,
-                        total_row_groups=total_row_groups,
-                        row_group=row_group,
-                    )
-                    LOGGER.info(
-                        "V2 V1 reuse index: shard %d/%d row group %d/%d ready (%d identities)",
-                        position,
-                        len(files),
-                        row_group + 1,
-                        total_row_groups,
-                        len(indexed),
-                    )
-            finally:
-                if next_group is not None:
-                    next_group.cancel()
-                parquet_file.close()
-            with connection:
-                connection.execute(
+        return True
+
+    def _prepare_shard(
+        self,
+        path: Path,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        progress: Mapping[str, tuple[int, int, int, int, bool, int, int]],
+    ) -> tuple[pq.ParquetFile, bool, int, int]:
+        """Validate a shard and initialize or resume its row-group checkpoint."""
+        legacy_articles = bool(fingerprint[-1])
+        parquet_file = _validated_parquet_file(path, legacy_articles=legacy_articles)
+        total_row_groups = parquet_file.num_row_groups
+        start_row_group = _resumable_row_group(
+            progress.get(resolved), fingerprint, total_row_groups
+        )
+        if start_row_group == 0:
+            with self._writer_connection:
+                self._writer_connection.execute(
+                    "DELETE FROM documents WHERE source_path=?", (resolved,)
+                )
+                self._writer_connection.execute("DELETE FROM file_state WHERE path=?", (resolved,))
+                self._writer_connection.execute(
                     """
-                    INSERT OR REPLACE INTO file_state(path, size, mtime_ns, ctime_ns, inode, legacy)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO scan_progress(
+                        path, size, mtime_ns, ctime_ns, inode, legacy,
+                        total_row_groups, next_row_group
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                     """,
-                    (resolved, *fingerprint),
+                    (resolved, *fingerprint, total_row_groups),
                 )
-                connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
             self._row_cache.clear()
-            changed += 1
-            LOGGER.info(
-                "V2 V1 reuse index: shard ready %d/%d",
-                position,
-                len(files),
-            )
+        return parquet_file, legacy_articles, total_row_groups, start_row_group
 
+    def _index_reader(self) -> ThreadPoolExecutor:
+        """Return the single bounded reader executor used for row-group scans."""
+        reader = self._index_reader_executor
+        if reader is None:
+            reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="v2-index-reader")
+            self._index_reader_executor = reader
+        return reader
+
+    def _submit_row_group(
+        self,
+        reader: ThreadPoolExecutor,
+        path: Path,
+        *,
+        legacy_articles: bool,
+        row_group: int,
+        total_row_groups: int,
+        parquet_file: pq.ParquetFile,
+    ) -> Future[list[tuple[str, str, str, int, int, str, int, int]]] | None:
+        """Submit a row group unless it is past the shard or cancellation boundary."""
+        if row_group >= total_row_groups or self._stop.is_set():
+            return None
+        return reader.submit(
+            _scan_index_row_group,
+            path,
+            legacy_articles=legacy_articles,
+            row_group=row_group,
+            parquet_file=parquet_file,
+        )
+
+    def _stop_row_group_scan(
+        self,
+        next_group: Future[list[tuple[str, str, str, int, int, str, int, int]]] | None,
+        *,
+        position: int,
+        total_files: int,
+        row_group: int,
+        total_row_groups: int,
+    ) -> bool:
+        """Cancel a prefetched row group and report the resumable stop boundary."""
+        if not self._stop.is_set():
+            return False
+        if next_group is not None:
+            next_group.cancel()
+        self._log_row_group_stop(position, total_files, row_group, total_row_groups)
+        return True
+
+    @staticmethod
+    def _log_row_group_stop(
+        position: int,
+        total_files: int,
+        row_group: int,
+        total_row_groups: int,
+    ) -> None:
+        LOGGER.info(
+            "V2 V1 reuse index stopped in shard %d/%d at row group %d/%d; "
+            "completed work is resumable",
+            position,
+            total_files,
+            row_group,
+            total_row_groups,
+        )
+
+    @staticmethod
+    def _resolve_row_group(
+        next_group: Future[list[tuple[str, str, str, int, int, str, int, int]]] | None,
+    ) -> list[tuple[str, str, str, int, int, str, int, int]]:
+        """Resolve a prefetched row group, preserving the loop invariant error."""
+        if next_group is None:  # pragma: no cover - loop invariant
+            raise RuntimeError("V2 index reader lost the next row group")
+        return next_group.result()
+
+    def _scan_row_groups(
+        self,
+        reader: ThreadPoolExecutor,
+        path: Path,
+        *,
+        legacy_articles: bool,
+        start_row_group: int,
+        total_row_groups: int,
+        parquet_file: pq.ParquetFile,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        position: int,
+        total_files: int,
+    ) -> bool:
+        """Scan and commit a shard's row groups with one-row-group lookahead."""
+        next_group = self._submit_row_group(
+            reader,
+            path,
+            legacy_articles=legacy_articles,
+            row_group=start_row_group,
+            total_row_groups=total_row_groups,
+            parquet_file=parquet_file,
+        )
+        try:
+            for row_group in range(start_row_group, total_row_groups):
+                if self._stop_row_group_scan(
+                    next_group,
+                    position=position,
+                    total_files=total_files,
+                    row_group=row_group,
+                    total_row_groups=total_row_groups,
+                ):
+                    return False
+                indexed = self._resolve_row_group(next_group)
+                next_group = self._submit_row_group(
+                    reader,
+                    path,
+                    legacy_articles=legacy_articles,
+                    row_group=row_group + 1,
+                    total_row_groups=total_row_groups,
+                    parquet_file=parquet_file,
+                )
+                self._commit_indexed_row_group(
+                    self._writer_connection,
+                    indexed,
+                    resolved=resolved,
+                    fingerprint=fingerprint,
+                    total_row_groups=total_row_groups,
+                    row_group=row_group,
+                )
+                LOGGER.info(
+                    "V2 V1 reuse index: shard %d/%d row group %d/%d ready (%d identities)",
+                    position,
+                    total_files,
+                    row_group + 1,
+                    total_row_groups,
+                    len(indexed),
+                )
+            return True
+        finally:
+            if next_group is not None:
+                next_group.cancel()
+
+    def _finalize_shard(
+        self,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        *,
+        position: int,
+        total_files: int,
+    ) -> None:
+        """Commit the completed shard marker and clear materialized row state."""
+        with self._writer_connection:
+            self._writer_connection.execute(
+                """
+                INSERT OR REPLACE INTO file_state(path, size, mtime_ns, ctime_ns, inode, legacy)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (resolved, *fingerprint),
+            )
+            self._writer_connection.execute("DELETE FROM scan_progress WHERE path=?", (resolved,))
+        self._row_cache.clear()
+        LOGGER.info("V2 V1 reuse index: shard ready %d/%d", position, total_files)
+
+    def _sync_shard(
+        self,
+        path: Path,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        progress: Mapping[str, tuple[int, int, int, int, bool, int, int]],
+        *,
+        position: int,
+        total_files: int,
+    ) -> bool:
+        """Validate, resume, scan, and finalize one changed shard."""
+        parquet_file, legacy_articles, total_row_groups, start_row_group = self._prepare_shard(
+            path, resolved, fingerprint, progress
+        )
+        try:
+            return_value = self._scan_row_groups(
+                self._index_reader(),
+                path,
+                legacy_articles=legacy_articles,
+                start_row_group=start_row_group,
+                total_row_groups=total_row_groups,
+                parquet_file=parquet_file,
+                resolved=resolved,
+                fingerprint=fingerprint,
+                position=position,
+                total_files=total_files,
+            )
+        finally:
+            parquet_file.close()
+        if return_value:
+            self._finalize_shard(
+                resolved,
+                fingerprint,
+                position=position,
+                total_files=total_files,
+            )
+        return return_value
+
+    def _finish_sync(self, changed: int, stale: set[str], total_files: int) -> bool:
+        """Cache the final identity count and emit the completion status."""
+        connection = self._writer_connection
         row_count = _read_cached_row_count(connection)
         if row_count is None:
             row_count = _count_distinct_documents(connection)
             with connection:
                 _store_cached_row_count(connection, row_count)
-        if changed or stale:
-            LOGGER.info(
-                "V2 V1 reuse index ready: %d/%d shards; %d document identities; cache=%s",
-                len(files),
-                len(files),
-                row_count,
-                self._db_path,
-            )
-        else:
-            LOGGER.info(
-                "V2 V1 reuse index reused: %d cached shards; %d document identities; cache=%s",
-                len(files),
-                row_count,
-                self._db_path,
-            )
+        status = "ready" if changed or stale else "reused"
+        LOGGER.info(
+            "V2 V1 reuse index %s: %d/%d shards; %d document identities; cache=%s",
+            status,
+            total_files,
+            total_files,
+            row_count,
+            self._db_path,
+        )
         return True
+
+    def _sync_file(
+        self,
+        path: Path,
+        *,
+        position: int,
+        total_files: int,
+        known: Mapping[str, tuple[int, int, int, int, bool]],
+        progress: Mapping[str, tuple[int, int, int, int, bool, int, int]],
+        row_count_invalidated: bool,
+    ) -> tuple[bool, bool, bool]:
+        """Process one shard and report continuation, change, and cache state."""
+        if self._stop.is_set():
+            LOGGER.info(
+                "V2 V1 reuse index stopped after %d/%d shards; completed work is resumable",
+                position - 1,
+                total_files,
+            )
+            return False, False, row_count_invalidated
+        resolved = str(path.resolve())
+        fingerprint = (*self._fingerprint(path), path.parent.name == "articles")
+        if self._unchanged_shard(resolved, fingerprint, known, progress):
+            return True, False, row_count_invalidated
+        row_count_invalidated = self._invalidate_row_count(row_count_invalidated)
+        LOGGER.info(
+            "V2 V1 reuse index: scanning shard %d/%d (%s)", position, total_files, path.name
+        )
+        completed = self._sync_shard(
+            path,
+            resolved,
+            fingerprint,
+            progress,
+            position=position,
+            total_files=total_files,
+        )
+        return completed, completed, row_count_invalidated
+
+    def _sync_files(
+        self,
+        files: tuple[Path, ...],
+        *,
+        known: Mapping[str, tuple[int, int, int, int, bool]],
+        progress: Mapping[str, tuple[int, int, int, int, bool, int, int]],
+        stale: set[str],
+    ) -> int | None:
+        """Process all shards, returning ``None`` when cancellation stopped the scan."""
+        row_count_invalidated = bool(stale)
+        changed = 0
+        for position, path in enumerate(files, start=1):
+            completed, did_change, row_count_invalidated = self._sync_file(
+                path,
+                position=position,
+                total_files=len(files),
+                known=known,
+                progress=progress,
+                row_count_invalidated=row_count_invalidated,
+            )
+            if not completed:
+                return None
+            changed += did_change
+        return changed
+
+    def _sync(self, files: tuple[Path, ...]) -> bool:
+        connection = self._writer_connection
+        current = _current_index_files(files)
+        known = _known_index_files(connection)
+        progress = _index_scan_progress(connection)
+        stale = self._remove_stale_paths(current, known)
+        changed = self._sync_files(files, known=known, progress=progress, stale=stale)
+        if changed is None:
+            return False
+        return self._finish_sync(changed, stale, len(files))
 
     def _query(self, query_name: str, parameters: tuple[object, ...]) -> tuple[DocumentRow, ...]:
         if not self._initialized.is_set():
             return ()
         self._raise_error()
         cache_key = (query_name, parameters)
-        if self._complete.is_set():
-            with self._query_cache_lock:
-                if cache_key in self._query_cache:
-                    cached = self._query_cache[cache_key]
-                    self._query_cache.move_to_end(cache_key)
-                    return cached
-        queries = {
-            "page": """
-                SELECT document_id, source_path, legacy, row_group, row_index
-                FROM documents WHERE language=? AND page_id=?
-                ORDER BY document_id, source_path
-            """,
-            "title": """
-                SELECT document_id, source_path, legacy, row_group, row_index
-                FROM documents WHERE language=? AND title_key=?
-                ORDER BY document_id, source_path
-            """,
-            "qid": """
-                SELECT document_id, source_path, legacy, row_group, row_index
-                FROM documents WHERE qid=?
-                ORDER BY document_id, source_path
-            """,
-        }
-        self._ensure_secondary_index(query_name)
-        with self._reader_query_lock:
-            rows = list(self._reader().execute(queries[query_name], parameters))
+        cached = self._cached_query(cache_key)
+        if cached is not None:
+            return cached
+        rows = self._query_rows(query_name, parameters)
         if not rows:
-            if self._complete.is_set():
-                with self._query_cache_lock:
-                    self._query_cache[cache_key] = ()
-                    self._query_cache.move_to_end(cache_key)
-                    while len(self._query_cache) > self._query_cache_limit:
-                        self._query_cache.popitem(last=False)
+            self._cache_query(cache_key, ())
             return ()
-        by_document: dict[str, sqlite3.Row] = {}
-        for row in rows:
-            by_document.setdefault(str(row["document_id"]), row)
+        by_document = _first_query_rows_by_document(rows)
         with self._materialize_lock:
             materialized = self._materialize(tuple(by_document.values()))
         result = tuple(materialized[document_id] for document_id in sorted(materialized))
-        if self._complete.is_set():
-            with self._query_cache_lock:
-                self._query_cache[cache_key] = result
-                self._query_cache.move_to_end(cache_key)
-                while len(self._query_cache) > self._query_cache_limit:
-                    self._query_cache.popitem(last=False)
+        self._cache_query(cache_key, result)
         return result
+
+    def _cached_query(
+        self, cache_key: tuple[str, tuple[object, ...]]
+    ) -> tuple[DocumentRow, ...] | None:
+        if not self._complete.is_set():
+            return None
+        with self._query_cache_lock:
+            cached = self._query_cache.get(cache_key)
+            if cached is None:
+                return None
+            self._query_cache.move_to_end(cache_key)
+            return cached
+
+    def _cache_query(
+        self,
+        cache_key: tuple[str, tuple[object, ...]],
+        result: tuple[DocumentRow, ...],
+    ) -> None:
+        if not self._complete.is_set():
+            return
+        with self._query_cache_lock:
+            self._query_cache[cache_key] = result
+            self._query_cache.move_to_end(cache_key)
+            while len(self._query_cache) > self._query_cache_limit:
+                self._query_cache.popitem(last=False)
+
+    def _query_rows(self, query_name: str, parameters: tuple[object, ...]) -> list[sqlite3.Row]:
+        query = _QUERY_SQL[query_name]
+        self._ensure_secondary_index(query_name)
+        with self._reader_query_lock:
+            return list(self._reader().execute(query, parameters))
+
+    def _cached_title_results(
+        self,
+        normalized: Sequence[tuple[str, str]],
+    ) -> tuple[dict[tuple[str, str], tuple[DocumentRow, ...]], tuple[tuple[str, str], ...]]:
+        """Read completed title results from the bounded cache."""
+        cached: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
+        complete = self._complete.is_set()
+        if complete:
+            with self._query_cache_lock:
+                for key in normalized:
+                    cache_key = ("title", key)
+                    result = self._query_cache.get(cache_key)
+                    if result is not None:
+                        self._query_cache.move_to_end(cache_key)
+                        cached[key] = result
+        return _partition_title_cache(normalized, cached, complete=complete)
+
+    def _fetch_title_chunk(
+        self,
+        chunk: Sequence[tuple[str, str]],
+    ) -> tuple[dict[tuple[str, str], tuple[sqlite3.Row, ...]], tuple[sqlite3.Row, ...]]:
+        """Fetch one bounded title chunk from SQLite."""
+        predicates = " OR ".join("(language=? AND title_key=?)" for _ in chunk)
+        parameters = tuple(value for key in chunk for value in key)
+        # The predicate is composed only from generated ``?`` placeholders;
+        # all title values remain bound parameters.
+        with self._reader_query_lock:
+            rows = list(
+                self._reader().execute(
+                    f"""
+                    SELECT language, title_key, document_id, source_path, legacy, row_group, row_index
+                    FROM documents
+                    WHERE {predicates}
+                    ORDER BY language, title_key, document_id, source_path
+                    """,  # noqa: S608
+                    parameters,
+                )
+            )
+        return _group_title_rows(rows)
 
     def by_titles(
         self,
         keys: Sequence[tuple[str, str]],
     ) -> dict[tuple[str, str], tuple[DocumentRow, ...]]:
         """Resolve title keys in bounded batches without changing row order."""
-        normalized = tuple(dict.fromkeys((_title_key(language, title) for language, title in keys)))
-        results: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
+        normalized = _normalized_title_keys(keys)
         if not self._initialized.is_set():
             return {key: () for key in normalized}
         self._raise_error()
 
-        missing: list[tuple[str, str]] = []
-        if self._complete.is_set():
-            with self._query_cache_lock:
-                for key in normalized:
-                    cache_key = ("title", key)
-                    cached = self._query_cache.get(cache_key)
-                    if cached is None:
-                        missing.append(key)
-                    else:
-                        self._query_cache.move_to_end(cache_key)
-                        results[key] = cached
-        else:
-            missing.extend(normalized)
+        results, missing = self._cached_title_results(normalized)
 
         for offset in range(0, len(missing), _TITLE_QUERY_BATCH_SIZE):
             chunk = tuple(missing[offset : offset + _TITLE_QUERY_BATCH_SIZE])
-            predicates = " OR ".join("(language=? AND title_key=?)" for _ in chunk)
-            parameters = tuple(value for key in chunk for value in key)
-            # The predicate is composed only from generated ``?`` placeholders;
-            # all title values remain bound parameters.
-            with self._reader_query_lock:
-                rows = list(
-                    self._reader().execute(
-                        f"""
-                        SELECT language, title_key, document_id, source_path, legacy, row_group, row_index
-                        FROM documents
-                        WHERE {predicates}
-                        ORDER BY language, title_key, document_id, source_path
-                        """,  # noqa: S608
-                        parameters,
-                    )
-                )
-            grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
-            references_by_document: dict[str, sqlite3.Row] = {}
-            for row in rows:
-                key = (str(row["language"]), str(row["title_key"]))
-                grouped.setdefault(key, []).append(row)
-                references_by_document.setdefault(str(row["document_id"]), row)
+            grouped, references = self._fetch_title_chunk(chunk)
             with self._materialize_lock:
-                materialized = self._materialize(tuple(references_by_document.values()))
-            for key in chunk:
-                references = {str(row["document_id"]): row for row in grouped.get(key, ())}
-                result = tuple(materialized[document_id] for document_id in sorted(references))
-                results[key] = result
-                if self._complete.is_set():
-                    cache_key = ("title", key)
-                    with self._query_cache_lock:
-                        self._query_cache[cache_key] = result
-                        self._query_cache.move_to_end(cache_key)
-                        while len(self._query_cache) > self._query_cache_limit:
-                            self._query_cache.popitem(last=False)
+                materialized = self._materialize(references)
+            chunk_results = _title_chunk_results(chunk, grouped, materialized)
+            results.update(chunk_results)
+            for key, result in chunk_results.items():
+                self._cache_query(("title", key), result)
         return results
 
     def _materialize(self, references: tuple[sqlite3.Row, ...]) -> dict[str, DocumentRow]:
         result: dict[str, DocumentRow] = {}
-        grouped: dict[tuple[str, bool, int], list[sqlite3.Row]] = {}
-        for reference in references:
-            document_id = str(reference["document_id"])
-            cached = self._row_cache.get(document_id)
-            if cached is not None:
-                self._row_cache.move_to_end(document_id)
-                result[document_id] = cached
-                continue
-            group = (
-                str(reference["source_path"]),
-                bool(reference["legacy"]),
-                int(reference["row_group"]),
-            )
-            grouped.setdefault(group, []).append(reference)
+        grouped = _group_materialization_references(references, self._row_cache, result)
 
         for (source_path, legacy, row_group), group_references in grouped.items():
-            with pq.ParquetFile(source_path) as parquet_file:
-                table = parquet_file.read_row_group(row_group)
-                raw_rows = table.to_pylist()
-            for reference in group_references:
-                document_id = str(reference["document_id"])
-                row = raw_rows[int(reference["row_index"])]
-                normalized = (
-                    wikipedia_document_from_article_row(row).to_dict() if legacy else dict(row)
+            result.update(
+                _materialize_group(
+                    source_path,
+                    legacy,
+                    row_group,
+                    group_references,
+                    self._row_cache,
+                    self._row_cache_limit,
                 )
-                self._row_cache[document_id] = normalized
-                self._row_cache.move_to_end(document_id)
-                while len(self._row_cache) > self._row_cache_limit:
-                    self._row_cache.popitem(last=False)
-                result[document_id] = normalized
+            )
         return result
 
     def by_page(self, language: str, page_id: int) -> tuple[DocumentRow, ...]:

@@ -150,16 +150,22 @@ def read_source_path(data_root: DataRoot, stem: str) -> Path:
     repair it. The returned path may not yet exist for a never-augmented stem.
     """
     sources = wikipedia_source_paths(data_root, stem)
-    if sources.canonical.exists():
-        if not sources.legacy.exists():
-            return sources.canonical
-        try:
-            schema: pa.Schema = pq.read_schema(sources.canonical)  # type: ignore[no-untyped-call]
-        except (OSError, pa.ArrowInvalid):
-            return sources.legacy
-        if schema.equals(wikipedia_document_schema(), check_metadata=True):
-            return sources.canonical
+    if _canonical_source_is_valid(sources):
+        return sources.canonical
     return sources.legacy if sources.legacy.exists() else sources.canonical
+
+
+def _canonical_source_is_valid(sources: WikipediaSourcePaths) -> bool:
+    """Return whether the canonical document path should take precedence."""
+    if not sources.canonical.exists():
+        return False
+    if not sources.legacy.exists():
+        return True
+    try:
+        schema: pa.Schema = pq.read_schema(sources.canonical)  # type: ignore[no-untyped-call]
+    except (OSError, pa.ArrowInvalid):
+        return False
+    return schema.equals(wikipedia_document_schema(), check_metadata=True)
 
 
 def sha256_file(path: Path) -> str:
@@ -206,28 +212,32 @@ def _normalized_article_table(path: Path) -> pa.Table:
     if unknown:
         raise ValueError(f"Core article Parquet has unknown columns at {path}: {sorted(unknown)}")
     schema = article_schema()
-    rows = []
-    for source_row in source.to_pylist():
-        row: dict[str, Any] = {}
-        for column in ARTICLE_COLUMNS:
-            if column in source_row:
-                row[column] = source_row[column]
-            else:
-                row[column] = "" if pa.types.is_string(schema.field(column).type) else None
-        rows.append(row)
+    rows = [_normalized_article_row(source_row, schema) for source_row in source.to_pylist()]
     return pa.Table.from_pylist(rows, schema=schema)
 
 
+def _normalized_article_row(source_row: dict[str, Any], schema: pa.Schema) -> dict[str, Any]:
+    """Fill missing historical article columns with schema-appropriate nulls."""
+    return {
+        column: source_row[column]
+        if column in source_row
+        else ("" if pa.types.is_string(schema.field(column).type) else None)
+        for column in ARTICLE_COLUMNS
+    }
+
+
 def _label_maps(entities: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
-    out: dict[str, dict[str, str]] = {}
-    for qid, entity in entities.items():
-        labels = entity.get("labels") or {}
-        out[qid] = {
-            str(language): str(value.get("value", ""))
-            for language, value in labels.items()
-            if isinstance(value, dict) and value.get("value")
-        }
-    return out
+    return {qid: _label_map(entity) for qid, entity in entities.items()}
+
+
+def _label_map(entity: dict[str, Any]) -> dict[str, str]:
+    """Normalize one Wikidata entity's language labels."""
+    labels = entity.get("labels") or {}
+    return {
+        str(language): str(value.get("value", ""))
+        for language, value in labels.items()
+        if isinstance(value, dict) and value.get("value")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -245,26 +255,34 @@ def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
         raise FileNotFoundError(f"Core region is incomplete: {stem}")
     core_paths = (articles_path, polygons_path)
     core_hashes = {str(path): sha256_file(path) for path in core_paths}
-
-    source_table = pq.read_table(articles_path)  # type: ignore[no-untyped-call]
-    if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
-        wikipedia_documents = [
-            Document(**{column: row[column] for column in DOCUMENT_COLUMNS})
-            for row in source_table.to_pylist()
-        ]
-    else:
-        article_table = _normalized_article_table(articles_path)
-        wikipedia_documents = [document_from_article_row(row) for row in article_table.to_pylist()]
+    wikipedia_documents = _load_core_documents(articles_path)
     polygon_rows = pq.read_table(polygons_path, columns=["wikidata"]).to_pylist()  # type: ignore[no-untyped-call]
     wikipedia_documents.sort(key=lambda row: row.document_id)
-    qids = sorted(
-        {qid for row in polygon_rows for qid in qids_from_osm_tag(str(row.get("wikidata") or ""))}
-    )
+    qids = _core_qids(polygon_rows)
     return CoreInputs(
         wikipedia_documents=tuple(wikipedia_documents),
         qids=tuple(qids),
         core_paths=core_paths,
         core_hashes=core_hashes,
+    )
+
+
+def _load_core_documents(path: Path) -> list[Document]:
+    """Load canonical documents or normalize legacy article rows."""
+    source_table = pq.read_table(path)  # type: ignore[no-untyped-call]
+    if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
+        return [
+            Document(**{column: row[column] for column in DOCUMENT_COLUMNS})
+            for row in source_table.to_pylist()
+        ]
+    article_table = _normalized_article_table(path)
+    return [document_from_article_row(row) for row in article_table.to_pylist()]
+
+
+def _core_qids(polygon_rows: list[dict[str, Any]]) -> list[str]:
+    """Collect sorted unique QIDs from core polygon tags."""
+    return sorted(
+        {qid for row in polygon_rows for qid in qids_from_osm_tag(str(row.get("wikidata") or ""))}
     )
 
 
@@ -390,22 +408,56 @@ def build_wikidata_facts(
     entity ids, fetch ``labels`` for them, and produce one
     :class:`WikidataFact` per claim in ``FACT_PROPERTIES``. Output is
     sorted by ``fact_id``."""
-    label_ids = set(FACT_PROPERTIES)
-    for entity in entities.values():
-        for property_id, claims in (entity.get("claims") or {}).items():
-            if property_id not in FACT_PROPERTIES:
-                continue
-            for claim in claims:
-                value = ((claim.get("mainsnak") or {}).get("datavalue") or {}).get("value")
-                if isinstance(value, dict) and value.get("id"):
-                    label_ids.add(str(value["id"]))
+    label_ids = _fact_label_ids(entities)
     labels = _label_maps(client.entities(label_ids, props="labels"))
     progress.start("Wikidata facts", total=len(entities))
+    facts = _facts_for_entities(entities, labels, progress)
+    facts.sort(key=lambda row: row.fact_id)
+    return facts
+
+
+def _fact_label_ids(entities: dict[str, dict[str, Any]]) -> set[str]:
+    """Collect fact property and entity IDs needed for label resolution."""
+    label_ids = set(FACT_PROPERTIES)
+    for entity in entities.values():
+        label_ids.update(_fact_entity_label_ids(entity))
+    return label_ids
+
+
+def _fact_entity_label_ids(entity: dict[str, Any]) -> set[str]:
+    """Collect entity-valued IDs from one entity's supported claims."""
+    ids: set[str] = set()
+    for property_id, claims in (entity.get("claims") or {}).items():
+        if property_id in FACT_PROPERTIES:
+            ids.update(_fact_claim_label_ids(claims))
+    return ids
+
+
+def _fact_claim_label_ids(claims: list[dict[str, Any]]) -> set[str]:
+    """Collect entity IDs from a claim list."""
+    return {
+        entity_id for claim in claims if (entity_id := _fact_claim_entity_id(claim)) is not None
+    }
+
+
+def _fact_claim_entity_id(claim: dict[str, Any]) -> str | None:
+    """Return the entity ID carried by a claim, when present."""
+    value = ((claim.get("mainsnak") or {}).get("datavalue") or {}).get("value")
+    if isinstance(value, dict) and value.get("id"):
+        return str(value["id"])
+    return None
+
+
+def _facts_for_entities(
+    entities: dict[str, dict[str, Any]],
+    labels: dict[str, dict[str, str]],
+    progress: AugmentationProgress,
+) -> list[WikidataFact]:
+    """Normalize facts for each entity while advancing progress."""
     facts: list[WikidataFact] = []
     for entity in entities.values():
         facts.extend(normalize_facts(entity, labels))
         progress.advance()
-    facts.sort(key=lambda row: row.fact_id)
     return facts
 
 
@@ -428,58 +480,69 @@ def write_sidecars(
     advance the ``Writing sidecars`` phase once per file."""
     progress.start("Writing sidecars", total=len(paths))
 
-    if articles_path is None:
-        table = pa.Table.from_pylist(
-            [row.to_dict() for row in wikipedia_documents],
-            schema=document_schema(),
-        )
-    else:
-        try:
-            source_table = pq.read_table(articles_path)  # type: ignore[no-untyped-call]
-        except Exception as exc:
-            raise ValueError(
-                f"Failed to read core article Parquet from {articles_path}: {exc}"
-            ) from exc
-        table = (
-            source_table
-            if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True)
-            else build_wikipedia_document_table(_normalized_article_table(articles_path))
-        )
+    table = _sidecar_document_table(articles_path, wikipedia_documents)
 
     _write_atomic(paths[0], table)
     progress.advance()
+    _write_sidecar_files(paths[1:], sections_by_project, wikivoyage_documents, facts, progress)
 
-    _write_atomic_from_rows(
-        paths[1],
-        [row.to_dict() for row in sections_by_project["wikipedia"]],
-        SECTION_COLUMNS,
-        section_schema(),
-    )
-    progress.advance()
 
-    _write_atomic_from_rows(
-        paths[2],
-        [row.to_dict() for row in wikivoyage_documents],
-        DOCUMENT_COLUMNS,
-        document_schema(),
-    )
-    progress.advance()
+def _write_sidecar_files(
+    paths: tuple[Path, ...],
+    sections_by_project: dict[str, list[Section]],
+    wikivoyage_documents: list[Document],
+    facts: list[WikidataFact],
+    progress: AugmentationProgress,
+) -> None:
+    """Write the four sidecars after the canonical document table."""
+    for path, (rows, columns, schema) in zip(
+        paths, _sidecar_specs(sections_by_project, wikivoyage_documents, facts), strict=True
+    ):
+        _write_atomic_from_rows(path, rows, columns, schema)
+        progress.advance()
 
-    _write_atomic_from_rows(
-        paths[3],
-        [row.to_dict() for row in sections_by_project["wikivoyage"]],
-        SECTION_COLUMNS,
-        section_schema(),
-    )
-    progress.advance()
 
-    _write_atomic_from_rows(
-        paths[4],
-        [row.to_dict() for row in facts],
-        FACT_COLUMNS,
-        fact_schema(),
+def _sidecar_specs(
+    sections_by_project: dict[str, list[Section]],
+    wikivoyage_documents: list[Document],
+    facts: list[WikidataFact],
+) -> tuple[tuple[list[dict[str, Any]], tuple[str, ...], pa.Schema], ...]:
+    """Build rows and schemas for the non-document sidecars."""
+    return (
+        (
+            [row.to_dict() for row in sections_by_project["wikipedia"]],
+            SECTION_COLUMNS,
+            section_schema(),
+        ),
+        ([row.to_dict() for row in wikivoyage_documents], DOCUMENT_COLUMNS, document_schema()),
+        (
+            [row.to_dict() for row in sections_by_project["wikivoyage"]],
+            SECTION_COLUMNS,
+            section_schema(),
+        ),
+        ([row.to_dict() for row in facts], FACT_COLUMNS, fact_schema()),
     )
-    progress.advance()
+
+
+def _sidecar_document_table(
+    articles_path: Path | None,
+    wikipedia_documents: list[Document],
+) -> pa.Table:
+    """Build the canonical Wikipedia document table for sidecar output."""
+    if articles_path is None:
+        return pa.Table.from_pylist(
+            [row.to_dict() for row in wikipedia_documents],
+            schema=document_schema(),
+        )
+    try:
+        source_table = pq.read_table(articles_path)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        raise ValueError(
+            f"Failed to read core article Parquet from {articles_path}: {exc}"
+        ) from exc
+    if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
+        return source_table
+    return build_wikipedia_document_table(_normalized_article_table(articles_path))
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +573,32 @@ def update_augmentation_manifest(
         data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     )
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    entry = _augmentation_manifest_entry(
+        data_root,
+        paths,
+        core_hashes,
+        counts,
+        completed_at,
+        rejections,
+        link_schema_version,
+        link_artifact_sha256,
+    )
+    manifest[stem] = entry
+    atomic_write_text(manifest_path, dumps(manifest) + "\n")
+    return manifest_path
+
+
+def _augmentation_manifest_entry(
+    data_root: DataRoot,
+    paths: tuple[Path, Path, Path, Path, Path],
+    core_hashes: dict[str, str],
+    counts: dict[str, int],
+    completed_at: str,
+    rejections: dict[str, Any] | None,
+    link_schema_version: str | None,
+    link_artifact_sha256: str | None,
+) -> dict[str, Any]:
+    """Build one manifest entry without mutating the loaded manifest."""
     entry: dict[str, Any] = {
         "contract_version": CONTRACT_VERSION,
         "core_hashes": core_hashes,
@@ -517,15 +606,13 @@ def update_augmentation_manifest(
         "counts": counts,
         "completed_at": completed_at,
     }
-    if rejections is not None:
-        entry["rejections"] = rejections
-    if link_schema_version is not None:
-        entry["link_schema_version"] = link_schema_version
-    if link_artifact_sha256 is not None:
-        entry["link_artifact_sha256"] = link_artifact_sha256
-    manifest[stem] = entry
-    atomic_write_text(manifest_path, dumps(manifest) + "\n")
-    return manifest_path
+    optional = {
+        "rejections": rejections,
+        "link_schema_version": link_schema_version,
+        "link_artifact_sha256": link_artifact_sha256,
+    }
+    entry.update({key: value for key, value in optional.items() if value is not None})
+    return entry
 
 
 __all__ = [

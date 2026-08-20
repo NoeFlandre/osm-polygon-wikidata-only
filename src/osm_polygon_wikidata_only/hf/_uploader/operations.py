@@ -256,19 +256,62 @@ def upload_files(
         files=list(files) if files is not None else None,
         ops=list(ops) if ops is not None else None,
     )
-    # Safety net: refuse a commit that DELETES a legacy remote path
-    # WITHOUT uploading its canonical replacement in the same commit.
-    # Production code emits paired (add canonical, delete legacy)
-    # via ``hf._uploader.plan.add_op`` / ``delete_op`` in
-    # publication.py; this check is the structural safety net
-    # preventing any accidental dangling-delete of a manifest
-    # migration target.
+    _validate_upload_safety(add_paths, delete_paths)
+    _validate_upload_operations(operations_obj)
+    client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
+    _ensure_repo_exists(client, repo_id)
+    operations_obj = _drop_absent_deletes(client, repo_id, operations_obj, delete_paths)
+    return _create_upload_commit(
+        client,
+        repo_id,
+        operations_obj,
+        commit_message=commit_message,
+        num_threads=num_threads,
+    )
+
+
+def _create_upload_commit(
+    client: HfHub,
+    repo_id: str,
+    operations: list[Any],
+    *,
+    commit_message: str,
+    num_threads: int,
+) -> str:
+    """Create one translated, atomic Hub commit."""
+    LOGGER.info("Uploading %d ops atomically to %s", len(operations), repo_id)
+    try:
+        result = client.create_commit(
+            repo_id=repo_id,
+            operations=operations,
+            commit_message=commit_message,
+            repo_type="dataset",
+            num_threads=num_threads,
+        )
+    except Exception as error:
+        raise _translate_hf_error(error, repo_id=repo_id) from error
+    return str(result)
+
+
+def _validate_upload_safety(add_paths: set[str], delete_paths: set[str]) -> None:
+    """Enforce all legacy and canonical deletion pairing invariants."""
+    _validate_paired_legacy_deletes(add_paths, delete_paths)
+    _validate_paired_article_deletes(add_paths, delete_paths)
+    _validate_paired_canonical_deletes(add_paths, delete_paths)
+
+
+def _validate_paired_legacy_deletes(add_paths: set[str], delete_paths: set[str]) -> None:
+    """Require canonical replacements for known legacy remote paths."""
     for legacy, canonical in LEGACY_PATHS_REQUIRING_CANONICAL.items():
         if legacy in delete_paths and canonical not in add_paths:
             raise UploadError(
                 f"Refusing to delete legacy {legacy!r} without also uploading its "
                 f"canonical replacement {canonical!r} in the same commit."
             )
+
+
+def _validate_paired_article_deletes(add_paths: set[str], delete_paths: set[str]) -> None:
+    """Require canonical document replacements for retired article files."""
     for legacy_path in sorted(delete_paths):
         if not legacy_path.startswith("articles/") or not legacy_path.endswith(".parquet"):
             continue
@@ -278,6 +321,20 @@ def upload_files(
                 f"Refusing to delete legacy {legacy_path!r} without also uploading its "
                 f"canonical replacement {canonical_path!r} in the same commit"
             )
+
+
+def _validate_paired_canonical_deletes(add_paths: set[str], delete_paths: set[str]) -> None:
+    """Require a retirement manifest when deleting canonical region files."""
+    canonical_deletes = _canonical_region_deletes(delete_paths)
+    if canonical_deletes and "manifests/containment_retirements.json" not in add_paths:
+        raise UploadError(
+            "Refusing to delete canonical region artifacts without uploading "
+            "manifests/containment_retirements.json in the same commit"
+        )
+
+
+def _canonical_region_deletes(delete_paths: set[str]) -> set[str]:
+    """Return canonical region Parquet paths targeted for deletion."""
     canonical_region_prefixes = (
         "polygons/",
         "polygon_articles/",
@@ -287,52 +344,50 @@ def upload_files(
         "wikivoyage/sections/",
         "wikidata/facts/",
     )
-    canonical_deletes = {
+    return {
         path
         for path in delete_paths
         if path.startswith(canonical_region_prefixes) and path.endswith(".parquet")
     }
-    if canonical_deletes and "manifests/containment_retirements.json" not in add_paths:
-        raise UploadError(
-            "Refusing to delete canonical region artifacts without uploading "
-            "manifests/containment_retirements.json in the same commit"
-        )
-    if not operations_obj:
+
+
+def _validate_upload_operations(operations: list[Any]) -> None:
+    """Reject empty commits and duplicate remote paths."""
+    if not operations:
         raise UploadError("Cannot create an empty upload commit")
-    remote_paths = [op.path_in_repo for op in operations_obj]
+    remote_paths = [operation.path_in_repo for operation in operations]
     if len(remote_paths) != len(set(remote_paths)):
         raise UploadError("Upload commit contains duplicate remote paths")
-    client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
-    _ensure_repo_exists(client, repo_id)
-    if delete_paths:
-        try:
-            existing_deletes = {
-                path
-                for path in delete_paths
-                if client.file_exists(repo_id, path, repo_type="dataset")
-            }
-        except Exception as error:
-            raise _translate_hf_error(error, repo_id=repo_id) from error
-        skipped_deletes = delete_paths - existing_deletes
-        for path in sorted(skipped_deletes):
-            LOGGER.info("Legacy remote path already absent; skipping delete: %s", path)
-        operations_obj = [
-            operation
-            for operation in operations_obj
-            if operation.path_in_repo not in skipped_deletes
-        ]
-    LOGGER.info("Uploading %d ops atomically to %s", len(operations_obj), repo_id)
+
+
+def _drop_absent_deletes(
+    client: HfHub,
+    repo_id: str,
+    operations: list[Any],
+    delete_paths: set[str],
+) -> list[Any]:
+    """Skip idempotent deletes for paths that are already absent remotely."""
+    if not delete_paths:
+        return operations
+    existing_deletes = _existing_delete_paths(client, repo_id, delete_paths)
+    skipped_deletes = delete_paths - existing_deletes
+    for path in sorted(skipped_deletes):
+        LOGGER.info("Legacy remote path already absent; skipping delete: %s", path)
+    return [operation for operation in operations if operation.path_in_repo not in skipped_deletes]
+
+
+def _existing_delete_paths(
+    client: HfHub,
+    repo_id: str,
+    delete_paths: set[str],
+) -> set[str]:
+    """Query which requested deletes still exist on the Hub."""
     try:
-        result = client.create_commit(
-            repo_id=repo_id,
-            operations=operations_obj,
-            commit_message=commit_message,
-            repo_type="dataset",
-            num_threads=num_threads,
-        )
+        return {
+            path for path in delete_paths if client.file_exists(repo_id, path, repo_type="dataset")
+        }
     except Exception as error:
         raise _translate_hf_error(error, repo_id=repo_id) from error
-    return str(result)
 
 
 def _build_operations(

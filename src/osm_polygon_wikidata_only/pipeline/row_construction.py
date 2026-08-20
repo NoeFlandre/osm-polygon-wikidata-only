@@ -23,6 +23,8 @@ tests can still monkeypatch them through the historical location.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.ids import article_id, content_hash
 from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
@@ -98,48 +100,54 @@ def build_articles_and_links(
     articles_by_id: dict[str, Article] = {}
     links: list[PolygonArticleLink] = []
     for polygon in polygons:
-        summary = summaries.get(polygon.wikidata)
-        if summary is None or not summary.articles:
-            continue
-        best = summary.best_language()
-        for article in summary.articles:
-            identifier = article_id(
-                polygon.wikidata, article.language, article.page_id, article.revision_id
-            )
-            if identifier not in articles_by_id:
-                articles_by_id[identifier] = article_row(
-                    identifier, polygon.wikidata, article, summary
-                )
-            links.append(
-                PolygonArticleLink(
-                    polygon_id=polygon.polygon_id,
-                    article_id=identifier,
-                    wikidata=polygon.wikidata,
-                    language=article.language,
-                    source_pbf=polygon.source_pbf,
-                    region=polygon.region,
-                    osm_type=polygon.osm_type,
-                    osm_id=polygon.osm_id,
-                    page_id=article.page_id,
-                    revision_id=article.revision_id,
-                    is_best_language=article.language == best,
-                )
-            )
+        _append_polygon_articles(
+            polygon,
+            summaries.get(polygon.wikidata),
+            articles_by_id,
+            links,
+        )
     return list(articles_by_id.values()), links
+
+
+def _append_polygon_articles(
+    polygon: Polygon,
+    summary: LinkSummary | None,
+    articles_by_id: dict[str, Article],
+    links: list[PolygonArticleLink],
+) -> None:
+    """Append one polygon's deduplicated article rows and links."""
+    if summary is None or not summary.articles:
+        return
+    best = summary.best_language()
+    for article in summary.articles:
+        identifier = article_id(
+            polygon.wikidata, article.language, article.page_id, article.revision_id
+        )
+        if identifier not in articles_by_id:
+            articles_by_id[identifier] = article_row(identifier, polygon.wikidata, article, summary)
+        links.append(
+            PolygonArticleLink(
+                polygon_id=polygon.polygon_id,
+                article_id=identifier,
+                wikidata=polygon.wikidata,
+                language=article.language,
+                source_pbf=polygon.source_pbf,
+                region=polygon.region,
+                osm_type=polygon.osm_type,
+                osm_id=polygon.osm_id,
+                page_id=article.page_id,
+                revision_id=article.revision_id,
+                is_best_language=article.language == best,
+            )
+        )
 
 
 def article_row(
     identifier: str, qid: str, article: WikipediaArticle, summary: LinkSummary
 ) -> Article:
     """Build immutable derived metadata for one unique article revision."""
-    entity = summary.entity
-    label = entity.labels.get(article.language) if entity else ""
-    description = entity.descriptions.get(article.language) if entity else ""
-    aliases = entity.aliases.get(article.language) if entity else None
-    if entity is not None:
-        label = label or entity.labels.get("en", "")
-        description = description or entity.descriptions.get("en", "")
-        aliases = aliases or entity.aliases.get("en", [])
+    label, description, aliases = _article_entity_fields(article, summary)
+    fetch_status, fetch_error = _article_fetch_fields(article, summary)
     return Article(
         article_id=identifier,
         wikidata=qid,
@@ -151,8 +159,8 @@ def article_row(
         revision_id=article.revision_id,
         revision_timestamp=article.revision_timestamp,
         retrieved_at=article.retrieved_at,
-        wikidata_label=str(label or ""),
-        wikidata_description=str(description or ""),
+        wikidata_label=label,
+        wikidata_description=description,
         wikidata_aliases=json_dumps(aliases or []),
         lead_text=article.lead_text,
         extract=article.extract,
@@ -168,14 +176,37 @@ def article_row(
         license=article.license,
         attribution=article.attribution,
         source_api=article.source_api,
-        fetch_status=summary.statuses.get(article.site, "ok"),
-        fetch_error=(
-            ""
-            if summary.statuses.get(article.site, "ok") == "ok"
-            else summary.errors.get(article.site, "")
-        ),
+        fetch_status=fetch_status,
+        fetch_error=fetch_error,
         content_hash=content_hash(article.full_text),
     )
+
+
+def _article_entity_fields(
+    article: WikipediaArticle, summary: LinkSummary
+) -> tuple[str, str, list[str]]:
+    """Resolve localized entity fields with the English fallback policy."""
+    entity = summary.entity
+    if entity is None:
+        return "", "", []
+    return (
+        _localized_value(entity.labels, article.language, ""),
+        _localized_value(entity.descriptions, article.language, ""),
+        _localized_value(entity.aliases, article.language, []),
+    )
+
+
+def _localized_value[ValueT](
+    values: Mapping[str, ValueT], language: str, default: ValueT
+) -> ValueT:
+    """Return a localized value, falling back to English then a default."""
+    return values.get(language) or values.get("en", default) or default
+
+
+def _article_fetch_fields(article: WikipediaArticle, summary: LinkSummary) -> tuple[str, str]:
+    """Resolve fetch status and preserve the non-ok error contract."""
+    status = summary.statuses.get(article.site, "ok")
+    return status, "" if status == "ok" else summary.errors.get(article.site, "")
 
 
 __all__ = ["article_row", "build_articles_and_links", "enrich_polygon"]

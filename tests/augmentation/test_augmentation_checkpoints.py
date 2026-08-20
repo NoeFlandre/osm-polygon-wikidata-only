@@ -128,6 +128,58 @@ def test_section_metadata_parser_normalizes_valid_documents_and_rejects_bad_valu
     assert _section_batch_expected_documents(None) is None
 
 
+def test_section_batch_identity_helpers_validate_known_unique_sections() -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import (
+        _section_ids_are_known,
+        _section_ids_are_unique,
+    )
+
+    section = _section()
+    expected = ((section.document_id, section.revision_id, "abc"),)
+
+    assert _section_ids_are_known([section], expected)
+    assert _section_ids_are_unique([section])
+    assert not _section_ids_are_known([section], (("other", 1, "hash"),))
+    assert not _section_ids_are_unique([section, section])
+
+
+def test_checkpoint_payload_helpers_reject_malformed_rows(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import (
+        _read_json_object,
+        _validated_entity_payload,
+        _validated_voyage_documents,
+    )
+
+    payload = tmp_path / "payload.json"
+    payload.write_text('{"Q1": {"id": "Q1"}}', encoding="utf-8")
+    assert _read_json_object(payload) == {"Q1": {"id": "Q1"}}
+    payload.write_text("not-json", encoding="utf-8")
+    assert _read_json_object(payload) is None
+
+    assert _validated_entity_payload({"Q1": {"id": "Q1"}}, ("Q1",)) == {"Q1": {"id": "Q1"}}
+    assert _validated_entity_payload({"Q2": {}}, ("Q1",)) is None
+    assert _validated_entity_payload({"Q1": []}, ("Q1",)) is None
+
+    voyage = _voyage_document()
+    assert _validated_voyage_documents([voyage.to_dict()]) == [voyage]
+    assert _validated_voyage_documents([_document().to_dict()]) is None
+    assert _validated_voyage_documents([voyage.to_dict(), voyage.to_dict()]) is None
+
+
+def test_checkpoint_constructor_validation_helpers_preserve_contract() -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import (
+        _validate_augmentation_stem,
+        _validate_plan_key,
+    )
+
+    assert _validate_augmentation_stem("england-latest") == "england-latest"
+    assert _validate_plan_key("a" * 64) == "a" * 64
+    with pytest.raises(ValueError, match="stem"):
+        _validate_augmentation_stem("../escape")
+    with pytest.raises(ValueError, match="plan key"):
+        _validate_plan_key("not-a-plan-key")
+
+
 @pytest.mark.parametrize("stem", ["", ".", "..", "../escape", "nested/stem", r"nested\stem"])
 def test_checkpoint_store_rejects_unsafe_stem(tmp_path: Path, stem: str) -> None:
     from osm_polygon_wikidata_only.augmentation.checkpoints import (

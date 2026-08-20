@@ -246,6 +246,54 @@ def test_upstream_validation_does_not_wait_for_one_slow_chunk() -> None:
     assert set(result[0][0]) == {"Q1", "Q2", "Q3"}
 
 
+def test_single_entity_client_keeps_order_and_reports_progress() -> None:
+    class SingleClient(WikidataClient):
+        def get_entity(self, qid: str) -> WikidataEntity | None:
+            return _entity(qid)
+
+    progress: list[tuple[int, int]] = []
+    resolved, cache_hits = audit_mod._resolve_entities(
+        SingleClient(),
+        ["Q2", "Q1"],
+        batch_size=50,
+        progress=lambda completed, total: progress.append((completed, total)),
+    )
+
+    assert tuple(resolved) == ("Q2", "Q1")
+    assert all(entity is not None for entity in resolved.values())
+    assert cache_hits == 0
+    assert progress == [(1, 2), (2, 2)]
+
+
+def test_record_region_recovery_receipt_validates_and_persists(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    _write_region(data_root, "receipt-write", ["Q1"])
+
+    result = audit_mod.record_region_recovery_receipt(
+        data_root,
+        "receipt-write",
+        {"Q1": RecoveryClassification.AUTHORITATIVE_MISSING},
+    )
+
+    assert result.classifications == (("Q1", RecoveryClassification.AUTHORITATIVE_MISSING),)
+    assert (data_root.cache / "wikidata_recovery" / "index.json").is_file()
+    with pytest.raises(ValueError, match="do not cover"):
+        audit_mod.record_region_recovery_receipt(data_root, "receipt-write", {})
+    with pytest.raises(ValueError, match="repair_required"):
+        audit_mod.record_region_recovery_receipt(
+            data_root,
+            "receipt-write",
+            {"Q1": RecoveryClassification.REPAIR_REQUIRED},
+        )
+
+
+def test_missing_fingerprint_is_empty_only_for_optional_inputs(tmp_path: Path) -> None:
+    optional_path = tmp_path / "optional.parquet"
+    assert audit_mod._missing_fingerprint(optional_path, False) == ""
+    with pytest.raises(FileNotFoundError, match="Required recovery input is missing"):
+        audit_mod._missing_fingerprint(tmp_path / "required.parquet", True)
+
+
 def test_interrupted_audit_cancels_worker_retry_backoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -520,3 +568,129 @@ def test_audit_emits_bounded_stage_progress(tmp_path: Path) -> None:
     assert any("upstream validation 2/2 QIDs" in message for message in messages)
     assert messages[-1].startswith("Wikidata integrity audit complete:")
     assert "elapsed" in messages[-1]
+
+
+def test_polygon_index_expands_multi_qid_tags_and_rejects_duplicates() -> None:
+    rows = [
+        {"polygon_id": "alpha:way:1", "wikidata": "Q2;Q1"},
+        {"polygon_id": "alpha:way:2", "wikidata": "Q1"},
+    ]
+
+    polygons, by_qid = audit_mod._index_polygon_rows(rows)
+
+    assert polygons == {
+        "alpha:way:1": ("Q2", "Q1"),
+        "alpha:way:2": ("Q1",),
+    }
+    assert by_qid == {"Q1": ["alpha:way:1", "alpha:way:2"], "Q2": ["alpha:way:1"]}
+
+    with pytest.raises(ValueError, match="duplicate polygon_id"):
+        audit_mod._index_polygon_rows([rows[0], rows[0]])
+
+
+def test_missing_polygon_links_are_sorted_and_only_include_unlinked_pairs() -> None:
+    polygon_ids_by_qid = {
+        "Q2": ["zeta:way:2", "alpha:way:1"],
+        "Q1": ["beta:way:3", "alpha:way:1"],
+    }
+
+    assert audit_mod._missing_polygon_links(
+        polygon_ids_by_qid,
+        {("alpha:way:1", "Q1"), ("zeta:way:2", "Q2")},
+    ) == (
+        ("Q1", ("beta:way:3",)),
+        ("Q2", ("alpha:way:1",)),
+    )
+
+
+def test_link_identity_filters_non_wikipedia_and_rejects_duplicate_identity() -> None:
+    link_ids: set[tuple[str, str]] = set()
+    assert (
+        audit_mod._link_identity(
+            {"polygon_id": "p", "document_id": "d", "project": "wikivoyage", "wikidata": "Q1"},
+            canonical_links=True,
+            link_ids=link_ids,
+        )
+        is None
+    )
+    assert audit_mod._link_identity(
+        {"polygon_id": "p", "document_id": "d", "project": "wikipedia", "wikidata": "Q1"},
+        canonical_links=True,
+        link_ids=link_ids,
+    ) == ("p", "document_id", "d", "Q1")
+    with pytest.raises(ValueError, match="duplicate identity"):
+        audit_mod._link_identity(
+            {"polygon_id": "p", "document_id": "d", "project": "wikipedia", "wikidata": "Q1"},
+            canonical_links=True,
+            link_ids=link_ids,
+        )
+
+
+def test_link_target_validation_preserves_canonical_and_legacy_missing_rules() -> None:
+    identity = ("p", "document_id", "d", "Q1")
+    assert (
+        audit_mod._resolve_link_target(
+            identity,
+            canonical_links=True,
+            polygons={"p": ("Q1",)},
+            documents_by_article={},
+            documents_by_id={},
+            orphan_document_ids=[],
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="references absent article_id"):
+        audit_mod._resolve_link_target(
+            ("p", "article_id", "a", "Q1"),
+            canonical_links=False,
+            polygons={"p": ("Q1",)},
+            documents_by_article={},
+            documents_by_id={},
+            orphan_document_ids=[],
+        )
+    assert (
+        audit_mod._resolve_link_target(
+            identity,
+            canonical_links=True,
+            polygons={"p": ("Q1",)},
+            documents_by_article={},
+            documents_by_id={"d": {"document_id": "d", "wikidata": "Q1"}},
+            orphan_document_ids=["d"],
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="disagrees with link QID"):
+        audit_mod._resolve_link_target(
+            identity,
+            canonical_links=True,
+            polygons={"p": ("Q1",)},
+            documents_by_article={},
+            documents_by_id={"d": {"document_id": "d", "wikidata": "Q2"}},
+            orphan_document_ids=[],
+        )
+
+
+def test_validation_qids_are_sorted_and_ignore_blocked_scans() -> None:
+    scans = {
+        "blocked": audit_mod._RegionScan(
+            stem="blocked",
+            fingerprints=(),
+            polygon_ids_by_qid=(("Q9", ("p",)),),
+            missing_polygon_ids_by_qid=(("Q9", ("p",)),),
+            blocked_reason="bad input",
+        ),
+        "beta": audit_mod._RegionScan(
+            stem="beta",
+            fingerprints=(),
+            polygon_ids_by_qid=(("Q3", ("p",)), ("Q1", ("q",))),
+            missing_polygon_ids_by_qid=(("Q3", ("p",)),),
+        ),
+        "alpha": audit_mod._RegionScan(
+            stem="alpha",
+            fingerprints=(),
+            polygon_ids_by_qid=(("Q2", ("r",)),),
+            missing_polygon_ids_by_qid=(("Q2", ("r",)),),
+        ),
+    }
+
+    assert audit_mod._validation_qids(scans) == ["Q2", "Q3"]

@@ -766,3 +766,42 @@ def test_recovery_parses_different_documents_concurrently_and_keeps_order() -> N
     )
 
     assert [row["wikidata"] for row in rows] == ["Q1", "Q2"]
+
+
+def test_repair_change_flags_distinguish_map_inputs_from_sidecars(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "change-flags"
+    _write_region(data_root, stem, ["Q1", "Q2"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    region = _audit_plan(data_root, stem, "Q2")
+    inputs = repair_module._load_repair_inputs(data_root, region)
+
+    unchanged = repair_module._repair_change_flags(
+        inputs,
+        inputs.polygons,
+        inputs.stored_links,
+        inputs.documents,
+        inputs.sections,
+        inputs.facts,
+    )
+    assert unchanged == (False, False)
+
+    sidecar_changed = repair_module._repair_change_flags(
+        inputs,
+        inputs.polygons,
+        inputs.stored_links,
+        inputs.documents,
+        ["section"],
+        inputs.facts,
+    )
+    assert sidecar_changed == (True, False)
+
+    document_changed = repair_module._repair_change_flags(
+        inputs,
+        inputs.polygons,
+        inputs.stored_links,
+        ["document"],
+        inputs.sections,
+        inputs.facts,
+    )
+    assert document_changed == (True, True)

@@ -23,6 +23,39 @@ def _sha256(path: Path) -> str:
     return sha256_file(path)
 
 
+def _is_valid_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == _HASH_LENGTH
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _valid_cache_entry(value: object) -> dict[str, Any] | None:
+    """Normalize one persisted digest entry or reject it."""
+    if not isinstance(value, dict):
+        return None
+    digest = value.get("sha256")
+    fingerprint = value.get("fingerprint")
+    if not _is_valid_digest(digest) or not isinstance(fingerprint, dict):
+        return None
+    return {"fingerprint": fingerprint, "sha256": digest}
+
+
+def _load_cache_entries(files: object) -> dict[str, dict[str, Any]]:
+    """Keep only valid entries from the persisted file collection."""
+    if not isinstance(files, dict):
+        return {}
+    entries: dict[str, dict[str, Any]] = {}
+    for key, value in files.items():
+        if not isinstance(key, str):
+            continue
+        entry = _valid_cache_entry(value)
+        if entry is not None:
+            entries[key] = entry
+    return entries
+
+
 class V2FileHashCache:
     """Persist file digests keyed by a strong local file fingerprint.
 
@@ -45,23 +78,7 @@ class V2FileHashCache:
             return {}
         if not isinstance(raw, dict) or raw.get("contract_version") != _CACHE_CONTRACT_VERSION:
             return {}
-        files = raw.get("files")
-        if not isinstance(files, dict):
-            return {}
-        entries: dict[str, dict[str, Any]] = {}
-        for key, value in files.items():
-            if not isinstance(key, str) or not isinstance(value, dict):
-                continue
-            digest = value.get("sha256")
-            fingerprint = value.get("fingerprint")
-            if (
-                isinstance(digest, str)
-                and len(digest) == _HASH_LENGTH
-                and all(character in "0123456789abcdef" for character in digest)
-                and isinstance(fingerprint, dict)
-            ):
-                entries[key] = {"fingerprint": fingerprint, "sha256": digest}
-        return entries
+        return _load_cache_entries(raw.get("files"))
 
     def digest(self, path: Path) -> str:
         """Return the exact digest, reusing it only for the same fingerprint."""

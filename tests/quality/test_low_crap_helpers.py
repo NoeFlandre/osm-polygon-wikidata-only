@@ -13,11 +13,18 @@ from osm_polygon_wikidata_only.augmentation.integrity import (
     IntegrityReport,
     PolygonArticlesIntegrityResult,
     WikivoyageIntegrityResult,
+    _collect_integrity_results,
+    _partition_polygon_article_rows,
+    _partition_wikivoyage_documents,
+    _partition_wikivoyage_sections,
+    _record_polygon_wikidata,
 )
 from osm_polygon_wikidata_only.augmentation.orchestrator import _completed_region_stems
 from osm_polygon_wikidata_only.cli.parser import parse_languages
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.models import ManifestStats
+from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary
+from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataEntity
 from osm_polygon_wikidata_only.hf._dataset_stats.combined_languages import _parse_cached_stats
 from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     AugmentationStats,
@@ -47,6 +54,13 @@ from osm_polygon_wikidata_only.pipeline._wikidata_recovery.progress import (
     RecoveryHeartbeat,
     RecoveryProgress,
 )
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery.repair import (
+    _preferred_language,
+    _recompute_polygon_row,
+    _resolved_entity_map,
+    _summarize_polygon_links,
+    _validate_merge_rows,
+)
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.validation import (
     _unique_mapping,
     _unique_rows,
@@ -60,8 +74,20 @@ from osm_polygon_wikidata_only.pipeline.persistence import (
     _enforce_integrity_if_needed,
     _integrity_metadata,
 )
+from osm_polygon_wikidata_only.pipeline.row_construction import (
+    _append_polygon_articles,
+    _article_entity_fields,
+    _article_fetch_fields,
+)
 from osm_polygon_wikidata_only.v2.card import V2CardStats
 from osm_polygon_wikidata_only.v2.reuse import _normalize_link
+from osm_polygon_wikidata_only.v2.v1_index import (
+    _group_title_rows,
+    _normalized_title_keys,
+    _partition_title_cache,
+    _resumable_row_group,
+    _title_chunk_results,
+)
 
 
 def test_completed_region_stems_intersects_polygon_and_article_shards(tmp_path: Path) -> None:
@@ -92,6 +118,151 @@ def test_integrity_report_serializes_nested_results() -> None:
     assert payload["contract_version"] == INTEGRITY_CONTRACT_VERSION
     assert payload["polygon_articles"][0]["rejected_row_count"] == 1
     assert payload["wikivoyage"][0]["cascaded_section_count"] == 1
+
+
+def test_wikivoyage_partition_helpers_preserve_rejection_cascades() -> None:
+    documents, rejected_ids, rejections = _partition_wikivoyage_documents(
+        "demo-latest",
+        [
+            {"document_id": "doc-1", "wikidata": "Q1"},
+            {"document_id": "doc-2", "wikidata": "Q2"},
+        ],
+        {"Q1"},
+    )
+    assert documents[0]["document_id"] == "doc-1"
+    assert rejected_ids == {"doc-2"}
+    assert rejections[0].identifier == "doc-2"
+
+    sections, cascaded, cascades = _partition_wikivoyage_sections(
+        [{"document_id": "doc-1"}, {"document_id": "doc-2"}], rejected_ids
+    )
+    assert sections[0]["document_id"] == "doc-1"
+    assert cascaded == 1
+    assert cascades == {"doc-2": 1}
+
+
+def test_record_polygon_wikidata_tracks_only_conflicting_duplicates() -> None:
+    mapping: dict[str, str] = {}
+    duplicates: set[str] = set()
+
+    _record_polygon_wikidata(mapping, duplicates, "polygon-1", "Q1")
+    _record_polygon_wikidata(mapping, duplicates, "polygon-1", "Q1")
+    _record_polygon_wikidata(mapping, duplicates, "polygon-1", "Q2")
+
+    assert mapping == {"polygon-1": "Q1"}
+    assert duplicates == {"polygon-1"}
+
+
+def test_polygon_article_partition_keeps_matching_rows_and_audits_mismatches() -> None:
+    retained, rejections, seen = _partition_polygon_article_rows(
+        "demo-latest",
+        [{"polygon_id": "p1", "wikidata": "Q1"}, {"polygon_id": "p2", "wikidata": "Q2"}],
+        {"p1": "Q1"},
+    )
+
+    assert retained[0]["polygon_id"] == "p1"
+    assert rejections[0].identifier == "p2"
+    assert seen == {"p1", "p2"}
+
+
+def test_collect_integrity_results_skips_absent_sidecars(tmp_path: Path) -> None:
+    polygon_results, wikivoyage_results = _collect_integrity_results(
+        DataRoot(tmp_path), ["demo-latest"]
+    )
+
+    assert polygon_results == []
+    assert wikivoyage_results == []
+
+
+def test_normalized_title_keys_deduplicate_and_canonicalize() -> None:
+    assert _normalized_title_keys(
+        (("EN", "Douglas_Adams"), ("en", "Douglas Adams"), ("fr", "Page"))
+    ) == (("en", "douglas adams"), ("fr", "page"))
+
+
+def test_group_title_rows_keeps_one_materialization_reference_per_document() -> None:
+    rows = [
+        {"language": "en", "title_key": "page", "document_id": "doc-2"},
+        {"language": "en", "title_key": "page", "document_id": "doc-1"},
+        {"language": "fr", "title_key": "page", "document_id": "doc-1"},
+    ]
+
+    grouped, references = _group_title_rows(rows)
+
+    assert tuple(grouped) == (("en", "page"), ("fr", "page"))
+    assert [row["document_id"] for row in grouped[("en", "page")]] == ["doc-2", "doc-1"]
+    assert [row["document_id"] for row in references] == ["doc-2", "doc-1"]
+
+
+def test_title_chunk_results_sort_documents_and_fill_missing_titles() -> None:
+    grouped = {
+        ("en", "page"): (
+            {"document_id": "doc-2"},
+            {"document_id": "doc-1"},
+        )
+    }
+    materialized = {"doc-1": {"document_id": "doc-1"}, "doc-2": {"document_id": "doc-2"}}
+
+    assert _title_chunk_results((("en", "page"), ("fr", "missing")), grouped, materialized) == {
+        ("en", "page"): ({"document_id": "doc-1"}, {"document_id": "doc-2"}),
+        ("fr", "missing"): (),
+    }
+
+
+def test_partition_title_cache_returns_hits_and_missing_keys_in_order() -> None:
+    normalized = (("en", "page"), ("fr", "missing"))
+    cached = {("en", "page"): ({"document_id": "doc-1"},)}
+
+    assert _partition_title_cache(normalized, cached, complete=True) == (
+        {("en", "page"): ({"document_id": "doc-1"},)},
+        (("fr", "missing"),),
+    )
+    assert _partition_title_cache(normalized, cached, complete=False) == ({}, normalized)
+
+
+def test_resumable_row_group_requires_matching_fingerprint_and_bounds() -> None:
+    fingerprint = (1, 2, 3, 4, False)
+    assert _resumable_row_group((1, 2, 3, 4, False, 2, 1), fingerprint, 2) == 1
+    assert _resumable_row_group((9, 2, 3, 4, False, 2, 1), fingerprint, 2) == 0
+    assert _resumable_row_group((1, 2, 3, 4, False, 2, 3), fingerprint, 2) == 0
+
+
+def test_validate_merge_rows_returns_primary_and_secondary_identities() -> None:
+    assert _validate_merge_rows(
+        [{"document_id": "doc-1", "article_id": "article-1"}],
+        primary_key="document_id",
+        label="document_id",
+        secondary_key="article_id",
+    ) == ({"doc-1"}, {"article-1"})
+
+
+def test_recompute_polygon_row_updates_affected_language_fields() -> None:
+    row, best = _recompute_polygon_row(
+        {"polygon_id": "p1", "wikidata": "Q1"},
+        [{"article_id": "a1", "language": "fr"}],
+        {"a1": {"full_text": "text"}},
+        {"Q1"},
+    )
+
+    assert row["wikipedia_article_count"] == 1
+    assert row["has_french_wikipedia"] is True
+    assert row["text_available"] is True
+    assert best == "fr"
+
+
+def test_polygon_link_helpers_choose_preferred_language_deterministically() -> None:
+    article_ids, languages = _summarize_polygon_links(
+        [{"article_id": "a1", "language": "fr"}, {"article_id": "a1", "language": "en"}]
+    )
+
+    assert article_ids == ["a1"]
+    assert languages == ["en", "fr"]
+    assert _preferred_language(languages) == "en"
+
+
+def test_resolved_entity_map_rejects_missing_entities() -> None:
+    with pytest.raises(RecoveryRepairError, match="authoritatively missing"):
+        _resolved_entity_map(("Q1",), [None])
 
 
 def test_parse_languages_trims_deduplicates_and_sorts() -> None:
@@ -217,6 +388,43 @@ def test_v2_card_counts_documents_in_other_languages() -> None:
     )
 
     assert stats.other_wikipedia_languages == 2
+
+
+def test_article_row_helpers_preserve_entity_fallback_and_fetch_error_policy() -> None:
+    article = type("Article", (), {"language": "fr", "site": "frwiki"})()
+    summary = LinkSummary(
+        qid="Q1",
+        entity=WikidataEntity(
+            qid="Q1",
+            labels={"en": "English", "fr": ""},
+            descriptions={"en": "English description", "fr": ""},
+            aliases={"en": ["Alias"]},
+        ),
+        statuses={"frwiki": "failed", "enwiki": "ok"},
+        errors={"frwiki": "timeout"},
+    )
+
+    assert _article_entity_fields(article, summary) == (
+        "English",
+        "English description",
+        ["Alias"],
+    )
+    assert _article_fetch_fields(article, summary) == ("failed", "timeout")
+    assert _article_fetch_fields(
+        type("Article", (), {"language": "fr", "site": "enwiki"})(), summary
+    ) == ("ok", "")
+
+
+def test_append_polygon_articles_ignores_missing_or_empty_summaries() -> None:
+    polygon = type("Polygon", (), {"wikidata": "Q1"})()
+    articles: dict[str, object] = {}
+    links: list[object] = []
+
+    _append_polygon_articles(polygon, None, articles, links)
+    _append_polygon_articles(polygon, LinkSummary("Q1", None), articles, links)
+
+    assert articles == {}
+    assert links == []
 
 
 def test_parse_cached_stats_accepts_valid_payload_and_rejects_malformed() -> None:

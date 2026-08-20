@@ -184,6 +184,19 @@ class IntegrityReport:
 # ---------------------------------------------------------------------------
 
 
+def _record_polygon_wikidata(
+    mapping: dict[str, str],
+    duplicates: set[str],
+    polygon_id: str,
+    wikidata: str,
+) -> None:
+    """Record one polygon identity and flag conflicting Wikidata values."""
+    if polygon_id in mapping and mapping[polygon_id] != wikidata:
+        duplicates.add(polygon_id)
+        return
+    mapping[polygon_id] = wikidata
+
+
 def _read_polygon_wikidata_map(polygons_path: Path) -> dict[str, str]:
     """Read the canonical polygon wikidata for a shard.
 
@@ -203,12 +216,12 @@ def _read_polygon_wikidata_map(polygons_path: Path) -> dict[str, str]:
         strict=True,
     ):
         polygon_id, wikidata = row
-        polygon_id_str = str(polygon_id)
-        wikidata_str = str(wikidata) if wikidata is not None else ""
-        if polygon_id_str in mapping and mapping[polygon_id_str] != wikidata_str:
-            duplicates.add(polygon_id_str)
-            continue
-        mapping[polygon_id_str] = wikidata_str
+        _record_polygon_wikidata(
+            mapping,
+            duplicates,
+            str(polygon_id),
+            str(wikidata) if wikidata is not None else "",
+        )
     if duplicates:
         sorted_ids = ", ".join(sorted(duplicates)[:5])
         raise ValueError(
@@ -259,6 +272,72 @@ def _filter_rows(table: pa.Table, mask: list[bool]) -> pa.Table:
 # ---------------------------------------------------------------------------
 
 
+def _partition_polygon_article_rows(
+    stem: str,
+    rows: list[dict[str, Any]],
+    polygon_wikidata: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[RejectionRecord], set[str]]:
+    """Split polygon-article rows by canonical Wikidata agreement."""
+    retained_rows: list[dict[str, Any]] = []
+    rejections: list[RejectionRecord] = []
+    seen_polygon_ids: set[str] = set()
+    for row in rows:
+        polygon_id = str(row.get("polygon_id", ""))
+        link_wikidata = str(row.get("wikidata", ""))
+        seen_polygon_ids.add(polygon_id)
+        expected = polygon_wikidata.get(polygon_id)
+        if expected is None or expected != link_wikidata:
+            rejections.append(
+                RejectionRecord(
+                    shard=stem,
+                    source_table="polygon_articles",
+                    identifier=polygon_id,
+                    wikidata=link_wikidata,
+                    expected=expected,
+                    reason=REASON_POLYGON_ARTICLES_MISMATCH,
+                )
+            )
+            continue
+        retained_rows.append({column: row.get(column) for column in POLYGON_ARTICLE_COLUMNS})
+    return retained_rows, rejections, seen_polygon_ids
+
+
+def _missing_polygon_ids(seen_polygon_ids: set[str], polygon_wikidata: dict[str, str]) -> list[str]:
+    """Return polygon IDs referenced by links but absent from the core table."""
+    return sorted(seen_polygon_ids - polygon_wikidata.keys())
+
+
+def _ensure_polygon_ids_exist(
+    stem: str,
+    missing_polygon_ids: list[str],
+    rows: list[dict[str, Any]],
+) -> None:
+    """Raise a clear integrity error when links reference absent polygons."""
+    missing_with_links = sorted(
+        polygon_id
+        for polygon_id in missing_polygon_ids
+        if any(str(row.get("polygon_id", "")) == polygon_id for row in rows)
+    )
+    if not missing_with_links:
+        return
+    sample = ", ".join(missing_with_links[:5])
+    raise ValueError(
+        f"polygon_articles rows reference polygon_id(s) absent from polygons parquet "
+        f"for shard {stem!r}: {sample}"
+    )
+
+
+def _write_polygon_articles_if_needed(
+    links_path: Path,
+    retained_rows: list[dict[str, Any]],
+    *,
+    rewritten: bool,
+) -> None:
+    """Rewrite polygon-article rows only when an integrity defect was found."""
+    if rewritten:
+        write_polygon_articles(links_path, retained_rows)
+
+
 def enforce_polygon_articles_integrity(
     data_root: DataRoot, stem: str
 ) -> PolygonArticlesIntegrityResult:
@@ -288,56 +367,22 @@ def enforce_polygon_articles_integrity(
         columns=POLYGON_ARTICLE_COLUMNS,
     )
     rows = table.to_pylist()
-    retained_rows: list[dict[str, Any]] = []
-    rejections: list[RejectionRecord] = []
-    seen_polygon_ids: set[str] = set()
-    for row in rows:
-        polygon_id = str(row.get("polygon_id", ""))
-        link_wikidata = str(row.get("wikidata", ""))
-        seen_polygon_ids.add(polygon_id)
-        expected = polygon_wikidata.get(polygon_id)
-        if expected is None or expected != link_wikidata:
-            rejections.append(
-                RejectionRecord(
-                    shard=stem,
-                    source_table="polygon_articles",
-                    identifier=polygon_id,
-                    wikidata=link_wikidata,
-                    expected=expected,
-                    reason=REASON_POLYGON_ARTICLES_MISMATCH,
-                )
-            )
-            continue
-        retained_rows.append({column: row.get(column) for column in POLYGON_ARTICLE_COLUMNS})
+    retained_rows, rejections, seen_polygon_ids = _partition_polygon_article_rows(
+        stem, rows, polygon_wikidata
+    )
 
     # Detect polygon_ids that appear in polygon_articles but not in the
     # polygons table (unknown integrity defect). Surface these as
     # loud failures rather than silently dropping them: the join
     # contract guarantees the relationship is total, so a missing
     # polygon is a data hazard, not a benign gap.
-    missing_polygon_ids = sorted(seen_polygon_ids - polygon_wikidata.keys())
-    missing_with_links = sorted(
-        polygon_id
-        for polygon_id in missing_polygon_ids
-        if any(str(row.get("polygon_id", "")) == polygon_id for row in rows)
-    )
-    if missing_with_links:
-        sample = ", ".join(missing_with_links[:5])
-        raise ValueError(
-            f"polygon_articles rows reference polygon_id(s) absent from polygons parquet "
-            f"for shard {stem!r}: {sample}"
-        )
+    _ensure_polygon_ids_exist(stem, _missing_polygon_ids(seen_polygon_ids, polygon_wikidata), rows)
 
     original_count = len(rows)
     retained_count = len(retained_rows)
     rejected_count = len(rejections)
     rewritten = rejected_count > 0
-
-    if rewritten:
-        write_polygon_articles(links_path, retained_rows)
-    else:
-        # Guarantee byte-identical output: do not touch the file.
-        pass
+    _write_polygon_articles_if_needed(links_path, retained_rows, rewritten=rewritten)
 
     rejections_tuple = tuple(
         sorted(rejections, key=lambda record: (record.identifier, record.wikidata))
@@ -357,24 +402,81 @@ def enforce_polygon_articles_integrity(
 # ---------------------------------------------------------------------------
 
 
-def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIntegrityResult:
-    """Reject every wikivoyage document whose wikidata is absent from
-    the shard's polygons, and cascade the rejection to its sections.
+def _partition_wikivoyage_documents(
+    stem: str,
+    rows: list[dict[str, Any]],
+    valid_qids: set[str],
+) -> tuple[list[dict[str, Any]], set[str], list[RejectionRecord]]:
+    """Split Wikivoyage documents into retained rows and rejected identities."""
+    retained: list[dict[str, Any]] = []
+    rejected_ids: set[str] = set()
+    rejections: list[RejectionRecord] = []
+    for row in rows:
+        document_id = str(row.get("document_id", ""))
+        wikidata = str(row.get("wikidata", ""))
+        if wikidata not in valid_qids:
+            rejected_ids.add(document_id)
+            rejections.append(
+                RejectionRecord(
+                    shard=stem,
+                    source_table="wikivoyage_documents",
+                    identifier=document_id,
+                    wikidata=wikidata,
+                    expected=None,
+                    reason=REASON_WIKIVOYAGE_ABSENT,
+                    cascaded_sections=0,
+                )
+            )
+            continue
+        retained.append({column: row.get(column) for column in DOCUMENT_COLUMNS})
+    return retained, rejected_ids, rejections
 
-    The polygons parquet is the source of truth for the valid
-    wikidata QID set. Sections whose ``document_id`` belongs to a
-    rejected document are dropped; the cascade count is recorded in
-    each rejection record.
 
-    When at least one document or section is rejected the
-    ``wikivoyage/documents`` and ``wikivoyage/sections`` parquets
-    are atomically rewritten. When nothing is rejected the parquets
-    are left untouched (byte-identical).
-    """
+def _partition_wikivoyage_sections(
+    rows: list[dict[str, Any]],
+    rejected_document_ids: set[str],
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    """Drop sections cascading from rejected Wikivoyage documents."""
+    retained: list[dict[str, Any]] = []
+    cascaded_count = 0
+    cascades_by_document: dict[str, int] = {}
+    for row in rows:
+        document_id = str(row.get("document_id", ""))
+        if document_id in rejected_document_ids:
+            cascaded_count += 1
+            cascades_by_document[document_id] = cascades_by_document.get(document_id, 0) + 1
+            continue
+        retained.append({column: row.get(column) for column in SECTION_COLUMNS})
+    return retained, cascaded_count, cascades_by_document
+
+
+def _backfill_wikivoyage_rejections(
+    rejections: list[RejectionRecord],
+    cascades_by_document: dict[str, int],
+) -> list[RejectionRecord]:
+    """Attach section cascade counts to each rejected document record."""
+    return [
+        RejectionRecord(
+            shard=record.shard,
+            source_table=record.source_table,
+            identifier=record.identifier,
+            wikidata=record.wikidata,
+            expected=record.expected,
+            reason=record.reason,
+            cascaded_sections=cascades_by_document.get(record.identifier, 0),
+        )
+        for record in rejections
+    ]
+
+
+def _load_wikivoyage_integrity_inputs(
+    data_root: DataRoot,
+    stem: str,
+) -> tuple[Path, Path, list[dict[str, Any]], list[dict[str, Any]], set[str]]:
+    """Load the shard paths and rows needed for Wikivoyage validation."""
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     documents_path = data_root.processed / "wikivoyage" / "documents" / f"{stem}.parquet"
     sections_path = data_root.processed / "wikivoyage" / "sections" / f"{stem}.parquet"
-
     valid_qids = _read_polygon_wikidata_set(polygons_path)
     documents_table = _read_table_required(
         documents_path,
@@ -390,57 +492,72 @@ def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIn
         if sections_path.is_file()
         else pa.table({column: [] for column in SECTION_COLUMNS})
     )
+    return (
+        documents_path,
+        sections_path,
+        documents_table.to_pylist(),
+        sections_table.to_pylist(),
+        valid_qids,
+    )
 
-    documents_rows = documents_table.to_pylist()
-    retained_documents: list[dict[str, Any]] = []
-    rejected_document_ids: set[str] = set()
-    rejections: list[RejectionRecord] = []
 
-    for row in documents_rows:
-        document_id = str(row.get("document_id", ""))
-        wikidata = str(row.get("wikidata", ""))
-        if wikidata not in valid_qids:
-            rejected_document_ids.add(document_id)
-            rejections.append(
-                RejectionRecord(
-                    shard=stem,
-                    source_table="wikivoyage_documents",
-                    identifier=document_id,
-                    wikidata=wikidata,
-                    expected=None,
-                    reason=REASON_WIKIVOYAGE_ABSENT,
-                    cascaded_sections=0,
-                )
-            )
-            continue
-        retained_documents.append({column: row.get(column) for column in DOCUMENT_COLUMNS})
-
-    # Sections: drop any whose document_id is in the rejected set.
-    sections_rows = sections_table.to_pylist()
-    retained_sections: list[dict[str, Any]] = []
-    cascaded_count = 0
-    cascades_by_document: dict[str, int] = {}
-    for row in sections_rows:
-        document_id = str(row.get("document_id", ""))
-        if document_id in rejected_document_ids:
-            cascaded_count += 1
-            cascades_by_document[document_id] = cascades_by_document.get(document_id, 0) + 1
-            continue
-        retained_sections.append({column: row.get(column) for column in SECTION_COLUMNS})
-
-    # Backfill cascaded_sections in each rejection record.
-    rejections = [
-        RejectionRecord(
-            shard=record.shard,
-            source_table=record.source_table,
-            identifier=record.identifier,
-            wikidata=record.wikidata,
-            expected=record.expected,
-            reason=record.reason,
-            cascaded_sections=cascades_by_document.get(record.identifier, 0),
+def _write_wikivoyage_integrity_tables(
+    documents_path: Path,
+    sections_path: Path,
+    retained_documents: list[dict[str, Any]],
+    retained_sections: list[dict[str, Any]],
+    *,
+    rewrite_documents: bool,
+    rewrite_sections: bool,
+) -> None:
+    """Atomically rewrite only the Wikivoyage tables that changed."""
+    if rewrite_documents:
+        _atomic_overwrite_parquet(
+            documents_path,
+            _table_from_rows(retained_documents, DOCUMENT_COLUMNS, document_schema()),
         )
-        for record in rejections
-    ]
+    if rewrite_sections:
+        _atomic_overwrite_parquet(
+            sections_path,
+            _table_from_rows(retained_sections, SECTION_COLUMNS, section_schema()),
+        )
+
+
+def _table_from_rows(
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    schema: pa.Schema,
+) -> pa.Table:
+    """Build a schema-preserving table, including the empty-row case."""
+    if rows:
+        return pa.Table.from_pylist(rows, schema=schema)
+    return pa.table({column: [] for column in columns}, schema=schema)
+
+
+def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIntegrityResult:
+    """Reject every wikivoyage document whose wikidata is absent from
+    the shard's polygons, and cascade the rejection to its sections.
+
+    The polygons parquet is the source of truth for the valid
+    wikidata QID set. Sections whose ``document_id`` belongs to a
+    rejected document are dropped; the cascade count is recorded in
+    each rejection record.
+
+    When at least one document or section is rejected the
+    ``wikivoyage/documents`` and ``wikivoyage/sections`` parquets
+    are atomically rewritten. When nothing is rejected the parquets
+    are left untouched (byte-identical).
+    """
+    documents_path, sections_path, documents_rows, sections_rows, valid_qids = (
+        _load_wikivoyage_integrity_inputs(data_root, stem)
+    )
+    retained_documents, rejected_document_ids, rejections = _partition_wikivoyage_documents(
+        stem, documents_rows, valid_qids
+    )
+    retained_sections, cascaded_count, cascades_by_document = _partition_wikivoyage_sections(
+        sections_rows, rejected_document_ids
+    )
+    rejections = _backfill_wikivoyage_rejections(rejections, cascades_by_document)
 
     original_document_count = len(documents_rows)
     retained_document_count = len(retained_documents)
@@ -450,21 +567,14 @@ def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIn
     rewritten_documents = rejected_document_count > 0
     rewritten_sections = cascaded_count > 0
 
-    if rewritten_documents:
-        documents_table_to_write = (
-            pa.Table.from_pylist(retained_documents, schema=document_schema())
-            if retained_documents
-            else pa.table({column: [] for column in DOCUMENT_COLUMNS}, schema=document_schema())
-        )
-        _atomic_overwrite_parquet(documents_path, documents_table_to_write)
-
-    if rewritten_sections:
-        sections_table_to_write = (
-            pa.Table.from_pylist(retained_sections, schema=section_schema())
-            if retained_sections
-            else pa.table({column: [] for column in SECTION_COLUMNS}, schema=section_schema())
-        )
-        _atomic_overwrite_parquet(sections_path, sections_table_to_write)
+    _write_wikivoyage_integrity_tables(
+        documents_path,
+        sections_path,
+        retained_documents,
+        retained_sections,
+        rewrite_documents=rewritten_documents,
+        rewrite_sections=rewritten_sections,
+    )
 
     rejections_tuple = tuple(
         sorted(rejections, key=lambda record: (record.identifier, record.wikidata))
@@ -488,25 +598,11 @@ def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIn
 # ---------------------------------------------------------------------------
 
 
-def enforce_all_regions(
+def _collect_integrity_results(
     data_root: DataRoot,
-    *,
-    stems: list[str] | None = None,
-    audit_filename: str = "integrity_audit.json",
-) -> IntegrityReport:
-    """Run both integrity checks across every shard and emit a
-    deterministic audit JSON.
-
-    When *stems* is ``None`` the union of polygon stems is used
-    (the canonical intersection of polygons and either
-    polygon_articles or wikivoyage/documents). The audit JSON is
-    written to ``<data_root>/processed/integrity/<audit_filename>``
-    with deterministic key order.
-    """
-    if stems is None:
-        polygon_stems = sorted(path.stem for path in data_root.processed_polygons.glob("*.parquet"))
-        stems = polygon_stems
-
+    stems: list[str],
+) -> tuple[list[PolygonArticlesIntegrityResult], list[WikivoyageIntegrityResult]]:
+    """Run available integrity checks for each requested shard."""
     polygon_results: list[PolygonArticlesIntegrityResult] = []
     wikivoyage_results: list[WikivoyageIntegrityResult] = []
     for stem in stems:
@@ -518,20 +614,16 @@ def enforce_all_regions(
         )
         if wikivoyage_documents_path.is_file():
             wikivoyage_results.append(enforce_wikivoyage_integrity(data_root, stem))
+    return polygon_results, wikivoyage_results
 
-    polygon_results.sort(key=lambda result: result.shard)
-    wikivoyage_results.sort(key=lambda result: result.shard)
 
-    report = IntegrityReport(
-        contract_version=INTEGRITY_CONTRACT_VERSION,
-        polygon_articles=tuple(polygon_results),
-        wikivoyage=tuple(wikivoyage_results),
-        audit_path=data_root.processed / "integrity" / audit_filename,
-    )
-
-    audit_dir = report.audit_path.parent
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_payload = {
+def _integrity_audit_payload(
+    report: IntegrityReport,
+    polygon_results: list[PolygonArticlesIntegrityResult],
+    wikivoyage_results: list[WikivoyageIntegrityResult],
+) -> dict[str, Any]:
+    """Build the deterministic JSON payload for an integrity report."""
+    return {
         "contract_version": INTEGRITY_CONTRACT_VERSION,
         "generated_at": _utc_now_iso(),
         "polygon_articles": [result.to_dict() for result in polygon_results],
@@ -549,6 +641,41 @@ def enforce_all_regions(
             ),
         },
     }
+
+
+def enforce_all_regions(
+    data_root: DataRoot,
+    *,
+    stems: list[str] | None = None,
+    audit_filename: str = "integrity_audit.json",
+) -> IntegrityReport:
+    """Run both integrity checks across every shard and emit a
+    deterministic audit JSON.
+
+    When *stems* is ``None`` the union of polygon stems is used
+    (the canonical intersection of polygons and either
+    polygon_articles or wikivoyage/documents). The audit JSON is
+    written to ``<data_root>/processed/integrity/<audit_filename>``
+    with deterministic key order.
+    """
+    if stems is None:
+        stems = sorted(path.stem for path in data_root.processed_polygons.glob("*.parquet"))
+
+    polygon_results, wikivoyage_results = _collect_integrity_results(data_root, stems)
+
+    polygon_results.sort(key=lambda result: result.shard)
+    wikivoyage_results.sort(key=lambda result: result.shard)
+
+    report = IntegrityReport(
+        contract_version=INTEGRITY_CONTRACT_VERSION,
+        polygon_articles=tuple(polygon_results),
+        wikivoyage=tuple(wikivoyage_results),
+        audit_path=data_root.processed / "integrity" / audit_filename,
+    )
+
+    audit_dir = report.audit_path.parent
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_payload = _integrity_audit_payload(report, polygon_results, wikivoyage_results)
     atomic_write_text(report.audit_path, json.dumps(audit_payload, indent=2, sort_keys=True) + "\n")
     return report
 

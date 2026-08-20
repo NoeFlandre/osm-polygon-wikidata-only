@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery import transaction as transaction_module
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.transaction import (
     commit_replacements,
     recover_interrupted_transactions,
@@ -196,3 +197,95 @@ def test_recover_rejects_unknown_transaction_phase(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Unknown recovery transaction phase"):
         recover_interrupted_transactions(root)
+
+
+def test_rollback_removes_target_created_by_transaction(tmp_path: Path) -> None:
+    target = tmp_path / "created.txt"
+    target.write_text("created", encoding="utf-8")
+
+    transaction_module._rollback_entry(
+        {
+            "target": str(target),
+            "backup": str(tmp_path / "missing.backup"),
+            "existed": False,
+            "original_hash": "",
+        }
+    )
+
+    assert not target.exists()
+
+
+def test_rollback_rejects_missing_backup_for_existing_target(tmp_path: Path) -> None:
+    target = tmp_path / "existing.txt"
+    target.write_text("current", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="backup is unavailable"):
+        transaction_module._rollback_entry(
+            {
+                "target": str(target),
+                "backup": str(tmp_path / "missing.backup"),
+                "existed": True,
+                "original_hash": "unused",
+            }
+        )
+
+
+def test_rollback_rejects_hash_mismatch_after_restore(tmp_path: Path) -> None:
+    target = tmp_path / "existing.txt"
+    backup = tmp_path / "backup.txt"
+    target.write_text("current", encoding="utf-8")
+    backup.write_text("original", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="rollback verification failed"):
+        transaction_module._rollback_entry(
+            {
+                "target": str(target),
+                "backup": str(backup),
+                "existed": True,
+                "original_hash": "wrong-hash",
+            }
+        )
+
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_roll_forward_skips_target_with_matching_staged_hash(tmp_path: Path) -> None:
+    target = tmp_path / "target.txt"
+    staged = tmp_path / "staged.txt"
+    target.write_text("new", encoding="utf-8")
+    staged.write_text("new", encoding="utf-8")
+
+    transaction_module._roll_forward_entry(
+        {
+            "target": str(target),
+            "staged": str(staged),
+            "staged_hash": _sha256(staged),
+        }
+    )
+
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_roll_forward_rejects_changed_staged_file(tmp_path: Path) -> None:
+    target = tmp_path / "target.txt"
+    staged = tmp_path / "staged.txt"
+    staged.write_text("new", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="staged file is unavailable"):
+        transaction_module._roll_forward_entry(
+            {
+                "target": str(target),
+                "staged": str(staged),
+                "staged_hash": "wrong-hash",
+            }
+        )
+
+
+def test_journal_entries_require_a_list_of_mappings(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.json"
+
+    with pytest.raises(RuntimeError, match="Invalid recovery transaction entries"):
+        transaction_module._validate_journal_entries({"entry": "not-a-list"}, journal)
+
+    with pytest.raises(RuntimeError, match="Invalid recovery transaction entries"):
+        transaction_module._validate_journal_entries(["not-a-mapping"], journal)

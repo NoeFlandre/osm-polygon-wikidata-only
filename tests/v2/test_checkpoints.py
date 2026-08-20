@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.v2.checkpoints import (
     _expected_direct_refs,
     _load_direct_rows,
     _load_direct_statuses,
+    clear_v2_checkpoints,
 )
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
 from osm_polygon_wikidata_only.v2.reuse import merge_v2_region
@@ -184,6 +185,29 @@ def test_fetch_checkpoint_rejects_malformed_section_payloads(tmp_path: Path, pay
     path.write_text(payload, encoding="utf-8")
 
     assert checkpoint._load_section_payload(path) is None
+
+
+def test_clear_v2_checkpoints_removes_extraction_and_fetch_state(tmp_path: Path) -> None:
+    root = tmp_path / "checkpoints"
+    extraction = root / "extraction" / "region-latest"
+    fetch = root / "fetch" / "region-latest"
+    for directory in (extraction, fetch / "direct", fetch / "sections"):
+        directory.mkdir(parents=True)
+    for path in (
+        extraction / "chunk-00000000.parquet",
+        extraction / ".chunk.tmp",
+        extraction / "metadata.json",
+        fetch / "direct" / "direct.json",
+        fetch / "sections" / "section.json",
+        fetch / ".fetch.tmp",
+        fetch / "metadata.json",
+    ):
+        path.write_text("state", encoding="utf-8")
+
+    clear_v2_checkpoints(root, "region-latest")
+
+    assert not extraction.exists()
+    assert not fetch.exists()
 
 
 def test_fetch_checkpoint_discards_state_with_invalid_metadata(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -69,13 +69,23 @@ def _section_batch_expected_documents(
     if metadata is None:
         return None
     try:
-        return tuple(
-            (str(value[0]), int(value[1]), str(value[2]))
-            for value in metadata.get("documents", ())
-            if isinstance(value, list) and len(value) == 3
-        )
+        return _section_document_identities(metadata.get("documents", ()))
     except (TypeError, ValueError):
         return None
+
+
+def _section_document_identities(values: Any) -> tuple[tuple[str, int, str], ...]:
+    """Normalize the valid list-shaped identities from a metadata value."""
+    return tuple(
+        identity for value in values if (identity := _section_document_identity(value)) is not None
+    )
+
+
+def _section_document_identity(value: object) -> tuple[str, int, str] | None:
+    """Normalize one section document identity or ignore its shape."""
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    return str(value[0]), int(cast(str | int, value[1])), str(value[2])
 
 
 def _section_batch_rows(
@@ -95,27 +105,111 @@ def _validated_section_batch(
     expected_documents: tuple[tuple[str, int, str], ...],
 ) -> list[Section] | None:
     """Validate section identities and return deterministic ordering."""
-    expected_ids = {document_id for document_id, _, _ in expected_documents}
-    if any(section.document_id not in expected_ids for section in sections):
+    if not _section_ids_are_known(sections, expected_documents):
         return None
-    if len({section.section_id for section in sections}) != len(sections):
+    if not _section_ids_are_unique(sections):
         return None
     sections.sort(key=lambda row: (row.document_id, row.section_index))
     return sections
+
+
+def _section_ids_are_known(
+    sections: list[Section],
+    expected_documents: tuple[tuple[str, int, str], ...],
+) -> bool:
+    """Return whether every section belongs to an expected document."""
+    expected_ids = {document_id for document_id, _, _ in expected_documents}
+    return all(section.document_id in expected_ids for section in sections)
+
+
+def _section_ids_are_unique(sections: list[Section]) -> bool:
+    """Return whether a section batch has no repeated section identity."""
+    return len({section.section_id for section in sections}) == len(sections)
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    """Read one checkpoint JSON object, returning ``None`` on corruption."""
+    try:
+        raw = loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _validated_entity_payload(
+    raw: object,
+    expected_qids: tuple[str, ...],
+) -> dict[str, dict[str, Any]] | None:
+    """Validate an entity checkpoint's keys and object-valued payloads."""
+    if not _entity_keys_are_expected(raw, expected_qids):
+        return None
+    if not isinstance(raw, dict) or not _entity_values_are_objects(cast(dict[object, object], raw)):
+        return None
+    return cast(dict[str, dict[str, Any]], raw)
+
+
+def _entity_keys_are_expected(raw: object, expected_qids: tuple[str, ...]) -> bool:
+    """Return whether an entity payload has only requested QID keys."""
+    return isinstance(raw, dict) and set(raw).issubset(expected_qids)
+
+
+def _entity_values_are_objects(raw: dict[object, object]) -> bool:
+    """Return whether every entity payload value is a JSON object."""
+    return all(isinstance(key, str) and isinstance(value, dict) for key, value in raw.items())
+
+
+def _validated_voyage_documents(rows: list[dict[str, Any]] | None) -> list[Document] | None:
+    """Construct and validate a deterministic Wikivoyage document checkpoint."""
+    if rows is None:
+        return None
+    documents = _documents_from_rows(rows)
+    if documents is None:
+        return None
+    if not _all_wikivoyage_documents(documents):
+        return None
+    if not _document_ids_are_unique(documents):
+        return None
+    return sorted(documents, key=lambda row: row.document_id)
+
+
+def _documents_from_rows(rows: list[dict[str, Any]]) -> list[Document] | None:
+    """Construct typed documents, rejecting malformed parquet rows."""
+    try:
+        return [Document(**row) for row in rows]
+    except (TypeError, ValueError):
+        return None
+
+
+def _all_wikivoyage_documents(documents: list[Document]) -> bool:
+    """Return whether every document belongs to the Wikivoyage project."""
+    return all(document.project == "wikivoyage" for document in documents)
+
+
+def _document_ids_are_unique(documents: list[Document]) -> bool:
+    """Return whether a document collection has unique stable identities."""
+    return len({document.document_id for document in documents}) == len(documents)
+
+
+def _validate_augmentation_stem(stem: str) -> str:
+    """Validate and return a single-region checkpoint stem."""
+    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
+        raise ValueError(f"Invalid augmentation checkpoint stem: {stem!r}")
+    return stem
+
+
+def _validate_plan_key(plan_key: str) -> str:
+    """Validate and return a SHA-256 augmentation plan key."""
+    if len(plan_key) != 64 or any(character not in "0123456789abcdef" for character in plan_key):
+        raise ValueError("Invalid augmentation checkpoint plan key")
+    return plan_key
 
 
 class AugmentationCheckpointStore:
     """Persist complete phase artifacts below one operator data-root cache."""
 
     def __init__(self, root: Path, stem: str, plan_key: str) -> None:
-        if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-            raise ValueError(f"Invalid augmentation checkpoint stem: {stem!r}")
-        if len(plan_key) != 64 or any(
-            character not in "0123456789abcdef" for character in plan_key
-        ):
-            raise ValueError("Invalid augmentation checkpoint plan key")
-        self.region_root = root / stem
-        self.plan_root = self.region_root / plan_key
+        self.region_root = root / _validate_augmentation_stem(stem)
+        self.plan_root = self.region_root / _validate_plan_key(plan_key)
         try:
             self.plan_root.resolve().relative_to(root.resolve())
         except ValueError as error:
@@ -126,15 +220,9 @@ class AugmentationCheckpointStore:
         metadata = self._metadata(directory)
         if metadata is None or tuple(metadata.get("qids", ())) != expected_qids:
             return None
-        try:
-            raw = loads((directory / "entities.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            return None
-        if not isinstance(raw, dict) or not set(raw).issubset(expected_qids):
-            return None
-        if not all(isinstance(key, str) and isinstance(value, dict) for key, value in raw.items()):
-            return None
-        return raw
+        return _validated_entity_payload(
+            _read_json_object(directory / "entities.json"), expected_qids
+        )
 
     def save_entities(
         self,
@@ -154,18 +242,9 @@ class AugmentationCheckpointStore:
         directory = self.plan_root / "wikivoyage_documents"
         if not self._matches(directory, "entities_digest", expected_entities_digest):
             return None
-        rows = self._read_table(directory / "documents.parquet", document_schema())
-        if rows is None:
-            return None
-        try:
-            documents = [Document(**row) for row in rows]
-        except (TypeError, ValueError):
-            return None
-        if any(document.project != "wikivoyage" for document in documents) or len(
-            {document.document_id for document in documents}
-        ) != len(documents):
-            return None
-        return sorted(documents, key=lambda row: row.document_id)
+        return _validated_voyage_documents(
+            self._read_table(directory / "documents.parquet", document_schema())
+        )
 
     def save_voyage_documents(
         self,
