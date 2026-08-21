@@ -24,7 +24,7 @@ from osm_polygon_wikidata_only.cli.run_sync import (
     _paired_retirement_stems,
     _post_upload_publication_cleanup,
 )
-from osm_polygon_wikidata_only.hf._uploader.plan import add_op, delete_op
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
     add_pending_publications,
     load_pending_publications,
@@ -91,6 +91,54 @@ def test_canonical_add_pointing_to_external_path_rejected(tmp_path: Path) -> Non
 
     ops = [
         add_op(external, path_in_repo=f"wikipedia/documents/{STEM}.parquet"),
+        delete_op(f"articles/{STEM}.parquet"),
+    ]
+
+    assert _paired_retirement_stems(data_root, ops) == set()
+
+
+def test_canonical_add_missing_expected_file_rejected(tmp_path: Path) -> None:
+    """A correctly named but missing canonical file cannot authorize retirement."""
+    data_root = _seed_migrated_two_stems(tmp_path)
+    canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
+    canonical.unlink()
+
+    ops = [
+        add_op(canonical, path_in_repo=f"wikipedia/documents/{STEM}.parquet"),
+        delete_op(f"articles/{STEM}.parquet"),
+    ]
+
+    assert _paired_retirement_stems(data_root, ops) == set()
+
+
+def test_canonical_add_non_path_local_value_rejected(tmp_path: Path) -> None:
+    """Unexpected local-path values fail closed instead of authorizing deletion."""
+    data_root = _seed_migrated_two_stems(tmp_path)
+    operation = PublicationOp(
+        action="add",
+        path_in_repo=f"wikipedia/documents/{STEM}.parquet",
+        local_path=object(),  # type: ignore[arg-type]
+    )
+
+    ops = [operation, delete_op(f"articles/{STEM}.parquet")]
+
+    assert _paired_retirement_stems(data_root, ops) == set()
+
+
+def test_canonical_add_resolution_error_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Filesystem resolution failures fail closed instead of authorizing deletion."""
+    data_root = _seed_migrated_two_stems(tmp_path)
+    canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
+
+    def fail_resolve(_path: Path, strict: bool = False) -> Path:
+        del strict
+        raise OSError("resolution unavailable")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+    ops = [
+        add_op(canonical, path_in_repo=f"wikipedia/documents/{STEM}.parquet"),
         delete_op(f"articles/{STEM}.parquet"),
     ]
 
