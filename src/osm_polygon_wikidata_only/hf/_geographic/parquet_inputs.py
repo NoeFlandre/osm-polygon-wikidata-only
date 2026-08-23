@@ -7,6 +7,7 @@ logic lives here; only the file-loading primitives.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from .models import CoverageMapError
 PYARROW_INTERNAL_COLUMNS: frozenset[str] = frozenset(
     {"__fragment_index", "__batch_index", "__last_in_fragment", "__filename"}
 )
+_PARQUET_BATCH_SIZE = 65_536
 
 
 def sorted_parquets(directory: Path) -> list[Path]:
@@ -41,13 +43,14 @@ def require_directory(path: Path, *, label: str) -> Path:
     return path
 
 
-def read_required_columns(
+def iter_required_columns(
     parquet_path: Path,
     columns: tuple[str, ...],
     *,
     label: str,
-) -> list[dict[str, Any]]:
-    """Read only ``columns`` from ``parquet_path`` as a list of dicts.
+    batch_size: int = _PARQUET_BATCH_SIZE,
+) -> Iterator[dict[str, Any]]:
+    """Stream only ``columns`` from ``parquet_path`` as dicts.
 
     Raises :class:`CoverageMapError` when the parquet file is missing
     required columns or is unreadable. The error message identifies
@@ -56,22 +59,36 @@ def read_required_columns(
     import pyarrow as pa
 
     actual: set[str] = set()
+    metadata_read = False
     try:
         metadata = pq.read_metadata(parquet_path)  # type: ignore[no-untyped-call]
         actual = set(metadata.schema.names) - PYARROW_INTERNAL_COLUMNS
+        metadata_read = True
     # ``except Exception`` retained: PyArrow's metadata API raises
     # across several unstable exception types depending on the
     # corruption mode. When the metadata read fails, we fall through
     # with an empty ``actual`` column-name set and let the
-    # column-pruned ``pq.read_table`` call determine the outcome:
-    # a valid parquet with the requested columns still loads; missing
-    # columns are translated into ``CoverageMapError``. See
+    # ``ParquetFile`` schema determine the outcome. A valid parquet
+    # with the requested columns still streams; missing columns are
+    # translated into ``CoverageMapError``. See
     # ``tests/hf/test_geographic_text_coverage.py`` for the focused
     # schema-introspection tests.
     except Exception:
         actual = set()
     try:
-        table = pq.read_table(parquet_path, columns=list(columns))  # type: ignore[no-untyped-call]
+        with pq.ParquetFile(parquet_path) as parquet_file:  # type: ignore[no-untyped-call]
+            if not metadata_read:
+                actual = set(parquet_file.schema.names) - PYARROW_INTERNAL_COLUMNS
+            missing = sorted(set(columns) - actual)
+            if missing:
+                raise CoverageMapError(
+                    f"{label} parquet {parquet_path} is missing required columns: {missing}"
+                )
+            for batch in parquet_file.iter_batches(
+                batch_size=batch_size,
+                columns=list(columns),
+            ):
+                yield from batch.to_pylist()
     except pa.ArrowInvalid as error:
         missing = sorted(set(columns) - actual)
         raise CoverageMapError(
@@ -84,8 +101,20 @@ def read_required_columns(
         ) from error
     except OSError as error:
         raise CoverageMapError(f"Could not read {label} parquet {parquet_path}: {error}") from error
-    rows: list[dict[str, Any]] = table.to_pylist()
-    return rows
+
+
+def read_required_columns(
+    parquet_path: Path,
+    columns: tuple[str, ...],
+    *,
+    label: str,
+) -> list[dict[str, Any]]:
+    """Read only ``columns`` from ``parquet_path`` as a list of dicts.
+
+    This compatibility wrapper retains the list-returning API. Production
+    readers should use :func:`iter_required_columns` to bound peak memory.
+    """
+    return list(iter_required_columns(parquet_path, columns, label=label))
 
 
 def load_qualifying_article_ids(articles_dir: Path) -> set[str]:
@@ -98,7 +127,7 @@ def load_qualifying_article_ids(articles_dir: Path) -> set[str]:
 
 def _qualifying_ids_from_file(parquet_path: Path) -> set[str]:
     qualifying: set[str] = set()
-    for row in read_required_columns(parquet_path, ("article_id", "full_text"), label="articles"):
+    for row in iter_required_columns(parquet_path, ("article_id", "full_text"), label="articles"):
         text = row.get("full_text")
         article_id = row.get("article_id")
         if isinstance(text, str) and text.strip() and article_id:
@@ -119,7 +148,7 @@ def load_covered_polygon_ids(
 
 def _covered_ids_from_file(path: Path, qualifying_article_ids: set[str]) -> set[str]:
     covered: set[str] = set()
-    for row in read_required_columns(path, ("polygon_id", "article_id"), label="polygon_articles"):
+    for row in iter_required_columns(path, ("polygon_id", "article_id"), label="polygon_articles"):
         article_id = row.get("article_id")
         polygon_id = row.get("polygon_id")
         if article_id is not None and str(article_id) in qualifying_article_ids and polygon_id:
@@ -148,9 +177,10 @@ def load_polygon_cells(
 
 
 def _polygon_cells_from_file(path: Path, h3_resolution: int) -> list[tuple[str, str]]:
-    table_rows = read_required_columns(path, ("polygon_id", "lat", "lon"), label="polygons")
     rows: list[tuple[str, str]] = []
-    for row_index, row in enumerate(table_rows):
+    for row_index, row in enumerate(
+        iter_required_columns(path, ("polygon_id", "lat", "lon"), label="polygons")
+    ):
         rows.append(_polygon_cell(path, row_index, row, h3_resolution))
     return rows
 

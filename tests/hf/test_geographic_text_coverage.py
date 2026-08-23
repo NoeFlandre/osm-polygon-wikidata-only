@@ -1374,6 +1374,36 @@ def test_read_required_columns_still_propagates_coverage_error_when_columns_miss
         read_required_columns(parquet_path, ("polygon_id", "lat", "lon"), label="polygons")
 
 
+def test_geographic_loaders_stream_rows_without_full_table_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = _build_processed_root(
+        tmp_path,
+        polygons=(("p:way:1", 0.0, 0.0),),
+        articles=(("Q1:wikipedia:en:1:1", "article text"), ("Q2:wikipedia:en:1:1", None)),
+        links=(("p:way:1", "Q1:wikipedia:en:1:1"),),
+    )
+
+    def _forbid_full_table_reads(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("geographic loaders must stream Parquet batches")
+
+    monkeypatch.setattr(pq, "read_table", _forbid_full_table_reads)
+
+    from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import (
+        load_covered_polygon_ids,
+        load_polygon_cells,
+        load_qualifying_article_ids,
+    )
+
+    qualifying = load_qualifying_article_ids(processed / "articles")
+    covered = load_covered_polygon_ids(processed / "polygon_articles", qualifying)
+    polygon_cells = load_polygon_cells(processed / "polygons", h3_resolution=3)
+
+    assert qualifying == {"Q1:wikipedia:en:1:1"}
+    assert covered == {"p:way:1"}
+    assert [polygon_id for polygon_id, _ in polygon_cells] == ["p:way:1"]
+
+
 # --- world-map basemap fallback -----------------------------------------
 
 
