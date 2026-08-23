@@ -19,10 +19,6 @@ def _fingerprint(path: Path) -> dict[str, int]:
     return FileStatFingerprint.from_path(path).resume()
 
 
-def _sha256(path: Path) -> str:
-    return sha256_file(path)
-
-
 def _is_valid_digest(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -87,7 +83,7 @@ class V2FileHashCache:
         cached = self._entries.get(resolved)
         if cached is not None and cached.get("fingerprint") == fingerprint:
             return str(cached["sha256"])
-        digest = _sha256(Path(path))
+        digest = sha256_file(Path(path))
         self._entries[resolved] = {"fingerprint": fingerprint, "sha256": digest}
         self._dirty = True
         return digest

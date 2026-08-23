@@ -41,10 +41,6 @@ class V2RegionArtifacts:
     file_hashes: dict[str, str]
 
 
-def _sha256(path: Path) -> str:
-    return sha256_file(path)
-
-
 def _write_table(path: Path, rows: list[dict[str, Any]], schema: pa.Schema) -> None:
     normalized = [{field.name: row.get(field.name) for field in schema} for row in rows]
     table = pa.Table.from_pylist(normalized, schema=schema)
@@ -236,7 +232,7 @@ def _cleanup_staged_paths(staged: dict[Path, Path]) -> None:
 
 
 def _hash_region_paths(processed_v2: Path, paths: tuple[Path, ...]) -> dict[str, str]:
-    return {str(path.relative_to(processed_v2)): _sha256(path) for path in paths}
+    return {str(path.relative_to(processed_v2)): sha256_file(path) for path in paths}
 
 
 def _region_manifest_entry(

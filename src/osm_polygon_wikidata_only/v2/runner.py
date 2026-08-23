@@ -535,7 +535,7 @@ def _region_files_match(
         path = processed_v2 / relative
         if not path.is_file():
             return False
-        current_hash = hash_cache.digest(path) if hash_cache is not None else _sha256(path)
+        current_hash = hash_cache.digest(path) if hash_cache is not None else sha256_file(path)
         if hashes.get(relative) != current_hash:
             return False
     return True
@@ -558,10 +558,6 @@ def _region_is_current(
         )
         and manifest[stem].get("v1_index_reconciled", True) is True
     )
-
-
-def _sha256(path: Path) -> str:
-    return sha256_file(path)
 
 
 __all__ = ["run_v2_sync"]

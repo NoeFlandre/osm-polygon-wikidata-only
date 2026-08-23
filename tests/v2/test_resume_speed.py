@@ -65,14 +65,15 @@ def test_region_current_check_reuses_persisted_file_digests(
     import osm_polygon_wikidata_only.v2.resume as resume
 
     calls = 0
-    original = resume._sha256
+    original = resume.sha256_file
 
     def counted(path: Path) -> str:
         nonlocal calls
         calls += 1
         return original(path)
 
-    monkeypatch.setattr(resume, "_sha256", counted)
+    monkeypatch.setattr(resume, "sha256_file", counted)
+    monkeypatch.delattr(resume, "_sha256", raising=False)
     assert _region_is_current(
         tmp_path,
         "region-latest",

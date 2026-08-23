@@ -230,16 +230,12 @@ def _copy_v1_sidecar(
         return None
     target = destination / subdir / source.name
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file() and _sha256(source) == _sha256(target):
+    if target.is_file() and sha256_file(source) == sha256_file(target):
         return target
     temporary = target.with_suffix(target.suffix + ".tmp")
     shutil.copy2(source, temporary)
     temporary.replace(target)
     return target
-
-
-def _sha256(path: Path) -> str:
-    return sha256_file(path)
 
 
 def _polygon_refs(polygon: dict[str, Any]) -> tuple[WikipediaTagRef, ...]:
