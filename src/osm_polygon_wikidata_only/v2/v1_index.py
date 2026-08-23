@@ -24,11 +24,19 @@ from types import MappingProxyType
 
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-    wikipedia_document_from_article_row,
-)
-from osm_polygon_wikidata_only.v2 import index_scanning
+from osm_polygon_wikidata_only.v2 import index_queries, index_scanning
 from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
+from osm_polygon_wikidata_only.v2.index_queries import (
+    PersistentIndexQueries,
+    first_query_rows_by_document,
+    group_materialization_references,
+    group_title_rows,
+    materialize_group,
+    normalized_title_keys,
+    partition_title_cache,
+    title_chunk_results,
+    title_key,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,11 +50,23 @@ _scan_index_row_group = index_scanning.scan_index_row_group
 _scan_index_rows = index_scanning.scan_index_rows
 _validated_parquet_file = index_scanning.validated_parquet_file
 
+# Keep these private aliases stable for existing internal callers and tests
+# while the query/materialization implementation lives in ``index_queries``.
+_title_key = title_key
+_normalized_title_keys = normalized_title_keys
+_group_title_rows = group_title_rows
+_title_chunk_results = title_chunk_results
+_partition_title_cache = partition_title_cache
+_first_query_rows_by_document = first_query_rows_by_document
+_group_materialization_references = group_materialization_references
+_materialize_group = materialize_group
+_QUERY_SQL = index_queries._QUERY_SQL
+_TITLE_QUERY_BATCH_SIZE = index_queries._TITLE_QUERY_BATCH_SIZE
+
 PageKey = tuple[str, int]
 _INDEX_SCHEMA_VERSION = 4
 _INDEX_FILENAME = "v1_reuse_index.sqlite3"
 _INDEX_SHUTDOWN_TIMEOUT_S = 5.0
-_TITLE_QUERY_BATCH_SIZE = 256
 _SECONDARY_INDEX_SQL = {
     "page": (
         "documents_page",
@@ -57,80 +77,6 @@ _SECONDARY_INDEX_SQL = {
         "CREATE INDEX IF NOT EXISTS documents_qid ON documents(qid, document_id)",
     ),
 }
-_QUERY_SQL = {
-    "page": """
-        SELECT document_id, source_path, legacy, row_group, row_index
-        FROM documents WHERE language=? AND page_id=?
-        ORDER BY document_id, source_path
-    """,
-    "title": """
-        SELECT document_id, source_path, legacy, row_group, row_index
-        FROM documents WHERE language=? AND title_key=?
-        ORDER BY document_id, source_path
-    """,
-    "qid": """
-        SELECT document_id, source_path, legacy, row_group, row_index
-        FROM documents WHERE qid=?
-        ORDER BY document_id, source_path
-    """,
-}
-
-
-def _title_key(language: str, title: str) -> tuple[str, str]:
-    return language.casefold(), " ".join(title.replace("_", " ").split()).casefold()
-
-
-def _normalized_title_keys(keys: Sequence[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
-    """Normalize title lookup keys while retaining first-seen order."""
-    return tuple(dict.fromkeys(_title_key(language, title) for language, title in keys))
-
-
-def _group_title_rows(
-    rows: Sequence[sqlite3.Row],
-) -> tuple[dict[tuple[str, str], tuple[sqlite3.Row, ...]], tuple[sqlite3.Row, ...]]:
-    """Group title query rows and keep one reference per document identity."""
-    grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
-    references_by_document: dict[str, sqlite3.Row] = {}
-    for row in rows:
-        key = (str(row["language"]), str(row["title_key"]))
-        grouped.setdefault(key, []).append(row)
-        references_by_document.setdefault(str(row["document_id"]), row)
-    return {key: tuple(value) for key, value in grouped.items()}, tuple(
-        references_by_document.values()
-    )
-
-
-def _title_chunk_results(
-    chunk: Sequence[tuple[str, str]],
-    grouped: Mapping[tuple[str, str], Sequence[sqlite3.Row]],
-    materialized: Mapping[str, DocumentRow],
-) -> dict[tuple[str, str], tuple[DocumentRow, ...]]:
-    """Build deterministic lookup results for a fetched title chunk."""
-    results: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
-    for key in chunk:
-        document_ids = {str(row["document_id"]) for row in grouped.get(key, ())}
-        results[key] = tuple(materialized[document_id] for document_id in sorted(document_ids))
-    return results
-
-
-def _partition_title_cache(
-    normalized: Sequence[tuple[str, str]],
-    cached: Mapping[tuple[str, str], tuple[DocumentRow, ...]],
-    *,
-    complete: bool,
-) -> tuple[dict[tuple[str, str], tuple[DocumentRow, ...]], tuple[tuple[str, str], ...]]:
-    """Split normalized title keys into cached hits and ordered misses."""
-    if not complete:
-        return {}, tuple(normalized)
-    results: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
-    missing: list[tuple[str, str]] = []
-    for key in normalized:
-        result = cached.get(key)
-        if result is None:
-            missing.append(key)
-        else:
-            results[key] = result
-    return results, tuple(missing)
 
 
 def _resumable_row_group(
@@ -174,62 +120,6 @@ def _store_cached_row_count(connection: sqlite3.Connection, row_count: int) -> N
     )
 
 
-def _first_query_rows_by_document(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
-    """Keep the first deterministic reference for each document identity."""
-    by_document: dict[str, sqlite3.Row] = {}
-    for row in rows:
-        by_document.setdefault(str(row["document_id"]), row)
-    return by_document
-
-
-def _group_materialization_references(
-    references: tuple[sqlite3.Row, ...],
-    row_cache: OrderedDict[str, DocumentRow],
-    result: dict[str, DocumentRow],
-) -> dict[tuple[str, bool, int], list[sqlite3.Row]]:
-    """Separate cached rows from Parquet row-group reads."""
-    grouped: dict[tuple[str, bool, int], list[sqlite3.Row]] = {}
-    for reference in references:
-        document_id = str(reference["document_id"])
-        cached = row_cache.get(document_id)
-        if cached is not None:
-            row_cache.move_to_end(document_id)
-            result[document_id] = cached
-            continue
-        group = (
-            str(reference["source_path"]),
-            bool(reference["legacy"]),
-            int(reference["row_group"]),
-        )
-        grouped.setdefault(group, []).append(reference)
-    return grouped
-
-
-def _materialize_group(
-    source_path: str,
-    legacy: bool,
-    row_group: int,
-    references: list[sqlite3.Row],
-    row_cache: OrderedDict[str, DocumentRow],
-    row_cache_limit: int,
-) -> dict[str, DocumentRow]:
-    """Materialize one Parquet row group into the bounded document cache."""
-    with pq.ParquetFile(source_path) as parquet_file:
-        table = parquet_file.read_row_group(row_group)
-        raw_rows = table.to_pylist()
-    result: dict[str, DocumentRow] = {}
-    for reference in references:
-        document_id = str(reference["document_id"])
-        row = raw_rows[int(reference["row_index"])]
-        normalized = wikipedia_document_from_article_row(row).to_dict() if legacy else dict(row)
-        row_cache[document_id] = normalized
-        row_cache.move_to_end(document_id)
-        while len(row_cache) > row_cache_limit:
-            row_cache.popitem(last=False)
-        result[document_id] = normalized
-    return result
-
-
 def _current_index_files(files: tuple[Path, ...]) -> dict[str, tuple[Path, bool]]:
     return {str(path.resolve()): (path, path.parent.name == "articles") for path in files}
 
@@ -266,7 +156,7 @@ def _index_scan_progress(
     }
 
 
-class _PersistentV1Index:
+class _PersistentV1Index(PersistentIndexQueries):
     """Incremental SQLite metadata index with bounded Parquet row loading."""
 
     def __init__(
@@ -925,149 +815,6 @@ class _PersistentV1Index:
         if changed is None:
             return False
         return self._finish_sync(changed, stale, len(files))
-
-    def _query(self, query_name: str, parameters: tuple[object, ...]) -> tuple[DocumentRow, ...]:
-        if not self._initialized.is_set():
-            return ()
-        self._raise_error()
-        cache_key = (query_name, parameters)
-        cached = self._cached_query(cache_key)
-        if cached is not None:
-            return cached
-        rows = self._query_rows(query_name, parameters)
-        if not rows:
-            self._cache_query(cache_key, ())
-            return ()
-        by_document = _first_query_rows_by_document(rows)
-        with self._materialize_lock:
-            materialized = self._materialize(tuple(by_document.values()))
-        result = tuple(materialized[document_id] for document_id in sorted(materialized))
-        self._cache_query(cache_key, result)
-        return result
-
-    def _cached_query(
-        self, cache_key: tuple[str, tuple[object, ...]]
-    ) -> tuple[DocumentRow, ...] | None:
-        if not self._complete.is_set():
-            return None
-        with self._query_cache_lock:
-            cached = self._query_cache.get(cache_key)
-            if cached is None:
-                return None
-            self._query_cache.move_to_end(cache_key)
-            return cached
-
-    def _cache_query(
-        self,
-        cache_key: tuple[str, tuple[object, ...]],
-        result: tuple[DocumentRow, ...],
-    ) -> None:
-        if not self._complete.is_set():
-            return
-        with self._query_cache_lock:
-            self._query_cache[cache_key] = result
-            self._query_cache.move_to_end(cache_key)
-            while len(self._query_cache) > self._query_cache_limit:
-                self._query_cache.popitem(last=False)
-
-    def _query_rows(self, query_name: str, parameters: tuple[object, ...]) -> list[sqlite3.Row]:
-        query = _QUERY_SQL[query_name]
-        self._ensure_secondary_index(query_name)
-        with self._reader_query_lock:
-            return list(self._reader().execute(query, parameters))
-
-    def _cached_title_results(
-        self,
-        normalized: Sequence[tuple[str, str]],
-    ) -> tuple[dict[tuple[str, str], tuple[DocumentRow, ...]], tuple[tuple[str, str], ...]]:
-        """Read completed title results from the bounded cache."""
-        cached: dict[tuple[str, str], tuple[DocumentRow, ...]] = {}
-        complete = self._complete.is_set()
-        if complete:
-            with self._query_cache_lock:
-                for key in normalized:
-                    cache_key = ("title", key)
-                    result = self._query_cache.get(cache_key)
-                    if result is not None:
-                        self._query_cache.move_to_end(cache_key)
-                        cached[key] = result
-        return _partition_title_cache(normalized, cached, complete=complete)
-
-    def _fetch_title_chunk(
-        self,
-        chunk: Sequence[tuple[str, str]],
-    ) -> tuple[dict[tuple[str, str], tuple[sqlite3.Row, ...]], tuple[sqlite3.Row, ...]]:
-        """Fetch one bounded title chunk from SQLite."""
-        predicates = " OR ".join("(language=? AND title_key=?)" for _ in chunk)
-        parameters = tuple(value for key in chunk for value in key)
-        # The predicate is composed only from generated ``?`` placeholders;
-        # all title values remain bound parameters.
-        with self._reader_query_lock:
-            rows = list(
-                self._reader().execute(
-                    f"""
-                    SELECT language, title_key, document_id, source_path, legacy, row_group, row_index
-                    FROM documents
-                    WHERE {predicates}
-                    ORDER BY language, title_key, document_id, source_path
-                    """,  # noqa: S608
-                    parameters,
-                )
-            )
-        return _group_title_rows(rows)
-
-    def by_titles(
-        self,
-        keys: Sequence[tuple[str, str]],
-    ) -> dict[tuple[str, str], tuple[DocumentRow, ...]]:
-        """Resolve title keys in bounded batches without changing row order."""
-        normalized = _normalized_title_keys(keys)
-        if not self._initialized.is_set():
-            return {key: () for key in normalized}
-        self._raise_error()
-
-        results, missing = self._cached_title_results(normalized)
-
-        for offset in range(0, len(missing), _TITLE_QUERY_BATCH_SIZE):
-            chunk = tuple(missing[offset : offset + _TITLE_QUERY_BATCH_SIZE])
-            grouped, references = self._fetch_title_chunk(chunk)
-            with self._materialize_lock:
-                materialized = self._materialize(references)
-            chunk_results = _title_chunk_results(chunk, grouped, materialized)
-            results.update(chunk_results)
-            for key, result in chunk_results.items():
-                self._cache_query(("title", key), result)
-        return results
-
-    def _materialize(self, references: tuple[sqlite3.Row, ...]) -> dict[str, DocumentRow]:
-        result: dict[str, DocumentRow] = {}
-        grouped = _group_materialization_references(references, self._row_cache, result)
-
-        for (source_path, legacy, row_group), group_references in grouped.items():
-            result.update(
-                _materialize_group(
-                    source_path,
-                    legacy,
-                    row_group,
-                    group_references,
-                    self._row_cache,
-                    self._row_cache_limit,
-                )
-            )
-        return result
-
-    def by_page(self, language: str, page_id: int) -> tuple[DocumentRow, ...]:
-        return self._query(
-            "page",
-            (language.casefold(), page_id),
-        )
-
-    def by_title(self, language: str, title: str) -> tuple[DocumentRow, ...]:
-        language_key, title_key = _title_key(language, title)
-        return self._query("title", (language_key, title_key))
-
-    def by_qid(self, qid: str) -> tuple[DocumentRow, ...]:
-        return self._query("qid", (qid,))
 
 
 @dataclass(frozen=True, slots=True)
