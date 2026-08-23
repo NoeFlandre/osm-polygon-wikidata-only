@@ -32,7 +32,7 @@ def test_remote_coverage_map_path() -> None:
 # --- helpers ------------------------------------------------------------
 
 
-def _write_polygon_parquet(path: Path, lons: list[float], lats: list[float]) -> Path:
+def _write_polygon_parquet(path: Path, lons: list[float | None], lats: list[float | None]) -> Path:
     """Write a minimal polygons parquet with only the columns we need."""
     table = pa.table({"lon": lons, "lat": lats})
     pq.write_table(table, path)
@@ -85,6 +85,29 @@ def test_load_centroids_skips_nulls(tmp_path: Path) -> None:
     lons, lats = load_centroids_from_parquet(tmp_path)
     assert lons == [4.0]
     assert lats == [1.0]
+
+
+def test_load_centroids_streams_batches_without_read_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lons: list[float | None] = [0.0, 1.0, None, 3.0, 4.0]
+    lats: list[float | None] = [0.0, 10.0, 20.0, None, 40.0]
+    _write_polygon_parquet(tmp_path / "a-latest.parquet", lons, lats)
+
+    def fail_read_table(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("centroid loading must stream Parquet batches")
+
+    monkeypatch.setattr(coverage_map.pq, "read_table", fail_read_table)
+    monkeypatch.setattr(coverage_map, "_CENTROID_BATCH_SIZE", 2)
+
+    actual_lons, actual_lats = load_centroids_from_parquet(tmp_path)
+
+    expected = [
+        (lon, lat)
+        for lon, lat in zip(lons, lats, strict=True)
+        if lon is not None and lat is not None
+    ]
+    assert list(zip(actual_lons, actual_lats, strict=True)) == expected
 
 
 def test_load_centroids_multiple_files(tmp_path: Path) -> None:

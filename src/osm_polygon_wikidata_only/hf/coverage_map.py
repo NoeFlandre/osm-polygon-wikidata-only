@@ -13,6 +13,7 @@ import json
 import logging
 import shutil
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ _POINT_COLOR = "#e8743b"
 _POINT_EDGE = "#c0392b"
 _POINT_SIZE = 1.5
 _POINT_ALPHA = 0.5
+_CENTROID_BATCH_SIZE = 65_536
 
 
 def load_centroids_from_parquet(polygons_dir: Path) -> tuple[list[float], list[float]]:
@@ -65,21 +67,32 @@ def load_centroids_from_parquet(polygons_dir: Path) -> tuple[list[float], list[f
 
 
 def _load_centroid_file(parquet_path: Path) -> tuple[list[float], list[float]]:
+    lons: list[float] = []
+    lats: list[float] = []
     try:
-        table = pq.read_table(parquet_path, columns=["lon", "lat"])  # type: ignore[no-untyped-call]
+        with pq.ParquetFile(parquet_path) as parquet_file:
+            for batch in parquet_file.iter_batches(
+                batch_size=_CENTROID_BATCH_SIZE,
+                columns=["lon", "lat"],
+            ):
+                for row_lon, row_lat in _valid_centroid_rows(batch):
+                    lons.append(row_lon)
+                    lats.append(row_lat)
     except (OSError, KeyError) as error:
         LOGGER.warning("Skipping %s: %s", parquet_path, error)
         return [], []
-    lons: list[float] = []
-    lats: list[float] = []
+    return lons, lats
+
+
+def _valid_centroid_rows(batch: Any) -> Iterator[tuple[float, float]]:
     for row_lon, row_lat in zip(
-        table.column("lon").to_pylist(), table.column("lat").to_pylist(), strict=True
+        batch.column("lon").to_pylist(),
+        batch.column("lat").to_pylist(),
+        strict=True,
     ):
         if row_lon is None or row_lat is None:
             continue
-        lons.append(float(row_lon))
-        lats.append(float(row_lat))
-    return lons, lats
+        yield float(row_lon), float(row_lat)
 
 
 def ensure_world_land(cache_dir: Path) -> Path:
