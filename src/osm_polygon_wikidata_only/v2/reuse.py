@@ -8,12 +8,11 @@ by a V1 document are fetched.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import shutil
-from collections import defaultdict, deque
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections import defaultdict
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -503,18 +502,30 @@ def _run_direct_workers(
     record_result: Any,
 ) -> None:
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        pending: deque[tuple[_DirectInput, Future[DirectEnrichmentResult]]] = deque()
-        inputs = iter(pending_inputs)
+        pending: dict[Future[DirectEnrichmentResult], tuple[int, _DirectInput]] = {}
+        completed: dict[int, tuple[_DirectInput, Future[DirectEnrichmentResult]]] = {}
+        inputs = iter(enumerate(pending_inputs))
+        next_to_record = 0
+
+        def submit_next() -> None:
+            try:
+                position, item = next(inputs)
+            except StopIteration:
+                return
+            pending[executor.submit(enrich_one, item)] = (position, item)
+
         for _ in range(workers):
-            with contextlib.suppress(StopIteration):
-                item = next(inputs)
-                pending.append((item, executor.submit(enrich_one, item)))
+            submit_next()
         while pending:
-            item, future = pending.popleft()
-            record_result(item, future.result())
-            with contextlib.suppress(StopIteration):
-                next_item = next(inputs)
-                pending.append((next_item, executor.submit(enrich_one, next_item)))
+            done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            for future in done:
+                position, item = pending.pop(future)
+                completed[position] = (item, future)
+                submit_next()
+            while next_to_record in completed:
+                item, future = completed.pop(next_to_record)
+                record_result(item, future.result())
+                next_to_record += 1
 
 
 def _enrich_direct_inputs(

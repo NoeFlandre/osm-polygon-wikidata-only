@@ -14,7 +14,11 @@ from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
-from osm_polygon_wikidata_only.v2.reuse import merge_v2_region, reconcile_v2_region
+from osm_polygon_wikidata_only.v2.reuse import (
+    _run_direct_workers,
+    merge_v2_region,
+    reconcile_v2_region,
+)
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
 from tests.v2.test_direct_enrichment import _article, _v1_row
@@ -23,6 +27,57 @@ from tests.v2.test_direct_enrichment import _article, _v1_row
 def _write(path: Path, schema: pa.Schema, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows, schema=schema), path)
+
+
+def test_direct_workers_refill_completed_slots_without_reordering_results() -> None:
+    items = [(f"polygon-{position}", {}, ()) for position in range(4)]
+    first_started = threading.Event()
+    release_first = threading.Event()
+    fast_items_done = threading.Event()
+    replacement_started = threading.Event()
+    fast_items_completed = 0
+    lock = threading.Lock()
+    recorded: list[str] = []
+
+    def enrich_one(item: tuple[str, dict, tuple]) -> str:
+        nonlocal fast_items_completed
+        polygon_id = item[0]
+        if polygon_id == "polygon-0":
+            first_started.set()
+            assert release_first.wait(timeout=2.0)
+        elif polygon_id in {"polygon-1", "polygon-2"}:
+            with lock:
+                fast_items_completed += 1
+                if fast_items_completed == 2:
+                    fast_items_done.set()
+        elif polygon_id == "polygon-3":
+            replacement_started.set()
+        return polygon_id
+
+    def record_result(item: tuple[str, dict, tuple], result: str) -> None:
+        assert item[0] == result
+        recorded.append(result)
+
+    worker = threading.Thread(
+        target=_run_direct_workers,
+        kwargs={
+            "pending_inputs": items,
+            "workers": 3,
+            "enrich_one": enrich_one,
+            "record_result": record_result,
+        },
+    )
+    worker.start()
+    try:
+        assert first_started.wait(timeout=2.0)
+        assert fast_items_done.wait(timeout=2.0)
+        assert replacement_started.wait(timeout=1.0)
+    finally:
+        release_first.set()
+        worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert recorded == [f"polygon-{position}" for position in range(4)]
 
 
 def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -> None:
