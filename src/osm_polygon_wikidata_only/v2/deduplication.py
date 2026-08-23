@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
+
+_Identity = str | tuple[str, str, str]
 
 
 def _document_identity(raw: dict[str, Any]) -> str:
@@ -24,6 +26,23 @@ def _link_identity(raw: dict[str, Any]) -> tuple[str, str, str]:
     return identity
 
 
+def _deduplicate_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    identity_of: Callable[[dict[str, Any]], _Identity],
+    kind: str,
+) -> list[dict[str, Any]]:
+    by_identity: dict[_Identity, dict[str, Any]] = {}
+    for raw in rows:
+        identity = identity_of(raw)
+        row = dict(raw)
+        previous = by_identity.get(identity)
+        if previous is not None and previous != row:
+            raise ValueError(f"Conflicting duplicate {kind} identity {identity!r}")
+        by_identity[identity] = row
+    return [by_identity[identity] for identity in sorted(by_identity)]
+
+
 def deduplicate_documents(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse identical document rows and reject conflicting identities.
 
@@ -31,15 +50,7 @@ def deduplicate_documents(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
     harmless repeated observations and collapse to one row.  Different rows
     with the same identity are data conflicts and fail closed.
     """
-    by_identity: dict[str, dict[str, Any]] = {}
-    for raw in rows:
-        identity = _document_identity(raw)
-        row = dict(raw)
-        previous = by_identity.get(identity)
-        if previous is not None and previous != row:
-            raise ValueError(f"Conflicting duplicate document identity {identity!r}")
-        by_identity[identity] = row
-    return [by_identity[identity] for identity in sorted(by_identity)]
+    return _deduplicate_rows(rows, identity_of=_document_identity, kind="document")
 
 
 def deduplicate_links(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -49,15 +60,7 @@ def deduplicate_links(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     provenance remains part of the row, so conflicting provenance is treated
     as a conflict rather than silently discarded.
     """
-    by_identity: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for raw in rows:
-        identity = _link_identity(raw)
-        row = dict(raw)
-        previous = by_identity.get(identity)
-        if previous is not None and previous != row:
-            raise ValueError(f"Conflicting duplicate link identity {identity!r}")
-        by_identity[identity] = row
-    return [by_identity[identity] for identity in sorted(by_identity)]
+    return _deduplicate_rows(rows, identity_of=_link_identity, kind="link")
 
 
 __all__ = ["deduplicate_documents", "deduplicate_links"]

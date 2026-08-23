@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from osm_polygon_wikidata_only.v2.deduplication import (
+    _deduplicate_rows,
     _document_identity,
     _link_identity,
     deduplicate_documents,
@@ -19,6 +20,23 @@ def test_documents_deduplicate_identical_rows_and_sort_by_identity() -> None:
     assert deduplicate_documents(rows) == [
         {"document_id": "d1", "title": "First"},
         {"document_id": "d2", "title": "Second"},
+    ]
+
+
+def test_shared_deduplicate_rows_supports_custom_identity_and_sorting() -> None:
+    rows = [
+        {"slug": "b", "value": 2},
+        {"slug": "a", "value": 1},
+        {"slug": "a", "value": 1},
+    ]
+
+    assert _deduplicate_rows(
+        rows,
+        identity_of=lambda row: str(row["slug"]),
+        kind="row",
+    ) == [
+        {"slug": "a", "value": 1},
+        {"slug": "b", "value": 2},
     ]
 
 
