@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 
 from ._geographic.models import CoverageMapError, RenderResult
 from ._geographic.parquet_inputs import read_required_columns, require_directory, sorted_parquets
-from ._links.reader import DocumentLink, read_document_links
+from ._links.reader import DocumentLink, is_canonical_link_schema, read_document_links
 from .coverage_map import generate_coverage_map
 
 
@@ -144,14 +144,8 @@ def _linked_text_polygon_ids(
 
 
 def _has_canonical_links(source_links_dir: Path) -> bool:
-    from osm_polygon_wikidata_only.domain.polygon_document_links import (
-        polygon_document_link_schema,
-    )
-
     return any(
-        pq.read_schema(path).equals(  # type: ignore[no-untyped-call]
-            polygon_document_link_schema(), check_metadata=True
-        )
+        is_canonical_link_schema(pq.read_schema(path))  # type: ignore[no-untyped-call]
         for path in sorted_parquets(source_links_dir)
     )
 

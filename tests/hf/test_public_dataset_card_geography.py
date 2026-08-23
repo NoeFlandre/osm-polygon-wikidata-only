@@ -10,8 +10,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.hf import geographic_text_presence as text_presence_module
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import split_antimeridian
+from osm_polygon_wikidata_only.hf._links.reader import is_canonical_link_schema
 from osm_polygon_wikidata_only.hf.continent_stats import (
     assign_continents,
     render_continent_stats,
@@ -25,6 +27,31 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     generate_geographic_text_presence,
     load_text_presence,
 )
+from osm_polygon_wikidata_only.v2.schema import polygon_document_link_v2_schema
+
+
+def test_link_schema_classifier_accepts_v1_and_v2_but_rejects_legacy() -> None:
+    assert is_canonical_link_schema(polygon_document_link_schema())
+    assert is_canonical_link_schema(polygon_document_link_v2_schema())
+    assert not is_canonical_link_schema(
+        pa.schema(
+            [
+                pa.field("polygon_id", pa.string()),
+                pa.field("article_id", pa.string()),
+            ]
+        )
+    )
+
+
+def test_text_presence_recognizes_v2_links_as_canonical(tmp_path: Path) -> None:
+    links_dir = tmp_path / "polygon_document_links"
+    links_dir.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist([], schema=polygon_document_link_v2_schema()),
+        links_dir / "x.parquet",
+    )
+
+    assert text_presence_module._has_canonical_links(links_dir)
 
 
 def test_document_identity_column_prefers_canonical_id() -> None:

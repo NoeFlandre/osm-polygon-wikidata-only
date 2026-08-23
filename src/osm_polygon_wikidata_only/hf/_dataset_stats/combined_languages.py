@@ -11,7 +11,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import sorted_parquets
-from osm_polygon_wikidata_only.hf._links.reader import read_document_links
+from osm_polygon_wikidata_only.hf._links.reader import (
+    is_canonical_link_schema,
+    read_document_links,
+)
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 
 from .cache import _file_fingerprint
@@ -227,13 +230,8 @@ def _polygon_languages_from_links(
 
 
 def _has_canonical_links(processed_root: Path) -> bool:
-    from osm_polygon_wikidata_only.domain.polygon_document_links import (
-        polygon_document_link_schema,
-    )
-
-    schema = polygon_document_link_schema()
     return any(
-        pq.read_schema(path).equals(schema, check_metadata=True)  # type: ignore[no-untyped-call]
+        is_canonical_link_schema(pq.read_schema(path))  # type: ignore[no-untyped-call]
         for path in sorted_parquets(processed_root / "polygon_articles")
     )
 

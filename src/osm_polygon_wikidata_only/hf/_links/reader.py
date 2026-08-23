@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.domain.polygon_document_links import (
@@ -28,6 +29,22 @@ class DocumentLink:
     language: str
 
 
+_CANONICAL_SCHEMA = polygon_document_link_schema()
+_CANONICAL_COLUMN_NAMES = frozenset(_CANONICAL_SCHEMA.names)
+
+
+def is_canonical_link_schema(schema: pa.Schema) -> bool:
+    """Return whether ``schema`` is a supported canonical link schema.
+
+    V2 extends the V1 canonical columns with ``link_sources`` and uses
+    distinct field metadata, so it must be recognized alongside the exact
+    V1 schema.
+    """
+    return schema.equals(_CANONICAL_SCHEMA, check_metadata=True) or (
+        _CANONICAL_COLUMN_NAMES.issubset(schema.names) and "link_sources" in schema.names
+    )
+
+
 def read_document_links(
     processed_root: Path,
     *,
@@ -38,11 +55,10 @@ def read_document_links(
     ``links_dir`` is used by isolated dataset contracts such as V2.  The
     default remains the V1 ``polygon_articles`` directory.
     """
-    expected = polygon_document_link_schema()
     source_dir = links_dir or processed_root / "polygon_articles"
     rows: list[DocumentLink] = []
     for path in sorted_parquets(source_dir):
-        source_rows = _read_source_rows(processed_root, path, expected)
+        source_rows = _read_source_rows(processed_root, path)
         if source_rows is None:
             continue
         rows.extend(_document_links(source_rows))
@@ -52,10 +68,9 @@ def read_document_links(
 def _read_source_rows(
     processed_root: Path,
     path: Path,
-    expected: Any,
 ) -> list[dict[str, Any]] | None:
     schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
-    if _is_canonical_schema(schema, expected):
+    if is_canonical_link_schema(schema):
         return read_required_columns(
             path,
             ("polygon_id", "project", "document_id", "wikidata", "language"),
@@ -65,12 +80,6 @@ def _read_source_rows(
         return _read_legacy_rows(processed_root, path)
     raise CoverageMapError(
         f"polygon link parquet {path} does not use the canonical or supported legacy schema"
-    )
-
-
-def _is_canonical_schema(schema: Any, expected: Any) -> bool:
-    return schema.equals(expected, check_metadata=True) or (
-        set(expected.names).issubset(schema.names) and "link_sources" in schema.names
     )
 
 
@@ -137,4 +146,4 @@ def _document_links(rows: list[dict[str, Any]]) -> list[DocumentLink]:
     ]
 
 
-__all__ = ["DocumentLink", "read_document_links"]
+__all__ = ["DocumentLink", "is_canonical_link_schema", "read_document_links"]
