@@ -63,7 +63,6 @@ dev = [
     "pre-commit>=4.6.1",
     "pytest>=8",
     "pytest-cov>=5",
-    "mutmut>=3.7,<4",
     "radon>=6,<7",
     "ruff>=0.5",
     "ty==0.0.64",
@@ -127,6 +126,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py",
     "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
     "src/osm_polygon_wikidata_only/io/pbf_reader.py",
+    "src/osm_polygon_wikidata_only/hf/_upload_state.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only"]
 mutate_only_covered_lines = true
@@ -140,5 +140,11 @@ pytest_add_cli_args_test_selection = [
     "tests/enrichment/test_enrichment.py",
     "tests/io/test_pbf_reader_area_quality.py",
     "tests/io/test_pbf_reader_contracts.py",
+    "tests/io/test_upload_queue_amendment_8.py",
+    "tests/io/test_upload_queue_durability.py",
+    "tests/io/test_upload_queue_real_legacy.py",
+    "tests/hf/test_hf.py",
+    "tests/hf/test_upload_operation_helpers.py",
+    "tests/hf/test_upload_state.py",
     "tests/v2/test_pbf_reader_scope.py",
 ]

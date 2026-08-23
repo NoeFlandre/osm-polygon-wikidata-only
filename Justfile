@@ -47,8 +47,8 @@ crap-sync:
 
 # Enforce a CRAP score below 6 for durable upload-queue helpers.
 crap-upload:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/io/test_upload_queue_durability.py tests/io/test_upload_queue_amendment_8.py tests/io/test_upload_queue_real_legacy.py tests/hf/test_upload_operation_helpers.py --cov=osm_polygon_wikidata_only.hf.upload_queue --cov-branch --cov-report=json:/tmp/osm-polygon-wikidata-upload-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/upload_queue.py > /tmp/osm-polygon-wikidata-upload-crap-complexity.json
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/io/test_upload_queue_durability.py tests/io/test_upload_queue_amendment_8.py tests/io/test_upload_queue_real_legacy.py tests/hf/test_upload_operation_helpers.py tests/hf/test_upload_state.py --cov=osm_polygon_wikidata_only.hf.upload_queue --cov=osm_polygon_wikidata_only.hf._upload_state --cov-branch --cov-report=json:/tmp/osm-polygon-wikidata-upload-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/upload_queue.py src/osm_polygon_wikidata_only/hf/_upload_state.py > /tmp/osm-polygon-wikidata-upload-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-upload-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-upload-crap-complexity.json --maximum 6
 
 crap-all: crap crap-sync crap-upload
