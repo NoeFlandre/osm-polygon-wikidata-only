@@ -83,7 +83,52 @@ def test_load_v1_region_adds_direct_tag_metadata_to_existing_polygons(tmp_path: 
     assert result.links[0]["link_sources"] == '["wikidata_sitelink"]'
 
 
-def test_rows_closes_parquet_file_after_read(
+def test_rows_consumes_ordered_batches_without_reading_the_whole_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "rows.parquet"
+    path.touch()
+    batches = [
+        pa.record_batch({"row_id": ["first"], "value": [1]}),
+        pa.record_batch({"row_id": ["second", "third"], "value": [2, None]}),
+    ]
+    batch_sizes: list[int] = []
+
+    import osm_polygon_wikidata_only.v2.reuse as reuse
+
+    class BatchOnlyParquetFile:
+        def __init__(self, _source: Path) -> None:
+            pass
+
+        def __enter__(self) -> "BatchOnlyParquetFile":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def iter_batches(self, *, batch_size: int):
+            batch_sizes.append(batch_size)
+            yield from batches
+
+        def read(self):
+            raise AssertionError("_rows must not materialize the complete Parquet table")
+
+    monkeypatch.setattr(reuse.pq, "ParquetFile", BatchOnlyParquetFile)
+
+    assert list(_rows(path)) == [
+        {"row_id": "first", "value": 1},
+        {"row_id": "second", "value": 2},
+        {"row_id": "third", "value": None},
+    ]
+    assert batch_sizes == [65_536]
+
+
+def test_rows_returns_no_rows_for_a_missing_file(tmp_path: Path) -> None:
+    assert list(_rows(tmp_path / "missing.parquet")) == []
+
+
+def test_rows_closes_parquet_file_after_iteration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -116,11 +161,14 @@ def test_rows_closes_parquet_file_after_read(
                 self._inner.close()
                 closed.append(self)
 
+        def iter_batches(self, *, batch_size: int):
+            yield from self._inner.iter_batches(batch_size=batch_size)
+
         def read(self):
             return self._inner.read()
 
     monkeypatch.setattr(reuse.pq, "ParquetFile", TrackedParquetFile)
-    assert _rows(path)
+    assert list(_rows(path))
     assert opened
     assert closed == opened
 

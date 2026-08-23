@@ -12,6 +12,7 @@ import json
 import logging
 import shutil
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,7 @@ from osm_polygon_wikidata_only.v2.storage import write_v2_region
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef, parse_wikipedia_tags
 
 LOGGER = logging.getLogger(__name__)
+_PARQUET_BATCH_SIZE = 65_536
 _RECONCILIATION_LOOKUP_BATCH_SIZE = 256
 
 SIDECAR_SUBDIRS: tuple[str, ...] = (
@@ -85,11 +87,12 @@ class _MergeInputs:
     all_refs: tuple[WikipediaTagRef, ...]
 
 
-def _rows(path: Path) -> list[dict[str, Any]]:
+def _rows(path: Path) -> Iterator[dict[str, Any]]:
     if not path.is_file():
-        return []
+        return
     with pq.ParquetFile(path) as parquet_file:
-        return parquet_file.read().to_pylist()
+        for batch in parquet_file.iter_batches(batch_size=_PARQUET_BATCH_SIZE):
+            yield from batch.to_pylist()
 
 
 def load_v1_region(data_root: DataRoot, stem: str) -> V1RegionData:
@@ -111,13 +114,13 @@ def load_v1_region(data_root: DataRoot, stem: str) -> V1RegionData:
 def _load_v1_documents(data_root: DataRoot, stem: str) -> list[dict[str, Any]]:
     documents_path = data_root.processed / "wikipedia/documents" / f"{stem}.parquet"
     if documents_path.is_file():
-        return _rows(documents_path)
+        return list(_rows(documents_path))
     articles_path = data_root.processed_articles / f"{stem}.parquet"
     return [wikipedia_document_from_article_row(row).to_dict() for row in _rows(articles_path)]
 
 
 def _normalize_links(
-    links: list[dict[str, Any]],
+    links: Iterable[dict[str, Any]],
     by_article: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     return [_normalize_link(row, by_article) for row in links]
@@ -712,7 +715,7 @@ def _load_section_rows(
     filter_document_ids: bool,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
-    sections = _rows(sections_path)
+    sections = list(_rows(sections_path))
     sections, completed_section_ids = _merge_checkpoint_sections(sections, fetch_checkpoint)
     return _filter_section_rows(sections, completed_section_ids, documents, filter_document_ids)
 
@@ -915,7 +918,7 @@ def _load_reconciliation_rows(
     dict[tuple[str, str, str], dict[str, Any]],
     dict[tuple[str, str], list[dict[str, Any]]],
 ]:
-    polygons_rows = _rows(data_root.processed_v2 / "polygons" / f"{stem}.parquet")
+    polygons_rows = list(_rows(data_root.processed_v2 / "polygons" / f"{stem}.parquet"))
     documents = {
         str(row["document_id"]): dict(row)
         for row in _rows(data_root.processed_v2 / "wikipedia/documents" / f"{stem}.parquet")
