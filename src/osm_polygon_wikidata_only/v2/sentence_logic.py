@@ -276,6 +276,19 @@ def _populate_supported_rows(
     segmenter: SentenceSegmenter,
     batch_size: int,
 ) -> None:
+    if getattr(segmenter, "supports_mixed_languages", False):
+        positions = sorted(
+            position for values in supported_positions.values() for position in values
+        )
+        _populate_positions(
+            sections,
+            rows_by_position,
+            language="mixed",
+            positions=positions,
+            segmenter=segmenter,
+            batch_size=batch_size,
+        )
+        return
     for language in sorted(supported_positions):
         _populate_language_rows(
             sections,
@@ -288,6 +301,25 @@ def _populate_supported_rows(
 
 
 def _populate_language_rows(
+    sections: Sequence[dict[str, Any]],
+    rows_by_position: dict[int, list[dict[str, Any]]],
+    *,
+    language: str,
+    positions: Sequence[int],
+    segmenter: SentenceSegmenter,
+    batch_size: int,
+) -> None:
+    _populate_positions(
+        sections,
+        rows_by_position,
+        language=language,
+        positions=positions,
+        segmenter=segmenter,
+        batch_size=batch_size,
+    )
+
+
+def _populate_positions(
     sections: Sequence[dict[str, Any]],
     rows_by_position: dict[int, list[dict[str, Any]]],
     *,

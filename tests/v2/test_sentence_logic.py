@@ -242,6 +242,28 @@ def test_split_sections_batches_supported_sections() -> None:
     assert summary.sections == 3
 
 
+def test_split_sections_batches_supported_languages_together_for_mixed_segmenter() -> None:
+    class _MixedFakeSegmenter(_FakeSegmenter):
+        supports_mixed_languages = True
+
+    sections = [
+        _section("fr-1", "fr", "Un. Deux."),
+        _section("en-1", "en", "First. Second."),
+    ]
+    segmenter = _MixedFakeSegmenter(
+        {
+            "Un. Deux.": ["Un. ", "Deux."],
+            "First. Second.": ["First. ", "Second."],
+        }
+    )
+
+    rows, summary = split_sections(sections, segmenter=segmenter, batch_size=2)
+
+    assert segmenter.calls == [("mixed", ("Un. Deux.", "First. Second."))]
+    assert [row["text"] for row in rows] == ["Un. ", "Deux.", "First. ", "Second."]
+    assert summary.supported_languages == ("en", "fr")
+
+
 def test_split_sections_uses_source_text_when_source_hash_is_missing() -> None:
     section = _section("fallback", "en", "Alpha. Beta!")
     section.pop("content_hash")

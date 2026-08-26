@@ -19,6 +19,7 @@ class SaT3lSegmenter:
     """Load ``segment-any-text/sat-3l-sm`` lazily and expose a testable API."""
 
     model_id = SAT_MODEL_ID
+    supports_mixed_languages = True
 
     def __init__(
         self,
