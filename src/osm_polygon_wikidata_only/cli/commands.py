@@ -184,6 +184,23 @@ def _run_v2_sync(
         parser.error(str(error))
 
 
+def _run_v2_sentence_split(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+) -> int:
+    """Run V2 sentence sidecars while holding their dedicated lock."""
+    from osm_polygon_wikidata_only.v2.cli import execute_v2_sentence_split
+
+    try:
+        with exclusive_run_lock(data_root.cache / "sentence-splitting.lock"):
+            return execute_v2_sentence_split(args, data_root=data_root, settings=settings)
+    except RunLockError as error:
+        parser.error(str(error))
+
+
 def _run_v1_sync(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -411,6 +428,8 @@ def _dispatch_command(
     settings: Settings,
 ) -> int:
     """Run the handler for the parsed command."""
+    if args.command == "split-v2-sentences":
+        return _run_v2_sentence_split(parser, args, data_root=data_root, settings=settings)
     if args.command == "sync-dir":
         return _run_sync_command(parser, args, data_root=data_root, settings=settings)
     if args.command in {"augment-region", "augment-dir"}:

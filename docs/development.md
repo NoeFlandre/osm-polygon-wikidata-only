@@ -15,6 +15,16 @@ The source checkout contains code, tests, and documentation. Keep PBFs, Parquet
 files, credentials, generated cards, and other run output in an
 operator-selected data root outside the checkout.
 
+The optional V2 sentence stage is installed separately so the normal pipeline
+does not pull a large model runtime:
+
+```bash
+uv sync --extra sentence-splitting
+```
+
+Its exact routing and resumability contract is documented in the
+[sentence-splitting guide](sentence-splitting.md).
+
 ## Docker reproducibility
 
 The checked-in `Dockerfile` has `runtime` and `development` targets. Both are

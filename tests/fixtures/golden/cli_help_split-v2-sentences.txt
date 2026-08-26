@@ -1,0 +1,21 @@
+usage: PROG split-v2-sentences [-h] [--data-root DATA_ROOT] [--repo-id REPO_ID]
+ [--batch-size BATCH_SIZE]
+ [--inference-batch-size INFERENCE_BATCH_SIZE]
+ [--push] [--commit-message COMMIT_MESSAGE]
+ [--upload-threads UPLOAD_THREADS]
+ [--hf-token HF_TOKEN]
+ [--log-level {DEBUG,INFO,WARNING,ERROR}]
+ [--dry-run]
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT Data root directory
+ --repo-id REPO_ID Hugging Face repo id (org/name)
+ --batch-size BATCH_SIZE
+ --inference-batch-size INFERENCE_BATCH_SIZE
+ --push Push artifacts to Hugging Face
+ --commit-message COMMIT_MESSAGE
+ --upload-threads UPLOAD_THREADS
+ --hf-token HF_TOKEN
+ --log-level {DEBUG,INFO,WARNING,ERROR}
+ --dry-run Use a stub HF client (no network)

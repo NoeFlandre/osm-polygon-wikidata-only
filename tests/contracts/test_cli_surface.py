@@ -19,6 +19,7 @@ EXPECTED_COMMANDS = {
     "sync-dir",
     "augment-region",
     "augment-dir",
+    "split-v2-sentences",
 }
 
 EXPECTED_COMMON_FLAGS = {
@@ -84,6 +85,26 @@ def test_sync_dir_accepts_skip_existing_and_push(tmp_path: Path) -> None:
     assert args.skip_existing is True
     assert args.push is True
     assert args.dry_run is True
+
+
+def test_sentence_split_accepts_external_root_and_batch_size(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "split-v2-sentences",
+            "--data-root",
+            str(tmp_path),
+            "--batch-size",
+            "32",
+            "--inference-batch-size",
+            "7",
+        ]
+    )
+
+    assert args.command == "split-v2-sentences"
+    assert args.dataset_version == "v2"
+    assert args.batch_size == 32
+    assert args.inference_batch_size == 7
+    assert args.push is False
 
 
 def test_augment_region_requires_stem_argument() -> None:

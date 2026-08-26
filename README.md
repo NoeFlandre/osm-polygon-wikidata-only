@@ -103,6 +103,12 @@ never published. A restart rescans at most the source PBF because libosmium does
 not expose a portable byte offset, while already saved extraction and fetch
 work is reused and never published until final reconciliation.
 
+Sentence-level V2 sidecars are a separate opt-in stage. It uses only
+`segment-any-text/sat-3l-sm` for the exact 85 language codes documented in the
+[sentence-splitting guide](docs/sentence-splitting.md). All other language
+codes remain as one unsplit row with explicit unsupported-language provenance;
+they are never passed to SaT.
+
 ---
 
 ## Repository layout
@@ -180,6 +186,7 @@ uv run osm-polygon-wikidata-only process-pbf <input.pbf> [--options]
 uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 uv run osm-polygon-wikidata-only augment-region <stem>  [--options]
 uv run osm-polygon-wikidata-only augment-dir             [--options]
+uv run osm-polygon-wikidata-only split-v2-sentences       [--options]
 uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 ```
 
@@ -227,6 +234,26 @@ checkpoints in the configured data root. It reuses finalized V1 documents and
 sections, fetches only missing direct pages, and keeps V1 files unchanged.
 Extraction, fetching, and publication are checkpointed so an interrupted run
 can resume; use `--force` only when deliberately rebuilding a region.
+
+### V2 sentence sidecars
+
+Install the optional CPU sentence runtime and run the post-processing command
+after V2 sections are finalized:
+
+```bash
+uv sync --extra sentence-splitting
+uv run osm-polygon-wikidata-only split-v2-sentences \
+    --data-root "$OSM_POLYGON_DATA_ROOT" \
+    --batch-size 256 \
+    --inference-batch-size 16
+```
+
+The command resumes from external batch checkpoints and writes sentence
+sidecars under `processed_v2/`. It routes only the exact supported codes in
+the [sentence-splitting guide](docs/sentence-splitting.md); unsupported codes
+are preserved unsplit and listed in
+`processed_v2/manifests/sentence_splitting.json`. Add `--push` only after
+reviewing the sidecars and manifest.
 
 ### Wikimedia Bot Password authentication
 

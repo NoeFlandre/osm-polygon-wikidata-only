@@ -48,3 +48,4 @@ nav:
   - API reference: api.md
   - Architecture: architecture.md
   - Development: development.md
+  - V2 sentence splitting: sentence-splitting.md

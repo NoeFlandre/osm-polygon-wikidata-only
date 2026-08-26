@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
 )
 from osm_polygon_wikidata_only.v2.config import V2_ASSET_PATHS
 from osm_polygon_wikidata_only.v2.reuse import SIDECAR_SUBDIRS
+from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
 
 Upload = Callable[[list[PublicationOp], str], None]
 _REGION_UPLOAD_BATCH_SIZE = 16
@@ -56,6 +57,18 @@ def metadata_publication_ops(
             raise FileNotFoundError(f"Dataset hero asset is missing: {hero_path}")
         operations.insert(0, add_op(hero_path, path_in_repo=REMOTE_DATASET_HERO_FILE))
     return operations
+
+
+def sentence_publication_ops(processed_v2: Path, stems: Sequence[str]) -> list[PublicationOp]:
+    """Return the sentence sidecars plus their routing manifest and card."""
+    paths: list[Path] = []
+    for stem in sorted(set(stems)):
+        paths.append(Path("wikipedia/sentences") / f"{stem}.parquet")
+        wikivoyage = Path("wikivoyage/sentences") / f"{stem}.parquet"
+        if (processed_v2 / wikivoyage).is_file():
+            paths.append(wikivoyage)
+    paths.extend([SENTENCE_MANIFEST_RELATIVE_PATH, Path("README.md")])
+    return _add_existing(processed_v2, paths)
 
 
 def upload_region_batches(
@@ -106,5 +119,6 @@ __all__ = [
     "metadata_publication_ops",
     "region_publication_ops",
     "remote_region_complete",
+    "sentence_publication_ops",
     "upload_region_batches",
 ]

@@ -43,6 +43,9 @@ Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
 Issues = "https://github.com/NoeFlandre/osm-polygon-wikidata-only/issues"
 Dataset = "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only"
 
+[project.optional-dependencies]
+sentence-splitting = ["wtpsplit[onnx-cpu]==2.2.1"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -127,6 +130,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
     "src/osm_polygon_wikidata_only/io/pbf_reader.py",
     "src/osm_polygon_wikidata_only/hf/_upload_state.py",
+    "src/osm_polygon_wikidata_only/v2/sentence_logic.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only"]
 mutate_only_covered_lines = true
@@ -147,4 +151,5 @@ pytest_add_cli_args_test_selection = [
     "tests/hf/test_upload_operation_helpers.py",
     "tests/hf/test_upload_state.py",
     "tests/v2/test_pbf_reader_scope.py",
+    "tests/v2/test_sentence_logic.py",
 ]

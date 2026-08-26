@@ -35,7 +35,7 @@ the expected enrichment has completed.
 | `enrichment` | Wikidata, Wikipedia, and Wikivoyage clients, parsing, and pacing. |
 | `pipeline` | Extraction, enrichment, row construction, manifests, and orchestration. |
 | `augmentation` | Optional text sections, Wikivoyage documents, and Wikidata facts. |
-| `v2` | The isolated direct-Wikipedia-tag contract and its publication path. |
+| `v2` | The isolated direct-Wikipedia-tag contract, sentence sidecars, and publication path. |
 | `hf` | Dataset cards, statistics, maps, Trackio snapshots, and Hub uploads. |
 | `cli` | Argument parsing and dependency wiring for the supported commands. |
 
@@ -74,6 +74,9 @@ tables:
   projects;
 - optional section, Wikivoyage, and Wikidata-fact tables produced by
   augmentation; and
+- optional `wikipedia/sentences/<stem>.parquet` and
+  `wikivoyage/sentences/<stem>.parquet` sidecars produced by the explicit
+  [sentence-splitting stage](sentence-splitting.md); and
 - `manifests/processed_pbfs.json` — source names, row counts, and aggregate
   coverage statistics.
 
@@ -95,6 +98,14 @@ Parquet files and manifest entry pass schema and join checks. With `--push`,
 the region files and metadata are sent in an atomic Hugging Face commit. A
 failed upload leaves local results available for a later retry and never turns
 an incomplete region into a published one.
+
+Sentence splitting is a separate V2 stage. It reads finalized section tables,
+routes only the exact SaT-3l-sm language set, and preserves every unsupported
+language as one unsplit sentence row. Each source batch has an atomic restart
+boundary identified by the source hash, batch size, model identifier, and model
+revision. Sentence outputs and `manifests/sentence_splitting.json` are written
+only after all source batches complete; the [sentence-splitting guide](sentence-splitting.md)
+defines the schema and routing policy.
 
 ## Wikimedia requests
 

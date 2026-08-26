@@ -471,6 +471,7 @@ def build_golden_help(out: Path) -> dict[str, Path]:
         "process-pbf": ["process-pbf"],
         "process-dir": ["process-dir"],
         "sync-dir": ["sync-dir"],
+        "split-v2-sentences": ["split-v2-sentences"],
         "augment-region": ["augment-region"],
         "augment-dir": ["augment-dir"],
     }

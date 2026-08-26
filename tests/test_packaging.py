@@ -71,6 +71,9 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
         config["project"]["scripts"]["osm-polygon-wikidata-only-trackio"]
         == "osm_polygon_wikidata_only.hf.trackio_snapshot:run"
     )
+    assert config["project"]["optional-dependencies"]["sentence-splitting"] == [
+        "wtpsplit[onnx-cpu]==2.2.1"
+    ]
 
 
 def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:

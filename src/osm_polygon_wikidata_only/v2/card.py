@@ -359,7 +359,7 @@ def render_v2_card(
 ) -> str:
     """Render a concise, viewer-compatible card from V2 files on disk."""
     snapshot = stats or compute_v2_card_stats(processed_v2, v1_processed=v1_processed)
-    front_matter = _render_front_matter(snapshot)
+    front_matter = _render_front_matter(snapshot, processed_v2=processed_v2)
     comparison = _render_comparison(snapshot)
     return (
         front_matter
@@ -424,12 +424,18 @@ def render_v2_card(
                 "",
                 "Regional extracts can overlap, so the same OSM object or document may appear in more than one regional file. We do not globally deduplicate these copies. We keep those copies to preserve regional membership and provenance; snapshot counts are regional-shard rows rather than globally unique objects or pages.",
                 "",
+                "## Sentence-level text",
+                "",
+                "Sentence sidecars are opt-in and use `sat-3l-sm` only for the exact ISO codes listed in `docs/sentence-splitting.md` in the [source repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/docs/sentence-splitting.md). Any other language code remains one unsplit row with `segmentation_status=unsupported_language`; it is never passed to SaT.",
+                "When generated, sentence rows are stored in `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet`; `manifests/sentence_splitting.json` records the model, revision, and observed routing.",
+                "",
                 "## Repository layout",
                 "",
                 "- `polygons/<stem>.parquet` — one row per retained OSM polygon.",
                 "- `wikipedia/documents/<stem>.parquet` and `wikipedia/sections/<stem>.parquet` — multilingual Wikipedia documents and their sections.",
                 "  Wikipedia sections retain the exact V1 22-column section schema for lossless reuse.",
                 "- `wikivoyage/documents/<stem>.parquet` and `wikivoyage/sections/<stem>.parquet` — Wikivoyage documents and sections reused from V1 where available.",
+                "- `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet` — optional sentence rows with explicit split/unsplit provenance.",
                 "- `polygon_document_links/<stem>.parquet` — unified Wikipedia and Wikivoyage polygon links.",
                 "- `wikidata/facts/<stem>.parquet` — structured Wikidata facts.",
                 "",
@@ -461,8 +467,8 @@ def write_v2_card(
     return path
 
 
-def _render_front_matter(snapshot: V2CardStats) -> str:
-    configs = (
+def _render_front_matter(snapshot: V2CardStats, *, processed_v2: Path) -> str:
+    configs = [
         ("polygons", "polygons", "polygons/*.parquet"),
         ("polygon_document_links", "polygon_document_links", "polygon_document_links/*.parquet"),
         ("wikipedia_documents", "wikipedia_documents", "wikipedia/documents/*.parquet"),
@@ -470,7 +476,15 @@ def _render_front_matter(snapshot: V2CardStats) -> str:
         ("wikivoyage_documents", "wikivoyage_documents", "wikivoyage/documents/*.parquet"),
         ("wikivoyage_sections", "wikivoyage_sections", "wikivoyage/sections/*.parquet"),
         ("wikidata_facts", "wikidata_facts", "wikidata/facts/*.parquet"),
-    )
+    ]
+    if _has_parquet(processed_v2 / "wikipedia/sentences"):
+        configs.append(
+            ("wikipedia_sentences", "wikipedia_sentences", "wikipedia/sentences/*.parquet")
+        )
+    if _has_parquet(processed_v2 / "wikivoyage/sentences"):
+        configs.append(
+            ("wikivoyage_sentences", "wikivoyage_sentences", "wikivoyage/sentences/*.parquet")
+        )
     lines = [
         "---",
         "license: odbl",
@@ -505,6 +519,10 @@ def _render_front_matter(snapshot: V2CardStats) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def _has_parquet(directory: Path) -> bool:
+    return any(directory.glob("*.parquet"))
 
 
 def _render_comparison(snapshot: V2CardStats) -> str:

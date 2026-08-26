@@ -64,6 +64,7 @@ def help_outputs() -> dict[str, str]:
         "process-pbf": _capture_help(parser, ["process-pbf"]),
         "process-dir": _capture_help(parser, ["process-dir"]),
         "sync-dir": _capture_help(parser, ["sync-dir"]),
+        "split-v2-sentences": _capture_help(parser, ["split-v2-sentences"]),
         "augment-region": _capture_help(parser, ["augment-region"]),
         "augment-dir": _capture_help(parser, ["augment-dir"]),
     }
@@ -93,6 +94,12 @@ def test_sync_dir_help_frozen(help_outputs: dict[str, str]) -> None:
     assert help_outputs["sync-dir"] == golden_path.read_text(encoding="utf-8")
 
 
+def test_sentence_split_help_frozen(help_outputs: dict[str, str]) -> None:
+    golden_path = GOLDEN / "cli_help_split-v2-sentences.txt"
+    assert golden_path.exists(), f"missing golden help file: {golden_path}"
+    assert help_outputs["split-v2-sentences"] == golden_path.read_text(encoding="utf-8")
+
+
 def test_augment_region_help_frozen(help_outputs: dict[str, str]) -> None:
     golden_path = GOLDEN / "cli_help_augment-region.txt"
     assert golden_path.exists(), f"missing golden help file: {golden_path}"
@@ -111,6 +118,7 @@ def test_root_help_lists_every_subcommand(help_outputs: dict[str, str]) -> None:
         "process-pbf",
         "process-dir",
         "sync-dir",
+        "split-v2-sentences",
         "augment-region",
         "augment-dir",
     ):

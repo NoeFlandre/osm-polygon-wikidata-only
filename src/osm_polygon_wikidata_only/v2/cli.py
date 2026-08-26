@@ -15,12 +15,14 @@ from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import UploadError, upload_files
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.v2.card import V2CardStats
+from osm_polygon_wikidata_only.v2.card import V2CardStats, write_v2_card
 from osm_polygon_wikidata_only.v2.config import (
     V2_CACHE_CONTRACT_VERSION,
     V2_TRACKIO_RUN_NAME,
 )
 from osm_polygon_wikidata_only.v2.runner import run_v2_sync
+from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION, SaT3lSegmenter
+from osm_polygon_wikidata_only.v2.sentence_runner import run_v2_sentence_split
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +56,41 @@ def execute_v2(
         remote_inventory=remote_inventory,
         trackio_publish=trackio_publish,
     )
+
+
+def execute_v2_sentence_split(
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+) -> int:
+    """Materialize V2 sentence sidecars and optionally publish them."""
+    segmenter = SaT3lSegmenter(
+        cache_dir=data_root.hf_cache / "models" / "sat-3l-sm",
+        revision=DEFAULT_SAT_MODEL_REVISION,
+        inference_batch_size=getattr(args, "inference_batch_size", 16),
+    )
+    result = run_v2_sentence_split(
+        data_root,
+        segmenter=segmenter,
+        batch_size=args.batch_size,
+    )
+    write_v2_card(data_root.processed_v2)
+    if args.push:
+        from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
+
+        stems = tuple(sorted({summary.stem for summary in result.regions}))
+        operations = sentence_publication_ops(data_root.processed_v2, stems)
+        upload_files(
+            settings.repo_id,
+            ops=operations,
+            hub=StubHfHub() if args.dry_run else None,
+            token=settings.hf_token,
+            commit_message=args.commit_message or "Add V2 sentence sidecars",
+            num_threads=args.upload_threads,
+        )
+    LOGGER.info("Sentence splitting complete for %d region/project table(s)", len(result.regions))
+    return 0
 
 
 def _build_section_client(
@@ -119,4 +156,4 @@ def _build_trackio_publisher(args: argparse.Namespace, data_root: DataRoot):
     return publish_snapshot
 
 
-__all__ = ["execute_v2"]
+__all__ = ["execute_v2", "execute_v2_sentence_split"]

@@ -40,6 +40,23 @@ def test_card_is_factual_and_deterministic(tmp_path: Path) -> None:
     assert write_v2_card(tmp_path).read_text(encoding="utf-8") == first
 
 
+def test_card_documents_exact_sentence_split_scope_when_sidecars_exist(tmp_path: Path) -> None:
+    write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
+    sentence_path = tmp_path / "wikipedia/sentences/region-latest.parquet"
+    sentence_path.parent.mkdir(parents=True)
+    sentence_path.touch()
+
+    card_text = render_v2_card(tmp_path)
+
+    assert "sat-3l-sm" in card_text
+    assert "exact ISO codes listed in `docs/sentence-splitting.md`" in card_text
+    assert "one unsplit row" in card_text
+    assert "segmentation_status=unsupported_language" in card_text
+    assert "never passed to SaT" in card_text
+    assert "wikipedia/sentences/<stem>.parquet" in card_text
+    assert "wikipedia_sentences" in card_text
+
+
 def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:
     assert _word_column({"article_length_words", "text_length_words"}) == ("article_length_words")
     assert _word_column({"text_length_words"}) == "text_length_words"

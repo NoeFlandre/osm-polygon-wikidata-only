@@ -79,6 +79,12 @@ from the finalized tables. Attribution and source licenses remain part of the
 published contract; see the [README](https://github.com/NoeFlandre/osm-polygon-wikidata-only#licensing-and-attribution)
 for details.
 
+Optional V2 sentence sidecars use only `segment-any-text/sat-3l-sm` for the
+exact supported language-code set. Other language codes stay as one unsplit
+row with explicit `unsupported_language` provenance. See the [V2 sentence
+splitting guide](sentence-splitting.md) for the full list, resumable command,
+and output contract.
+
 ## Learn more
 
 - [Architecture](architecture.md) — data flow, V1/V2 boundaries, storage, and

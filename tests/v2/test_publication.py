@@ -9,6 +9,7 @@ from osm_polygon_wikidata_only.v2.publication import (
     metadata_publication_ops,
     region_publication_ops,
     remote_region_complete,
+    sentence_publication_ops,
     upload_region_batches,
 )
 
@@ -114,5 +115,27 @@ def test_metadata_publication_includes_v2_maps_and_card(tmp_path: Path) -> None:
         "assets/geographic_text_presence.png",
         "assets/geographic_text_density.png",
         "manifests/processed_pbfs.json",
+        "README.md",
+    ]
+
+
+def test_sentence_publication_includes_sidecars_manifest_and_card(tmp_path: Path) -> None:
+    stem = "region-latest"
+    for relative in (
+        f"wikipedia/sentences/{stem}.parquet",
+        f"wikivoyage/sentences/{stem}.parquet",
+        "manifests/sentence_splitting.json",
+        "README.md",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    operations = sentence_publication_ops(tmp_path, [stem])
+
+    assert [op.path_in_repo for op in operations] == [
+        f"wikipedia/sentences/{stem}.parquet",
+        f"wikivoyage/sentences/{stem}.parquet",
+        "manifests/sentence_splitting.json",
         "README.md",
     ]

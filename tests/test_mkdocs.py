@@ -13,7 +13,13 @@ def test_mkdocs_configuration_defines_public_navigation_and_exclusions() -> None
     assert "site_name: OSM Polygon Wikidata Only" in config
     assert "site_url: https://noeflandre.github.io/osm-polygon-wikidata-only/" in config
     assert "name: material" in config
-    for page in ("index.md", "api.md", "architecture.md", "development.md"):
+    for page in (
+        "index.md",
+        "api.md",
+        "architecture.md",
+        "development.md",
+        "sentence-splitting.md",
+    ):
         assert page in config
     assert "superpowers/**" in config
     assert ".DS_Store" in config

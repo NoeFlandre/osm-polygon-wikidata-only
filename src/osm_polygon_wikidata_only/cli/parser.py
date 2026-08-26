@@ -60,6 +60,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     common.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
+    sentence_common = argparse.ArgumentParser(add_help=False)
+    sentence_common.add_argument("--data-root", type=Path, default=None, help="Data root directory")
+    sentence_common.add_argument(
+        "--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face repo id (org/name)"
+    )
+    sentence_common.add_argument("--batch-size", type=int, default=256)
+    sentence_common.add_argument("--inference-batch-size", type=int, default=16)
+    sentence_common.add_argument(
+        "--push", action="store_true", help="Push artifacts to Hugging Face"
+    )
+    sentence_common.add_argument("--commit-message", default=None)
+    sentence_common.add_argument("--upload-threads", type=int, default=5)
+    sentence_common.add_argument("--hf-token", default=None)
+    sentence_common.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
+    sentence_common.add_argument(
+        "--dry-run", action="store_true", help="Use a stub HF client (no network)"
+    )
     p_pbf = sub.add_parser("process-pbf", parents=[common], help="Process one PBF file")
     p_pbf.add_argument("input", type=Path, help="Path to a .osm.pbf file")
     p_dir = sub.add_parser("process-dir", parents=[common], help="Process every PBF in a directory")
@@ -74,6 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="v1",
         help="Select the isolated dataset contract (default: v1)",
     )
+    p_sentence = sub.add_parser(
+        "split-v2-sentences",
+        parents=[sentence_common],
+        help="Materialize resumable V2 sentence sidecars",
+    )
+    p_sentence.set_defaults(dataset_version="v2")
     p_augment = sub.add_parser(
         "augment-region", parents=[common], help="Augment one completed region without reading PBF"
     )
@@ -89,22 +114,22 @@ def parse_languages(value: str) -> tuple[str, ...]:
 
 def build_settings(args: argparse.Namespace) -> Settings:
     """Convert parsed CLI arguments into immutable pipeline settings."""
-    languages = (
-        None if args.all_languages or args.languages is None else parse_languages(args.languages)
-    )
+    all_languages = getattr(args, "all_languages", False)
+    language_value = getattr(args, "languages", None)
+    languages = None if all_languages or language_value is None else parse_languages(language_value)
     return Settings(
-        repo_id=args.repo_id,
-        user_agent=args.user_agent,
+        repo_id=getattr(args, "repo_id", DEFAULT_REPO_ID),
+        user_agent=getattr(args, "user_agent", DEFAULT_USER_AGENT),
         languages=languages,
-        fetch_full_text=not args.no_full_text,
-        max_articles_per_qid=args.max_articles_per_qid,
-        enrichment_batch_size=args.enrichment_batch_size,
-        enrichment_site_workers=args.enrichment_site_workers,
+        fetch_full_text=not getattr(args, "no_full_text", False),
+        max_articles_per_qid=getattr(args, "max_articles_per_qid", None),
+        enrichment_batch_size=getattr(args, "enrichment_batch_size", 50),
+        enrichment_site_workers=getattr(args, "enrichment_site_workers", 8),
         cache_ttl_s=86_400,
-        skip_existing=args.skip_existing,
-        force=args.force,
-        limit=args.limit,
-        hf_token=args.hf_token,
+        skip_existing=getattr(args, "skip_existing", False),
+        force=getattr(args, "force", False),
+        limit=getattr(args, "limit", None),
+        hf_token=getattr(args, "hf_token", None),
     )
 
 

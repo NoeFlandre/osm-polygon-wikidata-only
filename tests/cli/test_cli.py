@@ -13,7 +13,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 
 
-def test_parser_has_two_subcommands() -> None:
+def test_parser_has_documented_subcommands() -> None:
     parser = build_parser()
     sub_action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     assert set(sub_action.choices) == {
@@ -22,6 +22,7 @@ def test_parser_has_two_subcommands() -> None:
         "process-pbf",
         "process-dir",
         "sync-dir",
+        "split-v2-sentences",
     }
 
 
