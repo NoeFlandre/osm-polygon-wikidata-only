@@ -32,7 +32,7 @@ def _fake_wtpsplit() -> ModuleType:
     return module
 
 
-def test_sat_3l_segmenter_uses_cpu_and_pinned_model(
+def test_sat_3l_segmenter_uses_explicit_cpu_and_pinned_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
@@ -41,6 +41,7 @@ def test_sat_3l_segmenter_uses_cpu_and_pinned_model(
         cache_dir=tmp_path,
         revision="model-revision",
         inference_batch_size=7,
+        ort_providers=("CPUExecutionProvider",),
     )
     result = segmenter.split(["First. Second."], language="en")
 
@@ -73,3 +74,23 @@ def test_sat_3l_segmenter_requires_optional_dependency(
 
     with pytest.raises(RuntimeError, match="uv sync --extra sentence-splitting"):
         SaT3lSegmenter(cache_dir=tmp_path, revision="model-revision")
+
+
+def test_sat_3l_segmenter_prefers_coreml_when_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
+    ort = ModuleType("onnxruntime")
+    ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
+        "CoreMLExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+
+    SaT3lSegmenter(cache_dir=tmp_path, revision="model-revision")
+
+    assert _FakeSaT.init_kwargs is not None
+    assert _FakeSaT.init_kwargs["ort_providers"] == [
+        "CoreMLExecutionProvider",
+        "CPUExecutionProvider",
+    ]

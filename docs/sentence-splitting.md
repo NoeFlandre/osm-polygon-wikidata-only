@@ -3,9 +3,11 @@
 V2 sentence sidecars are an opt-in post-processing stage over finalized V2
 section tables. The stage uses only
 [`segment-any-text/sat-3l-sm`](https://huggingface.co/segment-any-text/sat-3l-sm),
-with model revision `137da05` and ONNX Runtime's CPU provider. It is a separate
-command, so ordinary V1 and V2 synchronization does not download a sentence
-model or change existing section files.
+with model revision `137da05`. On Apple Silicon, ONNX Runtime prefers its
+CoreML provider and falls back to the CPU provider when CoreML is unavailable;
+other platforms use CPU. It is a separate command, so ordinary V1 and V2
+synchronization does not download a sentence model or change existing section
+files.
 
 ## Exact language scope
 

@@ -11,6 +11,8 @@ from typing import Any
 from osm_polygon_wikidata_only.v2.sentence_logic import SAT_MODEL_ID
 
 DEFAULT_SAT_MODEL_REVISION = "137da05"
+_COREML_PROVIDER = "CoreMLExecutionProvider"
+_CPU_PROVIDER = "CPUExecutionProvider"
 
 
 class SaT3lSegmenter:
@@ -24,6 +26,7 @@ class SaT3lSegmenter:
         cache_dir: Path,
         revision: str,
         inference_batch_size: int = 16,
+        ort_providers: Sequence[str] | None = None,
     ) -> None:
         if inference_batch_size < 1:
             raise ValueError("inference_batch_size must be positive")
@@ -42,11 +45,12 @@ class SaT3lSegmenter:
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.revision = revision
         self.inference_batch_size = inference_batch_size
+        self.ort_providers = tuple(_resolve_ort_providers(ort_providers))
         self.version = str(getattr(wtpsplit, "__version__", "unknown"))
         self._model = model_class(
             self.model_id,
             hub_prefix=None,
-            ort_providers=["CPUExecutionProvider"],
+            ort_providers=list(self.ort_providers),
             from_pretrained_kwargs={
                 "cache_dir": str(cache_dir),
                 "revision": revision,
@@ -72,6 +76,26 @@ class SaT3lSegmenter:
                 outer_batch_size=len(values),
             )
         return [list(pieces) for pieces in result]
+
+
+def _resolve_ort_providers(override: Sequence[str] | None) -> list[str]:
+    """Select CoreML on Apple Silicon and retain a portable CPU fallback."""
+    if override is not None:
+        providers = list(override)
+        if not providers:
+            raise ValueError("ort_providers must not be empty")
+        return providers
+    try:
+        onnxruntime = importlib.import_module("onnxruntime")
+        available = set(onnxruntime.get_available_providers())
+    except (ImportError, AttributeError):
+        available = set()
+    if _COREML_PROVIDER in available:
+        return [
+            _COREML_PROVIDER,
+            *([_CPU_PROVIDER] if _CPU_PROVIDER in available else []),
+        ]
+    return [_CPU_PROVIDER]
 
 
 __all__ = ["DEFAULT_SAT_MODEL_REVISION", "SaT3lSegmenter"]
