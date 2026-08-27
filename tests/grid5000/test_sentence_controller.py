@@ -91,6 +91,7 @@ def test_rsync_resolves_remote_home_placeholder(tmp_path: Path, monkeypatch) -> 
 def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
     calls: list[tuple[str, ...]] = []
     job_command = 'cd "$HOME/run/code" && uv sync --frozen'
+    property_filter = "gpu_model='H100 NVL'"
 
     def fake_run(args, **_kwargs):
         calls.append(tuple(args))
@@ -100,15 +101,35 @@ def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
 
     sentence_controller.SubprocessGrid5000Transport("grenoble").run_frontend(
-        ("oarsub", "-q", "besteffort", "-l", "host=1/gpu=1,walltime=0:30", job_command)
+        (
+            "oarsub",
+            "-q",
+            "besteffort",
+            "-p",
+            property_filter,
+            "-l",
+            "host=1/gpu=1,walltime=0:30",
+            job_command,
+        )
     )
 
     assert calls == [
         (
             "ssh",
             "grenoble",
-            "oarsub -q besteffort -l host=1/gpu=1,walltime=0:30 "
-            + sentence_controller.shlex.quote(job_command),
+            " ".join(
+                sentence_controller.shlex.quote(argument)
+                for argument in (
+                    "oarsub",
+                    "-q",
+                    "besteffort",
+                    "-p",
+                    property_filter,
+                    "-l",
+                    "host=1/gpu=1,walltime=0:30",
+                    job_command,
+                )
+            ),
         )
     ]
 

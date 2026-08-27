@@ -685,8 +685,8 @@ class SubprocessGrid5000Transport:
 
     def run_frontend(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         remote_args = tuple(args)
-        if remote_args and remote_args[0] == "oarsub" and len(remote_args) >= 5:
-            remote_args = (" ".join((*remote_args[:-1], shlex.quote(remote_args[-1]))),)
+        if remote_args and remote_args[0] == "oarsub":
+            remote_args = (" ".join(shlex.quote(argument) for argument in remote_args),)
         return subprocess.run(  # noqa: S603 - args are controller-generated frontend commands
             [_required_executable("ssh"), self.site, *remote_args],
             check=False,
