@@ -622,6 +622,7 @@ class SubprocessGrid5000Transport:
 
     def __init__(self, site: str) -> None:
         self.site = site
+        self._remote_home: str | None = None
 
     def run_frontend(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603 - args are controller-generated frontend commands
@@ -632,12 +633,13 @@ class SubprocessGrid5000Transport:
         )
 
     def upload_tree(self, local_root: Path, remote_root: str) -> None:
+        resolved_root = self._resolve_remote_path(remote_root)
         result = subprocess.run(  # noqa: S603 - remote_root is a validated run namespace
             [
                 _required_executable("rsync"),
                 "-a",
                 f"{local_root}/",
-                f"{self.site}:{remote_root}/",
+                f"{self.site}:{resolved_root}/",
             ],
             check=False,
             capture_output=True,
@@ -648,11 +650,12 @@ class SubprocessGrid5000Transport:
 
     def download_tree(self, remote_root: str, local_root: Path) -> None:
         local_root.mkdir(parents=True, exist_ok=True)
+        resolved_root = self._resolve_remote_path(remote_root)
         result = subprocess.run(  # noqa: S603 - remote_root is a validated run namespace
             [
                 _required_executable("rsync"),
                 "-a",
-                f"{self.site}:{remote_root}/",
+                f"{self.site}:{resolved_root}/",
                 f"{local_root}/",
             ],
             check=False,
@@ -665,9 +668,22 @@ class SubprocessGrid5000Transport:
     def remove_tree(self, remote_root: str) -> None:
         if not remote_root.startswith(_REMOTE_NAMESPACE + "/"):
             raise ControllerRunError("Refusing to remove an outside Grid5000 namespace")
-        result = self.run_frontend(("rm", "-rf", remote_root))
+        result = self.run_frontend(("rm", "-rf", self._resolve_remote_path(remote_root)))
         if result.returncode != 0:
             raise ControllerRunError("Grid5000 cleanup failed")
+
+    def _resolve_remote_path(self, remote_path: str) -> str:
+        if not remote_path.startswith("$HOME/"):
+            raise ControllerRunError("Refusing a Grid5000 path outside the remote home")
+        if self._remote_home is None:
+            result = self.run_frontend(("printf", "%s", "$HOME"))
+            if result.returncode != 0:
+                raise ControllerRunError("Could not resolve the Grid5000 remote home")
+            remote_home = (result.stdout or "").strip()
+            if not remote_home.startswith("/") or any(char.isspace() for char in remote_home):
+                raise ControllerRunError("Grid5000 remote home is invalid")
+            self._remote_home = remote_home
+        return f"{self._remote_home}{remote_path[len('$HOME') :]}"
 
 
 class HfHubSentencePublisher:

@@ -64,6 +64,30 @@ def _data_root(tmp_path: Path) -> DataRoot:
     return root
 
 
+def test_rsync_resolves_remote_home_placeholder(tmp_path: Path, monkeypatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(tuple(args))
+        if args[0] == "ssh":
+            return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
+        return CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+
+    sentence_controller.SubprocessGrid5000Transport("grenoble").upload_tree(
+        staging, "$HOME/project"
+    )
+
+    assert calls == [
+        ("ssh", "grenoble", "printf", "%s", "$HOME"),
+        ("rsync", "-a", f"{staging}/", "grenoble:/home/test-user/project/"),
+    ]
+
+
 class _FakeTransport:
     def __init__(
         self, tmp_path: Path, *, success: bool = True, interrupt_on_poll: bool = False
