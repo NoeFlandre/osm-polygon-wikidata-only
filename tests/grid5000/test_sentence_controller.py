@@ -448,10 +448,12 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
     mkdir_command = next(command for command in transport.frontend_calls if command[0] == "mkdir")
     assert f"{controller.remote_run_root}/jobs" in mkdir_command
     submit_command = next(command for command in transport.frontend_calls if command[0] == "oarsub")
-    assert submit_command[:5] == (
+    assert submit_command[:7] == (
         "oarsub",
         "-q",
         "besteffort",
+        "-p",
+        "gpu_model='H100 NVL'",
         "-l",
         "host=1/gpu=1,walltime=0:30",
     )

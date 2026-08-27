@@ -52,6 +52,7 @@ _REMOTE_NAMESPACE = "$HOME/osm-polygon-wikidata-only-grid5000"
 _SEGMENTER_VERSION = "2.2.1"
 _GRID5000_UV_VERSION = "0.11.16"
 DEFAULT_GRID5000_QUEUE = "besteffort"
+DEFAULT_GRID5000_GPU_MODEL = "H100 NVL"
 _ACTIVE_STATES = frozenset({"submitted", "running"})
 _TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
 _SUCCESS_STATES = frozenset({"terminated", "finishing"})
@@ -344,6 +345,8 @@ class Grid5000SentenceController:
                 "oarsub",
                 "-q",
                 self.queue,
+                "-p",
+                f"gpu_model='{DEFAULT_GRID5000_GPU_MODEL}'",
                 "-l",
                 f"host=1/gpu=1,walltime={self.limits.walltime}",
                 self._remote_job_command(batch),
@@ -1059,6 +1062,7 @@ def _download_hf_file(
 
 
 __all__ = [
+    "DEFAULT_GRID5000_GPU_MODEL",
     "DEFAULT_GRID5000_QUEUE",
     "ControllerLimits",
     "ControllerRunError",

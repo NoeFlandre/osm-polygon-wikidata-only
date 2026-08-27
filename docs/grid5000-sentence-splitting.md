@@ -44,7 +44,7 @@ From the repository checkout, start or resume the operation with:
 ```bash
 UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run python scripts/grid5000_sentence_controller.py \
     --data-root "$OSM_POLYGON_DATA_ROOT" \
-    --site grenoble \
+    --site rennes \
     --queue besteffort \
     --repo-id NoeFlandre/osm-polygon-wikidata-and-wikipedia \
     --max-stems 4 \
@@ -75,7 +75,6 @@ the full dataset or raw PBF collection. The model and package download are
 performed on the reserved node, with a run-owned model and uv cache reused by
 later jobs. Because the compute-node image does not guarantee a system `uv`,
 the first job creates a run-owned bootstrap environment and installs the
-the first job creates a run-owned bootstrap environment and installs the
 pinned `uv==0.11.16` package into it; later jobs reuse that bootstrap. After
 the locked environment is synced, the job adds the installed NVIDIA library
 directories to `LD_LIBRARY_PATH` before constructing the SaT session.
@@ -84,10 +83,13 @@ directories to `LD_LIBRARY_PATH` before constructing the SaT session.
 
 The controller acquires the local lock before reading or writing the ledger.
 It runs `usagepolicycheck -t` before submission and immediately after
-submission. OAR requests use the explicitly recorded `besteffort` queue and
-exactly `oarsub -q besteffort -l host=1/gpu=1,walltime=0:30`; monitoring polls
-only the recorded OAR job ID. A different queue may be supplied only after a
-site qualification probe. The frontend performs only policy, OAR, SSH/rsync,
+submission. The production invocation uses the explicitly recorded
+`besteffort` queue and constrains each short job to the qualified Rennes
+H100 NVL resources: `oarsub -q besteffort -p gpu_model='H100 NVL' -l
+host=1/gpu=1,walltime=0:30`. This avoids heterogeneous GPU allocations that
+cannot run the locked CUDA stack. Monitoring polls only the recorded OAR job
+ID. A different queue or site may be supplied only after a site qualification
+probe. The frontend performs only policy, OAR, SSH/rsync,
 monitoring, and scoped file-management operations. `uv sync`, `nvidia-smi`,
 model loading, and sentence inference happen inside the reservation.
 
