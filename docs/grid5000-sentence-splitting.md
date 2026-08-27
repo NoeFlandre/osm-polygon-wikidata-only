@@ -71,7 +71,9 @@ The controller stages only the selected section tables, manifests, selected
 checkpoint trees, pinned source files, and job metadata. It does not stage
 the full dataset or raw PBF collection. The model and package download are
 performed on the reserved node, with a run-owned model and uv cache reused by
-later jobs.
+later jobs. Because the compute-node image does not guarantee a system `uv`,
+the first job creates a run-owned bootstrap environment and installs the
+pinned `uv==0.11.16` package into it; later jobs reuse that bootstrap.
 
 ## Policy, resume, and publication sequence
 
@@ -103,17 +105,21 @@ silently replaced by an older card. Their baseline hashes are recorded when
 the run is created and any change blocks publication for operator review.
 
 If a job fails, valid partial checkpoints are imported and the batch remains
-retryable without publishing incomplete sentence outputs. If publication
-fails, the batch remains `ready_to_publish`; a restart retries the local HF
-publication without submitting another GPU job. `Ctrl-C` records the current
-state, cancels only a known active OAR job, and releases the local lock.
+retryable without publishing incomplete sentence outputs. A terminal job with
+no valid receipt is recorded as a retryable failure and its run-owned
+directory is cleaned, rather than leaving the ledger falsely `running`. If
+publication fails, the batch remains `ready_to_publish`; a restart retries the
+local HF publication without submitting another GPU job. `Ctrl-C` records the
+current state, cancels only a known active OAR job, and releases the local
+lock.
 
 The ledger is the source of resume truth. An omitted `--run-id` resumes the
 existing ledger, while immutable fields such as source commit, model
 revision, site, queue, limits, and protected asset hashes must match after the
-first GPU submission. A failed pre-submission ledger may adopt a newer source
-commit once, with the change recorded in `source_commit_updates`. A successful
-run performs one final policy check and removes the entire run namespace only
+first successful publication. An unpublished run may adopt a newer source
+commit only when its batches are planned or have a recorded terminal receipt
+failure, with the change recorded in `source_commit_updates`. A successful run
+performs one final policy check and removes the entire run namespace only
 after all planned batches are published. Cleanup rejects paths outside that
 namespace.
 

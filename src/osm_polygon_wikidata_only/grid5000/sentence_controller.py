@@ -50,6 +50,7 @@ _LEDGER_FILENAME = "grid5000_sentence_run.json"
 _RUN_DIRECTORY = "grid5000_sentence_runs"
 _REMOTE_NAMESPACE = "$HOME/osm-polygon-wikidata-only-grid5000"
 _SEGMENTER_VERSION = "2.2.1"
+_GRID5000_UV_VERSION = "0.11.16"
 DEFAULT_GRID5000_QUEUE = "besteffort"
 _ACTIVE_STATES = frozenset({"submitted", "running"})
 _TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
@@ -57,6 +58,7 @@ _JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECAS
 _STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
 _EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
 _QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_RETRYABLE_ARTIFACT_FAILURES = frozenset({"missing_receipt", "invalid_receipt"})
 
 
 class Grid5000Transport(Protocol):
@@ -179,7 +181,7 @@ class Grid5000SentenceController:
             if self.run_id is not None and self.run_id != stored_run_id:
                 raise ControllerRunError("Requested run_id does not match the existing ledger")
             self.run_id = stored_run_id
-            self._refresh_pre_submission_source_commit(ledger)
+            self._refresh_resumable_source_commit(ledger)
             self._validate_immutable_ledger(ledger)
         else:
             if self.run_id is None:
@@ -191,9 +193,9 @@ class Grid5000SentenceController:
         self._ledger = ledger
         return ledger
 
-    def _refresh_pre_submission_source_commit(self, ledger: dict[str, Any]) -> None:
+    def _refresh_resumable_source_commit(self, ledger: dict[str, Any]) -> None:
         stored_commit = ledger.get("source_commit")
-        if stored_commit == self.source_commit or not _is_pre_submission_ledger(ledger):
+        if stored_commit == self.source_commit or not _is_source_commit_migration_safe(ledger):
             return
         if not isinstance(stored_commit, str):
             return
@@ -207,7 +209,7 @@ class Grid5000SentenceController:
                 "from": stored_commit,
                 "to": self.source_commit,
                 "at": _timestamp(),
-                "reason": "pre_submission_resume",
+                "reason": "resumable_unpublished_run",
             },
         ]
         self._write_ledger(ledger)
@@ -414,13 +416,21 @@ class Grid5000SentenceController:
         receipt = f"{remote_job_root}/result/receipt.json"
         model_cache = f"{self.remote_run_root}/model-cache"
         uv_cache = f"{self.remote_run_root}/uv-cache"
+        uv_bootstrap = f"{self.remote_run_root}/uv-bootstrap"
+        uv_bin = f"{uv_bootstrap}/bin/uv"
+        uv_python = f"{uv_bootstrap}/bin/python"
         stems = " ".join(shlex.quote(stem) for stem in _batch_stems(batch))
         return (
             f'cd "{remote_job_root}/code" && '
+            f'if [ ! -x "{uv_bin}" ]; then '
+            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN python3 -m venv "{uv_bootstrap}" && '
+            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN "{uv_python}" -m pip install '
+            f'--disable-pip-version-check --no-input "uv=={_GRID5000_UV_VERSION}"; '
+            f"fi && "
             f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
-            f"uv sync --frozen --extra sentence-splitting-gpu --no-dev && "
+            f'"{uv_bin}" sync --frozen --extra sentence-splitting-gpu --no-dev && '
             f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
-            f"uv run --no-sync python scripts/grid5000_sentence_job.py "
+            f'"{uv_bin}" run --no-sync python scripts/grid5000_sentence_job.py '
             f'--data-root "{remote_data}" --model-cache "{model_cache}" '
             f"--source-commit {shlex.quote(self.source_commit)} "
             '--job-id "$OAR_JOB_ID" '
@@ -456,9 +466,23 @@ class Grid5000SentenceController:
         ) as temporary:
             received = Path(temporary)
             self.transport.download_tree(f"{batch['remote_job_root']}/result", received)
-            receipt = _read_json_mapping(received / "receipt.json")
-            self._validate_receipt(batch, receipt)
             received_data = DataRoot(received / "data")
+            try:
+                receipt = _read_json_mapping(received / "receipt.json")
+                self._validate_receipt(batch, receipt)
+            except ControllerRunError as error:
+                self._import_partial(batch, received_data)
+                batch["state"] = "failed"
+                batch["error"] = (
+                    "missing_receipt"
+                    if not (received / "receipt.json").is_file()
+                    else "invalid_receipt"
+                )
+                self._write_ledger()
+                self._cleanup_remote_job(batch)
+                raise ControllerRunError(
+                    f"Grid5000 batch {batch['index']} produced an invalid receipt; retryable"
+                ) from error
             succeeded = state == "terminated" and exit_code in {None, 0}
             if succeeded and receipt.get("status") == "succeeded":
                 self._import_success(batch, received_data, receipt)
@@ -909,7 +933,7 @@ def _batch_stems(batch: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(str(stem) for stem in raw)
 
 
-def _is_pre_submission_ledger(ledger: Mapping[str, object]) -> bool:
+def _is_source_commit_migration_safe(ledger: Mapping[str, object]) -> bool:
     raw_batches = ledger.get("batches")
     if not isinstance(raw_batches, list) or not raw_batches:
         return False
@@ -918,7 +942,13 @@ def _is_pre_submission_ledger(ledger: Mapping[str, object]) -> bool:
             return False
         if raw_batch.get("state") not in {"planned", "failed"}:
             return False
-        if raw_batch.get("oar_job_id") not in (None, ""):
+        if raw_batch.get("state") == "planned" and raw_batch.get("oar_job_id") not in (None, ""):
+            return False
+        if (
+            raw_batch.get("state") == "failed"
+            and raw_batch.get("oar_job_id") not in (None, "")
+            and raw_batch.get("error") not in _RETRYABLE_ARTIFACT_FAILURES
+        ):
             return False
         if raw_batch.get("hf_commit") not in (None, ""):
             return False

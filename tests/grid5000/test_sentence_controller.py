@@ -113,6 +113,37 @@ def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
     ]
 
 
+def test_remote_job_bootstraps_pinned_uv_on_compute_node(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    controller = _controller(data_root, transport, publisher)
+
+    command = controller._remote_job_command(
+        {
+            "remote_job_root": f"{controller.remote_run_root}/jobs/batch-00000000-attempt-01",
+            "stems": ["alpha-latest"],
+        }
+    )
+
+    assert (
+        'python3 -m venv "$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/uv-bootstrap"'
+        in command
+    )
+    assert (
+        '"$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/uv-bootstrap/bin/python" '
+        '-m pip install --disable-pip-version-check --no-input "uv==0.11.16"'
+    ) in command
+    assert (
+        '"$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/uv-bootstrap/bin/uv" sync --frozen'
+        in command
+    )
+    assert (
+        '"$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/uv-bootstrap/bin/uv" run --no-sync'
+        in command
+    )
+
+
 class _FakeTransport:
     def __init__(
         self, tmp_path: Path, *, success: bool = True, interrupt_on_poll: bool = False
@@ -357,6 +388,29 @@ def test_pre_submission_resume_records_a_new_source_commit(tmp_path: Path) -> No
     assert updated["source_commit_updates"][-1]["to"] == "new123"
 
 
+def test_failed_receipt_resume_can_adopt_a_new_source_commit(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    first = _controller(data_root, transport, publisher)
+    ledger = first.initialize()
+    ledger["batches"][0].update(
+        state="failed",
+        attempt=1,
+        oar_job_id="12345",
+        remote_job_root="$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/jobs/batch-00000000-attempt-01",
+        error="missing_receipt",
+    )
+    first._write_ledger(ledger)
+
+    resumed = _controller(data_root, transport, publisher, source_commit="new123")
+
+    updated = resumed.initialize()
+
+    assert updated["source_commit"] == "new123"
+    assert updated["source_commit_updates"][-1]["reason"] == "resumable_unpublished_run"
+
+
 def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path)
@@ -420,6 +474,29 @@ def test_failed_job_imports_partial_checkpoint_and_does_not_publish(tmp_path: Pa
     assert (checkpoint / "batch-00000000.parquet").is_file()
     assert publisher.publish_calls == []
     assert json.loads(controller.ledger_path.read_text())["batches"][0]["state"] == "failed"
+
+
+def test_missing_receipt_marks_terminal_batch_failed_and_cleans_it(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    controller = _controller(data_root, transport, publisher)
+
+    original_download = transport.download_tree
+
+    def download_without_receipt(remote_root: str, local_root: Path) -> None:
+        original_download(remote_root, local_root)
+        (local_root / "receipt.json").unlink()
+
+    transport.download_tree = download_without_receipt  # type: ignore[method-assign]
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="receipt"):
+        controller.run()
+
+    batch = json.loads(controller.ledger_path.read_text())["batches"][0]
+    assert batch["state"] == "failed"
+    assert batch["error"] == "missing_receipt"
+    assert transport.removals[-1].endswith("batch-00000000-attempt-01")
 
 
 def test_publisher_failure_leaves_ready_state_and_resume_does_not_submit_again(
