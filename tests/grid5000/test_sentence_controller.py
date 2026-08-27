@@ -345,6 +345,8 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
     assert publisher.publish_calls
     assert publisher.verify_calls
     assert any(command[0] == "oarsub" for command in transport.frontend_calls)
+    mkdir_command = next(command for command in transport.frontend_calls if command[0] == "mkdir")
+    assert f"{controller.remote_run_root}/jobs" in mkdir_command
     submit_command = next(command for command in transport.frontend_calls if command[0] == "oarsub")
     assert submit_command[:5] == (
         "oarsub",

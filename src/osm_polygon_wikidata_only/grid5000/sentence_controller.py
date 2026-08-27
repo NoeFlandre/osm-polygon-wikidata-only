@@ -366,6 +366,7 @@ class Grid5000SentenceController:
                 "-p",
                 f"{self.remote_run_root}/model-cache",
                 f"{self.remote_run_root}/uv-cache",
+                f"{self.remote_run_root}/jobs",
             )
         )
 
