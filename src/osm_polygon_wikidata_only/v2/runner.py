@@ -435,6 +435,7 @@ def _write_v2_metadata(
     generate_v2_map_assets(
         state.data_root.processed_v2,
         state.data_root.processed_v2 / "assets",
+        v1_processed=state.data_root.processed,
         land_geojson_path=land_path if land_path.is_file() else None,
         land_cache_dir=state.data_root.cache,
     )

@@ -13,7 +13,7 @@ import json
 import logging
 import shutil
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -48,34 +48,44 @@ _POINT_ALPHA = 0.5
 _CENTROID_BATCH_SIZE = 65_536
 
 
-def load_centroids_from_parquet(polygons_dir: Path) -> tuple[list[float], list[float]]:
+def load_centroids_from_parquet(
+    polygons_dir: Path,
+    *,
+    polygon_ids: Collection[str] | None = None,
+) -> tuple[list[float], list[float]]:
     """Read polygon centroids from all parquet files in ``polygons_dir``.
 
     Returns ``(lons, lats)`` parallel lists. Only the ``lon`` and ``lat``
     columns are read (columnar pruning), so this is fast even for
-    hundreds of processed PBFs. ``None``/missing values are skipped.
+    hundreds of processed PBFs. When ``polygon_ids`` is supplied, only those
+    polygon identities are returned. ``None``/missing values are skipped.
     """
     lons: list[float] = []
     lats: list[float] = []
     if not polygons_dir.exists():
         return lons, lats
+    selected_ids = None if polygon_ids is None else {str(value) for value in polygon_ids}
     for parquet_path in sorted(polygons_dir.glob("*.parquet")):
-        file_lons, file_lats = _load_centroid_file(parquet_path)
+        file_lons, file_lats = _load_centroid_file(parquet_path, selected_ids)
         lons.extend(file_lons)
         lats.extend(file_lats)
     return lons, lats
 
 
-def _load_centroid_file(parquet_path: Path) -> tuple[list[float], list[float]]:
+def _load_centroid_file(
+    parquet_path: Path,
+    polygon_ids: set[str] | None = None,
+) -> tuple[list[float], list[float]]:
     lons: list[float] = []
     lats: list[float] = []
     try:
         with pq.ParquetFile(parquet_path) as parquet_file:
+            columns = ["lon", "lat"] if polygon_ids is None else ["polygon_id", "lon", "lat"]
             for batch in parquet_file.iter_batches(
                 batch_size=_CENTROID_BATCH_SIZE,
-                columns=["lon", "lat"],
+                columns=columns,
             ):
-                for row_lon, row_lat in _valid_centroid_rows(batch):
+                for row_lon, row_lat in _valid_centroid_rows(batch, polygon_ids):
                     lons.append(row_lon)
                     lats.append(row_lat)
     except (OSError, KeyError) as error:
@@ -84,12 +94,27 @@ def _load_centroid_file(parquet_path: Path) -> tuple[list[float], list[float]]:
     return lons, lats
 
 
-def _valid_centroid_rows(batch: Any) -> Iterator[tuple[float, float]]:
-    for row_lon, row_lat in zip(
+def _valid_centroid_rows(
+    batch: Any,
+    polygon_ids: set[str] | None = None,
+) -> Iterator[tuple[float, float]]:
+    if polygon_ids is None:
+        for row_lon, row_lat in zip(
+            batch.column("lon").to_pylist(),
+            batch.column("lat").to_pylist(),
+            strict=True,
+        ):
+            if row_lon is not None and row_lat is not None:
+                yield float(row_lon), float(row_lat)
+        return
+    for polygon_id, row_lon, row_lat in zip(
+        batch.column("polygon_id").to_pylist(),
         batch.column("lon").to_pylist(),
         batch.column("lat").to_pylist(),
         strict=True,
     ):
+        if str(polygon_id) not in polygon_ids:
+            continue
         if row_lon is None or row_lat is None:
             continue
         yield float(row_lon), float(row_lat)

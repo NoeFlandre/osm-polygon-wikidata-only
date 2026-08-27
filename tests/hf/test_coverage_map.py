@@ -141,6 +141,22 @@ def test_load_centroids_reads_from_subdir(tmp_path: Path) -> None:
     assert lats == [2.0]
 
 
+def test_load_centroids_filters_to_requested_polygon_ids(tmp_path: Path) -> None:
+    table = pa.table(
+        {
+            "polygon_id": ["keep", "drop"],
+            "lon": [4.0, 5.0],
+            "lat": [1.0, 2.0],
+        }
+    )
+    pq.write_table(table, tmp_path / "a-latest.parquet")
+
+    lons, lats = load_centroids_from_parquet(tmp_path, polygon_ids={"keep"})
+
+    assert lons == [4.0]
+    assert lats == [1.0]
+
+
 # --- generate_coverage_map ----------------------------------------------
 
 

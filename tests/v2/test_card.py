@@ -229,11 +229,17 @@ def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) 
         documents=[v2_document],
         links=[
             {
+                "polygon_id": "region-latest:way:2",
+                "document_id": "new-doc",
+                "project": "wikipedia",
+                "link_sources": '["osm_wikipedia_tag"]',
+            },
+            {
                 "polygon_id": "region-latest:way:3",
                 "document_id": "new-doc",
                 "project": "wikipedia",
                 "link_sources": '["osm_wikipedia_tag"]',
-            }
+            },
         ],
         sections=[v2_section],
     )
@@ -242,7 +248,8 @@ def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) 
     assert stats.new_polygons_vs_v1 == 3
     assert stats.new_polygons_wikipedia_tag_vs_v1 == 2
     assert stats.new_polygons_wikidata_only_vs_v1 == 1
-    assert stats.new_wikipedia_tag_polygons_without_document == 1
+    assert stats.new_wikipedia_tag_polygons_without_document == 0
+    assert stats.new_wikipedia_tag_document_polygons_vs_v1 == 1
     assert stats.new_wikipedia_document_identity_words_vs_v1 == 10
     assert stats.new_wikipedia_documents_sharing_v1_content == 1
     assert stats.additional_unique_sections_vs_v1 == 1
@@ -251,7 +258,12 @@ def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) 
     assert "**Additional polygon identities:** 3" in card_text
     assert "**Of those, polygons with a Wikipedia tag:** 2" in card_text
     assert "**Of those, Wikidata-only polygons:** 1" in card_text
-    assert "**New Wikipedia-tag polygons without a matching page at the snapshot:** 1" in card_text
+    assert "**New Wikipedia-tag polygons without a matching page at the snapshot:** 0" in card_text
+    assert (
+        "**V2-added polygons with a new Wikipedia-tag document and no Wikidata discovery:** 1"
+        in card_text
+    )
+    assert "assets/v2_added_wikipedia_tag_documents.png" in card_text
     assert "**Words in newly added Wikipedia document identities:** 10" in card_text
     assert "**New Wikipedia document identities sharing content with V1:** 1" in card_text
     assert "**Additional unique section identities:** 1" in card_text

@@ -13,8 +13,12 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
+from osm_polygon_wikidata_only.v2.comparison import (
+    select_v2_added_wikipedia_tag_document_polygon_ids_from_files,
+)
 from osm_polygon_wikidata_only.v2.config import (
     V1_DATASET_URL,
+    V2_ADDED_WIKIPEDIA_TAG_MAP_PATH,
     V2_CONTRACT_VERSION,
     V2_DATASET_CARD_VERSION,
     V2_GITHUB_URL,
@@ -55,6 +59,7 @@ class V2CardStats:
     new_wikipedia_document_identity_words_vs_v1: int | None = None
     new_wikipedia_documents_sharing_v1_content: int | None = None
     additional_unique_sections_vs_v1: int | None = None
+    new_wikipedia_tag_document_polygons_vs_v1: int | None = None
 
     @property
     def documents(self) -> int:
@@ -117,6 +122,7 @@ class _V1Comparison:
     document_identity_words: int | None = None
     documents_sharing_content: int | None = None
     unique_sections: int | None = None
+    wikipedia_tag_document_polygons: int | None = None
 
 
 def compute_v2_card_stats(
@@ -220,6 +226,16 @@ def _compute_v1_comparison(
     polygon_comparison = _compare_polygon_sources(files, metrics, baseline)
     document_comparison = _compare_document_content(files, metrics, baseline)
     unique_sections = _compare_unique_sections(files, v1_processed)
+    new_polygon_ids = metrics.polygon_ids - baseline.polygon_ids
+    new_document_ids = metrics.document_ids - baseline.document_ids
+    wikipedia_tag_document_polygons = len(
+        select_v2_added_wikipedia_tag_document_polygon_ids_from_files(
+            files.polygon_files,
+            files.link_files,
+            new_polygon_ids=new_polygon_ids,
+            new_document_ids=new_document_ids,
+        )
+    )
     return _V1Comparison(
         new_polygons=len(metrics.polygon_ids - baseline.polygon_ids),
         new_documents=len(metrics.document_ids - baseline.document_ids),
@@ -235,6 +251,7 @@ def _compute_v1_comparison(
         document_identity_words=document_comparison[0],
         documents_sharing_content=document_comparison[1],
         unique_sections=unique_sections,
+        wikipedia_tag_document_polygons=wikipedia_tag_document_polygons,
     )
 
 
@@ -348,6 +365,7 @@ def _build_card_stats(
         new_wikipedia_document_identity_words_vs_v1=comparison.document_identity_words,
         new_wikipedia_documents_sharing_v1_content=comparison.documents_sharing_content,
         additional_unique_sections_vs_v1=comparison.unique_sections,
+        new_wikipedia_tag_document_polygons_vs_v1=comparison.wikipedia_tag_document_polygons,
     )
 
 
@@ -540,6 +558,7 @@ def _render_comparison(snapshot: V2CardStats) -> str:
             snapshot.new_wikipedia_document_identity_words_vs_v1,
             snapshot.new_wikipedia_documents_sharing_v1_content,
             snapshot.additional_unique_sections_vs_v1,
+            snapshot.new_wikipedia_tag_document_polygons_vs_v1,
         )
     ):
         lines.append(
@@ -560,6 +579,13 @@ def _render_comparison(snapshot: V2CardStats) -> str:
                 f"- **Additional section rows in V2 (Wikipedia + Wikivoyage):** {snapshot.additional_sections_vs_v1:,}",
                 f"- **Additional unique section identities:** {snapshot.additional_unique_sections_vs_v1:,}",
                 f"- **New Wikipedia-tag polygons without a matching page at the snapshot:** {snapshot.new_wikipedia_tag_polygons_without_document:,}",
+                f"- **V2-added polygons with a new Wikipedia-tag document and no Wikidata discovery:** {snapshot.new_wikipedia_tag_document_polygons_vs_v1:,}",
+                "",
+                "### V2-added polygons with Wikipedia-tag documents",
+                "",
+                f"![V2-added polygons with Wikipedia-tag documents]({V2_ADDED_WIKIPEDIA_TAG_MAP_PATH})",
+                "",
+                "This map shows only polygon identities absent from V1 whose discovery provenance is exactly `wikipedia_tag` and which link to at least one Wikipedia document identity new in V2 through `osm_wikipedia_tag`.",
                 "",
                 "The polygon and document figures are set differences of stable identities, while row-word and row-section figures include regional copies. V2 keeps regional copies to preserve source membership and provenance; a direct Wikipedia reference without a matching page remains represented in the polygon table and is not counted as a document.",
                 "",

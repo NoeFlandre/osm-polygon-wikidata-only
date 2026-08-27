@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import yaml
 
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
 from osm_polygon_wikidata_only.v2 import maps as v2_maps
 from osm_polygon_wikidata_only.v2.card import render_v2_card
-from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
+from osm_polygon_wikidata_only.v2.maps import (
+    generate_v2_added_wikipedia_tag_map,
+    generate_v2_map_assets,
+)
+from osm_polygon_wikidata_only.v2.schema import wikipedia_document_v2_schema
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
 
@@ -88,7 +94,12 @@ def test_v2_card_front_matter_has_viewer_configs_for_every_table(tmp_path: Path)
 
 def test_v2_map_assets_render_all_three_views_without_network(tmp_path: Path) -> None:
     write_v2_region(tmp_path, "region-latest", polygons=[_polygon()], documents=[], links=[])
-    assets = generate_v2_map_assets(tmp_path, tmp_path / "assets", land_geojson_path=None)
+    assets = generate_v2_map_assets(
+        tmp_path,
+        tmp_path / "assets",
+        v1_processed=tmp_path / "v1",
+        land_geojson_path=None,
+    )
 
     assert tuple(path.name for path in assets) == (
         "coverage_map.png",
@@ -96,6 +107,8 @@ def test_v2_map_assets_render_all_three_views_without_network(tmp_path: Path) ->
         "geographic_text_density.png",
     )
     assert all(path.is_file() and path.stat().st_size > 0 for path in assets)
+    comparison_map = tmp_path / "assets" / "v2_added_wikipedia_tag_documents.png"
+    assert comparison_map.is_file() and comparison_map.stat().st_size > 0
 
 
 def test_v2_map_assets_discovers_sibling_land_cache(tmp_path: Path, monkeypatch) -> None:
@@ -130,3 +143,44 @@ def test_v2_map_assets_discovers_sibling_land_cache(tmp_path: Path, monkeypatch)
         "presence": cache_dir / "ne_110m_land.geojson",
         "density": cache_dir,
     }
+
+
+def test_v2_comparison_map_contains_only_qualifying_v2_polygons(tmp_path: Path) -> None:
+    v1 = tmp_path / "v1"
+    v2 = tmp_path / "v2"
+    v1_polygon_path = v1 / "polygons" / "region-latest.parquet"
+    v1_polygon_path.parent.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist([], schema=polygon_schema()), v1_polygon_path)
+
+    polygon = _polygon()
+    polygon.update(
+        {
+            "polygon_id": "region-latest:way:2",
+            "discovery_sources": '["wikipedia_tag"]',
+        }
+    )
+    document = {field.name: None for field in wikipedia_document_v2_schema()}
+    document["document_id"] = "new-doc"
+    write_v2_region(
+        v2,
+        "region-latest",
+        polygons=[polygon],
+        documents=[document],
+        links=[
+            {
+                "polygon_id": "region-latest:way:2",
+                "document_id": "new-doc",
+                "project": "wikipedia",
+                "link_sources": '["osm_wikipedia_tag"]',
+            }
+        ],
+    )
+
+    output = generate_v2_added_wikipedia_tag_map(
+        v2,
+        v1,
+        v2 / "assets" / "v2_added_wikipedia_tag_documents.png",
+    )
+
+    assert output.is_file()
+    assert output.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

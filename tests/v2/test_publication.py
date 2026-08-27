@@ -102,6 +102,7 @@ def test_metadata_publication_includes_v2_maps_and_card(tmp_path: Path) -> None:
         "assets/coverage_map.png",
         "assets/geographic_text_presence.png",
         "assets/geographic_text_density.png",
+        "assets/v2_added_wikipedia_tag_documents.png",
     ):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +115,7 @@ def test_metadata_publication_includes_v2_maps_and_card(tmp_path: Path) -> None:
         "assets/coverage_map.png",
         "assets/geographic_text_presence.png",
         "assets/geographic_text_density.png",
+        "assets/v2_added_wikipedia_tag_documents.png",
         "manifests/processed_pbfs.json",
         "README.md",
     ]
