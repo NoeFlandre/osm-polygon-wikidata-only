@@ -380,6 +380,8 @@ class Grid5000SentenceController:
         _copy_required(self.repo_root / "uv.lock", code / "uv.lock")
         _copy_required(self.repo_root / "README.md", code / "README.md")
         _copy_required(self.repo_root / "LICENSE", code / "LICENSE")
+        for asset in ("dataset_hero.png", "dataset_hero_v2.png"):
+            _copy_required(self.repo_root / "assets" / asset, code / "assets" / asset)
         shutil.copytree(self.repo_root / "src", code / "src")
         (code / "scripts").mkdir()
         _copy_required(

@@ -144,6 +144,19 @@ def test_remote_job_bootstraps_pinned_uv_on_compute_node(tmp_path: Path) -> None
     )
 
 
+def test_batch_staging_includes_package_forced_assets(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    controller = _controller(data_root, _FakeTransport(tmp_path), _FakePublisher())
+    ledger = controller.initialize()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+
+    controller._stage_batch(staging, ledger["batches"][0])
+
+    assert (staging / "code/assets/dataset_hero.png").is_file()
+    assert (staging / "code/assets/dataset_hero_v2.png").is_file()
+
+
 class _FakeTransport:
     def __init__(
         self, tmp_path: Path, *, success: bool = True, interrupt_on_poll: bool = False

@@ -68,7 +68,7 @@ uv run --no-sync python scripts/grid5000_sentence_job.py \
 ```
 
 The controller stages only the selected section tables, manifests, selected
-checkpoint trees, pinned source files, and job metadata. It does not stage
+checkpoint trees, pinned source files, package-forced assets, and job metadata. It does not stage
 the full dataset or raw PBF collection. The model and package download are
 performed on the reserved node, with a run-owned model and uv cache reused by
 later jobs. Because the compute-node image does not guarantee a system `uv`,
