@@ -356,12 +356,14 @@ def _controller(
     *,
     run_id: str = "run-20260827-01",
     queue: str = "besteffort",
+    gpu_model: str = "A40",
     source_commit: str = "abc123",
 ) -> sentence_controller.Grid5000SentenceController:
     return sentence_controller.Grid5000SentenceController(
         data_root,
         site="grenoble",
         queue=queue,
+        gpu_model=gpu_model,
         repo_id="example/v2",
         transport=transport,
         publisher=publisher,
@@ -409,6 +411,19 @@ def test_initialize_persists_immutable_ledger_and_first_planned_batch(tmp_path: 
     assert (
         json.loads(controller.ledger_path.read_text(encoding="utf-8"))["run_id"] == ledger["run_id"]
     )
+
+
+def test_custom_gpu_model_is_persisted_and_requested(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    controller = _controller(data_root, transport, publisher, gpu_model="L40S")
+
+    ledger = controller.run()
+
+    assert ledger["gpu_model"] == "L40S"
+    submit_command = next(command for command in transport.frontend_calls if command[0] == "oarsub")
+    assert submit_command[4] == "gpu_model='L40S'"
 
 
 def test_pre_submission_resume_records_a_new_source_commit(tmp_path: Path) -> None:

@@ -60,6 +60,7 @@ _JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECAS
 _STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
 _EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
 _QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_GPU_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 _RETRYABLE_ARTIFACT_FAILURES = frozenset({"missing_receipt", "invalid_receipt"})
 
 
@@ -122,6 +123,7 @@ class Grid5000SentenceController:
         *,
         site: str = "grenoble",
         queue: str = DEFAULT_GRID5000_QUEUE,
+        gpu_model: str = DEFAULT_GRID5000_GPU_MODEL,
         repo_id: str = V2_REPO_ID,
         transport: Grid5000Transport,
         publisher: HubPublisher,
@@ -141,6 +143,9 @@ class Grid5000SentenceController:
         if not _QUEUE_PATTERN.fullmatch(queue):
             raise ControllerRunError(f"Unsafe Grid5000 queue: {queue!r}")
         self.queue = queue
+        if not _GPU_MODEL_PATTERN.fullmatch(gpu_model):
+            raise ControllerRunError(f"Unsafe Grid5000 GPU model: {gpu_model!r}")
+        self.gpu_model = gpu_model
         self.repo_id = repo_id
         self.transport = transport
         self.publisher = publisher
@@ -271,6 +276,7 @@ class Grid5000SentenceController:
             "segmenter_version": _SEGMENTER_VERSION,
             "site": self.site,
             "queue": self.queue,
+            "gpu_model": self.gpu_model,
             "baseline_readme_sha256": readme_hash,
             "baseline_map_sha256": map_hash,
             "limits": self.limits.as_payload(),
@@ -303,6 +309,7 @@ class Grid5000SentenceController:
             "segmenter_version": _SEGMENTER_VERSION,
             "site": self.site,
             "queue": self.queue,
+            "gpu_model": self.gpu_model,
             "limits": self.limits.as_payload(),
         }
         for key, value in expected.items():
@@ -347,7 +354,7 @@ class Grid5000SentenceController:
                 "-q",
                 self.queue,
                 "-p",
-                f"gpu_model='{DEFAULT_GRID5000_GPU_MODEL}'",
+                f"gpu_model='{self.gpu_model}'",
                 "-l",
                 f"host=1/gpu=1,walltime={self.limits.walltime}",
                 self._remote_job_command(batch),
@@ -798,6 +805,7 @@ def run_grid5000_sentence_controller(
     *,
     site: str = "grenoble",
     queue: str = DEFAULT_GRID5000_QUEUE,
+    gpu_model: str = DEFAULT_GRID5000_GPU_MODEL,
     repo_id: str = V2_REPO_ID,
     max_stems: int = DEFAULT_MAX_STEMS,
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
@@ -819,6 +827,7 @@ def run_grid5000_sentence_controller(
         data_root,
         site=site,
         queue=queue,
+        gpu_model=gpu_model,
         repo_id=repo_id,
         transport=transport,
         publisher=publisher,

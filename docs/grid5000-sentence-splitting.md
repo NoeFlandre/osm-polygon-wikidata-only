@@ -46,6 +46,7 @@ UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run python scripts/grid5000_se
     --data-root "$OSM_POLYGON_DATA_ROOT" \
     --site rennes \
     --queue besteffort \
+    --gpu-model A40 \
     --repo-id NoeFlandre/osm-polygon-wikidata-and-wikipedia \
     --max-stems 4 \
     --max-input-bytes 268435456 \
@@ -83,13 +84,13 @@ directories to `LD_LIBRARY_PATH` before constructing the SaT session.
 
 The controller acquires the local lock before reading or writing the ledger.
 It runs `usagepolicycheck -t` before submission and immediately after
-submission. The production invocation uses the explicitly recorded
-`besteffort` queue and constrains each short job to the qualified Rennes
-A40 resources: `oarsub -q besteffort -p gpu_model='A40' -l
-host=1/gpu=1,walltime=0:30`. This avoids heterogeneous GPU allocations that
-cannot run the locked CUDA stack. Monitoring polls only the recorded OAR job
-ID. A different queue or site may be supplied only after a site qualification
-probe. The frontend performs only policy, OAR, SSH/rsync,
+submission. The invocation records the selected GPU model and constrains each
+short job to it, for example the qualified Rennes A40 resources:
+`oarsub -q besteffort -p gpu_model='A40' -l host=1/gpu=1,walltime=0:30`.
+This avoids heterogeneous GPU allocations that cannot run the locked CUDA
+stack. Monitoring polls only the recorded OAR job ID. A different GPU model,
+queue, or site may be supplied only after a site qualification probe. The
+frontend performs only policy, OAR, SSH/rsync,
 monitoring, and scoped file-management operations. `uv sync`, `nvidia-smi`,
 model loading, and sentence inference happen inside the reservation.
 
