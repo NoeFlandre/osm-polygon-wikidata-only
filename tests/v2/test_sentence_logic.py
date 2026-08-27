@@ -11,6 +11,7 @@ from osm_polygon_wikidata_only.v2.sentence_logic import (
     SENTENCE_COLUMNS,
     _normalize_pieces,
     is_sat_supported_language,
+    sentence_schema,
     split_sections,
 )
 
@@ -48,6 +49,27 @@ def test_supported_language_set_is_explicit_and_exact() -> None:
     assert is_sat_supported_language("zh")
     assert not is_sat_supported_language("xx")
     assert not is_sat_supported_language("zh-hans")
+
+
+def test_sentence_schema_preserves_column_names_and_integer_types() -> None:
+    schema = sentence_schema()
+    integer_columns = {
+        "page_id",
+        "revision_id",
+        "section_index",
+        "level",
+        "sentence_index",
+        "start_char",
+        "end_char",
+        "text_length_chars",
+        "text_length_words",
+        "text_length_tokens_estimate",
+    }
+
+    assert schema.names == list(SENTENCE_COLUMNS)
+    assert [str(field.type) for field in schema] == [
+        "int64" if column in integer_columns else "string" for column in SENTENCE_COLUMNS
+    ]
 
 
 def test_split_sections_routes_only_supported_languages_and_keeps_others_unsplit() -> None:

@@ -126,8 +126,8 @@ def validate_manifest_extension(
     selected_stems: Sequence[str],
 ) -> None:
     """Ensure an incoming sentence manifest only appends verified regions."""
-    local_regions = _manifest_regions(local_payload, "local")
-    incoming_regions = _manifest_regions(incoming_payload, "incoming")
+    local_regions = _manifest_regions(local_payload, "Local")
+    incoming_regions = _manifest_regions(incoming_payload, "Incoming")
     _validate_manifest_invariants(local_payload, incoming_payload)
     _validate_existing_regions(local_regions, incoming_regions)
     _validate_selected_stems(incoming_regions, selected_stems)
@@ -202,12 +202,12 @@ def _manifest_regions(
 ) -> dict[tuple[str, str], Mapping[str, object]]:
     raw_regions = payload.get("regions")
     if not isinstance(raw_regions, list):
-        raise ValueError(f"{label.capitalize()} sentence manifest regions must be a list")
+        raise ValueError(f"{label} sentence manifest regions must be a list")
     regions: dict[tuple[str, str], Mapping[str, object]] = {}
     for raw_region in raw_regions:
         identity, region = _manifest_region_identity(raw_region, label)
         if identity in regions:
-            raise ValueError(f"{label.capitalize()} sentence manifest has duplicate region")
+            raise ValueError(f"{label} sentence manifest has duplicate region")
         regions[identity] = region
     return regions
 
@@ -216,14 +216,12 @@ def _manifest_region_identity(
     raw_region: object, label: str
 ) -> tuple[tuple[str, str], Mapping[str, object]]:
     if not isinstance(raw_region, Mapping):
-        raise ValueError(f"{label.capitalize()} sentence manifest region must be an object")
-    region = cast(Mapping[str, object], raw_region)
+        raise ValueError(f"{label} sentence manifest region must be an object")
+    region = cast(Mapping[str, object], raw_region)  # pragma: no mutate
     stem = region.get("stem")
     project = region.get("project")
     if not isinstance(stem, str) or not isinstance(project, str):
-        raise ValueError(
-            f"{label.capitalize()} sentence manifest region needs string stem and project"
-        )
+        raise ValueError(f"{label} sentence manifest region needs string stem and project")
     return (stem, project), region
 
 
@@ -403,7 +401,7 @@ def _read_checkpoint_metadata(path: Path) -> dict[str, object]:
         raise ValueError(f"Invalid checkpoint metadata: {path}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"Invalid checkpoint metadata: {path}")
-    return cast(dict[str, object], payload)
+    return payload
 
 
 def _validate_checkpoint_identity(

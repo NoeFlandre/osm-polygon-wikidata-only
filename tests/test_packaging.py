@@ -184,6 +184,7 @@ def test_crap_gate_keeps_the_existing_v2_fingerprint_scope() -> None:
     justfile = (root / "Justfile").read_text(encoding="utf-8")
 
     assert "src/osm_polygon_wikidata_only/v2/fingerprints.py" in justfile
+    assert "--cov-fail-under=0" in justfile
 
 
 def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:
@@ -194,10 +195,13 @@ def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:
 
     protocol_source = "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py"
     protocol_tests = "tests/grid5000/test_sentence_protocol.py"
+    artifact_tests = "tests/grid5000/test_sentence_artifacts.py"
     assert protocol_source in justfile
     assert "--cov=osm_polygon_wikidata_only.grid5000.sentence_protocol" in justfile
+    assert artifact_tests in justfile
     assert protocol_source in mutation["source_paths"]
     assert protocol_tests in mutation["pytest_add_cli_args_test_selection"]
+    assert artifact_tests in mutation["pytest_add_cli_args_test_selection"]
 
 
 def test_diff_review_executes_unmerged_path_check() -> None:

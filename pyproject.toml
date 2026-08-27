@@ -155,4 +155,5 @@ pytest_add_cli_args_test_selection = [
     "tests/v2/test_pbf_reader_scope.py",
     "tests/v2/test_sentence_logic.py",
     "tests/grid5000/test_sentence_protocol.py",
+    "tests/grid5000/test_sentence_artifacts.py",
 ]

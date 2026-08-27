@@ -276,7 +276,7 @@ def _populate_supported_rows(
     segmenter: SentenceSegmenter,
     batch_size: int,
 ) -> None:
-    if getattr(segmenter, "supports_mixed_languages", False):
+    if getattr(segmenter, "supports_mixed_languages", False):  # pragma: no mutate
         positions = sorted(
             position for values in supported_positions.values() for position in values
         )

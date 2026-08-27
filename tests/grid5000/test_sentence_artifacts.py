@@ -8,7 +8,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
+from osm_polygon_wikidata_only.grid5000 import sentence_protocol
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
+    _copy_file_atomically,
+    _manifest_region_identity,
+    _read_checkpoint_metadata,
+    _validate_existing_checkpoint,
     import_checkpoint_tree,
     validate_manifest_extension,
     validate_sentence_output,
@@ -122,6 +127,28 @@ def test_manifest_extension_rejects_removal_or_contract_changes(
         validate_manifest_extension(local, incoming, selected_stems=("alpha-latest",))
 
 
+def test_manifest_extension_preserves_explicit_local_and_incoming_error_labels() -> None:
+    valid = _manifest([])
+    with pytest.raises(ValueError, match=r"^Local sentence manifest region must be an object$"):
+        validate_manifest_extension(
+            {**valid, "regions": ["invalid"]}, valid, selected_stems=("alpha-latest",)
+        )
+    with pytest.raises(ValueError, match=r"^Incoming sentence manifest region must be an object$"):
+        validate_manifest_extension(
+            valid, {**valid, "regions": ["invalid"]}, selected_stems=("alpha-latest",)
+        )
+
+
+@pytest.mark.parametrize("missing_side", ["local", "incoming"])
+def test_manifest_extension_rejects_missing_invariant_keys(missing_side: str) -> None:
+    local = _manifest([{"stem": "alpha-latest", "project": "wikipedia"}])
+    incoming = _manifest([{"stem": "alpha-latest", "project": "wikipedia"}])
+    del (local if missing_side == "local" else incoming)["model_revision"]
+
+    with pytest.raises(ValueError, match=r"^Sentence manifest model_revision changed$"):
+        validate_manifest_extension(local, incoming, selected_stems=("alpha-latest",))
+
+
 def test_manifest_extension_requires_selected_stems() -> None:
     payload = _manifest([])
 
@@ -152,6 +179,20 @@ def test_manifest_extension_rejects_malformed_region_entries(regions: object, me
         validate_manifest_extension(local, incoming, selected_stems=("alpha-latest",))
 
 
+@pytest.mark.parametrize(
+    "region",
+    [{"project": "wikipedia"}, {"stem": "alpha-latest"}],
+)
+def test_manifest_region_identity_rejects_each_missing_identity_field(
+    region: dict[str, object],
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^Incoming sentence manifest region needs string stem and project$",
+    ):
+        _manifest_region_identity(region, "Incoming")
+
+
 def test_sentence_output_requires_schema_and_sha256(tmp_path: Path) -> None:
     valid = tmp_path / "valid.parquet"
     _write_table(valid, sentence_schema())
@@ -164,6 +205,15 @@ def test_sentence_output_requires_schema_and_sha256(tmp_path: Path) -> None:
         validate_sentence_output(invalid_schema, expected_sha256=sha256_file(invalid_schema))
     with pytest.raises(ValueError, match="SHA-256"):
         validate_sentence_output(valid, expected_sha256="0" * 64)
+
+
+def test_sentence_output_rejects_schema_metadata_differences(tmp_path: Path) -> None:
+    path = tmp_path / "metadata-mismatch.parquet"
+    metadata_schema = sentence_schema().with_metadata({b"contract": b"wrong"})
+    _write_table(path, metadata_schema)
+
+    with pytest.raises(ValueError, match="unexpected schema"):
+        validate_sentence_output(path, expected_sha256=sha256_file(path))
 
 
 def test_import_checkpoint_tree_validates_then_preserves_existing_batches(tmp_path: Path) -> None:
@@ -187,8 +237,22 @@ def test_import_checkpoint_tree_rejects_identity_mismatch(
     incoming = tmp_path / "incoming"
     _write_checkpoint(incoming, identity=bad_identity)
 
-    with pytest.raises(ValueError, match="identity"):
+    with pytest.raises(
+        ValueError, match=r"^Checkpoint identity does not match expected source/model$"
+    ):
         import_checkpoint_tree(incoming, tmp_path / "local", expected_identity=_identity())
+
+
+def test_import_checkpoint_tree_rejects_mismatched_existing_local_identity(tmp_path: Path) -> None:
+    incoming = tmp_path / "incoming"
+    local = tmp_path / "nested" / "local"
+    _write_checkpoint(incoming)
+    _write_checkpoint(local, identity=_identity(model_revision="rev-b"))
+
+    with pytest.raises(
+        ValueError, match=r"^Checkpoint identity does not match expected source/model$"
+    ):
+        import_checkpoint_tree(incoming, local, expected_identity=_identity())
 
 
 def test_import_checkpoint_tree_rejects_bad_schema_and_path_traversal(
@@ -216,11 +280,21 @@ def test_import_checkpoint_tree_rejects_bad_schema_and_path_traversal(
         )
 
 
+def test_import_checkpoint_tree_rejects_schema_metadata_differences(tmp_path: Path) -> None:
+    incoming = tmp_path / "metadata-mismatch"
+    _write_checkpoint(incoming)
+    metadata_schema = sentence_schema().with_metadata({b"contract": b"wrong"})
+    _write_table(incoming / "batch-00000000.parquet", metadata_schema)
+
+    with pytest.raises(ValueError, match="unexpected schema"):
+        import_checkpoint_tree(incoming, tmp_path / "local", expected_identity=_identity())
+
+
 def test_import_checkpoint_tree_rejects_invalid_tree_layout(tmp_path: Path) -> None:
     missing_metadata = tmp_path / "missing-metadata"
     missing_metadata.mkdir()
     _write_table(missing_metadata / "batch-00000000.parquet", sentence_schema())
-    with pytest.raises(ValueError, match=r"metadata\.json"):
+    with pytest.raises(ValueError, match=r"^Checkpoint metadata\.json is missing$"):
         import_checkpoint_tree(
             missing_metadata,
             tmp_path / "local-missing-metadata",
@@ -251,8 +325,80 @@ def test_import_checkpoint_tree_rejects_noncontiguous_batches(tmp_path: Path) ->
     (incoming / "batch-00000001.parquet").unlink()
     _write_table(incoming / "batch-00000002.parquet", sentence_schema())
 
-    with pytest.raises(ValueError, match="contiguous"):
+    with pytest.raises(ValueError, match=r"^Checkpoint batches are not contiguous$"):
         import_checkpoint_tree(incoming, tmp_path / "local", expected_identity=_identity())
+
+
+def test_import_checkpoint_tree_creates_nested_local_root_and_lowercase_metadata(
+    tmp_path: Path,
+) -> None:
+    incoming = tmp_path / "incoming"
+    local = tmp_path / "nested" / "checkpoint"
+    _write_checkpoint(incoming)
+
+    import_checkpoint_tree(incoming, local, expected_identity=_identity())
+
+    names = {path.name for path in local.iterdir()}
+    assert "metadata.json" in names
+    assert "METADATA.JSON" not in names
+
+
+def test_existing_checkpoint_uses_canonical_metadata_filename() -> None:
+    requested_names: list[str] = []
+
+    class _MissingPath:
+        def exists(self) -> bool:
+            return False
+
+    class _RootPath:
+        def __truediv__(self, name: str) -> _MissingPath:
+            requested_names.append(name)
+            return _MissingPath()
+
+    _validate_existing_checkpoint(_RootPath(), {})  # type: ignore[arg-type]
+
+    assert requested_names == ["metadata.json"]
+
+
+def test_read_checkpoint_metadata_uses_utf8_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "metadata.json"
+    captured: dict[str, object] = {}
+
+    def fake_read_text(self: Path, **kwargs: object) -> str:
+        captured.update(kwargs)
+        return "{}"
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    assert _read_checkpoint_metadata(path) == {}
+    assert captured == {"encoding": "utf-8"}
+
+
+def test_copy_file_atomically_uses_same_directory_and_hidden_temp_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.txt"
+    target = tmp_path / "target.txt"
+    source.write_text("payload", encoding="utf-8")
+    captured: dict[str, object] = {}
+    original_mkstemp = sentence_protocol.tempfile.mkstemp
+
+    def recording_mkstemp(**kwargs: object) -> tuple[int, str]:
+        captured.update(kwargs)
+        return original_mkstemp(**kwargs)
+
+    monkeypatch.setattr(sentence_protocol.tempfile, "mkstemp", recording_mkstemp)
+
+    _copy_file_atomically(source, target)
+
+    assert captured == {
+        "prefix": ".target.txt.",
+        "suffix": ".tmp",
+        "dir": target.parent,
+    }
+    assert target.read_text(encoding="utf-8") == "payload"
 
 
 def test_failed_checkpoint_import_leaves_prior_local_state_unchanged(tmp_path: Path) -> None:
