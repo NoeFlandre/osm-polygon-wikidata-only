@@ -85,7 +85,7 @@ The controller acquires the local lock before reading or writing the ledger.
 It runs `usagepolicycheck -t` before submission and immediately after
 submission. The production invocation uses the explicitly recorded
 `besteffort` queue and constrains each short job to the qualified Rennes
-H100 NVL resources: `oarsub -q besteffort -p gpu_model='H100 NVL' -l
+A40 resources: `oarsub -q besteffort -p gpu_model='A40' -l
 host=1/gpu=1,walltime=0:30`. This avoids heterogeneous GPU allocations that
 cannot run the locked CUDA stack. Monitoring polls only the recorded OAR job
 ID. A different queue or site may be supplied only after a site qualification

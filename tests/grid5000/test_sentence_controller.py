@@ -474,7 +474,7 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
         "-q",
         "besteffort",
         "-p",
-        "gpu_model='H100 NVL'",
+        "gpu_model='A40'",
         "-l",
         "host=1/gpu=1,walltime=0:30",
     )
