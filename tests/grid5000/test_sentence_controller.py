@@ -233,10 +233,12 @@ def _controller(
     publisher: _FakePublisher,
     *,
     run_id: str = "run-20260827-01",
+    queue: str = "besteffort",
 ) -> sentence_controller.Grid5000SentenceController:
     return sentence_controller.Grid5000SentenceController(
         data_root,
         site="grenoble",
+        queue=queue,
         repo_id="example/v2",
         transport=transport,
         publisher=publisher,
@@ -245,6 +247,15 @@ def _controller(
         repo_root=Path.cwd(),
         sleep=lambda _seconds: None,
     )
+
+
+def test_unsafe_queue_is_rejected_before_a_run_can_start(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="Unsafe Grid5000 queue"):
+        _controller(data_root, transport, publisher, queue="best effort")
 
 
 def test_initialize_persists_immutable_ledger_and_first_planned_batch(tmp_path: Path) -> None:
@@ -260,6 +271,7 @@ def test_initialize_persists_immutable_ledger_and_first_planned_batch(tmp_path: 
     assert ledger["model_id"] == "segment-any-text/sat-3l-sm"
     assert ledger["model_revision"] == "137da05"
     assert ledger["site"] == "grenoble"
+    assert ledger["queue"] == "besteffort"
     assert ledger["baseline_readme_sha256"]
     assert ledger["baseline_map_sha256"]
     assert ledger["limits"] == {
@@ -290,8 +302,15 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
     assert publisher.verify_calls
     assert any(command[0] == "oarsub" for command in transport.frontend_calls)
     submit_command = next(command for command in transport.frontend_calls if command[0] == "oarsub")
-    assert '--job-id "$OAR_JOB_ID"' in submit_command[3]
-    assert "env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN" in submit_command[3]
+    assert submit_command[:5] == (
+        "oarsub",
+        "-q",
+        "besteffort",
+        "-l",
+        "host=1/gpu=1,walltime=0:30",
+    )
+    assert '--job-id "$OAR_JOB_ID"' in submit_command[-1]
+    assert "env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN" in submit_command[-1]
     assert sum(command[0] == "usagepolicycheck" for command in transport.frontend_calls) >= 3
     assert transport.removals[-1].endswith("run-20260827-01")
 

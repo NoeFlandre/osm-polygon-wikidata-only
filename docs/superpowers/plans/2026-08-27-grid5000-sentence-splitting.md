@@ -441,7 +441,7 @@ The existing `run_v2_sentence_split` remains the only sentence-row materializer.
   - create a local temporary staging tree containing only selected source sections, the two V2/sentence manifests, selected checkpoint trees, the pinned Git archive, and job metadata;
   - use the explicit remote root `$HOME/osm-polygon-wikidata-only-grid5000/<run-id>/`;
   - run `usagepolicycheck -t` on the site frontend before submission and immediately after submission;
-  - submit exactly `oarsub -l host=1/gpu=1,walltime=0:30 <job-script>` in the default queue;
+  - submit exactly `oarsub -q besteffort -l host=1/gpu=1,walltime=0:30 <job-script>`;
   - poll only the recorded OAR job ID;
   - download receipt, outputs, manifest, and checkpoint state before cleanup;
   - import and validate locally before calling the HF publisher;
@@ -519,6 +519,7 @@ The existing `run_v2_sentence_split` remains the only sentence-row materializer.
   UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run python scripts/grid5000_sentence_controller.py \
       --data-root "$OSM_POLYGON_DATA_ROOT" \
       --site grenoble \
+      --queue besteffort \
       --repo-id NoeFlandre/osm-polygon-wikidata-and-wikipedia \
       --max-stems 4 \
       --max-input-bytes 268435456 \

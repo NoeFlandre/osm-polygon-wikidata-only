@@ -43,6 +43,7 @@ From the repository checkout, start or resume the operation with:
 UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run python scripts/grid5000_sentence_controller.py \
     --data-root "$OSM_POLYGON_DATA_ROOT" \
     --site grenoble \
+    --queue besteffort \
     --repo-id NoeFlandre/osm-polygon-wikidata-and-wikipedia \
     --max-stems 4 \
     --max-input-bytes 268435456 \
@@ -76,11 +77,12 @@ later jobs.
 
 The controller acquires the local lock before reading or writing the ledger.
 It runs `usagepolicycheck -t` before submission and immediately after
-submission. OAR requests use the default queue and exactly
-`oarsub -l host=1/gpu=1,walltime=0:30`; monitoring polls only the recorded
-OAR job ID. The frontend performs only policy, OAR, SSH/rsync, monitoring, and
-scoped file-management operations. `uv sync`, `nvidia-smi`, model loading,
-and sentence inference happen inside the reservation.
+submission. OAR requests use the explicitly recorded `besteffort` queue and
+exactly `oarsub -q besteffort -l host=1/gpu=1,walltime=0:30`; monitoring polls
+only the recorded OAR job ID. A different queue may be supplied only after a
+site qualification probe. The frontend performs only policy, OAR, SSH/rsync,
+monitoring, and scoped file-management operations. `uv sync`, `nvidia-smi`,
+model loading, and sentence inference happen inside the reservation.
 
 For every successful GPU job, the controller:
 
@@ -108,7 +110,7 @@ state, cancels only a known active OAR job, and releases the local lock.
 
 The ledger is the source of resume truth. An omitted `--run-id` resumes the
 existing ledger, while immutable fields such as source commit, model
-revision, site, limits, and protected asset hashes must match. A successful
+revision, site, queue, limits, and protected asset hashes must match. A successful
 run performs one final policy check and removes the entire run namespace only
 after all planned batches are published. Cleanup rejects paths outside that
 namespace.

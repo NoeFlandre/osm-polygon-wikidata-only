@@ -50,11 +50,13 @@ _LEDGER_FILENAME = "grid5000_sentence_run.json"
 _RUN_DIRECTORY = "grid5000_sentence_runs"
 _REMOTE_NAMESPACE = "$HOME/osm-polygon-wikidata-only-grid5000"
 _SEGMENTER_VERSION = "2.2.1"
+DEFAULT_GRID5000_QUEUE = "besteffort"
 _ACTIVE_STATES = frozenset({"submitted", "running"})
 _TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
 _JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECASE)
 _STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
 _EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
+_QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
 class Grid5000Transport(Protocol):
@@ -115,6 +117,7 @@ class Grid5000SentenceController:
         data_root: DataRoot,
         *,
         site: str = "grenoble",
+        queue: str = DEFAULT_GRID5000_QUEUE,
         repo_id: str = V2_REPO_ID,
         transport: Grid5000Transport,
         publisher: HubPublisher,
@@ -131,6 +134,9 @@ class Grid5000SentenceController:
     ) -> None:
         self.data_root = data_root
         self.site = site
+        if not _QUEUE_PATTERN.fullmatch(queue):
+            raise ControllerRunError(f"Unsafe Grid5000 queue: {queue!r}")
+        self.queue = queue
         self.repo_id = repo_id
         self.transport = transport
         self.publisher = publisher
@@ -238,6 +244,7 @@ class Grid5000SentenceController:
             "model_revision": DEFAULT_SAT_MODEL_REVISION,
             "segmenter_version": _SEGMENTER_VERSION,
             "site": self.site,
+            "queue": self.queue,
             "baseline_readme_sha256": readme_hash,
             "baseline_map_sha256": map_hash,
             "limits": self.limits.as_payload(),
@@ -269,6 +276,7 @@ class Grid5000SentenceController:
             "model_revision": DEFAULT_SAT_MODEL_REVISION,
             "segmenter_version": _SEGMENTER_VERSION,
             "site": self.site,
+            "queue": self.queue,
             "limits": self.limits.as_payload(),
         }
         for key, value in expected.items():
@@ -309,6 +317,8 @@ class Grid5000SentenceController:
             self._policy_check()
             submit_command = (
                 "oarsub",
+                "-q",
+                self.queue,
                 "-l",
                 f"host=1/gpu=1,walltime={self.limits.walltime}",
                 self._remote_job_command(batch),
@@ -709,6 +719,7 @@ def run_grid5000_sentence_controller(
     data_root: DataRoot,
     *,
     site: str = "grenoble",
+    queue: str = DEFAULT_GRID5000_QUEUE,
     repo_id: str = V2_REPO_ID,
     max_stems: int = DEFAULT_MAX_STEMS,
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
@@ -729,6 +740,7 @@ def run_grid5000_sentence_controller(
     controller = Grid5000SentenceController(
         data_root,
         site=site,
+        queue=queue,
         repo_id=repo_id,
         transport=transport,
         publisher=publisher,
@@ -951,6 +963,7 @@ def _download_hf_file(
 
 
 __all__ = [
+    "DEFAULT_GRID5000_QUEUE",
     "ControllerLimits",
     "ControllerRunError",
     "Grid5000SentenceController",

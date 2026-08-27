@@ -28,6 +28,8 @@ def test_controller_cli_forwards_all_resumable_run_options(
                 str(tmp_path / "data-root"),
                 "--site",
                 "lyon",
+                "--queue",
+                "besteffort",
                 "--repo-id",
                 "example/dataset",
                 "--max-stems",
@@ -51,6 +53,7 @@ def test_controller_cli_forwards_all_resumable_run_options(
 
     assert captured["data_root"].path == tmp_path / "data-root"
     assert captured["site"] == "lyon"
+    assert captured["queue"] == "besteffort"
     assert captured["repo_id"] == "example/dataset"
     assert captured["max_stems"] == 3
     assert captured["max_input_bytes"] == 1234

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000.sentence_controller import (
+    DEFAULT_GRID5000_QUEUE,
     run_grid5000_sentence_controller,
 )
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
@@ -17,6 +18,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--site", default="grenoble")
+    parser.add_argument("--queue", default=DEFAULT_GRID5000_QUEUE)
     parser.add_argument("--repo-id", default=V2_REPO_ID)
     parser.add_argument("--max-stems", type=int, default=4)
     parser.add_argument("--max-input-bytes", type=int, default=256 * 1024 * 1024)
@@ -36,6 +38,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ledger = run_grid5000_sentence_controller(
         data_root,
         site=args.site,
+        queue=args.queue,
         repo_id=args.repo_id,
         max_stems=args.max_stems,
         max_input_bytes=args.max_input_bytes,

@@ -142,7 +142,8 @@ No job code receives `HF_TOKEN`.
 ### Resource policy
 
 The initial request is one GPU on one host with a 30-minute walltime in the
-default queue, expressed as `host=1/gpu=1,walltime=0:30`. The controller will
+explicit `besteffort` queue, expressed as
+`-q besteffort -l host=1/gpu=1,walltime=0:30`. The controller will
 not assume that a particular GPU model is available; it will inspect the
 selected site immediately before submission and fail closed if a CUDA-capable
 GPU cannot be reserved. Batch size may be reduced only based on recorded
