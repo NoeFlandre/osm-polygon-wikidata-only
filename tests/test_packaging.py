@@ -74,6 +74,9 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     assert config["project"]["optional-dependencies"]["sentence-splitting"] == [
         "wtpsplit[onnx-cpu]==2.2.1"
     ]
+    assert config["project"]["optional-dependencies"]["sentence-splitting-gpu"] == [
+        "wtpsplit[onnx-gpu]==2.2.1"
+    ]
 
 
 def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
@@ -181,6 +184,20 @@ def test_crap_gate_keeps_the_existing_v2_fingerprint_scope() -> None:
     justfile = (root / "Justfile").read_text(encoding="utf-8")
 
     assert "src/osm_polygon_wikidata_only/v2/fingerprints.py" in justfile
+
+
+def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    mutation = config["tool"]["mutmut"]
+
+    protocol_source = "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py"
+    protocol_tests = "tests/grid5000/test_sentence_protocol.py"
+    assert protocol_source in justfile
+    assert "--cov=osm_polygon_wikidata_only.grid5000.sentence_protocol" in justfile
+    assert protocol_source in mutation["source_paths"]
+    assert protocol_tests in mutation["pytest_add_cli_args_test_selection"]
 
 
 def test_diff_review_executes_unmerged_path_check() -> None:

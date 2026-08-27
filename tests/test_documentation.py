@@ -343,6 +343,13 @@ def test_developer_docs_use_current_test_paths_and_quality_gate() -> None:
     assert "just tests" in development
 
 
+def test_developer_docs_link_the_grid5000_sentence_operation() -> None:
+    development = (REPOSITORY / "docs/development.md").read_text(encoding="utf-8")
+
+    assert "grid5000-sentence-splitting.md" in development
+    assert "sentence-splitting-gpu" in development
+
+
 def test_architecture_keeps_private_modules_out_of_public_docs() -> None:
     architecture = (REPOSITORY / "docs/architecture.md").read_text(encoding="utf-8")
     assert "hf._" not in architecture

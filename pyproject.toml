@@ -132,6 +132,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/io/pbf_reader.py",
     "src/osm_polygon_wikidata_only/hf/_upload_state.py",
     "src/osm_polygon_wikidata_only/v2/sentence_logic.py",
+    "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only"]
 mutate_only_covered_lines = true
@@ -153,4 +154,5 @@ pytest_add_cli_args_test_selection = [
     "tests/hf/test_upload_state.py",
     "tests/v2/test_pbf_reader_scope.py",
     "tests/v2/test_sentence_logic.py",
+    "tests/grid5000/test_sentence_protocol.py",
 ]

@@ -25,6 +25,18 @@ uv sync --extra sentence-splitting
 Its exact routing and resumability contract is documented in the
 [sentence-splitting guide](sentence-splitting.md).
 
+The GPU extra is reserved for the Grid5000 compute-node job:
+
+```bash
+uv sync --extra sentence-splitting-gpu
+```
+
+The local controller, short-job policy, CUDA requirement, token boundary, and
+resume/publish contract are documented in the
+[Grid5000 sentence operations guide](grid5000-sentence-splitting.md). The
+external data root remains authoritative; the controller stages only bounded
+batch inputs and keeps HF authentication local.
+
 ## Docker reproducibility
 
 The checked-in `Dockerfile` has `runtime` and `development` targets. Both are

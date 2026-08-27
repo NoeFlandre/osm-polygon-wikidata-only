@@ -19,6 +19,7 @@ def test_mkdocs_configuration_defines_public_navigation_and_exclusions() -> None
         "architecture.md",
         "development.md",
         "sentence-splitting.md",
+        "grid5000-sentence-splitting.md",
     ):
         assert page in config
     assert "superpowers/**" in config

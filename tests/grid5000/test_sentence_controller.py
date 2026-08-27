@@ -291,7 +291,7 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
     assert any(command[0] == "oarsub" for command in transport.frontend_calls)
     submit_command = next(command for command in transport.frontend_calls if command[0] == "oarsub")
     assert '--job-id "$OAR_JOB_ID"' in submit_command[3]
-    assert "HF_TOKEN" not in submit_command[3]
+    assert "env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN" in submit_command[3]
     assert sum(command[0] == "usagepolicycheck" for command in transport.frontend_calls) >= 3
     assert transport.removals[-1].endswith("run-20260827-01")
 

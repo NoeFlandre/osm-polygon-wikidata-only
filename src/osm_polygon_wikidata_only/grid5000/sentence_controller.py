@@ -384,8 +384,10 @@ class Grid5000SentenceController:
         stems = " ".join(shlex.quote(stem) for stem in _batch_stems(batch))
         return (
             f'cd "{remote_job_root}/code" && '
-            f'UV_CACHE_DIR="{uv_cache}" uv sync --frozen --extra sentence-splitting-gpu --no-dev && '
-            f'UV_CACHE_DIR="{uv_cache}" uv run --no-sync python scripts/grid5000_sentence_job.py '
+            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
+            f"uv sync --frozen --extra sentence-splitting-gpu --no-dev && "
+            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
+            f"uv run --no-sync python scripts/grid5000_sentence_job.py "
             f'--data-root "{remote_data}" --model-cache "{model_cache}" '
             f"--source-commit {shlex.quote(self.source_commit)} "
             '--job-id "$OAR_JOB_ID" '

@@ -255,6 +255,11 @@ are preserved unsplit and listed in
 `processed_v2/manifests/sentence_splitting.json`. Add `--push` only after
 reviewing the sidecars and manifest.
 
+For the remaining V2 sentence work, use the [Grid5000 sentence operations
+guide](docs/grid5000-sentence-splitting.md). It keeps the Hugging Face token on
+the local controller, runs `SaT-3l-sm` only in short CUDA GPU jobs, publishes
+one verified batch at a time, and resumes from its durable ledger.
+
 ### Wikimedia Bot Password authentication
 
 Long production runs should authenticate their read-only API requests with a
