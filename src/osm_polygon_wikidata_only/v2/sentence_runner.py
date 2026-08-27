@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
+from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.sentence_checkpoints import SentenceCheckpoint
 from osm_polygon_wikidata_only.v2.sentence_logic import (
     SAT_MODEL_ID,
@@ -308,8 +309,14 @@ def _write_manifest(
     segmenter: SentenceSegmenter,
     summaries: Sequence[SentenceRegionSummary],
 ) -> None:
+    merged = {
+        (summary.stem, summary.project): summary
+        for summary in _load_manifest_summaries(path, segmenter=segmenter)
+    }
+    merged.update({(summary.stem, summary.project): summary for summary in summaries})
+    ordered_summaries = [merged[key] for key in sorted(merged)]
     unsupported_languages = sorted(
-        {language for summary in summaries for language in summary.unsupported_languages}
+        {language for summary in ordered_summaries for language in summary.unsupported_languages}
     )
     payload = {
         "contract_version": SENTENCE_SPLIT_CONTRACT_VERSION,
@@ -320,9 +327,60 @@ def _write_manifest(
         "supported_languages": list(SAT_SUPPORTED_LANGUAGES),
         "unsupported_languages": unsupported_languages,
         "unsupported_language_policy": "one unsplit row; never passed to SaT",
-        "regions": [asdict(summary) for summary in summaries],
+        "regions": [asdict(summary) for summary in ordered_summaries],
     }
     atomic_write_text(path, json_dumps(payload) + "\n")
+
+
+def _load_manifest_summaries(
+    path: Path,
+    *,
+    segmenter: SentenceSegmenter,
+) -> tuple[SentenceRegionSummary, ...]:
+    if not path.is_file():
+        return ()
+    try:
+        payload = json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"Invalid sentence manifest: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid sentence manifest: {path}")
+    expected_metadata = {
+        "contract_version": SENTENCE_SPLIT_CONTRACT_VERSION,
+        "segmenter": SAT_MODEL_NAME,
+        "model_id": segmenter.model_id,
+        "model_revision": _model_revision(segmenter),
+        "segmenter_version": segmenter.version,
+    }
+    if any(payload.get(key) != value for key, value in expected_metadata.items()):
+        raise ValueError(f"Sentence manifest uses a different segmenter: {path}")
+    regions = payload.get("regions")
+    if not isinstance(regions, list):
+        raise ValueError(f"Invalid sentence manifest regions: {path}")
+    summaries: list[SentenceRegionSummary] = []
+    for region in regions:
+        if not isinstance(region, dict):
+            raise ValueError(f"Invalid sentence manifest region: {path}")
+        try:
+            summaries.append(
+                SentenceRegionSummary(
+                    stem=str(region["stem"]),
+                    project=str(region["project"]),
+                    sections=int(region["sections"]),
+                    split_sections=int(region["split_sections"]),
+                    unsplit_sections=int(region["unsplit_sections"]),
+                    sentence_rows=int(region["sentence_rows"]),
+                    supported_languages=tuple(
+                        str(value) for value in region["supported_languages"]
+                    ),
+                    unsupported_languages=tuple(
+                        str(value) for value in region["unsupported_languages"]
+                    ),
+                )
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid sentence manifest region: {path}") from exc
+    return tuple(summaries)
 
 
 def _model_revision(segmenter: SentenceSegmenter) -> str:

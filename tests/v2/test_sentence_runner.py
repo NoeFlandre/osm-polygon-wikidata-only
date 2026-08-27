@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, is_dataclass
 from pathlib import Path
 
@@ -124,6 +125,33 @@ def test_v2_sentence_split_resumes_without_rewriting_sections(tmp_path: Path) ->
     manifest = result.manifest_path.read_text(encoding="utf-8")
     assert '"unsupported_languages":["xx"]' in manifest
     assert '"model_id":"segment-any-text/sat-3l-sm"' in manifest
+
+
+def test_partial_sentence_run_preserves_previous_manifest_regions(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    for stem in ("first-latest", "second-latest"):
+        write_v2_region(
+            data_root.processed_v2,
+            stem,
+            polygons=[],
+            documents=[],
+            links=[],
+            sections=[_section(f"{stem}-en", "en", "First. Second.")],
+        )
+
+    segmenter = _FakeSegmenter()
+    run_v2_sentence_split(data_root, segmenter=segmenter, batch_size=1, stems=("first-latest",))
+    run_v2_sentence_split(data_root, segmenter=segmenter, batch_size=1, stems=("second-latest",))
+
+    manifest = json.loads(
+        (data_root.processed_v2 / "manifests/sentence_splitting.json").read_text(encoding="utf-8")
+    )
+
+    assert {region["stem"] for region in manifest["regions"]} == {
+        "first-latest",
+        "second-latest",
+    }
 
 
 def test_sentence_source_processing_returns_typed_accounting(tmp_path: Path) -> None:
