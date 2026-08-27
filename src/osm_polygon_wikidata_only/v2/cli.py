@@ -75,7 +75,7 @@ def execute_v2_sentence_split(
         segmenter=segmenter,
         batch_size=args.batch_size,
     )
-    write_v2_card(data_root.processed_v2)
+    write_v2_card(data_root.processed_v2, v1_processed=data_root.processed)
     if args.push:
         from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
 

@@ -126,6 +126,45 @@ def test_sentence_executor_constructs_pinned_cpu_segmenter(tmp_path: Path, monke
     assert calls["run"][2] == 32  # type: ignore[index]
 
 
+def test_sentence_executor_renders_card_against_v1_artifacts(tmp_path: Path, monkeypatch) -> None:
+    import osm_polygon_wikidata_only.v2.cli as v2_cli
+    from osm_polygon_wikidata_only.v2.sentence_runner import SentenceRunResult
+
+    class FakeSegmenter:
+        model_id = "segment-any-text/sat-3l-sm"
+        revision = "model-revision"
+        version = "test"
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+    def fake_run(_data_root, *, segmenter, batch_size):
+        del segmenter, batch_size
+        return SentenceRunResult(manifest_path=tmp_path / "manifest.json", regions=())
+
+    card_calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(v2_cli, "SaT3lSegmenter", FakeSegmenter)
+    monkeypatch.setattr(v2_cli, "run_v2_sentence_split", fake_run)
+    monkeypatch.setattr(
+        v2_cli,
+        "write_v2_card",
+        lambda processed_v2, **kwargs: card_calls.append((processed_v2, kwargs)),
+    )
+    args = argparse.Namespace(
+        batch_size=32,
+        inference_batch_size=7,
+        push=False,
+        dry_run=False,
+        commit_message=None,
+        upload_threads=1,
+    )
+    data_root = DataRoot(tmp_path)
+
+    assert v2_cli.execute_v2_sentence_split(args, data_root=data_root, settings=Settings()) == 0
+
+    assert card_calls == [(data_root.processed_v2, {"v1_processed": data_root.processed})]
+
+
 def test_sentence_executor_publishes_only_completed_sentence_artifacts(
     tmp_path: Path, monkeypatch
 ) -> None:
