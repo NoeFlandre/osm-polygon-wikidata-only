@@ -142,6 +142,8 @@ def test_remote_job_bootstraps_pinned_uv_on_compute_node(tmp_path: Path) -> None
         '"$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/uv-bootstrap/bin/uv" run --no-sync'
         in command
     )
+    assert 'find "$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/jobs' in command
+    assert "LD_LIBRARY_PATH=" in command
 
 
 def test_batch_staging_includes_package_forced_assets(tmp_path: Path) -> None:

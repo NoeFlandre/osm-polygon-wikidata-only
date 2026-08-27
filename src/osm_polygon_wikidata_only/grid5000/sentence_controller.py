@@ -421,6 +421,7 @@ class Grid5000SentenceController:
         uv_bootstrap = f"{self.remote_run_root}/uv-bootstrap"
         uv_bin = f"{uv_bootstrap}/bin/uv"
         uv_python = f"{uv_bootstrap}/bin/python"
+        venv_lib = f"{remote_job_root}/code/.venv/lib"
         stems = " ".join(shlex.quote(stem) for stem in _batch_stems(batch))
         return (
             f'cd "{remote_job_root}/code" && '
@@ -431,7 +432,11 @@ class Grid5000SentenceController:
             f"fi && "
             f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
             f'"{uv_bin}" sync --frozen --extra sentence-splitting-gpu --no-dev && '
+            f'nvidia_libs="$(find "{venv_lib}" -path "*/site-packages/nvidia/*/lib" '
+            '-type d -print | paste -sd: -)" && '
+            'if [ -z "$nvidia_libs" ]; then echo "CUDA libraries were not installed" >&2; exit 1; fi && '
             f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
+            'LD_LIBRARY_PATH="$nvidia_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" '
             f'"{uv_bin}" run --no-sync python scripts/grid5000_sentence_job.py '
             f'--data-root "{remote_data}" --model-cache "{model_cache}" '
             f"--source-commit {shlex.quote(self.source_commit)} "

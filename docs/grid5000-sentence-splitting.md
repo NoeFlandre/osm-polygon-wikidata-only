@@ -9,8 +9,10 @@ reserved GPU job.
 ## Fixed execution contract
 
 Every job uses `SaT-3l-sm` at revision `137da05` through
-`wtpsplit[onnx-gpu]==2.2.1`. The compute entry point requires
-`CUDAExecutionProvider` and fails closed when CUDA is not available. It also
+`wtpsplit[onnx-gpu]==2.2.1`, plus the pinned ONNX Runtime CUDA/cuDNN runtime
+wheels. The compute entry point requires an active
+`CUDAExecutionProvider` and fails closed when CUDA is not available; it does
+not accept a session that silently falls back to CPU. It also
 records the GPU name, UUID, memory, ONNX Runtime providers, source commit,
 model revision, selected stems, row counts, and artifact hashes in a receipt.
 
@@ -73,7 +75,10 @@ the full dataset or raw PBF collection. The model and package download are
 performed on the reserved node, with a run-owned model and uv cache reused by
 later jobs. Because the compute-node image does not guarantee a system `uv`,
 the first job creates a run-owned bootstrap environment and installs the
-pinned `uv==0.11.16` package into it; later jobs reuse that bootstrap.
+the first job creates a run-owned bootstrap environment and installs the
+pinned `uv==0.11.16` package into it; later jobs reuse that bootstrap. After
+the locked environment is synced, the job adds the installed NVIDIA library
+directories to `LD_LIBRARY_PATH` before constructing the SaT session.
 
 ## Policy, resume, and publication sequence
 

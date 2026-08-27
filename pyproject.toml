@@ -45,7 +45,10 @@ Dataset = "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only"
 
 [project.optional-dependencies]
 sentence-splitting = ["wtpsplit[onnx-cpu]==2.2.1"]
-sentence-splitting-gpu = ["wtpsplit[onnx-gpu]==2.2.1"]
+sentence-splitting-gpu = [
+    "wtpsplit[onnx-gpu]==2.2.1",
+    "onnxruntime-gpu[cuda,cudnn]==1.29.0",
+]
 
 [build-system]
 requires = ["hatchling"]

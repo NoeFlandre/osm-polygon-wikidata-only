@@ -50,7 +50,7 @@ class SaT3lSegmenter:
         self.inference_batch_size = inference_batch_size
         self.ort_providers = tuple(_resolve_ort_providers(ort_providers, require_gpu=require_gpu))
         self.version = str(getattr(wtpsplit, "__version__", "unknown"))
-        self._model = model_class(
+        model = model_class(
             self.model_id,
             hub_prefix=None,
             ort_providers=list(self.ort_providers),
@@ -59,6 +59,13 @@ class SaT3lSegmenter:
                 "revision": revision,
             },
         )
+        if require_gpu:
+            self.ort_providers = _effective_ort_providers(model)
+            if _CUDA_PROVIDER not in self.ort_providers:
+                raise RuntimeError(
+                    "Grid5000 sentence splitting requires an active CUDAExecutionProvider"
+                )
+        self._model = model
 
     def split(self, texts: Sequence[str], *, language: str) -> list[list[str]]:
         """Return lossless SaT pieces for one exact language code."""
@@ -118,6 +125,19 @@ def _gpu_ort_providers() -> list[str]:
         *([_CUDA_PROVIDER] if _CUDA_PROVIDER in available else []),
         *([_CPU_PROVIDER] if _CPU_PROVIDER in available else []),
     ]
+
+
+def _effective_ort_providers(model: Any) -> tuple[str, ...]:
+    """Return the providers actually active in a constructed SaT session."""
+    wrapper = getattr(model, "model", None)
+    session = getattr(wrapper, "ort_session", None)
+    get_providers = getattr(session, "get_providers", None)
+    if not callable(get_providers):
+        raise RuntimeError("Could not verify the active CUDAExecutionProvider")
+    providers = tuple(str(provider) for provider in get_providers())
+    if not providers:
+        raise RuntimeError("Could not verify the active CUDAExecutionProvider")
+    return providers
 
 
 def _available_ort_providers() -> set[str]:

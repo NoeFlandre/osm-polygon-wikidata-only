@@ -14,15 +14,26 @@ class _FakeSaT:
     init_kwargs: dict[str, object] | None = None
     split_args: tuple[object, ...] | None = None
     split_kwargs: dict[str, object] | None = None
+    effective_providers = ("CUDAExecutionProvider", "CPUExecutionProvider")
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         type(self).init_args = args
         type(self).init_kwargs = kwargs
+        self.model = _FakeORTWrapper(type(self).effective_providers)
 
     def split(self, *args: object, **kwargs: object) -> list[list[str]]:
         type(self).split_args = args
         type(self).split_kwargs = kwargs
         return [["First. ", "Second."]]
+
+
+class _FakeORTWrapper:
+    def __init__(self, providers: tuple[str, ...]) -> None:
+        self.ort_session = self
+        self._providers = providers
+
+    def get_providers(self) -> list[str]:
+        return list(self._providers)
 
 
 def _fake_wtpsplit() -> ModuleType:
@@ -134,3 +145,23 @@ def test_gpu_mode_passes_cuda_before_cpu(tmp_path: Path, monkeypatch: pytest.Mon
         "CUDAExecutionProvider",
         "CPUExecutionProvider",
     ]
+
+
+def test_gpu_mode_rejects_a_cpu_fallback_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
+    ort = ModuleType("onnxruntime")
+    ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+    monkeypatch.setattr(_FakeSaT, "effective_providers", ("CPUExecutionProvider",))
+
+    with pytest.raises(RuntimeError, match="active CUDAExecutionProvider"):
+        SaT3lSegmenter(
+            cache_dir=tmp_path,
+            revision="model-revision",
+            require_gpu=True,
+        )

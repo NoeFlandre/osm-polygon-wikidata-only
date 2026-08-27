@@ -75,7 +75,8 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
         "wtpsplit[onnx-cpu]==2.2.1"
     ]
     assert config["project"]["optional-dependencies"]["sentence-splitting-gpu"] == [
-        "wtpsplit[onnx-gpu]==2.2.1"
+        "wtpsplit[onnx-gpu]==2.2.1",
+        "onnxruntime-gpu[cuda,cudnn]==1.29.0",
     ]
 
 
