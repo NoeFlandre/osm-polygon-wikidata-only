@@ -179,6 +179,7 @@ class Grid5000SentenceController:
             if self.run_id is not None and self.run_id != stored_run_id:
                 raise ControllerRunError("Requested run_id does not match the existing ledger")
             self.run_id = stored_run_id
+            self._refresh_pre_submission_source_commit(ledger)
             self._validate_immutable_ledger(ledger)
         else:
             if self.run_id is None:
@@ -189,6 +190,27 @@ class Grid5000SentenceController:
             self._write_ledger(ledger)
         self._ledger = ledger
         return ledger
+
+    def _refresh_pre_submission_source_commit(self, ledger: dict[str, Any]) -> None:
+        stored_commit = ledger.get("source_commit")
+        if stored_commit == self.source_commit or not _is_pre_submission_ledger(ledger):
+            return
+        if not isinstance(stored_commit, str):
+            return
+        updates = ledger.get("source_commit_updates", [])
+        if not isinstance(updates, list):
+            raise ControllerRunError("Sentence ledger source_commit_updates must be a list")
+        ledger["source_commit"] = self.source_commit
+        ledger["source_commit_updates"] = [
+            *updates,
+            {
+                "from": stored_commit,
+                "to": self.source_commit,
+                "at": _timestamp(),
+                "reason": "pre_submission_resume",
+            },
+        ]
+        self._write_ledger(ledger)
 
     def run(self) -> dict[str, Any]:
         """Process batches serially until all finalized V2 stems are published."""
@@ -881,6 +903,22 @@ def _batch_stems(batch: Mapping[str, object]) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(stem, str) for stem in raw):
         raise ControllerRunError("Sentence ledger batch stems are invalid")
     return tuple(str(stem) for stem in raw)
+
+
+def _is_pre_submission_ledger(ledger: Mapping[str, object]) -> bool:
+    raw_batches = ledger.get("batches")
+    if not isinstance(raw_batches, list) or not raw_batches:
+        return False
+    for raw_batch in raw_batches:
+        if not isinstance(raw_batch, Mapping):
+            return False
+        if raw_batch.get("state") not in {"planned", "failed"}:
+            return False
+        if raw_batch.get("oar_job_id") not in (None, ""):
+            return False
+        if raw_batch.get("hf_commit") not in (None, ""):
+            return False
+    return True
 
 
 def _source_projects(processed_v2: Path, stem: str) -> tuple[str, ...]:

@@ -258,6 +258,7 @@ def _controller(
     *,
     run_id: str = "run-20260827-01",
     queue: str = "besteffort",
+    source_commit: str = "abc123",
 ) -> sentence_controller.Grid5000SentenceController:
     return sentence_controller.Grid5000SentenceController(
         data_root,
@@ -267,7 +268,7 @@ def _controller(
         transport=transport,
         publisher=publisher,
         run_id=run_id,
-        source_commit="abc123",
+        source_commit=source_commit,
         repo_root=Path.cwd(),
         sleep=lambda _seconds: None,
     )
@@ -310,6 +311,25 @@ def test_initialize_persists_immutable_ledger_and_first_planned_batch(tmp_path: 
     assert (
         json.loads(controller.ledger_path.read_text(encoding="utf-8"))["run_id"] == ledger["run_id"]
     )
+
+
+def test_pre_submission_resume_records_a_new_source_commit(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    first = _controller(data_root, transport, publisher)
+    ledger = first.initialize()
+    ledger["source_commit"] = "old123"
+    ledger["batches"][0].update(state="failed", attempt=1, error="ControllerRunError")
+    first._write_ledger(ledger)
+
+    resumed = _controller(data_root, transport, publisher, source_commit="new123")
+
+    updated = resumed.initialize()
+
+    assert updated["source_commit"] == "new123"
+    assert updated["source_commit_updates"][-1]["from"] == "old123"
+    assert updated["source_commit_updates"][-1]["to"] == "new123"
 
 
 def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: Path) -> None:

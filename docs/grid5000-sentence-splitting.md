@@ -110,7 +110,9 @@ state, cancels only a known active OAR job, and releases the local lock.
 
 The ledger is the source of resume truth. An omitted `--run-id` resumes the
 existing ledger, while immutable fields such as source commit, model
-revision, site, queue, limits, and protected asset hashes must match. A successful
+revision, site, queue, limits, and protected asset hashes must match after the
+first GPU submission. A failed pre-submission ledger may adopt a newer source
+commit once, with the change recorded in `source_commit_updates`. A successful
 run performs one final policy check and removes the entire run namespace only
 after all planned batches are published. Cleanup rejects paths outside that
 namespace.
