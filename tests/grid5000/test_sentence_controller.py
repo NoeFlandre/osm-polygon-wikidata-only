@@ -511,6 +511,29 @@ def test_failed_job_imports_partial_checkpoint_and_does_not_publish(tmp_path: Pa
     assert json.loads(controller.ledger_path.read_text())["batches"][0]["state"] == "failed"
 
 
+def test_retry_resets_remote_cleanup_state_for_the_new_attempt(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    first_transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    first = _controller(data_root, first_transport, publisher)
+    ledger = first.initialize()
+    ledger["batches"][0].update(
+        state="failed",
+        attempt=1,
+        remote_job_root="$HOME/osm-polygon-wikidata-only-grid5000/run-20260827-01/jobs/batch-00000000-attempt-01",
+        remote_cleaned=True,
+        error="missing_receipt",
+    )
+    first._write_ledger(ledger)
+
+    transport = _FakeTransport(tmp_path)
+    resumed = _controller(data_root, transport, publisher)
+
+    resumed.run()
+
+    assert any(removal.endswith("batch-00000000-attempt-02") for removal in transport.removals)
+
+
 def test_missing_receipt_marks_terminal_batch_failed_and_cleans_it(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path)

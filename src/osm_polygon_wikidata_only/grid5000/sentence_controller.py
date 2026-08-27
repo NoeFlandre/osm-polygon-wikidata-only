@@ -330,6 +330,7 @@ class Grid5000SentenceController:
         batch["remote_job_root"] = _remote_job_root(
             self.remote_run_root, int(batch["index"]), int(batch["attempt"])
         )
+        batch["remote_cleaned"] = False
         batch["error"] = None
         self._write_ledger()
         try:
