@@ -94,3 +94,43 @@ def test_sat_3l_segmenter_prefers_coreml_when_available(
         "CoreMLExecutionProvider",
         "CPUExecutionProvider",
     ]
+
+
+def test_gpu_mode_requires_cuda_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
+    ort = ModuleType("onnxruntime")
+    ort.get_available_providers = lambda: ["CPUExecutionProvider"]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+
+    with pytest.raises(RuntimeError, match="CUDAExecutionProvider"):
+        SaT3lSegmenter(
+            cache_dir=tmp_path,
+            revision="model-revision",
+            require_gpu=True,
+        )
+
+
+def test_gpu_mode_passes_cuda_before_cpu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
+    ort = ModuleType("onnxruntime")
+    ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+
+    segmenter = SaT3lSegmenter(
+        cache_dir=tmp_path,
+        revision="model-revision",
+        require_gpu=True,
+    )
+
+    assert segmenter.ort_providers == (
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+    )
+    assert _FakeSaT.init_kwargs is not None
+    assert _FakeSaT.init_kwargs["ort_providers"] == [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+    ]

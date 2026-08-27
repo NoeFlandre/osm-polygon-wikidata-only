@@ -1,4 +1,4 @@
-"""Small, CPU-only adapter around the pinned SaT-3l-sm model."""
+"""Small adapter around the pinned SaT-3l-sm model."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from osm_polygon_wikidata_only.v2.sentence_logic import SAT_MODEL_ID
 
 DEFAULT_SAT_MODEL_REVISION = "137da05"
 _COREML_PROVIDER = "CoreMLExecutionProvider"
+_CUDA_PROVIDER = "CUDAExecutionProvider"
 _CPU_PROVIDER = "CPUExecutionProvider"
 
 
@@ -28,6 +29,7 @@ class SaT3lSegmenter:
         revision: str,
         inference_batch_size: int = 16,
         ort_providers: Sequence[str] | None = None,
+        require_gpu: bool = False,
     ) -> None:
         if inference_batch_size < 1:
             raise ValueError("inference_batch_size must be positive")
@@ -46,7 +48,7 @@ class SaT3lSegmenter:
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.revision = revision
         self.inference_batch_size = inference_batch_size
-        self.ort_providers = tuple(_resolve_ort_providers(ort_providers))
+        self.ort_providers = tuple(_resolve_ort_providers(ort_providers, require_gpu=require_gpu))
         self.version = str(getattr(wtpsplit, "__version__", "unknown"))
         self._model = model_class(
             self.model_id,
@@ -79,24 +81,52 @@ class SaT3lSegmenter:
         return [list(pieces) for pieces in result]
 
 
-def _resolve_ort_providers(override: Sequence[str] | None) -> list[str]:
-    """Select CoreML on Apple Silicon and retain a portable CPU fallback."""
+def _resolve_ort_providers(
+    override: Sequence[str] | None,
+    *,
+    require_gpu: bool = False,
+) -> list[str]:
+    """Select providers while optionally requiring CUDA for a GPU job."""
     if override is not None:
         providers = list(override)
         if not providers:
             raise ValueError("ort_providers must not be empty")
-        return providers
-    try:
-        onnxruntime = importlib.import_module("onnxruntime")
-        available = set(onnxruntime.get_available_providers())
-    except (ImportError, AttributeError):
-        available = set()
+    elif require_gpu:
+        providers = _gpu_ort_providers()
+    else:
+        providers = _default_ort_providers()
+    if require_gpu and _CUDA_PROVIDER not in providers:
+        raise RuntimeError("Grid5000 sentence splitting requires CUDAExecutionProvider")
+    return providers
+
+
+def _default_ort_providers() -> list[str]:
+    """Select CoreML on Apple Silicon and retain a portable CPU fallback."""
+    available = _available_ort_providers()
     if _COREML_PROVIDER in available:
         return [
             _COREML_PROVIDER,
             *([_CPU_PROVIDER] if _CPU_PROVIDER in available else []),
         ]
     return [_CPU_PROVIDER]
+
+
+def _gpu_ort_providers() -> list[str]:
+    """Prefer CUDA and retain CPU fallback when the GPU runtime exposes it."""
+    available = _available_ort_providers()
+    return [
+        *([_CUDA_PROVIDER] if _CUDA_PROVIDER in available else []),
+        *([_CPU_PROVIDER] if _CPU_PROVIDER in available else []),
+    ]
+
+
+def _available_ort_providers() -> set[str]:
+    """Return the providers exposed by the installed ONNX Runtime build."""
+    try:
+        onnxruntime = importlib.import_module("onnxruntime")
+        return set(onnxruntime.get_available_providers())
+    except (ImportError, AttributeError):
+        return set()
 
 
 __all__ = ["DEFAULT_SAT_MODEL_REVISION", "SaT3lSegmenter"]
