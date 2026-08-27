@@ -161,11 +161,17 @@ def test_batch_staging_includes_package_forced_assets(tmp_path: Path) -> None:
 
 class _FakeTransport:
     def __init__(
-        self, tmp_path: Path, *, success: bool = True, interrupt_on_poll: bool = False
+        self,
+        tmp_path: Path,
+        *,
+        success: bool = True,
+        interrupt_on_poll: bool = False,
+        terminal_state: str = "Terminated",
     ) -> None:
         self.tmp_path = tmp_path
         self.success = success
         self.interrupt_on_poll = interrupt_on_poll
+        self.terminal_state = terminal_state
         self.frontend_calls: list[tuple[str, ...]] = []
         self.uploads: list[tuple[Path, str]] = []
         self.downloads: list[tuple[str, Path]] = []
@@ -186,7 +192,7 @@ class _FakeTransport:
             self.polls += 1
             if self.interrupt_on_poll:
                 raise KeyboardInterrupt
-            state = "Terminated"
+            state = self.terminal_state
             exit_code = "0" if self.success else "1"
             return CompletedProcess(
                 args,
@@ -453,6 +459,18 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
     assert "env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN" in submit_command[-1]
     assert sum(command[0] == "usagepolicycheck" for command in transport.frontend_calls) >= 3
     assert transport.removals[-1].endswith("run-20260827-01")
+
+
+def test_finishing_success_receipt_is_published(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path, terminal_state="Finishing")
+    publisher = _FakePublisher()
+    controller = _controller(data_root, transport, publisher)
+
+    ledger = controller.run()
+
+    assert ledger["batches"][0]["state"] == "published"
+    assert publisher.publish_calls
 
 
 def test_running_ledger_is_reconciled_without_duplicate_submission(tmp_path: Path) -> None:

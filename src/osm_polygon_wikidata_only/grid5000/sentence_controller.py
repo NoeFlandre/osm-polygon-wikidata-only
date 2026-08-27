@@ -54,6 +54,7 @@ _GRID5000_UV_VERSION = "0.11.16"
 DEFAULT_GRID5000_QUEUE = "besteffort"
 _ACTIVE_STATES = frozenset({"submitted", "running"})
 _TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
+_SUCCESS_STATES = frozenset({"terminated", "finishing"})
 _JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECASE)
 _STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
 _EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
@@ -490,7 +491,7 @@ class Grid5000SentenceController:
                 raise ControllerRunError(
                     f"Grid5000 batch {batch['index']} produced an invalid receipt; retryable"
                 ) from error
-            succeeded = state == "terminated" and exit_code in {None, 0}
+            succeeded = state in _SUCCESS_STATES and exit_code in {None, 0}
             if succeeded and receipt.get("status") == "succeeded":
                 self._import_success(batch, received_data, receipt)
                 batch["state"] = "ready_to_publish"
