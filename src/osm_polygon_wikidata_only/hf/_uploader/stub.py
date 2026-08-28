@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -52,6 +53,22 @@ class StubHfHub:
         if self.remote_files is not None:
             return sorted(list(self.remote_files))
         return []
+
+    def get_paths_info(
+        self,
+        repo_id: str,
+        paths: list[str],
+        *,
+        repo_type: str,
+    ) -> list[Any]:
+        del repo_id, repo_type
+        if self.remote_files is None:
+            return []
+        return [
+            SimpleNamespace(path=path, size=0, lfs=None)
+            for path in paths
+            if path in self.remote_files
+        ]
 
     def upload_file(
         self,

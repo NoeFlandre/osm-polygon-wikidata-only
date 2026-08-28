@@ -785,7 +785,11 @@ class HfHubSentencePublisher:
         expected.append((map_path, V2_ADDED_WIKIPEDIA_TAG_MAP_PATH))
         if any(local is None for local, _ in expected):
             raise ControllerRunError("HF verification received an incomplete publication plan")
-        inventory = RemoteInventory.fetch(self.repo_id, token=self.token)
+        inventory = RemoteInventory.fetch_paths(
+            self.repo_id,
+            paths=[remote for _, remote in expected],
+            token=self.token,
+        )
         missing = [remote for _, remote in expected if not inventory.contains(remote)]
         if missing:
             raise ControllerRunError(f"HF sentence publication is missing files: {missing}")
@@ -795,14 +799,33 @@ class HfHubSentencePublisher:
         ) as temporary:
             for local, remote in expected:
                 assert local is not None
-                downloaded = _download_hf_file(
+                _verify_sentence_file(
                     self.repo_id,
+                    local,
                     remote,
+                    inventory=inventory,
                     token=self.token,
                     local_dir=Path(temporary),
                 )
-                if sha256_file(downloaded) != sha256_file(local):
-                    raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
+
+
+def _verify_sentence_file(
+    repo_id: str,
+    local: Path,
+    remote: str,
+    *,
+    inventory: RemoteInventory,
+    token: str | None,
+    local_dir: Path,
+) -> None:
+    info = inventory.metadata(remote)
+    if info is not None and info.sha256 is not None:
+        if info.size != local.stat().st_size or info.sha256 != sha256_file(local):
+            raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
+        return
+    downloaded = _download_hf_file(repo_id, remote, token=token, local_dir=local_dir)
+    if sha256_file(downloaded) != sha256_file(local):
+        raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
 
 
 def run_grid5000_sentence_controller(

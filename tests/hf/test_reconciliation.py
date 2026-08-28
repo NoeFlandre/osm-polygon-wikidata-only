@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -69,6 +70,55 @@ def test_remote_inventory_fetch_explicit_hub_no_credentials() -> None:
         _resolve_token=failing_resolver,
     )
     assert inventory.contains("polygons/mexico-latest.parquet")
+
+
+def test_remote_inventory_fetch_paths_reads_exact_file_metadata() -> None:
+    class Hub:
+        token = "token"
+
+        def get_paths_info(self, **kwargs):
+            assert kwargs == {
+                "repo_id": "test/repo",
+                "paths": ["wikipedia/sentences/alpha-latest.parquet", "README.md"],
+                "repo_type": "dataset",
+            }
+            return [
+                SimpleNamespace(
+                    path="wikipedia/sentences/alpha-latest.parquet",
+                    size=12,
+                    lfs=SimpleNamespace(sha256="a" * 64),
+                ),
+                SimpleNamespace(path="README.md", size=8, lfs=None),
+            ]
+
+    inventory = RemoteInventory.fetch_paths(
+        "test/repo",
+        paths=["wikipedia/sentences/alpha-latest.parquet", "README.md"],
+        hub=Hub(),
+    )
+
+    assert inventory.files == {
+        "wikipedia/sentences/alpha-latest.parquet",
+        "README.md",
+    }
+    assert inventory.metadata("wikipedia/sentences/alpha-latest.parquet").sha256 == "a" * 64
+    assert inventory.metadata("README.md").sha256 is None
+
+
+def test_remote_inventory_fetch_paths_falls_back_for_legacy_hub_client() -> None:
+    class LegacyHub:
+        def list_repo_files(self, repo_id: str, *, repo_type: str) -> list[str]:
+            del repo_id, repo_type
+            return ["README.md"]
+
+    inventory = RemoteInventory.fetch_paths(
+        "test/repo",
+        paths=["README.md"],
+        hub=LegacyHub(),  # type: ignore[arg-type]
+    )
+
+    assert inventory.files == {"README.md"}
+    assert inventory.metadata("README.md") is None
 
 
 def test_load_existing_core_artifacts_success(tmp_path: Path) -> None:

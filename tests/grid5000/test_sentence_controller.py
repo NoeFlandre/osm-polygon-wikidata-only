@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
     FileDigest,
     sha256_manifest,
 )
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, RemoteInventory
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 
 
@@ -643,6 +644,137 @@ def test_changed_card_or_map_blocks_publication(tmp_path: Path) -> None:
         controller.run()
 
     assert publisher.publish_calls == []
+
+
+def test_hf_sentence_verification_uses_lfs_metadata_without_download(
+    tmp_path: Path, monkeypatch
+) -> None:
+    data_root = _data_root(tmp_path)
+    sentence_path = data_root.processed_v2 / "wikipedia/sentences/alpha-latest.parquet"
+    _write_table(sentence_path, sentence_schema())
+    publisher = sentence_controller.HfHubSentencePublisher(
+        "example/v2", token="token", cache_dir=tmp_path / "verify"
+    )
+    expected_paths = [
+        operation.path_in_repo
+        for operation in sentence_controller.sentence_publication_ops(
+            data_root.processed_v2, ("alpha-latest",)
+        )
+    ]
+    expected_paths.append("assets/v2_added_wikipedia_tag_documents.png")
+    metadata = {
+        path: RemoteFileInfo(
+            path=path,
+            size=(data_root.processed_v2 / path).stat().st_size,
+            sha256=sentence_controller.sha256_file(data_root.processed_v2 / path),
+        )
+        for path in expected_paths
+    }
+    inventory = RemoteInventory(set(metadata), metadata)
+    fetch_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def fetch_paths(repo_id: str, *, paths: Sequence[str], **_kwargs) -> RemoteInventory:
+        fetch_calls.append((repo_id, tuple(paths)))
+        return inventory
+
+    monkeypatch.setattr(RemoteInventory, "fetch", lambda *_args, **_kwargs: inventory)
+    monkeypatch.setattr(RemoteInventory, "fetch_paths", fetch_paths)
+    monkeypatch.setattr(
+        sentence_controller,
+        "_download_hf_file",
+        lambda *_args, **_kwargs: pytest.fail("LFS verification should not download files"),
+    )
+
+    publisher.verify_sentence_batch(data_root.processed_v2, ("alpha-latest",))
+
+    assert fetch_calls == [("example/v2", tuple(expected_paths))]
+
+
+def test_hf_sentence_verification_downloads_files_without_lfs_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    data_root = _data_root(tmp_path)
+    sentence_path = data_root.processed_v2 / "wikipedia/sentences/alpha-latest.parquet"
+    _write_table(sentence_path, sentence_schema())
+    publisher = sentence_controller.HfHubSentencePublisher(
+        "example/v2", token="token", cache_dir=tmp_path / "verify"
+    )
+    expected_paths = [
+        operation.path_in_repo
+        for operation in sentence_controller.sentence_publication_ops(
+            data_root.processed_v2, ("alpha-latest",)
+        )
+    ]
+    expected_paths.append("assets/v2_added_wikipedia_tag_documents.png")
+    metadata = {
+        path: RemoteFileInfo(
+            path=path,
+            size=(data_root.processed_v2 / path).stat().st_size,
+            sha256=None
+            if path == "README.md"
+            else sentence_controller.sha256_file(data_root.processed_v2 / path),
+        )
+        for path in expected_paths
+    }
+    inventory = RemoteInventory(set(metadata), metadata)
+    downloaded: list[str] = []
+
+    monkeypatch.setattr(
+        RemoteInventory,
+        "fetch_paths",
+        lambda *_args, **_kwargs: inventory,
+    )
+
+    def download(_repo_id: str, filename: str, *, local_dir: Path, **_kwargs) -> Path:
+        downloaded.append(filename)
+        target = local_dir / "downloaded-file"
+        target.write_bytes((data_root.processed_v2 / filename).read_bytes())
+        return target
+
+    monkeypatch.setattr(sentence_controller, "_download_hf_file", download)
+
+    publisher.verify_sentence_batch(data_root.processed_v2, ("alpha-latest",))
+
+    assert downloaded == ["README.md"]
+
+
+def test_hf_sentence_verification_rejects_lfs_digest_mismatch(tmp_path: Path, monkeypatch) -> None:
+    data_root = _data_root(tmp_path)
+    sentence_path = data_root.processed_v2 / "wikipedia/sentences/alpha-latest.parquet"
+    _write_table(sentence_path, sentence_schema())
+    publisher = sentence_controller.HfHubSentencePublisher(
+        "example/v2", token="token", cache_dir=tmp_path / "verify"
+    )
+    expected_paths = [
+        operation.path_in_repo
+        for operation in sentence_controller.sentence_publication_ops(
+            data_root.processed_v2, ("alpha-latest",)
+        )
+    ]
+    expected_paths.append("assets/v2_added_wikipedia_tag_documents.png")
+    metadata = {
+        path: RemoteFileInfo(
+            path=path,
+            size=(data_root.processed_v2 / path).stat().st_size,
+            sha256="0" * 64
+            if path == "README.md"
+            else sentence_controller.sha256_file(data_root.processed_v2 / path),
+        )
+        for path in expected_paths
+    }
+    monkeypatch.setattr(
+        RemoteInventory,
+        "fetch_paths",
+        lambda *_args, **_kwargs: RemoteInventory(set(metadata), metadata),
+    )
+    monkeypatch.setattr(
+        sentence_controller,
+        "_download_hf_file",
+        lambda *_args, **_kwargs: pytest.fail("digest mismatches must fail before download"),
+    )
+
+    with pytest.raises(sentence_controller.ControllerRunError, match=r"hash mismatch: README\.md"):
+        publisher.verify_sentence_batch(data_root.processed_v2, ("alpha-latest",))
 
 
 def test_keyboard_interrupt_cancels_only_recorded_job_and_saves_ledger(tmp_path: Path) -> None:

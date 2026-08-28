@@ -58,3 +58,11 @@ class HfHub(Protocol):
         *,
         repo_type: str,
     ) -> list[str]: ...
+
+    def get_paths_info(
+        self,
+        repo_id: str,
+        paths: list[str],
+        *,
+        repo_type: str,
+    ) -> Iterable[Any]: ...
