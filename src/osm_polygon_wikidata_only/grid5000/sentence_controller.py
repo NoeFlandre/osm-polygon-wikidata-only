@@ -53,6 +53,7 @@ _SEGMENTER_VERSION = "2.2.1"
 _GRID5000_UV_VERSION = "0.11.16"
 DEFAULT_GRID5000_QUEUE = "besteffort"
 DEFAULT_GRID5000_GPU_MODEL = "A40"
+_EXOTIC_GRID5000_GPU_MODELS = frozenset({"A100-PCIE-40GB", "A100-SXM4-40GB", "H100 NVL"})
 _ACTIVE_STATES = frozenset({"submitted", "running"})
 _TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
 _SUCCESS_STATES = frozenset({"terminated", "finishing"})
@@ -349,10 +350,14 @@ class Grid5000SentenceController:
                 self._stage_batch(staging, batch)
                 self.transport.upload_tree(staging, str(batch["remote_job_root"]))
             self._policy_check()
+            job_type_args = (
+                ("-t", "exotic") if self.gpu_model in _EXOTIC_GRID5000_GPU_MODELS else ()
+            )
             submit_command = (
                 "oarsub",
                 "-q",
                 self.queue,
+                *job_type_args,
                 "-p",
                 f"gpu_model='{self.gpu_model}'",
                 "-l",

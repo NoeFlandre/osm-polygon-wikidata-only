@@ -426,6 +426,19 @@ def test_custom_gpu_model_is_persisted_and_requested(tmp_path: Path) -> None:
     assert submit_command[4] == "gpu_model='L40S'"
 
 
+def test_exotic_gpu_model_requests_exotic_job_type(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    controller = _controller(data_root, transport, publisher, gpu_model="A100-PCIE-40GB")
+
+    controller.run()
+
+    submit_command = next(command for command in transport.frontend_calls if command[0] == "oarsub")
+    job_type_position = submit_command.index("-t")
+    assert submit_command[job_type_position : job_type_position + 2] == ("-t", "exotic")
+
+
 def test_pre_submission_resume_records_a_new_source_commit(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path)
