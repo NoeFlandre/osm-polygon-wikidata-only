@@ -777,6 +777,33 @@ def test_hf_sentence_verification_rejects_lfs_digest_mismatch(tmp_path: Path, mo
         publisher.verify_sentence_batch(data_root.processed_v2, ("alpha-latest",))
 
 
+def test_hf_sentence_publisher_uses_bounded_upload_concurrency(tmp_path: Path, monkeypatch) -> None:
+    data_root = _data_root(tmp_path)
+    for stem in ("alpha-latest", "beta-latest"):
+        _write_table(
+            data_root.processed_v2 / f"wikipedia/sentences/{stem}.parquet",
+            sentence_schema(),
+        )
+    publisher = sentence_controller.HfHubSentencePublisher(
+        "example/v2", token="token", cache_dir=tmp_path / "verify"
+    )
+    observed: list[int] = []
+
+    def upload_files(*_args, num_threads: int, **_kwargs) -> str:
+        observed.append(num_threads)
+        return "commit"
+
+    monkeypatch.setattr(sentence_controller, "upload_files", upload_files)
+
+    publisher.publish_sentence_batch(
+        data_root.processed_v2,
+        ("alpha-latest", "beta-latest"),
+        "publish",
+    )
+
+    assert observed == [4]
+
+
 def test_keyboard_interrupt_cancels_only_recorded_job_and_saves_ledger(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path, interrupt_on_poll=True)

@@ -4,7 +4,7 @@
 
 **Goal:** Verify published sentence batches from Hub metadata whenever exact LFS SHA-256 values are available, avoiding redundant downloads while preserving exact-byte fallback verification.
 
-**Architecture:** Keep the existing publication plan and controller state machine intact. Extend `RemoteInventory` with a metadata-backed exact-path lookup, then make the sentence publisher choose metadata hashing for LFS files and the current download/hash path for regular Git files. Missing files and mismatches continue to fail publication before the ledger reaches `published`.
+**Architecture:** Keep the existing publication plan and controller state machine intact. Extend `RemoteInventory` with a metadata-backed exact-path lookup, then make the sentence publisher choose metadata hashing for LFS files and the current download/hash path for regular Git files. Use a bounded four-worker upload pool for sentence operations. Missing files and mismatches continue to fail publication before the ledger reaches `published`.
 
 **Tech Stack:** Python, `huggingface_hub.HfApi.get_paths_info`, dataclasses, pytest, Ruff, ty, CRAP, mutmut.
 
@@ -144,6 +144,12 @@ Expected: PASS with no download for LFS entries and download fallback for regula
 git add src/osm_polygon_wikidata_only/grid5000/sentence_controller.py tests/grid5000/test_sentence_controller.py
 git commit -m "perf: verify sentence uploads from Hub metadata"
 ```
+
+- [ ] **Step 7: Run the upload concurrency test**
+
+Run: `pytest tests/grid5000/test_sentence_controller.py -k bounded_upload -q`
+
+Expected: PASS and the publisher passes four workers for a four-operation batch.
 
 ### Task 3: Run the complete quality and publication safety checks
 

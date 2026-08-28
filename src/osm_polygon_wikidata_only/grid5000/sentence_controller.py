@@ -63,6 +63,7 @@ _EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
 _QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _GPU_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 _RETRYABLE_ARTIFACT_FAILURES = frozenset({"missing_receipt", "invalid_receipt"})
+_MAX_SENTENCE_UPLOAD_THREADS = 4
 
 
 class Grid5000Transport(Protocol):
@@ -775,7 +776,7 @@ class HfHubSentencePublisher:
             ops=operations,
             token=self.token,
             commit_message=message,
-            num_threads=2,
+            num_threads=min(_MAX_SENTENCE_UPLOAD_THREADS, len(operations)),
         )
 
     def verify_sentence_batch(self, processed_v2: Path, stems: Sequence[str]) -> None:

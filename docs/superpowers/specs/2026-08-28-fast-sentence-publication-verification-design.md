@@ -20,6 +20,8 @@ After each atomic upload, the controller currently lists the complete dataset re
 4. For files with LFS SHA-256 metadata, compare remote size and the local file SHA-256 without downloading the remote object.
 5. Fall back to the existing exact-byte download for files without a usable digest, preserving verification for regular Git blobs and older Hub responses.
 
+The sentence publisher will also use a bounded upload pool of at most four workers (or one per publication operation when fewer are present). This changes transfer concurrency only; the atomic commit contents and ordering remain unchanged.
+
 The README and comparison-map baseline checks remain unchanged. No sentence splitting, batch planning, HF paths, commit contents, or ledger state transitions change.
 
 ## Testing and quality gates
