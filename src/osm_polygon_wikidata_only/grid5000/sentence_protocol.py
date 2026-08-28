@@ -28,6 +28,7 @@ DEFAULT_WALLTIME = "0:30"
 
 _RUN_ID_PATTERN = re.compile(r"[a-z0-9_-]+")
 _CHECKPOINT_BATCH_PATTERN = re.compile(r"batch-(\d{8})\.parquet")
+_CHECKPOINT_TEMPORARY_PATTERN = re.compile(r"\.batch-\d{8}\.parquet\.[A-Za-z0-9_-]+\.tmp")
 _MANIFEST_INVARIANT_KEYS = (
     "contract_version",
     "segmenter",
@@ -380,6 +381,10 @@ def _classify_checkpoint_path(root: Path, candidate: Path) -> tuple[str, Path]:
         if not candidate.is_file():
             raise ValueError("Checkpoint metadata must be a file")
         return "metadata", candidate
+    if _CHECKPOINT_TEMPORARY_PATTERN.fullmatch(candidate.name):
+        if not candidate.is_file():
+            raise ValueError("Checkpoint temporary artifact must be a file")
+        return "temporary", candidate
     if not candidate.is_file() or _CHECKPOINT_BATCH_PATTERN.fullmatch(candidate.name) is None:
         raise ValueError(f"Unexpected checkpoint artifact: {candidate.name}")
     return "batch", candidate

@@ -319,6 +319,18 @@ def test_import_checkpoint_tree_rejects_invalid_tree_layout(tmp_path: Path) -> N
         )
 
 
+def test_import_checkpoint_tree_ignores_atomic_checkpoint_temporary_files(
+    tmp_path: Path,
+) -> None:
+    incoming = tmp_path / "incoming-with-temporary"
+    _write_checkpoint(incoming)
+    (incoming / ".batch-00000002.parquet.nq8j59gp.tmp").write_bytes(b"partial")
+
+    imported = import_checkpoint_tree(incoming, tmp_path / "local", expected_identity=_identity())
+
+    assert imported == (0, 1)
+
+
 def test_import_checkpoint_tree_rejects_noncontiguous_batches(tmp_path: Path) -> None:
     incoming = tmp_path / "noncontiguous"
     _write_checkpoint(incoming)
