@@ -353,9 +353,21 @@ def _checkpoint_paths(root: Path) -> tuple[Path, tuple[Path, ...]]:
     if not root.is_dir():
         raise ValueError(f"Checkpoint root is missing: {root}")
     classified = tuple(
-        _classify_checkpoint_path(root, candidate) for candidate in sorted(root.iterdir())
+        _classify_checkpoint_path(root, candidate) for candidate in _checkpoint_candidates(root)
     )
     return _split_checkpoint_paths(classified)
+
+
+def _checkpoint_candidates(root: Path) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    for candidate in sorted(root.iterdir()):
+        _validate_checkpoint_path(root, candidate)
+        if _CHECKPOINT_TEMPORARY_PATTERN.fullmatch(candidate.name):
+            if not candidate.is_file():
+                raise ValueError("Checkpoint temporary artifact must be a file")
+            continue
+        candidates.append(candidate)
+    return tuple(candidates)
 
 
 def _split_checkpoint_paths(
@@ -381,10 +393,6 @@ def _classify_checkpoint_path(root: Path, candidate: Path) -> tuple[str, Path]:
         if not candidate.is_file():
             raise ValueError("Checkpoint metadata must be a file")
         return "metadata", candidate
-    if _CHECKPOINT_TEMPORARY_PATTERN.fullmatch(candidate.name):
-        if not candidate.is_file():
-            raise ValueError("Checkpoint temporary artifact must be a file")
-        return "temporary", candidate
     if not candidate.is_file() or _CHECKPOINT_BATCH_PATTERN.fullmatch(candidate.name) is None:
         raise ValueError(f"Unexpected checkpoint artifact: {candidate.name}")
     return "batch", candidate
