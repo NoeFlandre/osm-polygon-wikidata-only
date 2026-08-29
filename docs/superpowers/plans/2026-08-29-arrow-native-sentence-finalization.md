@@ -15,9 +15,11 @@
 - Modify src/osm_polygon_wikidata_only/v2/sentence_logic.py: cache the immutable sentence_schema() result.
 - Modify src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py: expose schema-validated Arrow batches and use them for validity discovery.
 - Modify src/osm_polygon_wikidata_only/v2/sentence_runner.py: avoid Python conversion for resumed batches and final output writes.
+- Modify src/osm_polygon_wikidata_only/hf/_dataset_stats/scanning.py: read known single Parquet files without dataset discovery.
 - Modify tests/v2/test_sentence_logic.py: lock the schema-cache contract.
 - Modify tests/v2/test_sentence_checkpoints.py: lock Arrow-table loading and non-materializing completed-batch discovery.
 - Modify tests/v2/test_sentence_runner.py: lock Arrow-native output finalization and exact output values/schema.
+- Create tests/hf/test_dataset_stats_scanning.py: lock the single-file reader path and selected-column behavior.
 - Do not modify Grid5000 controllers, HF publication code, manifests, dataset-card content, or processed data.
 
 ### Task 1: Add failing tests for the new Arrow-native contract
@@ -251,22 +253,82 @@ git add src/osm_polygon_wikidata_only/v2/sentence_runner.py
 git commit -m "perf: finalize sentence sidecars with arrow tables"
 ~~~
 
-### Task 4: Measure the local dataset-card/statistics path without changing it
+### Task 4: Optimize the local dataset-card/statistics scanner
 
 **Files:**
-- No production files modified.
+- Modify: src/osm_polygon_wikidata_only/hf/_dataset_stats/scanning.py
+- Create: tests/hf/test_dataset_stats_scanning.py
 
-- [ ] **Step 1: Run the full read-only statistics baseline against the Seagate processed dataset.**
+- [ ] **Step 1: Add a failing scanner-path test.**
+
+Create tests/hf/test_dataset_stats_scanning.py:
+
+~~~python
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
+
+from osm_polygon_wikidata_only.hf._dataset_stats.scanning import safe_table
+
+
+def test_safe_table_reads_selected_columns_without_dataset_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parquet_path = tmp_path / "values.parquet"
+    pq.write_table(pa.table({"kept": [1, 2], "ignored": [3, 4]}), parquet_path)
+
+    def fail_if_dataset_reader_is_used(*args: object, **kwargs: object) -> None:
+        raise AssertionError("single-file dataset reader was used")
+
+    monkeypatch.setattr(pq, "read_table", fail_if_dataset_reader_is_used)
+
+    table = safe_table(parquet_path, ["kept"])
+
+    assert table is not None
+    assert table.column_names == ["kept"]
+    assert table.column("kept").to_pylist() == [1, 2]
+~~~
+
+- [ ] **Step 2: Run the scanner test and confirm RED.**
+
+~~~bash
+.venv/bin/pytest -q tests/hf/test_dataset_stats_scanning.py::test_safe_table_reads_selected_columns_without_dataset_discovery
+~~~
+
+Expected: FAIL because safe_table() currently calls pq.read_table().
+
+- [ ] **Step 3: Implement the direct single-file read.**
+
+Replace the return in safe_table() with:
+
+~~~python
+        with pq.ParquetFile(parquet_path) as parquet_file:
+            return parquet_file.read(columns=list(columns))
+~~~
+
+Keep the existing exception tuple, warning message, function signature, and
+column-list conversion unchanged.
+
+- [ ] **Step 4: Run scanner and dataset-statistics tests GREEN.**
+
+~~~bash
+.venv/bin/pytest -q tests/hf/test_dataset_stats_scanning.py tests/hf/test_dataset_stats.py
+~~~
+
+Expected: PASS with the existing factual stats and skip-on-error behavior.
+
+- [ ] **Step 5: Run the full read-only statistics benchmark and compare the exact hash.**
 
 ~~~bash
 time PYTHONPATH=src .venv/bin/python -c 'from pathlib import Path; from osm_polygon_wikidata_only.hf._dataset_stats.aggregation import compute_dataset_stats; stats = compute_dataset_stats(Path("/Volumes/Seagate M3/projects/osm-polygon-wikidata-only/processed")); print(stats)'
 ~~~
 
-Record wall time, peak memory if available, and exact DatasetStats values. Do not modify processed data or the dataset card.
-
-- [ ] **Step 2: Keep local stats unchanged unless a separate parity-tested design is approved.**
-
-This plan deliberately leaves that path untouched: the sentence benchmark is already a measured isolated win, while statistics aggregation has different contracts. Any later Arrow-kernel optimization must first have a separate benchmark and exact old/new DatasetStats parity test.
+Record wall time and verify the exact serialized stats hash remains
+878029edfc723db6f52b8d64120e19c785bd0df823a5c5a7ebd252b10c422ee4. Do not
+modify processed data or the dataset card.
 
 ### Task 5: Run all quality and performance gates
 
@@ -319,4 +381,3 @@ git log -5 --oneline
 ~~~
 
 Expected: only the committed spec, plan, tests, and sentence performance implementation are present; no data, HF, Grid5000, or unrelated user files are modified.
-

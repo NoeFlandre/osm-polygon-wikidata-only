@@ -3,8 +3,8 @@
 ## Goal
 
 Reduce avoidable CPU, allocation, and peak-memory overhead in the paused V2
-sentence workflow without changing its output or resumability. Measure the
-local dataset-card/statistics path before applying a separate optimization.
+sentence workflow and local dataset-card/statistics scan without changing
+output, statistics, or resumability.
 
 ## Evidence
 
@@ -14,6 +14,14 @@ validated checkpoint Parquet tables directly with Arrow took 0.331 seconds,
 an estimated 3.2x improvement. The current implementation deserializes every
 batch to Python dictionaries and immediately rebuilds an Arrow table before
 writing the final sidecar.
+
+The local statistics scan over the 19 GB processed tree completed in 1:52.42
+with the current single-file reader. A read-only comparison using
+`ParquetFile.read(columns=...)` completed in 1:45.89 and produced the same
+serialized `DatasetStats` SHA-256
+(`878029edfc723db6f52b8d64120e19c785bd0df823a5c5a7ebd252b10c422ee4`). On a
+100-file representative polygon sample, the direct reader had a 0.248 second
+median versus 0.485 seconds for `pq.read_table`, a 1.96x improvement.
 
 ## Chosen approach
 
@@ -28,6 +36,9 @@ writing the final sidecar.
    Snappy compression, atomic replacement, and final schema validation.
 5. Cache the immutable sentence schema to avoid reconstructing it in hot
    loops.
+6. Make the shared statistics `safe_table()` helper use `ParquetFile.read()`
+   for one known file, avoiding dataset discovery while retaining the same
+   selected columns and recoverable-error policy.
 
 ## Contracts preserved
 
@@ -43,11 +54,12 @@ writing the final sidecar.
 
 ## Local pipeline measurement gate
 
-After the sentence change, benchmark the existing dataset-card/statistics
-scan on representative processed files and compare exact `DatasetStats`
-values. Only then consider Arrow-kernel or allocation reductions in that
-path. No concurrency increase, skipped validation, or unchecked caching will
-be introduced as part of this slice.
+The statistics reader change is allowed because the full-tree comparison
+already matched the exact serialized `DatasetStats` result and the bounded
+sample measured a speedup. Tests must retain column pruning and the existing
+skip-on-`OSError`/`KeyError`/`ArrowInvalid` behavior. No concurrency increase,
+skipped validation, or unchecked caching will be introduced as part of this
+slice.
 
 ## Verification
 
@@ -58,4 +70,3 @@ be introduced as part of this slice.
 - Run the repository regression suite plus Ruff, type checking, CRAP with a
   score below 6, and the focused mutation gate with zero surviving mutants.
 - Re-run the bounded finalization benchmark and record the measured result.
-
