@@ -40,10 +40,8 @@ def safe_table(
     missing columns). Any other exception propagates unchanged.
     """
     try:
-        return pq.read_table(  # type: ignore[no-untyped-call]
-            parquet_path,
-            columns=list(columns),
-        )
+        with pq.ParquetFile(parquet_path) as parquet_file:
+            return parquet_file.read(columns=list(columns))  # type: ignore[no-untyped-call]
     except (OSError, KeyError, pa.ArrowInvalid) as e:
         LOGGER.warning("Skipping %s: %s", parquet_path, e)
         return None
