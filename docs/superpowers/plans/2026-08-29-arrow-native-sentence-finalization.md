@@ -4,7 +4,7 @@
 
 **Goal:** Remove redundant Python row materialization from resumable V2 sentence checkpoint validation and finalization while preserving every sentence output and restart contract.
 
-**Architecture:** Keep SentenceCheckpoint.load_batch() as the compatibility API that returns Python dictionaries, and add load_batch_table() as the Arrow-native API for validation and output. The runner will use table row counts for resumed batches and write validated Arrow tables directly in deterministic checkpoint order. The sentence schema will be cached because it is immutable and argument-free.
+**Architecture:** Keep SentenceCheckpoint.load_batch() as the compatibility API that returns Python dictionaries, add batch_row_count() for footer-only validation, and add load_batch_table() as the Arrow-native API for output. The runner will use footer row counts for resumed batches and write validated Arrow tables directly in deterministic checkpoint order. The sentence schema will be cached because it is immutable and argument-free.
 
 **Tech Stack:** Python 3.12+, PyArrow Parquet, pytest, Ruff, ty, CRAP, mutmut, and the existing V2 sentence checkpoint contracts.
 
@@ -13,7 +13,7 @@
 ## File map
 
 - Modify src/osm_polygon_wikidata_only/v2/sentence_logic.py: cache the immutable sentence_schema() result.
-- Modify src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py: expose schema-validated Arrow batches and use them for validity discovery.
+- Modify src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py: expose footer row counts and schema-validated Arrow batches for the appropriate validity/output paths.
 - Modify src/osm_polygon_wikidata_only/v2/sentence_runner.py: avoid Python conversion for resumed batches and final output writes.
 - Modify src/osm_polygon_wikidata_only/hf/_dataset_stats/scanning.py: read known single Parquet files without dataset discovery.
 - Modify tests/v2/test_sentence_logic.py: lock the schema-cache contract.
@@ -164,7 +164,7 @@ def load_batch(self, index: int) -> list[dict[str, Any]] | None:
     return None if table is None else table.to_pylist()
 ~~~
 
-Change completed_batches to call self.load_batch_table(index) is not None, not load_batch().
+Change completed_batches to call self.batch_row_count(index) is not None, not load_batch_table() or load_batch().
 
 - [ ] **Step 3: Run the focused tests and confirm GREEN for the checkpoint changes.**
 
@@ -199,8 +199,8 @@ git commit -m "perf: expose arrow-native sentence checkpoint batches"
 In _process_source(), replace the checkpoint load branch with:
 
 ~~~python
-            table = checkpoint.load_batch_table(batch_index)
-            if table is None:
+            batch_row_count = checkpoint.batch_row_count(batch_index)
+            if batch_row_count is None:
                 rows, _ = split_sections(
                     sections,
                     segmenter=segmenter,
@@ -209,7 +209,7 @@ In _process_source(), replace the checkpoint load branch with:
                 checkpoint.write_batch(batch_index, rows)
                 row_count += len(rows)
             else:
-                row_count += table.num_rows
+                row_count += batch_row_count
             batch_count = batch_index + 1
 ~~~
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.io.hashing import sha256_file
@@ -121,3 +122,50 @@ def test_sentence_checkpoint_loads_validated_arrow_tables_without_row_conversion
         lambda index: pytest.fail(f"Python rows were materialized for batch {index}"),
     )
     assert checkpoint.completed_batches == (0,)
+
+
+def test_sentence_checkpoint_validates_batch_metadata_without_loading_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
+    checkpoint.write_batch(0, [{"sentence_id": "sentence-1", "text": "First."}])
+
+    monkeypatch.setattr(
+        checkpoint,
+        "load_batch_table",
+        lambda index: pytest.fail(f"Rows were loaded for batch {index}"),
+    )
+
+    assert checkpoint.batch_row_count(0) == 1
+    assert checkpoint.completed_batches == (0,)
+
+
+def test_sentence_checkpoint_rejects_missing_and_schema_invalid_batch_metadata(
+    tmp_path: Path,
+) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
+
+    assert checkpoint.batch_row_count(0) is None
+
+    invalid_path = checkpoint._batch_path(0)
+    pq.write_table(pa.table({"unexpected": ["value"]}), invalid_path)
+
+    assert checkpoint.batch_row_count(0) is None
+    assert checkpoint.completed_batches == ()

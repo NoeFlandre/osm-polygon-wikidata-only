@@ -195,6 +195,50 @@ def test_sentence_source_processing_returns_typed_accounting(tmp_path: Path) -> 
     assert result.summary.sentence_rows == 2
 
 
+def test_sentence_source_processing_reuses_batch_metadata_without_loading_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    write_v2_region(
+        data_root.processed_v2,
+        "region-latest",
+        polygons=[],
+        documents=[],
+        links=[],
+        sections=[_section("en-1", "en", "First.")],
+    )
+    checkpoint = SentenceCheckpoint(
+        data_root.v2_cache / "sentence-checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=1,
+    )
+    checkpoint.write_batch(0, [{"sentence_id": "sentence-1", "text": "First."}])
+    monkeypatch.setattr(
+        checkpoint,
+        "load_batch_table",
+        lambda index: pytest.fail(f"Rows were loaded for batch {index}"),
+    )
+    segmenter = _FakeSegmenter()
+
+    result = _process_source(
+        data_root.processed_v2 / "wikipedia/sections/region-latest.parquet",
+        checkpoint=checkpoint,
+        segmenter=segmenter,
+        batch_size=1,
+        stem="region-latest",
+        project="wikipedia",
+    )
+
+    assert result.row_count == 1
+    assert segmenter.calls == 0
+
+
 def test_sentence_output_writes_validated_checkpoint_tables_directly(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

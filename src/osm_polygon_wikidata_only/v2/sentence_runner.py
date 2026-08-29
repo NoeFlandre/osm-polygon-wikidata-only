@@ -227,8 +227,8 @@ def _process_source(
         ):
             sections = record_batch.to_pylist()
             counters.add_sections(sections)
-            table = checkpoint.load_batch_table(batch_index)
-            if table is None:
+            batch_row_count = checkpoint.batch_row_count(batch_index)
+            if batch_row_count is None:
                 rows, _ = split_sections(
                     sections,
                     segmenter=segmenter,
@@ -237,7 +237,7 @@ def _process_source(
                 checkpoint.write_batch(batch_index, rows)
                 row_count += len(rows)
             else:
-                row_count += table.num_rows
+                row_count += batch_row_count
             batch_count = batch_index + 1
     counters.sentence_rows = row_count
     return _ProcessedSource(

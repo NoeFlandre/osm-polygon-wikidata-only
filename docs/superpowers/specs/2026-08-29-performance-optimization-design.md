@@ -23,12 +23,17 @@ serialized `DatasetStats` SHA-256
 100-file representative polygon sample, the direct reader had a 0.248 second
 median versus 0.485 seconds for `pq.read_table`, a 1.96x improvement.
 
+For resumability checks on a 32-batch/8,192-row sentence checkpoint, reading
+full Arrow tables had a 0.166 second median versus 0.053 seconds for validating
+the Parquet footer and row count, a 3.14x improvement.
+
 ## Chosen approach
 
-1. Add a checkpoint API that reads one batch as a schema-validated
-   `pyarrow.Table` without converting it to Python objects.
-2. Make checkpoint-validity discovery use that table API, so restart checks do
-   not materialize rows unnecessarily.
+1. Add checkpoint APIs that validate a batch's Parquet schema and row count
+   from footer metadata, or read it as a schema-validated `pyarrow.Table` when
+   row values are required.
+2. Make checkpoint-validity discovery and resumed row accounting use footer
+   metadata, so restart checks do not decode rows unnecessarily.
 3. Keep `load_batch()` and `load_rows()` as Python-row compatibility APIs for
    callers that need them.
 4. Make sentence output finalization write checkpoint Arrow tables directly,
@@ -44,7 +49,8 @@ median versus 0.485 seconds for `pq.read_table`, a 1.96x improvement.
 
 - Sentence row values, ordering, null handling, schema metadata, and output
   compression remain unchanged.
-- A missing, unreadable, or schema-invalid checkpoint remains invalid.
+- A missing, unreadable, or schema-invalid checkpoint remains invalid; final
+  output still reads and validates each batch table before publication.
 - Checkpoint metadata and contiguous-batch rules remain unchanged.
 - Output is still written to a temporary file and atomically replaced only
   after validation succeeds.

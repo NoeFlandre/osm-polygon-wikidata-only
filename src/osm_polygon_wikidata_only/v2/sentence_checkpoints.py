@@ -106,9 +106,21 @@ class SentenceCheckpoint:
         completed: list[int] = []
         for path in sorted(self.root.glob("batch-*.parquet")):
             index = _batch_index(path)
-            if index is not None and self.load_batch_table(index) is not None:
+            if index is not None and self.batch_row_count(index) is not None:
                 completed.append(index)
         return tuple(completed)
+
+    def batch_row_count(self, index: int) -> int | None:
+        """Return a valid batch's row count without decoding its rows."""
+        path = self._batch_path(index)
+        try:
+            with pq.ParquetFile(path) as parquet_file:
+                if not parquet_file.schema_arrow.equals(sentence_schema(), check_metadata=True):
+                    return None
+                metadata = parquet_file.metadata
+                return None if metadata is None else int(metadata.num_rows)
+        except (OSError, pa.ArrowException):
+            return None
 
     def load_batch_table(self, index: int) -> pa.Table | None:
         """Read one batch as a schema-validated Arrow table."""
