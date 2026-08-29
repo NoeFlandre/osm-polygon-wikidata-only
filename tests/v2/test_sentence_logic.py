@@ -72,6 +72,10 @@ def test_sentence_schema_preserves_column_names_and_integer_types() -> None:
     ]
 
 
+def test_sentence_schema_is_cached() -> None:
+    assert sentence_schema() is sentence_schema()
+
+
 def test_split_sections_routes_only_supported_languages_and_keeps_others_unsplit() -> None:
     sections = [
         _section("fr-1", "fr", "Un. Deux."),

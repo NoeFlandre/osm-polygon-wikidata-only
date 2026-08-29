@@ -11,7 +11,12 @@ from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.ids import content_hash
 from osm_polygon_wikidata_only.v2.sentence_checkpoints import SentenceCheckpoint
-from osm_polygon_wikidata_only.v2.sentence_runner import _process_source, run_v2_sentence_split
+from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
+from osm_polygon_wikidata_only.v2.sentence_runner import (
+    _process_source,
+    _write_output,
+    run_v2_sentence_split,
+)
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
 
@@ -188,3 +193,39 @@ def test_sentence_source_processing_returns_typed_accounting(tmp_path: Path) -> 
     assert result.batch_count == 1
     assert result.row_count == 2
     assert result.summary.sentence_rows == 2
+
+
+def test_sentence_output_writes_validated_checkpoint_tables_directly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
+    checkpoint.write_batch(
+        0,
+        [
+            {"sentence_id": "sentence-1", "text": "First."},
+            {"sentence_id": "sentence-2", "text": "Second."},
+        ],
+    )
+    checkpoint.mark_complete(batch_count=1, row_count=2)
+    monkeypatch.setattr(
+        checkpoint,
+        "load_batch",
+        lambda index: pytest.fail(f"Python rows were materialized for batch {index}"),
+    )
+
+    output_path = tmp_path / "sentences.parquet"
+    _write_output(output_path, checkpoint, batch_count=1)
+    output = pq.read_table(output_path)
+
+    assert output.schema.equals(sentence_schema(), check_metadata=True)
+    assert output.column("sentence_id").to_pylist() == ["sentence-1", "sentence-2"]
+    assert output.column("text").to_pylist() == ["First.", "Second."]

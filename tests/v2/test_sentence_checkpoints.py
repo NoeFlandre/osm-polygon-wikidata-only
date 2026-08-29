@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pyarrow as pa
+import pytest
+
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.sentence_checkpoints import SentenceCheckpoint
+from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 
 
 def test_sentence_checkpoint_reuses_rows_and_empty_batches(tmp_path: Path) -> None:
@@ -87,3 +91,33 @@ def test_sentence_checkpoint_finalization_keeps_only_restart_metadata(tmp_path: 
     assert checkpoint.completed_batches == ()
     assert checkpoint.output_matches(output, output_hash=output_hash)
     assert checkpoint.metadata["summary"] == {"sentence_rows": 1}
+
+
+def test_sentence_checkpoint_loads_validated_arrow_tables_without_row_conversion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
+    checkpoint.write_batch(0, [{"sentence_id": "sentence-1", "text": "First."}])
+
+    table = checkpoint.load_batch_table(0)
+
+    assert isinstance(table, pa.Table)
+    assert table is not None
+    assert table.schema.equals(sentence_schema(), check_metadata=True)
+    assert table.to_pylist()[0]["text"] == "First."
+
+    monkeypatch.setattr(
+        checkpoint,
+        "load_batch",
+        lambda index: pytest.fail(f"Python rows were materialized for batch {index}"),
+    )
+    assert checkpoint.completed_batches == (0,)
