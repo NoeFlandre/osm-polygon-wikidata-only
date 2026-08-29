@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Protocol
 
 import pyarrow as pa
@@ -198,6 +199,7 @@ class SentenceSplitSummary:
     unsupported_languages: tuple[str, ...]
 
 
+@lru_cache(maxsize=1)
 def sentence_schema() -> pa.Schema:
     """Return the stable Parquet schema for sentence sidecars."""
     return pa.schema(

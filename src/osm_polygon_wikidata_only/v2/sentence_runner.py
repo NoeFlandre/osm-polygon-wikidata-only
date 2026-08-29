@@ -227,15 +227,17 @@ def _process_source(
         ):
             sections = record_batch.to_pylist()
             counters.add_sections(sections)
-            rows = checkpoint.load_batch(batch_index)
-            if rows is None:
+            table = checkpoint.load_batch_table(batch_index)
+            if table is None:
                 rows, _ = split_sections(
                     sections,
                     segmenter=segmenter,
                     batch_size=batch_size,
                 )
                 checkpoint.write_batch(batch_index, rows)
-            row_count += len(rows)
+                row_count += len(rows)
+            else:
+                row_count += table.num_rows
             batch_count = batch_index + 1
     counters.sentence_rows = row_count
     return _ProcessedSource(
@@ -286,11 +288,11 @@ def _write_output(output_path: Path, checkpoint: SentenceCheckpoint, *, batch_co
     try:
         writer = pq.ParquetWriter(temporary, schema, compression="snappy")
         for batch_index in range(batch_count):
-            rows = checkpoint.load_batch(batch_index)
-            if rows is None:
+            table = checkpoint.load_batch_table(batch_index)
+            if table is None:
                 raise ValueError(f"Invalid sentence checkpoint batch: {batch_index}")
-            if rows:
-                writer.write_table(pa.Table.from_pylist(rows, schema=schema))
+            if table.num_rows:
+                writer.write_table(table)
         writer.close()
         writer = None
         _validate_schema(temporary, schema)

@@ -106,12 +106,12 @@ class SentenceCheckpoint:
         completed: list[int] = []
         for path in sorted(self.root.glob("batch-*.parquet")):
             index = _batch_index(path)
-            if index is not None and self.load_batch(index) is not None:
+            if index is not None and self.load_batch_table(index) is not None:
                 completed.append(index)
         return tuple(completed)
 
-    def load_batch(self, index: int) -> list[dict[str, Any]] | None:
-        """Read one batch, returning ``None`` for a missing or invalid file."""
+    def load_batch_table(self, index: int) -> pa.Table | None:
+        """Read one batch as a schema-validated Arrow table."""
         path = self._batch_path(index)
         try:
             with pq.ParquetFile(path) as parquet_file:
@@ -119,6 +119,13 @@ class SentenceCheckpoint:
         except (OSError, pa.ArrowException):
             return None
         if not table.schema.equals(sentence_schema(), check_metadata=True):
+            return None
+        return table
+
+    def load_batch(self, index: int) -> list[dict[str, Any]] | None:
+        """Read one batch, returning ``None`` for a missing or invalid file."""
+        table = self.load_batch_table(index)
+        if table is None:
             return None
         return table.to_pylist()
 
