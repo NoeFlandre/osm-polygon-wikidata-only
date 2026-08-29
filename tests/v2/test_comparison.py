@@ -2,11 +2,13 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
+from osm_polygon_wikidata_only.v2 import comparison
 from osm_polygon_wikidata_only.v2.comparison import (
     select_v2_added_wikipedia_tag_document_polygon_ids,
 )
@@ -42,6 +44,21 @@ def _write_v1_fixture(root: Path) -> None:
     )
 
 
+def test_unique_values_reuses_the_open_parquet_file_for_schema_and_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "values.parquet"
+    pq.write_table(pa.table({"language": ["en", "fr"]}), path)
+
+    def fail_if_opened_separately(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("schema inspection must reuse the row-reading handle")
+
+    monkeypatch.setattr(comparison.pq, "read_schema", fail_if_opened_separately)
+
+    assert comparison._unique_values((path,), "language") == {"en", "fr"}
+
+
 def _v2_polygon(polygon_id: str, sources: str) -> dict[str, object]:
     row = empty_row(tuple(field.name for field in polygon_schema()))
     row.update(
@@ -56,10 +73,18 @@ def _v2_polygon(polygon_id: str, sources: str) -> dict[str, object]:
     return row
 
 
-def test_selection_contains_only_v2_added_wikipedia_tag_document_polygons(tmp_path: Path) -> None:
+def test_selection_contains_only_v2_added_wikipedia_tag_document_polygons(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     v1 = tmp_path / "v1"
     v2 = tmp_path / "v2"
     _write_v1_fixture(v1)
+
+    def fail_if_opened_separately(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("schema inspection must reuse the row-reading handle")
+
+    monkeypatch.setattr(comparison.pq, "read_schema", fail_if_opened_separately)
 
     document = _row(wikipedia_document_v2_schema(), document_id="new-doc")
     write_v2_region(

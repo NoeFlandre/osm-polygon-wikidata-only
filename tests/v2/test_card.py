@@ -81,6 +81,181 @@ def test_sum_first_available_file_uses_first_present_word_column(tmp_path: Path)
     assert card._sum_first_available_file(path, ("missing",)) == 0
 
 
+def test_card_metrics_scan_document_columns_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "documents.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "document_id": ["doc-1"],
+                "language": ["en"],
+                "article_length_words": [4],
+            }
+        ),
+        path,
+    )
+    files = card._CardFiles(
+        stems=(),
+        polygon_files=[],
+        wikipedia_document_files=[path],
+        wikipedia_section_files=[],
+        wikivoyage_document_files=[],
+        wikivoyage_section_files=[],
+        wikidata_fact_files=[],
+        link_files=[],
+        parquet_files=(path,),
+    )
+
+    def fail_if_document_scan_is_repeated(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("document columns must be scanned once")
+
+    monkeypatch.setattr(card, "_text_document_languages", fail_if_document_scan_is_repeated)
+    monkeypatch.setattr(card, "_wikipedia_language_counts", fail_if_document_scan_is_repeated)
+    monkeypatch.setattr(card, "_sum_first_available", fail_if_document_scan_is_repeated)
+    original_unique_values = card._unique_values
+
+    def fail_if_document_values_are_rescanned(paths, column):
+        if path in tuple(paths):
+            raise AssertionError("document columns must be scanned once")
+        return original_unique_values(paths, column)
+
+    monkeypatch.setattr(card, "_unique_values", fail_if_document_values_are_rescanned)
+
+    metrics = card._compute_card_metrics(files)
+
+    assert metrics.document_ids == {"doc-1"}
+    assert metrics.languages == {"en"}
+    assert metrics.document_words == 4
+    assert metrics.top_languages == (("en", 1),)
+
+
+def test_card_metrics_scan_polygon_columns_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "polygons.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["polygon-1"],
+                "wikidata": ["Q42"],
+                "has_wikidata": [False],
+            }
+        ),
+        path,
+    )
+    files = card._CardFiles(
+        stems=(),
+        polygon_files=[path],
+        wikipedia_document_files=[],
+        wikipedia_section_files=[],
+        wikivoyage_document_files=[],
+        wikivoyage_section_files=[],
+        wikidata_fact_files=[],
+        link_files=[],
+        parquet_files=(path,),
+    )
+
+    def fail_if_polygon_scan_is_repeated(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("polygon columns must be scanned once")
+
+    monkeypatch.setattr(card, "_unique_values", fail_if_polygon_scan_is_repeated)
+    monkeypatch.setattr(card, "_unique_qids", fail_if_polygon_scan_is_repeated)
+    monkeypatch.setattr(card, "_count_boolean_false", fail_if_polygon_scan_is_repeated)
+
+    metrics = card._compute_card_metrics(files)
+
+    assert metrics.polygon_ids == {"polygon-1"}
+    assert metrics.qids == {"Q42"}
+    assert metrics.wikipedia_tag_only == 1
+
+
+def test_card_metrics_preserve_rows_when_metric_columns_are_missing(tmp_path: Path) -> None:
+    polygon_path = tmp_path / "polygons.parquet"
+    document_path = tmp_path / "documents.parquet"
+    pq.write_table(pa.table({"unrelated": [1, 2]}), polygon_path)
+    pq.write_table(pa.table({"unrelated": [1, 2, 3]}), document_path)
+    files = card._CardFiles(
+        stems=(),
+        polygon_files=[polygon_path],
+        wikipedia_document_files=[document_path],
+        wikipedia_section_files=[],
+        wikivoyage_document_files=[],
+        wikivoyage_section_files=[],
+        wikidata_fact_files=[],
+        link_files=[],
+        parquet_files=(polygon_path, document_path),
+    )
+
+    metrics = card._compute_card_metrics(files)
+
+    assert metrics.polygon_row_count == 2
+    assert metrics.wikipedia_document_row_count == 3
+
+
+def test_sum_metadata_uses_bounded_parallel_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = []
+    for index in range(3):
+        path = tmp_path / f"table-{index}.parquet"
+        pq.write_table(pa.table({"value": [index]}), path)
+        paths.append(path)
+
+    original_executor = card.ThreadPoolExecutor
+    worker_counts: list[int] = []
+
+    def tracking_executor(*args: object, **kwargs: object):
+        worker_counts.append(int(kwargs["max_workers"]))
+        return original_executor(*args, **kwargs)
+
+    monkeypatch.setattr(card, "ThreadPoolExecutor", tracking_executor)
+
+    assert card._sum_metadata(paths) == 3
+    assert worker_counts == [3]
+
+
+def test_build_card_stats_reuses_collected_row_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = card._CardFiles((), [], [], [], [], [], [], [], ())
+    metrics = card._compute_card_metrics(files)
+
+    def fail_if_counts_are_read_again(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("card row counts must not be read twice")
+
+    monkeypatch.setattr(card, "_sum_metadata", fail_if_counts_are_read_again)
+
+    snapshot = card._build_card_stats(files, metrics, card._V1Comparison())
+
+    assert snapshot.polygons == 0
+    assert snapshot.wikipedia_documents == 0
+    assert snapshot.wikivoyage_documents == 0
+    assert snapshot.wikipedia_sections == 0
+    assert snapshot.wikivoyage_sections == 0
+    assert snapshot.wikidata_facts == 0
+    assert snapshot.polygon_document_links == 0
+
+
+def test_unique_values_reuses_the_open_parquet_file_for_schema_and_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "documents.parquet"
+    pq.write_table(pa.table({"language": ["en", "fr"]}), path)
+
+    def fail_if_opened_separately(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("schema inspection must reuse the row-reading handle")
+
+    monkeypatch.setattr(card.pq, "read_schema", fail_if_opened_separately)
+
+    assert card._unique_values_file(path, "language") == {"en", "fr"}
+
+
 def test_validated_source_list_rejects_non_lists_and_non_strings() -> None:
     assert card._validated_source_list(["wikidata"], "p1", "sources") == ["wikidata"]
     with pytest.raises(ValueError, match="Invalid sources"):

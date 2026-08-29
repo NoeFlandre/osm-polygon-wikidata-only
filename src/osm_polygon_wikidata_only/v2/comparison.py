@@ -82,9 +82,9 @@ def _v1_document_files(processed: Path) -> tuple[Path, ...]:
 def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
     values: set[str] = set()
     for path in paths:
-        if column not in pq.read_schema(path).names:  # type: ignore[no-untyped-call]
-            continue
         with pq.ParquetFile(path) as parquet_file:
+            if column not in parquet_file.schema_arrow.names:
+                continue
             for batch in parquet_file.iter_batches(columns=[column], batch_size=_BATCH_SIZE):
                 values.update(
                     str(value) for value in batch.column(0).to_pylist() if value not in (None, "")
@@ -97,10 +97,9 @@ def _polygon_sources(paths: Iterable[Path], identities: set[str]) -> dict[str, s
     if not identities:
         return values
     for path in paths:
-        names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-        if not {"polygon_id", "discovery_sources"}.issubset(names):
-            continue
         with pq.ParquetFile(path) as parquet_file:
+            if not {"polygon_id", "discovery_sources"}.issubset(parquet_file.schema_arrow.names):
+                continue
             for batch in parquet_file.iter_batches(
                 columns=["polygon_id", "discovery_sources"], batch_size=_BATCH_SIZE
             ):
@@ -118,11 +117,10 @@ def _polygon_sources(paths: Iterable[Path], identities: set[str]) -> dict[str, s
 def _direct_documents_by_polygon(paths: Iterable[Path]) -> dict[str, set[str]]:
     values: dict[str, set[str]] = defaultdict(set)
     for path in paths:
-        names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
         required = {"polygon_id", "document_id", "project", "link_sources"}
-        if not required.issubset(names):
-            continue
         with pq.ParquetFile(path) as parquet_file:
+            if not required.issubset(parquet_file.schema_arrow.names):
+                continue
             for batch in parquet_file.iter_batches(
                 columns=["polygon_id", "document_id", "project", "link_sources"],
                 batch_size=_BATCH_SIZE,

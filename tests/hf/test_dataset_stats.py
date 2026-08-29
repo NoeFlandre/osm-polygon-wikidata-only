@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
+from osm_polygon_wikidata_only.hf._dataset_stats import aggregation
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     DatasetStats,
     compute_dataset_stats,
@@ -20,6 +22,42 @@ from osm_polygon_wikidata_only.hf.dataset_stats import (
 )
 
 # --- helpers ------------------------------------------------------------
+
+
+def test_parse_language_list_does_not_decode_canonical_empty_lists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_decoded(_value: object) -> object:
+        raise AssertionError("canonical empty language lists must not be decoded")
+
+    monkeypatch.setattr(aggregation.json, "loads", fail_if_decoded)
+
+    assert aggregation._parse_language_list("[]") == []
+
+
+def test_link_stats_use_bounded_parallel_metadata_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    links_dir = tmp_path / "polygon_articles"
+    links_dir.mkdir()
+    for index in range(3):
+        pq.write_table(pa.table({"value": [index]}), links_dir / f"part-{index}.parquet")
+
+    original_executor = aggregation.ThreadPoolExecutor
+    worker_counts: list[int] = []
+
+    def tracking_executor(*args: object, **kwargs: object):
+        worker_counts.append(int(kwargs["max_workers"]))
+        return original_executor(*args, **kwargs)
+
+    monkeypatch.setattr(aggregation, "ThreadPoolExecutor", tracking_executor)
+
+    stats = aggregation._StatsAccumulator()
+    aggregation._accumulate_link_files(stats, links_dir)
+
+    assert stats.link_count == 3
+    assert worker_counts == [3]
 
 
 def _write_polygons_parquet(path: Path, rows: list[dict]) -> Path:

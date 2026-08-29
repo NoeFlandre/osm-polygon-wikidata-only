@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ from osm_polygon_wikidata_only.v2.config import (
     V2_TRACKIO_SPACE_ID,
 )
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
+
+_METADATA_READ_WORKERS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +101,34 @@ class _CardMetrics:
     wikivoyage_section_count: int
     text_funnel: tuple[tuple[str, int], ...]
     top_languages: tuple[tuple[str, int], ...]
+    polygon_row_count: int
+    wikipedia_document_row_count: int
+    wikivoyage_document_row_count: int
+    wikidata_fact_row_count: int
+    link_row_count: int
+
+
+@dataclass(slots=True)
+class _DocumentMetrics:
+    """Metrics collected in one columnar pass over document files."""
+
+    document_ids: set[str]
+    languages: set[str]
+    text_document_languages: dict[str, str]
+    wikipedia_language_counts: Counter[str]
+    wikipedia_document_row_count: int = 0
+    wikivoyage_document_row_count: int = 0
+    document_words: int = 0
+
+
+@dataclass(slots=True)
+class _PolygonMetrics:
+    """Metrics collected in one columnar pass over polygon files."""
+
+    polygon_ids: set[str]
+    qids: set[str]
+    polygon_row_count: int = 0
+    wikipedia_tag_only: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,26 +201,36 @@ def _collect_card_files(processed_v2: Path) -> _CardFiles:
 
 def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
     document_files = files.wikipedia_document_files + files.wikivoyage_document_files
-    text_funnel, top_languages = _text_metrics(
+    document_metrics = _scan_document_metrics(
         document_files,
         files.wikipedia_document_files,
+    )
+    text_funnel, top_languages = _text_metrics_from_scanned(
+        document_metrics.text_document_languages,
+        document_metrics.wikipedia_language_counts,
         files.link_files,
     )
-    polygon_ids = _unique_values(files.polygon_files, "polygon_id")
+    polygon_metrics = _scan_polygon_metrics(files.polygon_files)
+    wikipedia_section_count = _sum_metadata(files.wikipedia_section_files)
+    wikivoyage_section_count = _sum_metadata(files.wikivoyage_section_files)
+    wikidata_fact_count = _sum_metadata(files.wikidata_fact_files)
+    link_count = _sum_metadata(files.link_files)
     return _CardMetrics(
-        polygon_ids=polygon_ids,
-        document_ids=_unique_values(files.wikipedia_document_files, "document_id"),
-        qids=_unique_qids(files.polygon_files),
-        languages=_unique_values(document_files, "language"),
-        wikipedia_tag_only=_count_boolean_false(files.polygon_files, "has_wikidata"),
-        document_words=_sum_first_available(
-            document_files,
-            ("article_length_words", "text_length_words"),
-        ),
-        wikipedia_section_count=_sum_metadata(files.wikipedia_section_files),
-        wikivoyage_section_count=_sum_metadata(files.wikivoyage_section_files),
-        text_funnel=(("All polygons", len(polygon_ids)), *text_funnel[1:]),
+        polygon_ids=polygon_metrics.polygon_ids,
+        document_ids=document_metrics.document_ids,
+        qids=polygon_metrics.qids,
+        languages=document_metrics.languages,
+        wikipedia_tag_only=polygon_metrics.wikipedia_tag_only,
+        document_words=document_metrics.document_words,
+        wikipedia_section_count=wikipedia_section_count,
+        wikivoyage_section_count=wikivoyage_section_count,
+        text_funnel=(("All polygons", len(polygon_metrics.polygon_ids)), *text_funnel[1:]),
         top_languages=top_languages,
+        polygon_row_count=polygon_metrics.polygon_row_count,
+        wikipedia_document_row_count=document_metrics.wikipedia_document_row_count,
+        wikivoyage_document_row_count=document_metrics.wikivoyage_document_row_count,
+        wikidata_fact_row_count=wikidata_fact_count,
+        link_row_count=link_count,
     )
 
 
@@ -340,14 +381,14 @@ def _build_card_stats(
 ) -> V2CardStats:
     return V2CardStats(
         regions=len(files.stems),
-        polygons=_sum_metadata(files.polygon_files),
+        polygons=metrics.polygon_row_count,
         unique_wikidata_entities=len(metrics.qids),
-        wikipedia_documents=_sum_metadata(files.wikipedia_document_files),
+        wikipedia_documents=metrics.wikipedia_document_row_count,
         wikipedia_sections=metrics.wikipedia_section_count,
-        wikivoyage_documents=_sum_metadata(files.wikivoyage_document_files),
+        wikivoyage_documents=metrics.wikivoyage_document_row_count,
         wikivoyage_sections=metrics.wikivoyage_section_count,
-        wikidata_facts=_sum_metadata(files.wikidata_fact_files),
-        polygon_document_links=_sum_metadata(files.link_files),
+        wikidata_facts=metrics.wikidata_fact_row_count,
+        polygon_document_links=metrics.link_row_count,
         wikipedia_tag_only_polygons=metrics.wikipedia_tag_only,
         document_words=metrics.document_words,
         languages=len(metrics.languages),
@@ -618,7 +659,19 @@ def _manifest_files(directory: Path, stems: Iterable[str]) -> list[Path]:
 
 
 def _sum_metadata(paths: Iterable[Path]) -> int:
-    return sum(int(pq.read_metadata(path).num_rows) for path in paths)  # type: ignore[no-untyped-call]
+    materialized = tuple(paths)
+    if not materialized:
+        return 0
+    workers = min(_METADATA_READ_WORKERS, len(materialized))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="v2-card-metadata",
+    ) as executor:
+        return sum(executor.map(_metadata_row_count, materialized))
+
+
+def _metadata_row_count(path: Path) -> int:
+    return int(pq.read_metadata(path).num_rows)  # type: ignore[no-untyped-call]
 
 
 def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
@@ -629,10 +682,10 @@ def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
 
 
 def _unique_values_file(path: Path, column: str) -> set[str]:
-    if column not in pq.read_schema(path).names:  # type: ignore[no-untyped-call]
-        return set()
     values: set[str] = set()
     with pq.ParquetFile(path) as parquet_file:
+        if column not in parquet_file.schema_arrow.names:
+            return values
         for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536):
             values.update(_non_empty_strings(batch.column(0).to_pylist()))
     return values
@@ -648,10 +701,9 @@ def _unique_qids(paths: Iterable[Path]) -> set[str]:
 def _count_boolean_false(paths: Iterable[Path], column: str) -> int:
     total = 0
     for path in paths:
-        names = pq.read_schema(path).names  # type: ignore[no-untyped-call]
-        if column not in names:
-            continue
         with pq.ParquetFile(path) as parquet_file:
+            if column not in parquet_file.schema_arrow.names:
+                continue
             for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536):
                 total += sum(value is False for value in batch.column(0).to_pylist())
     return total
@@ -662,11 +714,10 @@ def _sum_first_available(paths: Iterable[Path], columns: tuple[str, ...]) -> int
 
 
 def _sum_first_available_file(path: Path, columns: tuple[str, ...]) -> int:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    column = _first_present_column(names, columns)
-    if column is None:
-        return 0
     with pq.ParquetFile(path) as parquet_file:
+        column = _first_present_column(set(parquet_file.schema_arrow.names), columns)
+        if column is None:
+            return 0
         return sum(
             sum(int(value or 0) for value in batch.column(0).to_pylist())
             for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536)
@@ -693,11 +744,11 @@ def _merge_numeric_file(
     key_column: str,
     value_columns: tuple[str, ...],
 ) -> None:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    value_column = _first_present_column(names, value_columns)
-    if key_column not in names or value_column is None:
-        return
     with pq.ParquetFile(path) as parquet_file:
+        names = set(parquet_file.schema_arrow.names)
+        value_column = _first_present_column(names, value_columns)
+        if key_column not in names or value_column is None:
+            return
         _merge_numeric_batches(values, parquet_file, key_column, value_column)
 
 
@@ -755,10 +806,9 @@ def _merge_field_values_file(
     value_column: str,
     identities: set[str],
 ) -> None:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    if not {key_column, value_column}.issubset(names):
-        return
     with pq.ParquetFile(path) as parquet_file:
+        if not {key_column, value_column}.issubset(parquet_file.schema_arrow.names):
+            return
         for batch in parquet_file.iter_batches(
             columns=[key_column, value_column], batch_size=65_536
         ):
@@ -785,11 +835,10 @@ def _polygon_source_sets(paths: Iterable[Path], identities: set[str]) -> dict[st
 
 
 def _polygon_source_file(path: Path, identities: set[str]) -> dict[str, set[str]]:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    if not {"polygon_id", "discovery_sources"}.issubset(names):
-        return {}
     values: dict[str, set[str]] = {}
     with pq.ParquetFile(path) as parquet_file:
+        if not {"polygon_id", "discovery_sources"}.issubset(parquet_file.schema_arrow.names):
+            return values
         for batch in parquet_file.iter_batches(
             columns=["polygon_id", "discovery_sources"], batch_size=65_536
         ):
@@ -841,11 +890,10 @@ def _polygon_ids_with_link_source(paths: Iterable[Path], source: str) -> set[str
 
 
 def _link_source_file(path: Path, source: str) -> set[str]:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    if not {"polygon_id", "link_sources"}.issubset(names):
-        return set()
     values: set[str] = set()
     with pq.ParquetFile(path) as parquet_file:
+        if not {"polygon_id", "link_sources"}.issubset(parquet_file.schema_arrow.names):
+            return values
         for batch in parquet_file.iter_batches(
             columns=["polygon_id", "link_sources"], batch_size=65_536
         ):
@@ -870,11 +918,146 @@ def _text_metrics(
     """Return a combined text funnel and top Wikipedia document languages."""
     document_languages = _text_document_languages(all_document_paths)
     wikipedia_language_counts = _wikipedia_language_counts(wikipedia_document_paths)
+    return _text_metrics_from_scanned(document_languages, wikipedia_language_counts, link_paths)
+
+
+def _text_metrics_from_scanned(
+    document_languages: dict[str, str],
+    wikipedia_language_counts: Counter[str],
+    link_paths: Iterable[Path],
+) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
+    """Build text metrics from document columns already scanned once."""
     languages_by_polygon = _polygon_languages(link_paths, document_languages)
     return (
         _text_funnel(languages_by_polygon),
         tuple(wikipedia_language_counts.most_common(10)),
     )
+
+
+def _scan_document_metrics(
+    all_document_paths: Iterable[Path],
+    wikipedia_document_paths: Iterable[Path],
+) -> _DocumentMetrics:
+    """Collect document identities, languages, words, and text routing once."""
+    metrics = _DocumentMetrics(set(), set(), {}, Counter())
+    wikipedia_paths = set(wikipedia_document_paths)
+    for path in all_document_paths:
+        _scan_document_file(path, is_wikipedia=path in wikipedia_paths, metrics=metrics)
+    return metrics
+
+
+def _scan_document_file(path: Path, *, is_wikipedia: bool, metrics: _DocumentMetrics) -> None:
+    with pq.ParquetFile(path) as parquet_file:
+        metadata = parquet_file.metadata
+        row_count = 0 if metadata is None else int(metadata.num_rows)
+        if is_wikipedia:
+            metrics.wikipedia_document_row_count += row_count
+        else:
+            metrics.wikivoyage_document_row_count += row_count
+        names = set(parquet_file.schema_arrow.names)
+        word_column = _word_column(names)
+        has_document_id = "document_id" in names
+        has_language = "language" in names
+        if has_document_id and word_column is not None:
+            # Keep the historical failure for a text-bearing document file
+            # without a language column: the old text scan requested it too.
+            columns = ["document_id", "language", word_column]
+        else:
+            columns = [
+                column
+                for column in ("document_id", "language", word_column)
+                if column is not None and column in names
+            ]
+        if not columns:
+            return
+        positions = {column: index for index, column in enumerate(columns)}
+        for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+            _scan_document_batch(
+                batch,
+                positions=positions,
+                is_wikipedia=is_wikipedia,
+                has_document_id=has_document_id,
+                has_language=has_language,
+                has_word_column=word_column is not None,
+                metrics=metrics,
+            )
+
+
+def _scan_document_batch(
+    batch: Any,
+    *,
+    positions: dict[str, int],
+    is_wikipedia: bool,
+    has_document_id: bool,
+    has_language: bool,
+    has_word_column: bool,
+    metrics: _DocumentMetrics,
+) -> None:
+    identities = batch.column(positions["document_id"]).to_pylist() if has_document_id else None
+    languages = batch.column(positions["language"]).to_pylist() if has_language else None
+    word_column = next(
+        (column for column in positions if column not in {"document_id", "language"}), None
+    )
+    words = batch.column(positions[word_column]).to_pylist() if word_column else None
+    for index in range(batch.num_rows):
+        identity = identities[index] if identities is not None else None
+        language = languages[index] if languages is not None else None
+        word_count = words[index] if words is not None else None
+        if language:
+            metrics.languages.add(str(language))
+            if is_wikipedia and has_document_id:
+                metrics.wikipedia_language_counts[str(language)] += 1
+        if is_wikipedia and identity:
+            metrics.document_ids.add(str(identity))
+        if has_document_id and has_word_column and _has_non_empty_words(identity, word_count):
+            metrics.text_document_languages[str(identity)] = str(language or "")
+        if words is not None:
+            metrics.document_words += int(word_count or 0)
+
+
+def _scan_polygon_metrics(paths: Iterable[Path]) -> _PolygonMetrics:
+    """Collect polygon identities, QIDs, and source counts in one pass."""
+    metrics = _PolygonMetrics(set(), set())
+    for path in paths:
+        _scan_polygon_file(path, metrics)
+    return metrics
+
+
+def _scan_polygon_file(path: Path, metrics: _PolygonMetrics) -> None:
+    with pq.ParquetFile(path) as parquet_file:
+        metadata = parquet_file.metadata
+        metrics.polygon_row_count += 0 if metadata is None else int(metadata.num_rows)
+        names = set(parquet_file.schema_arrow.names)
+        columns = [
+            column for column in ("polygon_id", "wikidata", "has_wikidata") if column in names
+        ]
+        if not columns:
+            return
+        positions = {column: index for index, column in enumerate(columns)}
+        for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+            _scan_polygon_batch(batch, positions=positions, metrics=metrics)
+
+
+def _scan_polygon_batch(
+    batch: Any,
+    *,
+    positions: dict[str, int],
+    metrics: _PolygonMetrics,
+) -> None:
+    polygon_ids = (
+        batch.column(positions["polygon_id"]).to_pylist() if "polygon_id" in positions else None
+    )
+    wikidata = batch.column(positions["wikidata"]).to_pylist() if "wikidata" in positions else None
+    has_wikidata = (
+        batch.column(positions["has_wikidata"]).to_pylist() if "has_wikidata" in positions else None
+    )
+    for index in range(batch.num_rows):
+        if polygon_ids is not None and polygon_ids[index]:
+            metrics.polygon_ids.add(str(polygon_ids[index]))
+        if wikidata is not None and wikidata[index]:
+            metrics.qids.update(qids_from_osm_tag(str(wikidata[index])))
+        if has_wikidata is not None and has_wikidata[index] is False:
+            metrics.wikipedia_tag_only += 1
 
 
 def _word_column(names: set[str]) -> str | None:
@@ -893,12 +1076,12 @@ def _text_document_languages(paths: Iterable[Path]) -> dict[str, str]:
 
 
 def _text_document_file_languages(path: Path) -> dict[str, str]:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    words_column = _word_column(names)
-    if "document_id" not in names or words_column is None:
-        return {}
     languages: dict[str, str] = {}
     with pq.ParquetFile(path) as parquet_file:
+        names = set(parquet_file.schema_arrow.names)
+        words_column = _word_column(names)
+        if "document_id" not in names or words_column is None:
+            return languages
         for batch in parquet_file.iter_batches(
             columns=["document_id", "language", words_column], batch_size=65_536
         ):
@@ -931,11 +1114,11 @@ def _wikipedia_language_counts(paths: Iterable[Path]) -> Counter[str]:
 
 
 def _wikipedia_language_file_counts(path: Path) -> Counter[str]:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    if "language" not in names or "document_id" not in names:
-        return Counter()
     counts: Counter[str] = Counter()
     with pq.ParquetFile(path) as parquet_file:
+        names = set(parquet_file.schema_arrow.names)
+        if "language" not in names or "document_id" not in names:
+            return counts
         for batch in parquet_file.iter_batches(columns=["language"], batch_size=65_536):
             counts.update(_non_empty_strings(batch.column(0).to_pylist()))
     return counts
@@ -961,11 +1144,10 @@ def _polygon_languages_file(
     path: Path,
     document_languages: dict[str, str],
 ) -> dict[str, set[str]]:
-    names = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
-    if not {"polygon_id", "document_id"}.issubset(names):
-        return {}
     values: defaultdict[str, set[str]] = defaultdict(set)
     with pq.ParquetFile(path) as parquet_file:
+        if not {"polygon_id", "document_id"}.issubset(parquet_file.schema_arrow.names):
+            return values
         for batch in parquet_file.iter_batches(
             columns=["polygon_id", "document_id"], batch_size=65_536
         ):

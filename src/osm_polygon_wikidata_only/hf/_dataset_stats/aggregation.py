@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -24,6 +25,7 @@ from .models import DatasetStats
 from .scanning import safe_metadata_row_count, safe_table, sorted_parquets
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.dataset_stats")
+_METADATA_READ_WORKERS = 4
 
 
 @dataclass(slots=True)
@@ -165,7 +167,7 @@ def _count_polygon_languages(values: list[object]) -> Counter[str]:
 
 
 def _parse_language_list(value: object) -> list[object]:
-    if not value:
+    if not value or value == "[]":
         return []
     if not isinstance(value, (str, bytes, bytearray)):
         return []
@@ -207,11 +209,20 @@ def _sum_numeric(values: list[object]) -> int:
 def _accumulate_link_files(stats: _StatsAccumulator, links_dir: Path) -> None:
     if not links_dir.exists():
         return
-    for parquet_path in sorted_parquets(links_dir):
+    parquet_paths = sorted_parquets(links_dir)
+    for parquet_path in parquet_paths:
         stats.dataset_size_bytes += parquet_path.stat().st_size
-        n_rows = safe_metadata_row_count(parquet_path)
-        if n_rows is not None:
-            stats.link_count += n_rows
+    if not parquet_paths:
+        return
+    workers = min(_METADATA_READ_WORKERS, len(parquet_paths))
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="dataset-stats-metadata",
+    ) as executor:
+        row_counts = executor.map(safe_metadata_row_count, parquet_paths)
+        for n_rows in row_counts:
+            if n_rows is not None:
+                stats.link_count += n_rows
 
 
 __all__ = ["compute_dataset_stats"]
