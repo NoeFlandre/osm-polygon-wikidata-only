@@ -220,6 +220,81 @@ def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:
     assert artifact_tests in mutation["pytest_add_cli_args_test_selection"]
 
 
+def test_crap_gate_measures_comparison_and_sentence_checkpoint_helpers() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "tests/v2/test_comparison.py" in justfile
+    assert "src/osm_polygon_wikidata_only/v2/comparison.py" in justfile
+    assert "tests/v2/test_sentence_checkpoints.py" in justfile
+    assert "src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py" in justfile
+
+
+def test_crap_all_includes_the_isolated_geography_scope() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "crap-geography:" in justfile
+    assert "tests/hf/test_coverage_map.py" in justfile
+    assert "src/osm_polygon_wikidata_only/hf/coverage_map.py" in justfile
+    assert "crap-all: crap crap-sync crap-upload crap-quality crap-geography" in justfile
+
+
+def test_crap_scopes_cover_the_remaining_deterministic_refactor_targets() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    for recipe, test_path, source_path in (
+        (
+            "crap-geography-inputs:",
+            "tests/hf/test_geographic_text_coverage.py",
+            "src/osm_polygon_wikidata_only/hf/_geographic/parquet_inputs.py",
+        ),
+        (
+            "crap-stats:",
+            "tests/hf/test_dataset_stats.py",
+            "src/osm_polygon_wikidata_only/hf/_dataset_stats/aggregation.py",
+        ),
+        ("crap-sat:", "tests/v2/test_sat.py", "src/osm_polygon_wikidata_only/v2/sat.py"),
+    ):
+        assert recipe in justfile
+        assert test_path in justfile
+        assert source_path in justfile
+
+    assert (
+        "crap-all: crap crap-sync crap-upload crap-quality crap-geography "
+        "crap-geography-inputs crap-stats crap-sat"
+    ) in justfile
+
+
+def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    mutation = config["tool"]["mutmut"]
+
+    for source_path, test_path in (
+        (
+            "src/osm_polygon_wikidata_only/v2/comparison.py",
+            "tests/v2/test_comparison.py",
+        ),
+        (
+            "src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py",
+            "tests/v2/test_sentence_checkpoints.py",
+        ),
+        (
+            "src/osm_polygon_wikidata_only/hf/_geographic/parquet_inputs.py",
+            "tests/hf/test_geographic_text_coverage.py",
+        ),
+        (
+            "src/osm_polygon_wikidata_only/hf/_dataset_stats/aggregation.py",
+            "tests/hf/test_dataset_stats.py",
+        ),
+        ("src/osm_polygon_wikidata_only/v2/sat.py", "tests/v2/test_sat.py"),
+    ):
+        assert source_path not in mutation["source_paths"]
+        assert test_path not in mutation["pytest_add_cli_args_test_selection"]
+
+
 def test_diff_review_executes_unmerged_path_check() -> None:
     """The diff-review recipe must evaluate, not quote, its command substitution."""
 

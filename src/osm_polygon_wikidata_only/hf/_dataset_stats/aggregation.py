@@ -171,6 +171,10 @@ def _parse_language_list(value: object) -> list[object]:
         return []
     if not isinstance(value, (str, bytes, bytearray)):
         return []
+    return _decoded_language_list(value)
+
+
+def _decoded_language_list(value: str | bytes | bytearray) -> list[object]:
     try:
         languages = json.loads(value)
     except (ValueError, TypeError):
@@ -210,19 +214,20 @@ def _accumulate_link_files(stats: _StatsAccumulator, links_dir: Path) -> None:
     if not links_dir.exists():
         return
     parquet_paths = sorted_parquets(links_dir)
-    for parquet_path in parquet_paths:
-        stats.dataset_size_bytes += parquet_path.stat().st_size
+    stats.dataset_size_bytes += sum(path.stat().st_size for path in parquet_paths)
+    stats.link_count += _count_link_rows(parquet_paths)
+
+
+def _count_link_rows(parquet_paths: list[Path]) -> int:
     if not parquet_paths:
-        return
+        return 0
     workers = min(_METADATA_READ_WORKERS, len(parquet_paths))
     with ThreadPoolExecutor(
         max_workers=workers,
         thread_name_prefix="dataset-stats-metadata",
     ) as executor:
         row_counts = executor.map(safe_metadata_row_count, parquet_paths)
-        for n_rows in row_counts:
-            if n_rows is not None:
-                stats.link_count += n_rows
+        return sum(n_rows for n_rows in row_counts if n_rows is not None)
 
 
 __all__ = ["compute_dataset_stats"]

@@ -11,7 +11,11 @@ import pytest
 
 from osm_polygon_wikidata_only.hf import coverage_map
 from osm_polygon_wikidata_only.hf.coverage_map import (
+    WORLD_COUNTRIES_FILENAME,
     WORLD_LAND_FILENAME,
+    _all_centroid_rows,
+    _selected_centroid_rows,
+    ensure_world_countries,
     ensure_world_land,
     generate_coverage_map,
     load_centroids_from_parquet,
@@ -77,6 +81,24 @@ def test_load_centroids_reads_lat_lon(tmp_path: Path) -> None:
     lons, lats = load_centroids_from_parquet(tmp_path)
     assert lons == [4.0, 5.0, 6.0]
     assert lats == [1.0, 2.0, 3.0]
+
+
+def test_all_centroid_rows_skip_missing_coordinates() -> None:
+    batch = pa.record_batch({"lon": [4.0, None, 6.0], "lat": [1.0, 2.0, None]})
+
+    assert list(_all_centroid_rows(batch)) == [(4.0, 1.0)]
+
+
+def test_selected_centroid_rows_keep_only_requested_ids_with_coordinates() -> None:
+    batch = pa.record_batch(
+        {
+            "polygon_id": ["keep", "drop", "keep-no-coordinates"],
+            "lon": [4.0, 5.0, None],
+            "lat": [1.0, 2.0, 3.0],
+        }
+    )
+
+    assert list(_selected_centroid_rows(batch, {"keep", "keep-no-coordinates"})) == [(4.0, 1.0)]
 
 
 def test_load_centroids_skips_nulls(tmp_path: Path) -> None:
@@ -257,6 +279,16 @@ def test_ensure_world_land_does_not_redownload(
     monkeypatch.setattr("urllib.request.urlretrieve", fail_if_called)
     ensure_world_land(cache_dir)
     assert not download_called
+
+
+def test_ensure_world_countries_copies_the_bundled_reference(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+
+    result = ensure_world_countries(cache_dir)
+
+    assert result == cache_dir / WORLD_COUNTRIES_FILENAME
+    assert result.is_file()
+    assert result.stat().st_size > 0
 
 
 # --- integration: map is cumulative across PBFs -------------------------

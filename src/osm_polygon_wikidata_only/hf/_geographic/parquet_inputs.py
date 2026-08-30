@@ -58,49 +58,64 @@ def iter_required_columns(
     """
     import pyarrow as pa
 
-    actual: set[str] = set()
-    metadata_read = False
+    actual, metadata_read = _metadata_columns(parquet_path)
     try:
-        metadata = pq.read_metadata(parquet_path)  # type: ignore[no-untyped-call]
-        actual = set(metadata.schema.names) - PYARROW_INTERNAL_COLUMNS
-        metadata_read = True
-    # ``except Exception`` retained: PyArrow's metadata API raises
-    # across several unstable exception types depending on the
-    # corruption mode. When the metadata read fails, we fall through
-    # with an empty ``actual`` column-name set and let the
-    # ``ParquetFile`` schema determine the outcome. A valid parquet
-    # with the requested columns still streams; missing columns are
-    # translated into ``CoverageMapError``. See
-    # ``tests/hf/test_geographic_text_coverage.py`` for the focused
-    # schema-introspection tests.
-    except Exception:
-        actual = set()
-    try:
-        with pq.ParquetFile(parquet_path) as parquet_file:  # type: ignore[no-untyped-call]
-            if not metadata_read:
-                actual = set(parquet_file.schema.names) - PYARROW_INTERNAL_COLUMNS
-            missing = sorted(set(columns) - actual)
-            if missing:
-                raise CoverageMapError(
-                    f"{label} parquet {parquet_path} is missing required columns: {missing}"
-                )
-            for batch in parquet_file.iter_batches(
-                batch_size=batch_size,
-                columns=list(columns),
-            ):
-                yield from batch.to_pylist()
+        yield from _iter_required_rows(
+            parquet_path,
+            columns,
+            label=label,
+            batch_size=batch_size,
+            actual=actual,
+            metadata_read=metadata_read,
+        )
     except pa.ArrowInvalid as error:
         missing = sorted(set(columns) - actual)
-        raise CoverageMapError(
-            f"{label} parquet {parquet_path} is missing required columns: {missing}"
-        ) from error
+        raise _missing_columns_error(label, parquet_path, missing) from error
     except KeyError as error:
         missing = sorted(set(columns) - actual)
-        raise CoverageMapError(
-            f"{label} parquet {parquet_path} is missing required columns: {missing}"
-        ) from error
+        raise _missing_columns_error(label, parquet_path, missing) from error
     except OSError as error:
         raise CoverageMapError(f"Could not read {label} parquet {parquet_path}: {error}") from error
+
+
+def _metadata_columns(parquet_path: Path) -> tuple[set[str], bool]:
+    """Return user columns and whether metadata inspection succeeded."""
+    try:
+        metadata = pq.read_metadata(parquet_path)  # type: ignore[no-untyped-call]
+    # ``except Exception`` retained: PyArrow's metadata API raises
+    # across several unstable exception types depending on the
+    # corruption mode. The ParquetFile schema remains the fallback.
+    except Exception:
+        return set(), False
+    return set(metadata.schema.names) - PYARROW_INTERNAL_COLUMNS, True
+
+
+def _missing_columns_error(label: str, parquet_path: Path, missing: list[str]) -> CoverageMapError:
+    return CoverageMapError(
+        f"{label} parquet {parquet_path} is missing required columns: {missing}"
+    )
+
+
+def _iter_required_rows(
+    parquet_path: Path,
+    columns: tuple[str, ...],
+    *,
+    label: str,
+    batch_size: int,
+    actual: set[str],
+    metadata_read: bool,
+) -> Iterator[dict[str, Any]]:
+    with pq.ParquetFile(parquet_path) as parquet_file:  # type: ignore[no-untyped-call]
+        if not metadata_read:
+            actual.update(set(parquet_file.schema.names) - PYARROW_INTERNAL_COLUMNS)
+        missing = sorted(set(columns) - actual)
+        if missing:
+            raise _missing_columns_error(label, parquet_path, missing)
+        for batch in parquet_file.iter_batches(
+            batch_size=batch_size,
+            columns=list(columns),
+        ):
+            yield from batch.to_pylist()
 
 
 def read_required_columns(

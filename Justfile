@@ -33,10 +33,10 @@ architecture-checks:
     just docs
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/contracts tests/test_mkdocs.py tests/test_documentation.py tests/test_docker.py
 
-# Enforce a CRAP score below 6 for the v2 data-integrity helper scope.
+# Enforce a CRAP score below 6 for the V2 data-integrity helper scope.
 crap:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest tests/domain/test_filters.py tests/v2/test_deduplication.py tests/v2/test_fingerprints.py tests/v2/test_wikipedia_tags.py tests/v2/test_sentence_logic.py tests/v2/test_sentence_runner.py tests/grid5000/test_sentence_protocol.py tests/grid5000/test_sentence_artifacts.py --cov=osm_polygon_wikidata_only.domain.filters --cov=osm_polygon_wikidata_only.v2.deduplication --cov=osm_polygon_wikidata_only.v2.fingerprints --cov=osm_polygon_wikidata_only.v2.wikipedia_tags --cov=osm_polygon_wikidata_only.v2.sentence_logic --cov=osm_polygon_wikidata_only.v2.sentence_runner --cov=osm_polygon_wikidata_only.grid5000.sentence_protocol --cov-branch --cov-fail-under=0 --cov-report=lcov:/tmp/osm-polygon-wikidata-only-crap.lcov -q
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run crap4py --lcov /tmp/osm-polygon-wikidata-only-crap.lcov --max-crap 5.99 src/osm_polygon_wikidata_only/domain/filters.py src/osm_polygon_wikidata_only/v2/deduplication.py src/osm_polygon_wikidata_only/v2/fingerprints.py src/osm_polygon_wikidata_only/v2/wikipedia_tags.py src/osm_polygon_wikidata_only/v2/sentence_logic.py src/osm_polygon_wikidata_only/v2/sentence_runner.py src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest tests/domain/test_filters.py tests/v2/test_deduplication.py tests/v2/test_fingerprints.py tests/v2/test_wikipedia_tags.py tests/v2/test_sentence_logic.py tests/v2/test_sentence_runner.py tests/v2/test_comparison.py tests/v2/test_sentence_checkpoints.py tests/grid5000/test_sentence_protocol.py tests/grid5000/test_sentence_artifacts.py --cov=osm_polygon_wikidata_only.domain.filters --cov=osm_polygon_wikidata_only.v2.deduplication --cov=osm_polygon_wikidata_only.v2.fingerprints --cov=osm_polygon_wikidata_only.v2.wikipedia_tags --cov=osm_polygon_wikidata_only.v2.sentence_logic --cov=osm_polygon_wikidata_only.v2.sentence_runner --cov=osm_polygon_wikidata_only.v2.comparison --cov=osm_polygon_wikidata_only.v2.sentence_checkpoints --cov=osm_polygon_wikidata_only.grid5000.sentence_protocol --cov-branch --cov-fail-under=0 --cov-report=lcov:/tmp/osm-polygon-wikidata-only-crap.lcov -q
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run crap4py --lcov /tmp/osm-polygon-wikidata-only-crap.lcov --max-crap 5.99 src/osm_polygon_wikidata_only/domain/filters.py src/osm_polygon_wikidata_only/v2/deduplication.py src/osm_polygon_wikidata_only/v2/fingerprints.py src/osm_polygon_wikidata_only/v2/wikipedia_tags.py src/osm_polygon_wikidata_only/v2/sentence_logic.py src/osm_polygon_wikidata_only/v2/sentence_runner.py src/osm_polygon_wikidata_only/v2/comparison.py src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py
 
 # Report function-level CRAP scores for the pure parsing/cleaning and sync
 # application scopes. Reports stay in /tmp so Mac storage remains bounded.
@@ -57,7 +57,31 @@ crap-quality:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j scripts/quality/crap_score.py scripts/quality/mutation_gate.py scripts/audit_containment.py > /tmp/osm-polygon-wikidata-quality-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-quality-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-quality-crap-complexity.json --maximum 6
 
-crap-all: crap crap-sync crap-upload crap-quality
+# Enforce a CRAP score below 6 for deterministic centroid-file handling.
+crap-geography:
+    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-geography-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-geography-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_coverage_map.py --cov=osm_polygon_wikidata_only.hf.coverage_map --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-geography-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/coverage_map.py > /tmp/osm-polygon-wikidata-geography-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-geography-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-geography-crap-complexity.json --maximum 6
+
+# Enforce a CRAP score below 6 for deterministic geographic parquet inputs.
+crap-geography-inputs:
+    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-geography-inputs-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-geography-inputs-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_geographic_text_coverage.py --cov=osm_polygon_wikidata_only.hf._geographic.parquet_inputs --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-geography-inputs-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/_geographic/parquet_inputs.py > /tmp/osm-polygon-wikidata-geography-inputs-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-geography-inputs-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-geography-inputs-crap-complexity.json --maximum 6
+
+# Enforce a CRAP score below 6 for deterministic DatasetStats aggregation.
+crap-stats:
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-stats-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_dataset_stats.py --cov=osm_polygon_wikidata_only.hf._dataset_stats.aggregation --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-stats-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/_dataset_stats/aggregation.py > /tmp/osm-polygon-wikidata-stats-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-stats-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-stats-crap-complexity.json --maximum 6
+
+# Enforce a CRAP score below 6 for the lazy SaT dependency/provider adapter.
+crap-sat:
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-sat-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/v2/test_sat.py --cov=osm_polygon_wikidata_only.v2.sat --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-sat-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/v2/sat.py > /tmp/osm-polygon-wikidata-sat-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-sat-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-sat-crap-complexity.json --maximum 6
+
+crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat
 
 # Run mutmut with two workers to keep peak Mac memory bounded. The explicit
 # source scope contains only pure deterministic helpers, and the gate refuses
@@ -83,9 +107,9 @@ qa-gauntlet: quality-gauntlet
 
 # Run opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap crap-sync crap-upload crap-quality
+quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat
 
-quality-advanced: crap crap-sync crap-upload crap-quality mutation
+quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat mutation
 
 lint:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff check src tests scripts

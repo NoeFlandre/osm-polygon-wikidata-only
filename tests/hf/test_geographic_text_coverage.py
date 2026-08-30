@@ -1345,6 +1345,33 @@ def test_read_required_columns_recovers_when_metadata_read_fails(
     ]
 
 
+def test_metadata_columns_reports_fallback_when_metadata_read_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from osm_polygon_wikidata_only.hf._geographic import parquet_inputs
+
+    path = tmp_path / "polygons.parquet"
+    pq.write_table(pa.table({"polygon_id": ["p:way:1"]}), path)
+    monkeypatch.setattr(
+        parquet_inputs.pq,
+        "read_metadata",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("broken metadata")),
+    )
+
+    assert parquet_inputs._metadata_columns(path) == (set(), False)
+
+
+def test_missing_columns_error_preserves_the_public_message() -> None:
+    from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import _missing_columns_error
+
+    error = _missing_columns_error("polygons", Path("polygons.parquet"), ["lat", "lon"])
+
+    assert str(error) == (
+        "polygons parquet polygons.parquet is missing required columns: ['lat', 'lon']"
+    )
+
+
 def test_read_required_columns_still_propagates_coverage_error_when_columns_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

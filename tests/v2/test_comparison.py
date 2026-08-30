@@ -10,6 +10,12 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
 from osm_polygon_wikidata_only.v2 import comparison
 from osm_polygon_wikidata_only.v2.comparison import (
+    _iter_direct_document_batches,
+    _iter_polygon_source_batches,
+    _record_direct_document,
+    _record_polygon_source,
+    _validated_source_list,
+    _values_from_batch,
     select_v2_added_wikipedia_tag_document_polygon_ids,
 )
 from osm_polygon_wikidata_only.v2.schema import wikipedia_document_v2_schema
@@ -57,6 +63,90 @@ def test_unique_values_reuses_the_open_parquet_file_for_schema_and_rows(
     monkeypatch.setattr(comparison.pq, "read_schema", fail_if_opened_separately)
 
     assert comparison._unique_values((path,), "language") == {"en", "fr"}
+
+
+def test_values_from_batch_returns_non_empty_string_values() -> None:
+    batch = pa.record_batch({"value": ["en", None, "", "fr"]})
+
+    assert _values_from_batch(batch) == {"en", "fr"}
+
+
+def test_record_polygon_source_only_updates_requested_identity() -> None:
+    values: dict[str, set[str]] = {}
+
+    _record_polygon_source(
+        values,
+        "keep",
+        '["wikipedia_tag"]',
+        {"keep"},
+        Path("polygons.parquet"),
+    )
+    _record_polygon_source(
+        values,
+        "drop",
+        '["wikidata"]',
+        {"keep"},
+        Path("polygons.parquet"),
+    )
+
+    assert values == {"keep": {"wikipedia_tag"}}
+
+
+def test_polygon_source_batches_skip_files_without_required_columns(tmp_path: Path) -> None:
+    path = tmp_path / "polygons.parquet"
+    pq.write_table(pa.table({"polygon_id": ["polygon-1"]}), path)
+
+    assert list(_iter_polygon_source_batches(path)) == []
+
+
+def test_direct_document_batches_read_only_required_columns(tmp_path: Path) -> None:
+    path = tmp_path / "links.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["polygon-1"],
+                "document_id": ["document-1"],
+                "project": ["wikipedia"],
+                "link_sources": ['["osm_wikipedia_tag"]'],
+            }
+        ),
+        path,
+    )
+
+    batches = list(_iter_direct_document_batches(path))
+
+    assert len(batches) == 1
+    assert batches[0].schema.names == ["polygon_id", "document_id", "project", "link_sources"]
+
+
+def test_record_direct_document_requires_wikipedia_tag_source() -> None:
+    values: dict[str, set[str]] = {}
+
+    _record_direct_document(
+        values,
+        "polygon-1",
+        "document-1",
+        "wikipedia",
+        '["osm_wikipedia_tag"]',
+        Path("links.parquet"),
+    )
+    _record_direct_document(
+        values,
+        "polygon-2",
+        "document-2",
+        "wikivoyage",
+        '["osm_wikipedia_tag"]',
+        Path("links.parquet"),
+    )
+
+    assert values == {"polygon-1": {"document-1"}}
+
+
+def test_validated_source_list_rejects_non_string_members() -> None:
+    with pytest.raises(ValueError, match="Invalid link_sources"):
+        _validated_source_list(
+            ["osm_wikipedia_tag", 7], "polygon-1", Path("links.parquet"), "link_sources"
+        )
 
 
 def _v2_polygon(polygon_id: str, sources: str) -> dict[str, object]:

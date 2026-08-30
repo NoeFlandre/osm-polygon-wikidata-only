@@ -35,6 +35,25 @@ def test_parse_language_list_does_not_decode_canonical_empty_lists(
     assert aggregation._parse_language_list("[]") == []
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ('["en", "fr"]', ["en", "fr"]),
+        ('{"language": "en"}', []),
+        ("not-json", []),
+    ],
+)
+def test_decoded_language_list_handles_json_shapes_and_errors(
+    value: str, expected: list[object]
+) -> None:
+    assert aggregation._decoded_language_list(value) == expected
+
+
+@pytest.mark.parametrize("value", [None, 0, {}, object()])
+def test_parse_language_list_rejects_non_string_values(value: object) -> None:
+    assert aggregation._parse_language_list(value) == []
+
+
 def test_link_stats_use_bounded_parallel_metadata_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -58,6 +77,10 @@ def test_link_stats_use_bounded_parallel_metadata_reads(
 
     assert stats.link_count == 3
     assert worker_counts == [3]
+
+
+def test_count_link_rows_returns_zero_for_no_files() -> None:
+    assert aggregation._count_link_rows([]) == 0
 
 
 def _write_polygons_parquet(path: Path, rows: list[dict]) -> Path:

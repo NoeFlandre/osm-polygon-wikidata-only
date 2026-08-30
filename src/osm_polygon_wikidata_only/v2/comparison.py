@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, MutableMapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 
@@ -86,10 +86,12 @@ def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
             if column not in parquet_file.schema_arrow.names:
                 continue
             for batch in parquet_file.iter_batches(columns=[column], batch_size=_BATCH_SIZE):
-                values.update(
-                    str(value) for value in batch.column(0).to_pylist() if value not in (None, "")
-                )
+                values.update(_values_from_batch(batch))
     return values
+
+
+def _values_from_batch(batch: Any) -> set[str]:
+    return {str(value) for value in batch.column(0).to_pylist() if value not in (None, "")}
 
 
 def _polygon_sources(paths: Iterable[Path], identities: set[str]) -> dict[str, set[str]]:
@@ -97,43 +99,79 @@ def _polygon_sources(paths: Iterable[Path], identities: set[str]) -> dict[str, s
     if not identities:
         return values
     for path in paths:
-        with pq.ParquetFile(path) as parquet_file:
-            if not {"polygon_id", "discovery_sources"}.issubset(parquet_file.schema_arrow.names):
-                continue
-            for batch in parquet_file.iter_batches(
-                columns=["polygon_id", "discovery_sources"], batch_size=_BATCH_SIZE
+        for batch in _iter_polygon_source_batches(path):
+            for identity, raw_sources in zip(
+                batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
             ):
-                for identity, raw_sources in zip(
-                    batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
-                ):
-                    if identity not in identities:
-                        continue
-                    values.setdefault(str(identity), set()).update(
-                        _source_list(raw_sources, identity, path, "discovery_sources")
-                    )
+                _record_polygon_source(values, identity, raw_sources, identities, path)
     return values
+
+
+def _iter_polygon_source_batches(path: Path) -> Iterator[Any]:
+    with pq.ParquetFile(path) as parquet_file:
+        if not {"polygon_id", "discovery_sources"}.issubset(parquet_file.schema_arrow.names):
+            return
+        yield from parquet_file.iter_batches(
+            columns=["polygon_id", "discovery_sources"], batch_size=_BATCH_SIZE
+        )
+
+
+def _record_polygon_source(
+    values: MutableMapping[str, set[str]],
+    identity: Any,
+    raw_sources: Any,
+    identities: set[str],
+    path: Path,
+) -> None:
+    if identity not in identities:
+        return
+    values.setdefault(str(identity), set()).update(
+        _source_list(raw_sources, identity, path, "discovery_sources")
+    )
 
 
 def _direct_documents_by_polygon(paths: Iterable[Path]) -> dict[str, set[str]]:
     values: dict[str, set[str]] = defaultdict(set)
     for path in paths:
-        required = {"polygon_id", "document_id", "project", "link_sources"}
-        with pq.ParquetFile(path) as parquet_file:
-            if not required.issubset(parquet_file.schema_arrow.names):
-                continue
-            for batch in parquet_file.iter_batches(
-                columns=["polygon_id", "document_id", "project", "link_sources"],
-                batch_size=_BATCH_SIZE,
+        for batch in _iter_direct_document_batches(path):
+            for polygon_id, document_id, project, raw_sources in zip(
+                *(batch.column(index).to_pylist() for index in range(4)), strict=True
             ):
-                for polygon_id, document_id, project, raw_sources in zip(
-                    *(batch.column(index).to_pylist() for index in range(4)), strict=True
-                ):
-                    if not polygon_id or not document_id or project != "wikipedia":
-                        continue
-                    sources = _source_list(raw_sources, polygon_id, path, "link_sources")
-                    if "osm_wikipedia_tag" in sources:
-                        values[str(polygon_id)].add(str(document_id))
+                _record_direct_document(
+                    values,
+                    polygon_id,
+                    document_id,
+                    project,
+                    raw_sources,
+                    path,
+                )
     return dict(values)
+
+
+def _iter_direct_document_batches(path: Path) -> Iterator[Any]:
+    required = {"polygon_id", "document_id", "project", "link_sources"}
+    with pq.ParquetFile(path) as parquet_file:
+        if not required.issubset(parquet_file.schema_arrow.names):
+            return
+        yield from parquet_file.iter_batches(
+            columns=["polygon_id", "document_id", "project", "link_sources"],
+            batch_size=_BATCH_SIZE,
+        )
+
+
+def _record_direct_document(
+    values: MutableMapping[str, set[str]],
+    polygon_id: Any,
+    document_id: Any,
+    project: Any,
+    raw_sources: Any,
+    path: Path,
+) -> None:
+    if not polygon_id or not document_id or project != "wikipedia":
+        return
+    sources = _source_list(raw_sources, polygon_id, path, "link_sources")
+    if "osm_wikipedia_tag" in sources:
+        values.setdefault(str(polygon_id), set()).add(str(document_id))
 
 
 def _source_list(raw_sources: Any, identity: Any, path: Path, field: str) -> list[str]:
@@ -141,9 +179,18 @@ def _source_list(raw_sources: Any, identity: Any, path: Path, field: str) -> lis
         parsed = json_loads(str(raw_sources or "[]"))
     except (TypeError, ValueError) as error:
         raise ValueError(f"Invalid {field} for identity {identity!r} in {path}") from error
-    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
-        raise ValueError(f"Invalid {field} for identity {identity!r} in {path}")
-    return parsed
+    return _validated_source_list(parsed, identity, path, field)
+
+
+def _validated_source_list(
+    parsed: object,
+    identity: Any,
+    path: Path,
+    field: str,
+) -> list[str]:
+    if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+        return cast(list[str], parsed)
+    raise ValueError(f"Invalid {field} for identity {identity!r} in {path}")
 
 
 __all__ = [

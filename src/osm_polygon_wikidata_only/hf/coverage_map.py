@@ -99,14 +99,25 @@ def _valid_centroid_rows(
     polygon_ids: set[str] | None = None,
 ) -> Iterator[tuple[float, float]]:
     if polygon_ids is None:
-        for row_lon, row_lat in zip(
-            batch.column("lon").to_pylist(),
-            batch.column("lat").to_pylist(),
-            strict=True,
-        ):
-            if row_lon is not None and row_lat is not None:
-                yield float(row_lon), float(row_lat)
+        yield from _all_centroid_rows(batch)
         return
+    yield from _selected_centroid_rows(batch, polygon_ids)
+
+
+def _all_centroid_rows(batch: Any) -> Iterator[tuple[float, float]]:
+    for row_lon, row_lat in zip(
+        batch.column("lon").to_pylist(),
+        batch.column("lat").to_pylist(),
+        strict=True,
+    ):
+        if row_lon is not None and row_lat is not None:
+            yield float(row_lon), float(row_lat)
+
+
+def _selected_centroid_rows(
+    batch: Any,
+    polygon_ids: set[str],
+) -> Iterator[tuple[float, float]]:
     for polygon_id, row_lon, row_lat in zip(
         batch.column("polygon_id").to_pylist(),
         batch.column("lon").to_pylist(),

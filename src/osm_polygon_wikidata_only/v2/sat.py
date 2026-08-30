@@ -33,38 +33,24 @@ class SaT3lSegmenter:
     ) -> None:
         if inference_batch_size < 1:
             raise ValueError("inference_batch_size must be positive")
-        try:
-            wtpsplit = importlib.import_module("wtpsplit")
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "Sentence splitting requires the optional dependency; "
-                "run `uv sync --extra sentence-splitting` first"
-            ) from exc
-        model_class = getattr(wtpsplit, "SaT", None)
-        if model_class is None:
-            raise RuntimeError("The installed wtpsplit package does not expose SaT")
-
+        wtpsplit = _load_wtpsplit()
+        model_class = _sat_model_class(wtpsplit)
         cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.revision = revision
         self.inference_batch_size = inference_batch_size
         self.ort_providers = tuple(_resolve_ort_providers(ort_providers, require_gpu=require_gpu))
         self.version = str(getattr(wtpsplit, "__version__", "unknown"))
-        model = model_class(
+        model = _build_sat_model(
+            model_class,
             self.model_id,
-            hub_prefix=None,
-            ort_providers=list(self.ort_providers),
-            from_pretrained_kwargs={
-                "cache_dir": str(cache_dir),
-                "revision": revision,
-            },
+            cache_dir,
+            revision,
+            self.ort_providers,
         )
-        if require_gpu:
-            self.ort_providers = _effective_ort_providers(model)
-            if _CUDA_PROVIDER not in self.ort_providers:
-                raise RuntimeError(
-                    "Grid5000 sentence splitting requires an active CUDAExecutionProvider"
-                )
+        self.ort_providers = _active_ort_providers(
+            model, self.ort_providers, require_gpu=require_gpu
+        )
         self._model = model
 
     def split(self, texts: Sequence[str], *, language: str) -> list[list[str]]:
@@ -94,16 +80,71 @@ def _resolve_ort_providers(
     require_gpu: bool = False,
 ) -> list[str]:
     """Select providers while optionally requiring CUDA for a GPU job."""
+    providers = _requested_ort_providers(override, require_gpu=require_gpu)
+    if require_gpu and _CUDA_PROVIDER not in providers:
+        raise RuntimeError("Grid5000 sentence splitting requires CUDAExecutionProvider")
+    return providers
+
+
+def _requested_ort_providers(
+    override: Sequence[str] | None,
+    *,
+    require_gpu: bool,
+) -> list[str]:
     if override is not None:
         providers = list(override)
         if not providers:
             raise ValueError("ort_providers must not be empty")
-    elif require_gpu:
-        providers = _gpu_ort_providers()
-    else:
-        providers = _default_ort_providers()
-    if require_gpu and _CUDA_PROVIDER not in providers:
-        raise RuntimeError("Grid5000 sentence splitting requires CUDAExecutionProvider")
+        return providers
+    return _gpu_ort_providers() if require_gpu else _default_ort_providers()
+
+
+def _load_wtpsplit() -> Any:
+    try:
+        return importlib.import_module("wtpsplit")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Sentence splitting requires the optional dependency; "
+            "run `uv sync --extra sentence-splitting` first"
+        ) from exc
+
+
+def _sat_model_class(wtpsplit: Any) -> Any:
+    model_class = getattr(wtpsplit, "SaT", None)
+    if model_class is None:
+        raise RuntimeError("The installed wtpsplit package does not expose SaT")
+    return model_class
+
+
+def _build_sat_model(
+    model_class: Any,
+    model_id: str,
+    cache_dir: Path,
+    revision: str,
+    providers: Sequence[str],
+) -> Any:
+    return model_class(
+        model_id,
+        hub_prefix=None,
+        ort_providers=list(providers),
+        from_pretrained_kwargs={
+            "cache_dir": str(cache_dir),
+            "revision": revision,
+        },
+    )
+
+
+def _active_ort_providers(
+    model: Any,
+    requested: tuple[str, ...],
+    *,
+    require_gpu: bool,
+) -> tuple[str, ...]:
+    if not require_gpu:
+        return requested
+    providers = _effective_ort_providers(model)
+    if _CUDA_PROVIDER not in providers:
+        raise RuntimeError("Grid5000 sentence splitting requires an active CUDAExecutionProvider")
     return providers
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -143,23 +144,15 @@ class SentenceCheckpoint:
 
     def load_rows(self, *, batch_count: int | None = None) -> list[dict[str, Any]]:
         """Read contiguous checkpoint batches in deterministic order."""
-        expected = batch_count
-        if expected is None and self.complete:
-            expected = self._metadata.get("batch_count")
         indexes = self.completed_batches
-        if expected is None:
-            expected = max(indexes, default=-1) + 1
-        if not isinstance(expected, int) or expected < 0:
-            raise ValueError("Invalid sentence checkpoint batch count")
-        if indexes != tuple(range(expected)):
-            raise ValueError("Sentence checkpoint batches are not contiguous")
-        rows: list[dict[str, Any]] = []
-        for index in indexes:
-            batch = self.load_batch(index)
-            if batch is None:
-                raise ValueError(f"Invalid sentence checkpoint batch: {index}")
-            rows.extend(batch)
-        return rows
+        expected = _requested_batch_count(
+            batch_count,
+            complete=self.complete,
+            metadata=self._metadata,
+            indexes=indexes,
+        )
+        indexes = _validated_batch_indexes(indexes, expected)
+        return _load_checkpoint_rows(self, indexes)
 
     def write_batch(self, index: int, rows: list[dict[str, Any]]) -> None:
         """Atomically write one completed batch, including an empty batch."""
@@ -251,6 +244,44 @@ class SentenceCheckpoint:
             self.root.parent.rmdir()
         with suppress(OSError):
             self.root.parent.parent.rmdir()
+
+
+def _requested_batch_count(
+    requested: int | None,
+    *,
+    complete: bool,
+    metadata: Mapping[str, Any],
+    indexes: tuple[int, ...],
+) -> object:
+    if requested is not None:
+        return requested
+    if complete:
+        return metadata.get("batch_count")
+    return max(indexes, default=-1) + 1
+
+
+def _validated_batch_indexes(
+    indexes: tuple[int, ...],
+    expected: object,
+) -> tuple[int, ...]:
+    if not isinstance(expected, int) or expected < 0:
+        raise ValueError("Invalid sentence checkpoint batch count")
+    if indexes != tuple(range(expected)):
+        raise ValueError("Sentence checkpoint batches are not contiguous")
+    return indexes
+
+
+def _load_checkpoint_rows(
+    checkpoint: SentenceCheckpoint,
+    indexes: tuple[int, ...],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index in indexes:
+        batch = checkpoint.load_batch(index)
+        if batch is None:
+            raise ValueError(f"Invalid sentence checkpoint batch: {index}")
+        rows.extend(batch)
+    return rows
 
 
 def _batch_index(path: Path) -> int | None:

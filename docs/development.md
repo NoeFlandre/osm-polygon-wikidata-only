@@ -117,8 +117,9 @@ just smoke-test
 just diff-review
 ```
 
-`crap-all` combines the four bounded CRAP scopes (domain/V2 helpers, parsing
-and sync helpers, the durable upload queue, and the quality-reporting scripts).
+`crap-all` combines the bounded CRAP scopes for domain/V2 helpers, parsing and
+sync helpers, the durable upload queue, quality-reporting scripts, geographic
+rendering and parquet inputs, DatasetStats aggregation, and the SaT adapter.
 The sentence runner is included in the domain/V2 scope. The architecture stage also
 builds the package and strict MkDocs site before running its contracts. The
 smoke stage checks both public CLI help paths without reading a data root or
@@ -136,8 +137,12 @@ just check
 ### Mutation and complexity gates
 
 The advanced gate covers the pure, deterministic Wikipedia and Wikidata parser
-helpers plus the durable upload queue. It keeps reports in `/tmp`, uses two
-mutation workers to limit peak Mac memory, and does not read production data.
+helpers and the durable upload queue. V2 comparison/checkpoint, geographic
+parquet/rendering, DatasetStats, and optional SaT dependency boundaries remain
+under focused tests and CRAP gates; they are intentionally outside mutation
+testing because they cross file-system or external-runtime boundaries. The
+mutation run keeps reports in `/tmp` and uses two workers to limit peak Mac
+memory without reading production data.
 HTML cleaning remains covered by the CRAP and branch-coverage gates; mutmut 3.7 cannot execute mutations inside
 its `HTMLParser` subclass trampoline reliably, so those unsupported class
 mutations are not counted as actionable results:
@@ -148,11 +153,12 @@ just mutation
 just quality-advanced
 ```
 
-`just crap`, `just crap-sync`, `just crap-upload`, and `just crap-quality` join
-coverage.py and Radon function reports and fail when any function reaches CRAP
-6; every measured score must therefore be below 6.
-`just mutation` runs mutmut over the explicit two
-module scope and fails unless every generated mutant is killed. These gates
+`just crap`, `just crap-sync`, `just crap-upload`, `just crap-quality`,
+`just crap-geography`, `just crap-geography-inputs`, `just crap-stats`, and
+`just crap-sat` join coverage.py and Radon function reports and fail when any
+function reaches CRAP 6; every measured score must therefore be below 6.
+`just mutation` runs mutmut over the explicit deterministic module scope and
+fails unless every generated mutant is killed. These gates
 are deliberately narrow: network clients, large data files, and external
 publication are outside the mutation run.
 
@@ -172,6 +178,10 @@ just crap
 just crap-sync
 just crap-upload
 just crap-quality
+just crap-geography
+just crap-geography-inputs
+just crap-stats
+just crap-sat
 ```
 
 `mutmut` deliberately changes those helpers and requires every generated

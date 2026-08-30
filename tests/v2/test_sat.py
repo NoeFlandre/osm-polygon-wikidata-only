@@ -6,6 +6,7 @@ from types import ModuleType
 
 import pytest
 
+import osm_polygon_wikidata_only.v2.sat as sat_module
 from osm_polygon_wikidata_only.v2.sat import SaT3lSegmenter
 
 
@@ -41,6 +42,22 @@ def _fake_wtpsplit() -> ModuleType:
     module.__version__ = "2.2.1"
     module.SaT = _FakeSaT  # type: ignore[attr-defined]
     return module
+
+
+def test_requested_ort_providers_copies_explicit_override() -> None:
+    providers = sat_module._requested_ort_providers(("CPUExecutionProvider",), require_gpu=False)
+
+    assert providers == ["CPUExecutionProvider"]
+
+
+def test_requested_ort_providers_rejects_empty_override() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        sat_module._requested_ort_providers((), require_gpu=False)
+
+
+def test_sat_model_class_requires_the_package_export() -> None:
+    with pytest.raises(RuntimeError, match="does not expose SaT"):
+        sat_module._sat_model_class(ModuleType("wtpsplit"))
 
 
 def test_sat_3l_segmenter_uses_explicit_cpu_and_pinned_model(
