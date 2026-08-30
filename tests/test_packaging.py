@@ -103,6 +103,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "trackio:",
         "mutation:",
         "crap:",
+        "crap-quality:",
         "crap-all:",
         "crap-upload:",
         "quality-strength:",
@@ -186,6 +187,20 @@ def test_crap_gate_keeps_the_existing_v2_fingerprint_scope() -> None:
 
     assert "src/osm_polygon_wikidata_only/v2/fingerprints.py" in justfile
     assert "--cov-fail-under=0" in justfile
+
+
+def test_crap_gate_measures_sentence_runner_and_quality_scripts() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "tests/v2/test_sentence_runner.py" in justfile
+    assert "src/osm_polygon_wikidata_only/v2/sentence_runner.py" in justfile
+    assert "crap-all: crap crap-sync crap-upload crap-quality" in justfile
+    assert "crap-quality:" in justfile
+    assert "scripts/quality/crap_score.py" in justfile
+    assert "scripts/quality/mutation_gate.py" in justfile
+    assert "tests/quality/test_audit_containment.py" in justfile
+    assert "scripts/audit_containment.py" in justfile
 
 
 def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:

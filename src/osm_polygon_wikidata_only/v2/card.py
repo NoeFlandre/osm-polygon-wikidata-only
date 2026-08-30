@@ -958,29 +958,99 @@ def _scan_document_file(path: Path, *, is_wikipedia: bool, metrics: _DocumentMet
         word_column = _word_column(names)
         has_document_id = "document_id" in names
         has_language = "language" in names
-        if has_document_id and word_column is not None:
-            # Keep the historical failure for a text-bearing document file
-            # without a language column: the old text scan requested it too.
-            columns = ["document_id", "language", word_column]
-        else:
-            columns = [
-                column
-                for column in ("document_id", "language", word_column)
-                if column is not None and column in names
-            ]
+        columns = _document_columns(
+            names,
+            word_column=word_column,
+            has_document_id=has_document_id,
+        )
         if not columns:
             return
-        positions = {column: index for index, column in enumerate(columns)}
-        for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
-            _scan_document_batch(
-                batch,
-                positions=positions,
-                is_wikipedia=is_wikipedia,
-                has_document_id=has_document_id,
-                has_language=has_language,
-                has_word_column=word_column is not None,
-                metrics=metrics,
-            )
+        _scan_document_batches(
+            parquet_file,
+            columns=columns,
+            is_wikipedia=is_wikipedia,
+            has_document_id=has_document_id,
+            has_language=has_language,
+            word_column=word_column,
+            metrics=metrics,
+        )
+
+
+def _document_columns(
+    names: set[str],
+    *,
+    word_column: str | None,
+    has_document_id: bool,
+) -> list[str]:
+    if has_document_id and word_column is not None:
+        # Keep the historical failure for a text-bearing document file
+        # without a language column: the old text scan requested it too.
+        return ["document_id", "language", word_column]
+    return [column for column in _document_column_names(word_column) if column in names]
+
+
+def _document_column_names(word_column: str | None) -> tuple[str, ...]:
+    return (
+        ("document_id", "language")
+        if word_column is None
+        else (
+            "document_id",
+            "language",
+            word_column,
+        )
+    )
+
+
+def _scan_document_batches(
+    parquet_file: pq.ParquetFile,
+    *,
+    columns: list[str],
+    is_wikipedia: bool,
+    has_document_id: bool,
+    has_language: bool,
+    word_column: str | None,
+    metrics: _DocumentMetrics,
+) -> None:
+    positions = {column: index for index, column in enumerate(columns)}
+    for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+        _scan_document_batch(
+            batch,
+            positions=positions,
+            is_wikipedia=is_wikipedia,
+            has_document_id=has_document_id,
+            has_language=has_language,
+            word_column=word_column,
+            metrics=metrics,
+        )
+
+
+def _document_batch_columns(
+    batch: Any,
+    positions: dict[str, int],
+    *,
+    has_document_id: bool,
+    has_language: bool,
+    word_column: str | None,
+) -> tuple[list[Any] | None, list[Any] | None, list[Any] | None]:
+    return (
+        _batch_column(batch, positions, "document_id" if has_document_id else None),
+        _batch_column(batch, positions, "language" if has_language else None),
+        _batch_column(batch, positions, word_column),
+    )
+
+
+def _batch_column(
+    batch: Any,
+    positions: dict[str, int],
+    column: str | None,
+) -> list[Any] | None:
+    if column is None:
+        return None
+    return batch.column(positions[column]).to_pylist()
+
+
+def _batch_value(values: list[Any] | None, index: int) -> Any:
+    return None if values is None else values[index]
 
 
 def _scan_document_batch(
@@ -990,29 +1060,103 @@ def _scan_document_batch(
     is_wikipedia: bool,
     has_document_id: bool,
     has_language: bool,
-    has_word_column: bool,
+    word_column: str | None,
     metrics: _DocumentMetrics,
 ) -> None:
-    identities = batch.column(positions["document_id"]).to_pylist() if has_document_id else None
-    languages = batch.column(positions["language"]).to_pylist() if has_language else None
-    word_column = next(
-        (column for column in positions if column not in {"document_id", "language"}), None
+    identities, languages, words = _document_batch_columns(
+        batch,
+        positions,
+        has_document_id=has_document_id,
+        has_language=has_language,
+        word_column=word_column,
     )
-    words = batch.column(positions[word_column]).to_pylist() if word_column else None
+    has_text_columns = has_document_id and word_column is not None
     for index in range(batch.num_rows):
-        identity = identities[index] if identities is not None else None
-        language = languages[index] if languages is not None else None
-        word_count = words[index] if words is not None else None
-        if language:
-            metrics.languages.add(str(language))
-            if is_wikipedia and has_document_id:
-                metrics.wikipedia_language_counts[str(language)] += 1
-        if is_wikipedia and identity:
-            metrics.document_ids.add(str(identity))
-        if has_document_id and has_word_column and _has_non_empty_words(identity, word_count):
-            metrics.text_document_languages[str(identity)] = str(language or "")
-        if words is not None:
-            metrics.document_words += int(word_count or 0)
+        _record_document_row(
+            metrics,
+            identity=_batch_value(identities, index),
+            language=_batch_value(languages, index),
+            word_count=_batch_value(words, index),
+            is_wikipedia=is_wikipedia,
+            has_document_id=has_document_id,
+            has_text_columns=has_text_columns,
+            has_word_column=words is not None,
+        )
+
+
+def _record_document_row(
+    metrics: _DocumentMetrics,
+    *,
+    identity: Any,
+    language: Any,
+    word_count: Any,
+    is_wikipedia: bool,
+    has_document_id: bool,
+    has_text_columns: bool,
+    has_word_column: bool,
+) -> None:
+    _record_document_language(
+        metrics,
+        language,
+        is_wikipedia=is_wikipedia,
+        has_document_id=has_document_id,
+    )
+    _record_wikipedia_document_identity(metrics, identity, is_wikipedia=is_wikipedia)
+    _record_document_text(
+        metrics,
+        identity,
+        language,
+        word_count,
+        has_text_columns=has_text_columns,
+    )
+    _record_document_words(metrics, word_count, has_word_column=has_word_column)
+
+
+def _record_wikipedia_document_identity(
+    metrics: _DocumentMetrics,
+    identity: Any,
+    *,
+    is_wikipedia: bool,
+) -> None:
+    if is_wikipedia and identity:
+        metrics.document_ids.add(str(identity))
+
+
+def _record_document_text(
+    metrics: _DocumentMetrics,
+    identity: Any,
+    language: Any,
+    word_count: Any,
+    *,
+    has_text_columns: bool,
+) -> None:
+    if has_text_columns and _has_non_empty_words(identity, word_count):
+        metrics.text_document_languages[str(identity)] = str(language or "")
+
+
+def _record_document_words(
+    metrics: _DocumentMetrics,
+    word_count: Any,
+    *,
+    has_word_column: bool,
+) -> None:
+    if has_word_column:
+        metrics.document_words += int(word_count or 0)
+
+
+def _record_document_language(
+    metrics: _DocumentMetrics,
+    language: Any,
+    *,
+    is_wikipedia: bool,
+    has_document_id: bool,
+) -> None:
+    if not language:
+        return
+    language_value = str(language)
+    metrics.languages.add(language_value)
+    if is_wikipedia and has_document_id:
+        metrics.wikipedia_language_counts[language_value] += 1
 
 
 def _scan_polygon_metrics(paths: Iterable[Path]) -> _PolygonMetrics:
@@ -1028,14 +1172,25 @@ def _scan_polygon_file(path: Path, metrics: _PolygonMetrics) -> None:
         metadata = parquet_file.metadata
         metrics.polygon_row_count += 0 if metadata is None else int(metadata.num_rows)
         names = set(parquet_file.schema_arrow.names)
-        columns = [
-            column for column in ("polygon_id", "wikidata", "has_wikidata") if column in names
-        ]
+        columns = _polygon_columns(names)
         if not columns:
             return
-        positions = {column: index for index, column in enumerate(columns)}
-        for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
-            _scan_polygon_batch(batch, positions=positions, metrics=metrics)
+        _scan_polygon_batches(parquet_file, columns=columns, metrics=metrics)
+
+
+def _polygon_columns(names: set[str]) -> list[str]:
+    return [column for column in ("polygon_id", "wikidata", "has_wikidata") if column in names]
+
+
+def _scan_polygon_batches(
+    parquet_file: pq.ParquetFile,
+    *,
+    columns: list[str],
+    metrics: _PolygonMetrics,
+) -> None:
+    positions = {column: index for index, column in enumerate(columns)}
+    for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+        _scan_polygon_batch(batch, positions=positions, metrics=metrics)
 
 
 def _scan_polygon_batch(
@@ -1044,20 +1199,39 @@ def _scan_polygon_batch(
     positions: dict[str, int],
     metrics: _PolygonMetrics,
 ) -> None:
-    polygon_ids = (
-        batch.column(positions["polygon_id"]).to_pylist() if "polygon_id" in positions else None
+    polygon_ids = _batch_column(
+        batch,
+        positions,
+        "polygon_id" if "polygon_id" in positions else None,
     )
-    wikidata = batch.column(positions["wikidata"]).to_pylist() if "wikidata" in positions else None
-    has_wikidata = (
-        batch.column(positions["has_wikidata"]).to_pylist() if "has_wikidata" in positions else None
+    wikidata = _batch_column(batch, positions, "wikidata" if "wikidata" in positions else None)
+    has_wikidata = _batch_column(
+        batch,
+        positions,
+        "has_wikidata" if "has_wikidata" in positions else None,
     )
     for index in range(batch.num_rows):
-        if polygon_ids is not None and polygon_ids[index]:
-            metrics.polygon_ids.add(str(polygon_ids[index]))
-        if wikidata is not None and wikidata[index]:
-            metrics.qids.update(qids_from_osm_tag(str(wikidata[index])))
-        if has_wikidata is not None and has_wikidata[index] is False:
-            metrics.wikipedia_tag_only += 1
+        _record_polygon_row(
+            metrics,
+            polygon_id=_batch_value(polygon_ids, index),
+            wikidata=_batch_value(wikidata, index),
+            has_wikidata=_batch_value(has_wikidata, index),
+        )
+
+
+def _record_polygon_row(
+    metrics: _PolygonMetrics,
+    *,
+    polygon_id: Any,
+    wikidata: Any,
+    has_wikidata: Any,
+) -> None:
+    if polygon_id:
+        metrics.polygon_ids.add(str(polygon_id))
+    if wikidata:
+        metrics.qids.update(qids_from_osm_tag(str(wikidata)))
+    if has_wikidata is False:
+        metrics.wikipedia_tag_only += 1
 
 
 def _word_column(names: set[str]) -> str | None:

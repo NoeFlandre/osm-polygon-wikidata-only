@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Sequence
-from contextlib import suppress
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -150,7 +149,7 @@ def _selected_stems(
     if not manifest:
         raise FileNotFoundError("No finalized V2 regions found in manifests/processed_pbfs.json")
     available = set(manifest)
-    selected = tuple(sorted(set(available if stems is None else stems)))
+    selected = _requested_stems(manifest, stems)
     missing = sorted(set(selected) - available)
     if missing:
         raise ValueError(f"Sentence split region(s) are not finalized in V2: {missing}")
@@ -159,6 +158,12 @@ def _selected_stems(
     for stem in selected:
         _validate_stem(stem)
     return selected
+
+
+def _requested_stems(
+    manifest: Mapping[str, object], stems: Sequence[str] | None
+) -> tuple[str, ...]:
+    return tuple(sorted(set(manifest if stems is None else stems)))
 
 
 def _run_project(
@@ -255,23 +260,94 @@ def _recorded_output_matches(checkpoint: SentenceCheckpoint, output_path: Path) 
     )
 
 
-def _summary_from_checkpoint(checkpoint: SentenceCheckpoint) -> SentenceRegionSummary:
-    raw = checkpoint.metadata.get("summary")
-    if not isinstance(raw, dict):
-        raise ValueError("Completed sentence checkpoint has no summary")
+def _summary_from_mapping(
+    raw: Mapping[str, object],
+    *,
+    error: str,
+) -> SentenceRegionSummary:
     try:
         return SentenceRegionSummary(
             stem=str(raw["stem"]),
             project=str(raw["project"]),
-            sections=int(raw["sections"]),
-            split_sections=int(raw["split_sections"]),
-            unsplit_sections=int(raw["unsplit_sections"]),
-            sentence_rows=int(raw["sentence_rows"]),
-            supported_languages=tuple(str(value) for value in raw["supported_languages"]),
-            unsupported_languages=tuple(str(value) for value in raw["unsupported_languages"]),
+            sections=int(cast(Any, raw["sections"])),
+            split_sections=int(cast(Any, raw["split_sections"])),
+            unsplit_sections=int(cast(Any, raw["unsplit_sections"])),
+            sentence_rows=int(cast(Any, raw["sentence_rows"])),
+            supported_languages=tuple(
+                str(value) for value in cast(Any, raw["supported_languages"])
+            ),
+            unsupported_languages=tuple(
+                str(value) for value in cast(Any, raw["unsupported_languages"])
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("Completed sentence checkpoint has an invalid summary") from exc
+        raise ValueError(error) from exc
+
+
+def _manifest_metadata(segmenter: SentenceSegmenter) -> dict[str, str]:
+    return {
+        "contract_version": SENTENCE_SPLIT_CONTRACT_VERSION,
+        "segmenter": SAT_MODEL_NAME,
+        "model_id": segmenter.model_id,
+        "model_revision": _model_revision(segmenter),
+        "segmenter_version": segmenter.version,
+    }
+
+
+def _manifest_region_summary(
+    region: object,
+    *,
+    path: Path,
+) -> SentenceRegionSummary:
+    if not isinstance(region, dict):
+        raise ValueError(f"Invalid sentence manifest region: {path}")
+    return _summary_from_mapping(
+        cast(Mapping[str, object], region),
+        error=f"Invalid sentence manifest region: {path}",
+    )
+
+
+def _manifest_payload(
+    segmenter: SentenceSegmenter,
+    summaries: Sequence[SentenceRegionSummary],
+) -> dict[str, object]:
+    unsupported_languages = sorted(
+        {language for summary in summaries for language in summary.unsupported_languages}
+    )
+    return {
+        **_manifest_metadata(segmenter),
+        "supported_languages": list(SAT_SUPPORTED_LANGUAGES),
+        "unsupported_languages": unsupported_languages,
+        "unsupported_language_policy": "one unsplit row; never passed to SaT",
+        "regions": [asdict(summary) for summary in summaries],
+    }
+
+
+def _load_manifest_payload(path: Path) -> dict[str, object]:
+    try:
+        payload = json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"Invalid sentence manifest: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid sentence manifest: {path}")
+    return payload
+
+
+def _manifest_uses_segmenter(
+    payload: Mapping[str, object],
+    segmenter: SentenceSegmenter,
+) -> bool:
+    return all(payload.get(key) == value for key, value in _manifest_metadata(segmenter).items())
+
+
+def _summary_from_checkpoint(checkpoint: SentenceCheckpoint) -> SentenceRegionSummary:
+    raw = checkpoint.metadata.get("summary")
+    if not isinstance(raw, dict):
+        raise ValueError("Completed sentence checkpoint has no summary")
+    return _summary_from_mapping(
+        raw,
+        error="Completed sentence checkpoint has an invalid summary",
+    )
 
 
 def _write_output(output_path: Path, checkpoint: SentenceCheckpoint, *, batch_count: int) -> None:
@@ -284,25 +360,27 @@ def _write_output(output_path: Path, checkpoint: SentenceCheckpoint, *, batch_co
     os.close(fd)
     temporary = Path(raw)
     schema = sentence_schema()
-    writer: pq.ParquetWriter | None = None
     try:
-        writer = pq.ParquetWriter(temporary, schema, compression="snappy")
-        for batch_index in range(batch_count):
-            table = checkpoint.load_batch_table(batch_index)
-            if table is None:
-                raise ValueError(f"Invalid sentence checkpoint batch: {batch_index}")
-            if table.num_rows:
-                writer.write_table(table)
-        writer.close()
-        writer = None
+        with pq.ParquetWriter(temporary, schema, compression="snappy") as writer:
+            _write_checkpoint_batches(writer, checkpoint, batch_count=batch_count)
         _validate_schema(temporary, schema)
         os.replace(temporary, output_path)
-    except BaseException:
-        if writer is not None:
-            with suppress(Exception):
-                writer.close()
+    finally:
         temporary.unlink(missing_ok=True)
-        raise
+
+
+def _write_checkpoint_batches(
+    writer: pq.ParquetWriter,
+    checkpoint: SentenceCheckpoint,
+    *,
+    batch_count: int,
+) -> None:
+    for batch_index in range(batch_count):
+        table = checkpoint.load_batch_table(batch_index)
+        if table is None:
+            raise ValueError(f"Invalid sentence checkpoint batch: {batch_index}")
+        if table.num_rows:
+            writer.write_table(table)
 
 
 def _write_manifest(
@@ -317,21 +395,7 @@ def _write_manifest(
     }
     merged.update({(summary.stem, summary.project): summary for summary in summaries})
     ordered_summaries = [merged[key] for key in sorted(merged)]
-    unsupported_languages = sorted(
-        {language for summary in ordered_summaries for language in summary.unsupported_languages}
-    )
-    payload = {
-        "contract_version": SENTENCE_SPLIT_CONTRACT_VERSION,
-        "segmenter": SAT_MODEL_NAME,
-        "model_id": segmenter.model_id,
-        "model_revision": _model_revision(segmenter),
-        "segmenter_version": segmenter.version,
-        "supported_languages": list(SAT_SUPPORTED_LANGUAGES),
-        "unsupported_languages": unsupported_languages,
-        "unsupported_language_policy": "one unsplit row; never passed to SaT",
-        "regions": [asdict(summary) for summary in ordered_summaries],
-    }
-    atomic_write_text(path, json_dumps(payload) + "\n")
+    atomic_write_text(path, json_dumps(_manifest_payload(segmenter, ordered_summaries)) + "\n")
 
 
 def _load_manifest_summaries(
@@ -341,48 +405,13 @@ def _load_manifest_summaries(
 ) -> tuple[SentenceRegionSummary, ...]:
     if not path.is_file():
         return ()
-    try:
-        payload = json_loads(path.read_text(encoding="utf-8"))
-    except (OSError, TypeError, UnicodeError, ValueError) as exc:
-        raise ValueError(f"Invalid sentence manifest: {path}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"Invalid sentence manifest: {path}")
-    expected_metadata = {
-        "contract_version": SENTENCE_SPLIT_CONTRACT_VERSION,
-        "segmenter": SAT_MODEL_NAME,
-        "model_id": segmenter.model_id,
-        "model_revision": _model_revision(segmenter),
-        "segmenter_version": segmenter.version,
-    }
-    if any(payload.get(key) != value for key, value in expected_metadata.items()):
+    payload = _load_manifest_payload(path)
+    if not _manifest_uses_segmenter(payload, segmenter):
         raise ValueError(f"Sentence manifest uses a different segmenter: {path}")
     regions = payload.get("regions")
     if not isinstance(regions, list):
         raise ValueError(f"Invalid sentence manifest regions: {path}")
-    summaries: list[SentenceRegionSummary] = []
-    for region in regions:
-        if not isinstance(region, dict):
-            raise ValueError(f"Invalid sentence manifest region: {path}")
-        try:
-            summaries.append(
-                SentenceRegionSummary(
-                    stem=str(region["stem"]),
-                    project=str(region["project"]),
-                    sections=int(region["sections"]),
-                    split_sections=int(region["split_sections"]),
-                    unsplit_sections=int(region["unsplit_sections"]),
-                    sentence_rows=int(region["sentence_rows"]),
-                    supported_languages=tuple(
-                        str(value) for value in region["supported_languages"]
-                    ),
-                    unsupported_languages=tuple(
-                        str(value) for value in region["unsupported_languages"]
-                    ),
-                )
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid sentence manifest region: {path}") from exc
-    return tuple(summaries)
+    return tuple(_manifest_region_summary(region, path=path) for region in regions)
 
 
 def _model_revision(segmenter: SentenceSegmenter) -> str:

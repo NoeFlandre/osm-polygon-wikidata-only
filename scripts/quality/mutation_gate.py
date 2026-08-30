@@ -39,12 +39,16 @@ def parse_results(report: str) -> list[MutationResult]:
     return results
 
 
+def _non_killed(results: Sequence[MutationResult]) -> list[MutationResult]:
+    return [(name, status) for name, status in results if status != "killed"]
+
+
 def ensure_all_killed(results: Sequence[MutationResult]) -> None:
     """Raise with mutant names unless every result is ``killed``."""
 
     if not results:
         raise MutationGateError("No mutants were reported")
-    non_killed = [(name, status) for name, status in results if status != "killed"]
+    non_killed = _non_killed(results)
     if non_killed:
         details = ", ".join(f"{name}: {status}" for name, status in non_killed)
         raise MutationGateError(f"Non-killed mutants ({len(non_killed)}): {details}")

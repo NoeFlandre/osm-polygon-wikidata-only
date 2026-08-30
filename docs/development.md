@@ -117,8 +117,9 @@ just smoke-test
 just diff-review
 ```
 
-`crap-all` combines the three bounded CRAP scopes (domain/V2 helpers, parsing
-and sync helpers, and the durable upload queue). The architecture stage also
+`crap-all` combines the four bounded CRAP scopes (domain/V2 helpers, parsing
+and sync helpers, the durable upload queue, and the quality-reporting scripts).
+The sentence runner is included in the domain/V2 scope. The architecture stage also
 builds the package and strict MkDocs site before running its contracts. The
 smoke stage checks both public CLI help paths without reading a data root or
 making a network request. The Docker runtime has its own `docker-help` recipe
@@ -147,9 +148,9 @@ just mutation
 just quality-advanced
 ```
 
-`just crap`, `just crap-sync`, and `just crap-upload` join coverage.py and Radon
-function reports and fail when any function reaches CRAP 6; every measured
-score must therefore be below 6.
+`just crap`, `just crap-sync`, `just crap-upload`, and `just crap-quality` join
+coverage.py and Radon function reports and fail when any function reaches CRAP
+6; every measured score must therefore be below 6.
 `just mutation` runs mutmut over the explicit two
 module scope and fails unless every generated mutant is killed. These gates
 are deliberately narrow: network clients, large data files, and external
@@ -170,6 +171,7 @@ just mutation
 just crap
 just crap-sync
 just crap-upload
+just crap-quality
 ```
 
 `mutmut` deliberately changes those helpers and requires every generated

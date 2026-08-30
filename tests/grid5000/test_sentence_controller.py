@@ -22,6 +22,58 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, Remote
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 
 
+@pytest.mark.parametrize(
+    ("batch", "expected"),
+    [
+        ({"state": "planned", "oar_job_id": None, "hf_commit": None}, True),
+        ({"state": "planned", "oar_job_id": "123", "hf_commit": None}, False),
+        ({"state": "failed", "oar_job_id": "123", "error": "missing_receipt"}, True),
+        ({"state": "failed", "oar_job_id": "123", "error": "unknown"}, False),
+        ({"state": "published", "oar_job_id": None, "hf_commit": None}, False),
+        (None, False),
+    ],
+)
+def test_source_commit_batch_safety_is_explicit(batch: object, expected: bool) -> None:
+    assert sentence_controller._source_commit_batch_is_safe(batch) is expected
+
+
+def test_receipt_artifact_decoder_preserves_fields() -> None:
+    assert sentence_controller._receipt_artifact(
+        {"relative_path": "processed_v2/file.parquet", "size": 7, "sha256": "digest"}
+    ) == FileDigest("processed_v2/file.parquet", 7, "digest")
+
+
+def test_receipt_value_normalizes_stem_lists() -> None:
+    assert sentence_controller._normalized_receipt_value("stems", ["alpha-latest"]) == (
+        "alpha-latest",
+    )
+    assert sentence_controller._normalized_receipt_value("job_id", "123") == "123"
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("baseline_readme_sha256", None, "README baseline"),
+        ("baseline_map_sha256", None, "comparison-map baseline"),
+        ("batches", {}, "batches must be a list"),
+    ],
+)
+def test_ledger_baselines_reject_invalid_values(
+    key: str,
+    value: object,
+    message: str,
+) -> None:
+    ledger: dict[str, object] = {
+        "baseline_readme_sha256": "readme-digest",
+        "baseline_map_sha256": "map-digest",
+        "batches": [],
+    }
+    ledger[key] = value
+
+    with pytest.raises(sentence_controller.ControllerRunError, match=message):
+        sentence_controller._validate_ledger_baselines(ledger)
+
+
 def _write_table(path: Path, schema: pa.Schema, text: str = "First.") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {field.name: None for field in schema}
@@ -414,6 +466,21 @@ def test_initialize_persists_immutable_ledger_and_first_planned_batch(tmp_path: 
     )
 
 
+def test_process_batch_publishes_a_ready_batch_without_submitting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = _data_root(tmp_path)
+    controller = _controller(data_root, _FakeTransport(tmp_path), _FakePublisher())
+    batch = {"index": 0, "state": "ready_to_publish", "stems": ["alpha-latest"]}
+    published: list[dict[str, object]] = []
+    monkeypatch.setattr(controller, "_publish_batch", published.append)
+
+    controller._process_batch(batch)
+
+    assert published == [batch]
+
+
 def test_custom_gpu_model_is_persisted_and_requested(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path)
@@ -688,6 +755,21 @@ def test_hf_sentence_verification_uses_lfs_metadata_without_download(
     publisher.verify_sentence_batch(data_root.processed_v2, ("alpha-latest",))
 
     assert fetch_calls == [("example/v2", tuple(expected_paths))]
+
+
+def test_sentence_verification_plan_includes_the_comparison_map(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    _write_table(
+        data_root.processed_v2 / "wikipedia/sentences/alpha-latest.parquet",
+        sentence_schema(),
+    )
+
+    expected = sentence_controller._expected_sentence_files(
+        data_root.processed_v2,
+        ("alpha-latest",),
+    )
+
+    assert expected[-1][1] == "assets/v2_added_wikipedia_tag_documents.png"
 
 
 def test_hf_sentence_verification_downloads_files_without_lfs_metadata(

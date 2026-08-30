@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import io
+import sys
+
 import pytest
 
 from scripts.quality.mutation_gate import (
     MutationGateError,
+    _non_killed,
     ensure_all_killed,
+    main,
     parse_results,
 )
 
@@ -37,3 +42,17 @@ def test_ensure_all_killed_reports_non_killed_mutants() -> None:
 def test_ensure_all_killed_rejects_empty_reports() -> None:
     with pytest.raises(MutationGateError, match="No mutants"):
         ensure_all_killed([])
+
+
+def test_non_killed_extracts_only_actionable_mutants() -> None:
+    assert _non_killed([("one", "killed"), ("two", "survived")]) == [("two", "survived")]
+
+
+def test_mutation_gate_main_accepts_a_killed_report(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "stdin", io.StringIO("one: killed\n"))
+
+    assert main() == 0
+    assert "1 mutants killed" in capsys.readouterr().out

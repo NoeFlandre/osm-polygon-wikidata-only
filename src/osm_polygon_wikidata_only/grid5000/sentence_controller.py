@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
@@ -182,24 +182,31 @@ class Grid5000SentenceController:
         """Load and validate the ledger, or persist a new deterministic plan."""
         if self._ledger is not None:
             return self._ledger
-        if self.ledger_path.is_file():
-            ledger = _read_ledger(self.ledger_path)
-            stored_run_id = ledger.get("run_id")
-            if not isinstance(stored_run_id, str):
-                raise ControllerRunError("Sentence ledger has no valid run_id")
-            if self.run_id is not None and self.run_id != stored_run_id:
-                raise ControllerRunError("Requested run_id does not match the existing ledger")
-            self.run_id = stored_run_id
-            self._refresh_resumable_source_commit(ledger)
-            self._validate_immutable_ledger(ledger)
-        else:
-            if self.run_id is None:
-                self.run_id = _new_run_id()
-            if not _is_safe_run_id(self.run_id):
-                raise ControllerRunError(f"Unsafe Grid5000 run_id: {self.run_id!r}")
-            ledger = self._new_ledger()
-            self._write_ledger(ledger)
+        ledger = (
+            self._load_existing_ledger() if self.ledger_path.is_file() else self._create_ledger()
+        )
         self._ledger = ledger
+        return ledger
+
+    def _load_existing_ledger(self) -> dict[str, Any]:
+        ledger = _read_ledger(self.ledger_path)
+        stored_run_id = ledger.get("run_id")
+        if not isinstance(stored_run_id, str):
+            raise ControllerRunError("Sentence ledger has no valid run_id")
+        if self.run_id is not None and self.run_id != stored_run_id:
+            raise ControllerRunError("Requested run_id does not match the existing ledger")
+        self.run_id = stored_run_id
+        self._refresh_resumable_source_commit(ledger)
+        self._validate_immutable_ledger(ledger)
+        return ledger
+
+    def _create_ledger(self) -> dict[str, Any]:
+        if self.run_id is None:
+            self.run_id = _new_run_id()
+        if not _is_safe_run_id(self.run_id):
+            raise ControllerRunError(f"Unsafe Grid5000 run_id: {self.run_id!r}")
+        ledger = self._new_ledger()
+        self._write_ledger(ledger)
         return ledger
 
     def _refresh_resumable_source_commit(self, ledger: dict[str, Any]) -> None:
@@ -229,26 +236,7 @@ class Grid5000SentenceController:
         try:
             for batch in ledger["batches"]:
                 self._current_batch = batch
-                state = str(batch["state"])
-                if state == "published":
-                    continue
-                if state == "ready_to_publish":
-                    self._publish_batch(batch)
-                    continue
-                if state in _ACTIVE_STATES:
-                    self._reconcile_batch(batch)
-                    if batch["state"] == "ready_to_publish":
-                        self._publish_batch(batch)
-                    continue
-                if state in {"planned", "failed"}:
-                    self._submit_batch(batch)
-                    self._reconcile_batch(batch)
-                    if batch["state"] == "ready_to_publish":
-                        self._publish_batch(batch)
-                    continue
-                raise ControllerRunError(
-                    f"Batch {batch['index']} is in unsupported state {state!r}"
-                )
+                self._process_batch(batch)
             if not all(batch["state"] == "published" for batch in ledger["batches"]):
                 raise ControllerRunError("Sentence run is incomplete and remains resumable")
             self._finalize_run()
@@ -256,6 +244,26 @@ class Grid5000SentenceController:
         except KeyboardInterrupt:
             self._handle_interrupt()
             raise
+
+    def _process_batch(self, batch: dict[str, Any]) -> None:
+        state = str(batch["state"])
+        if state == "published":
+            return
+        if state == "ready_to_publish":
+            self._publish_batch(batch)
+            return
+        if state in _ACTIVE_STATES:
+            self._reconcile_batch(batch)
+        elif state in {"planned", "failed"}:
+            self._submit_batch(batch)
+            self._reconcile_batch(batch)
+        else:
+            raise ControllerRunError(f"Batch {batch['index']} is in unsupported state {state!r}")
+        self._publish_if_ready(batch)
+
+    def _publish_if_ready(self, batch: dict[str, Any]) -> None:
+        if batch["state"] == "ready_to_publish":
+            self._publish_batch(batch)
 
     def _new_ledger(self) -> dict[str, Any]:
         sentence_manifest = _load_json_mapping(
@@ -302,7 +310,13 @@ class Grid5000SentenceController:
         }
 
     def _validate_immutable_ledger(self, ledger: Mapping[str, object]) -> None:
-        expected = {
+        for key, value in self._immutable_ledger_fields().items():
+            if ledger.get(key) != value:
+                raise ControllerRunError(f"Sentence ledger immutable field changed: {key}")
+        _validate_ledger_baselines(ledger)
+
+    def _immutable_ledger_fields(self) -> dict[str, object]:
+        return {
             "contract_version": GRID5000_SENTENCE_CONTRACT_VERSION,
             "repo_id": self.repo_id,
             "source_commit": self.source_commit,
@@ -314,15 +328,6 @@ class Grid5000SentenceController:
             "gpu_model": self.gpu_model,
             "limits": self.limits.as_payload(),
         }
-        for key, value in expected.items():
-            if ledger.get(key) != value:
-                raise ControllerRunError(f"Sentence ledger immutable field changed: {key}")
-        if not isinstance(ledger.get("baseline_readme_sha256"), str):
-            raise ControllerRunError("Sentence ledger has no README baseline hash")
-        if not isinstance(ledger.get("baseline_map_sha256"), str):
-            raise ControllerRunError("Sentence ledger has no comparison-map baseline hash")
-        if not isinstance(ledger.get("batches"), list):
-            raise ControllerRunError("Sentence ledger batches must be a list")
 
     def _write_ledger(self, ledger: dict[str, Any] | None = None) -> None:
         if ledger is not None:
@@ -492,34 +497,50 @@ class Grid5000SentenceController:
             received = Path(temporary)
             self.transport.download_tree(f"{batch['remote_job_root']}/result", received)
             received_data = DataRoot(received / "data")
-            try:
-                receipt = _read_json_mapping(received / "receipt.json")
-                self._validate_receipt(batch, receipt)
-            except ControllerRunError as error:
-                self._import_partial(batch, received_data)
-                batch["state"] = "failed"
-                batch["error"] = (
-                    "missing_receipt"
-                    if not (received / "receipt.json").is_file()
-                    else "invalid_receipt"
-                )
-                self._write_ledger()
-                self._cleanup_remote_job(batch)
-                raise ControllerRunError(
-                    f"Grid5000 batch {batch['index']} produced an invalid receipt; retryable"
-                ) from error
-            succeeded = state in _SUCCESS_STATES and exit_code in {None, 0}
-            if succeeded and receipt.get("status") == "succeeded":
+            receipt = self._read_valid_receipt(batch, received, received_data)
+            if _remote_batch_succeeded(state, exit_code, receipt):
                 self._import_success(batch, received_data, receipt)
                 batch["state"] = "ready_to_publish"
                 self._write_ledger()
                 return
-            self._import_partial(batch, received_data)
-            batch["state"] = "failed"
-            batch["error"] = str(receipt.get("error_type") or "remote_job_failed")
-            self._write_ledger()
+            self._mark_batch_failed(batch, received_data, receipt)
         self._cleanup_remote_job(batch)
         raise ControllerRunError(f"Grid5000 batch {batch['index']} failed and is retryable")
+
+    def _read_valid_receipt(
+        self,
+        batch: dict[str, Any],
+        received: Path,
+        received_data: DataRoot,
+    ) -> dict[str, Any]:
+        try:
+            receipt = _read_json_mapping(received / "receipt.json")
+            self._validate_receipt(batch, receipt)
+            return receipt
+        except ControllerRunError as error:
+            self._import_partial(batch, received_data)
+            batch["state"] = "failed"
+            batch["error"] = (
+                "missing_receipt"
+                if not (received / "receipt.json").is_file()
+                else "invalid_receipt"
+            )
+            self._write_ledger()
+            self._cleanup_remote_job(batch)
+            raise ControllerRunError(
+                f"Grid5000 batch {batch['index']} produced an invalid receipt; retryable"
+            ) from error
+
+    def _mark_batch_failed(
+        self,
+        batch: dict[str, Any],
+        received_data: DataRoot,
+        receipt: Mapping[str, object],
+    ) -> None:
+        self._import_partial(batch, received_data)
+        batch["state"] = "failed"
+        batch["error"] = str(receipt.get("error_type") or "remote_job_failed")
+        self._write_ledger()
 
     def _validate_receipt(self, batch: Mapping[str, object], receipt: Mapping[str, object]) -> None:
         expected = {
@@ -530,9 +551,7 @@ class Grid5000SentenceController:
             "stems": _batch_stems(batch),
         }
         for key, value in expected.items():
-            actual = receipt.get(key)
-            if key == "stems" and isinstance(actual, list):
-                actual = tuple(str(stem) for stem in actual)
+            actual = _normalized_receipt_value(key, receipt.get(key))
             if actual != value:
                 raise ControllerRunError(f"Grid5000 receipt mismatch: {key}")
 
@@ -583,25 +602,28 @@ class Grid5000SentenceController:
     def _import_checkpoints(self, batch: Mapping[str, object], received_data: DataRoot) -> None:
         for stem in _batch_stems(batch):
             for project in _source_projects(self.data_root.processed_v2, stem):
-                incoming = received_data.v2_cache / "sentence-checkpoints" / stem / project
-                if not incoming.is_dir():
-                    continue
-                source = sentence_source_paths(self.data_root.processed_v2, stem)
-                source_path = next(path for path in source if project in path.parts)
-                identity = {
-                    "contract_version": "v2-sentence-checkpoints-v1",
-                    "stem": stem,
-                    "project": project,
-                    "input_fingerprint": sha256_file(source_path),
-                    "model_id": SAT_MODEL_ID,
-                    "model_revision": DEFAULT_SAT_MODEL_REVISION,
-                    "batch_size": self.limits.batch_size,
-                }
-                import_checkpoint_tree(
-                    incoming,
-                    self.data_root.v2_cache / "sentence-checkpoints" / stem / project,
-                    expected_identity=identity,
-                )
+                self._import_checkpoint(stem, project, received_data)
+
+    def _import_checkpoint(self, stem: str, project: str, received_data: DataRoot) -> None:
+        incoming = received_data.v2_cache / "sentence-checkpoints" / stem / project
+        if not incoming.is_dir():
+            return
+        source = sentence_source_paths(self.data_root.processed_v2, stem)
+        source_path = next(path for path in source if project in path.parts)
+        identity = {
+            "contract_version": "v2-sentence-checkpoints-v1",
+            "stem": stem,
+            "project": project,
+            "input_fingerprint": sha256_file(source_path),
+            "model_id": SAT_MODEL_ID,
+            "model_revision": DEFAULT_SAT_MODEL_REVISION,
+            "batch_size": self.limits.batch_size,
+        }
+        import_checkpoint_tree(
+            incoming,
+            self.data_root.v2_cache / "sentence-checkpoints" / stem / project,
+            expected_identity=identity,
+        )
 
     def _publish_batch(self, batch: dict[str, Any]) -> None:
         try:
@@ -750,15 +772,29 @@ class SubprocessGrid5000Transport:
     def _resolve_remote_path(self, remote_path: str) -> str:
         if not remote_path.startswith("$HOME/"):
             raise ControllerRunError("Refusing a Grid5000 path outside the remote home")
-        if self._remote_home is None:
-            result = self.run_frontend(("printf", "%s", "$HOME"))
-            if result.returncode != 0:
-                raise ControllerRunError("Could not resolve the Grid5000 remote home")
-            remote_home = (result.stdout or "").strip()
-            if not remote_home.startswith("/") or any(char.isspace() for char in remote_home):
-                raise ControllerRunError("Grid5000 remote home is invalid")
-            self._remote_home = remote_home
-        return f"{self._remote_home}{remote_path[len('$HOME') :]}"
+        remote_home = self._resolve_remote_home()
+        return f"{remote_home}{remote_path[len('$HOME') :]}"
+
+    def _resolve_remote_home(self) -> str:
+        if self._remote_home is not None:
+            return self._remote_home
+        result = self.run_frontend(("printf", "%s", "$HOME"))
+        remote_home = _validated_remote_home(result)
+        self._remote_home = remote_home
+        return self._remote_home
+
+
+def _validated_remote_home(result: subprocess.CompletedProcess[str]) -> str:
+    if result.returncode != 0:
+        raise ControllerRunError("Could not resolve the Grid5000 remote home")
+    remote_home = (result.stdout or "").strip()
+    return _validate_remote_home(remote_home)
+
+
+def _validate_remote_home(remote_home: str) -> str:
+    if not remote_home.startswith("/") or any(char.isspace() for char in remote_home):
+        raise ControllerRunError("Grid5000 remote home is invalid")
+    return remote_home
 
 
 class HfHubSentencePublisher:
@@ -780,34 +816,69 @@ class HfHubSentencePublisher:
         )
 
     def verify_sentence_batch(self, processed_v2: Path, stems: Sequence[str]) -> None:
-        operations = sentence_publication_ops(processed_v2, stems)
-        expected = [(operation.local_path, operation.path_in_repo) for operation in operations]
-        map_path = processed_v2 / V2_ADDED_WIKIPEDIA_TAG_MAP_PATH
-        expected.append((map_path, V2_ADDED_WIKIPEDIA_TAG_MAP_PATH))
-        if any(local is None for local, _ in expected):
-            raise ControllerRunError("HF verification received an incomplete publication plan")
+        expected = _expected_sentence_files(processed_v2, stems)
+        _validate_expected_sentence_files(expected)
         inventory = RemoteInventory.fetch_paths(
             self.repo_id,
             paths=[remote for _, remote in expected],
             token=self.token,
         )
-        missing = [remote for _, remote in expected if not inventory.contains(remote)]
+        missing = _missing_remote_files(expected, inventory)
         if missing:
             raise ControllerRunError(f"HF sentence publication is missing files: {missing}")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix="hf-sentence-verify-", dir=self.cache_dir
-        ) as temporary:
-            for local, remote in expected:
-                assert local is not None
-                _verify_sentence_file(
-                    self.repo_id,
-                    local,
-                    remote,
-                    inventory=inventory,
-                    token=self.token,
-                    local_dir=Path(temporary),
-                )
+        _verify_expected_sentence_files(
+            self.repo_id,
+            expected,
+            inventory=inventory,
+            token=self.token,
+            cache_dir=self.cache_dir,
+        )
+
+
+def _expected_sentence_files(
+    processed_v2: Path,
+    stems: Sequence[str],
+) -> list[tuple[Path | None, str]]:
+    operations = sentence_publication_ops(processed_v2, stems)
+    expected = [(operation.local_path, operation.path_in_repo) for operation in operations]
+    expected.append(
+        (processed_v2 / V2_ADDED_WIKIPEDIA_TAG_MAP_PATH, V2_ADDED_WIKIPEDIA_TAG_MAP_PATH)
+    )
+    return expected
+
+
+def _validate_expected_sentence_files(expected: Sequence[tuple[Path | None, str]]) -> None:
+    if any(local is None for local, _ in expected):
+        raise ControllerRunError("HF verification received an incomplete publication plan")
+
+
+def _missing_remote_files(
+    expected: Sequence[tuple[Path | None, str]],
+    inventory: RemoteInventory,
+) -> list[str]:
+    return [remote for _, remote in expected if not inventory.contains(remote)]
+
+
+def _verify_expected_sentence_files(
+    repo_id: str,
+    expected: Sequence[tuple[Path | None, str]],
+    *,
+    inventory: RemoteInventory,
+    token: str | None,
+    cache_dir: Path,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="hf-sentence-verify-", dir=cache_dir) as temporary:
+        for local, remote in expected:
+            assert local is not None
+            _verify_sentence_file(
+                repo_id,
+                local,
+                remote,
+                inventory=inventory,
+                token=token,
+                local_dir=Path(temporary),
+            )
 
 
 def _verify_sentence_file(
@@ -821,11 +892,15 @@ def _verify_sentence_file(
 ) -> None:
     info = inventory.metadata(remote)
     if info is not None and info.sha256 is not None:
-        if info.size != local.stat().st_size or info.sha256 != sha256_file(local):
-            raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
+        _verify_known_sentence_file(local, remote, info)
         return
     downloaded = _download_hf_file(repo_id, remote, token=token, local_dir=local_dir)
     if sha256_file(downloaded) != sha256_file(local):
+        raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
+
+
+def _verify_known_sentence_file(local: Path, remote: str, info: RemoteFileInfo) -> None:
+    if info.size != local.stat().st_size or info.sha256 != sha256_file(local):
         raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
 
 
@@ -900,31 +975,56 @@ def _read_ledger(path: Path) -> dict[str, Any]:
     return _read_json_mapping(path)
 
 
+def _validate_ledger_baselines(ledger: Mapping[str, object]) -> None:
+    if not isinstance(ledger.get("baseline_readme_sha256"), str):
+        raise ControllerRunError("Sentence ledger has no README baseline hash")
+    if not isinstance(ledger.get("baseline_map_sha256"), str):
+        raise ControllerRunError("Sentence ledger has no comparison-map baseline hash")
+    if not isinstance(ledger.get("batches"), list):
+        raise ControllerRunError("Sentence ledger batches must be a list")
+
+
+def _remote_batch_succeeded(
+    state: str,
+    exit_code: int | None,
+    receipt: Mapping[str, object],
+) -> bool:
+    return (
+        state in _SUCCESS_STATES and exit_code in {None, 0} and receipt.get("status") == "succeeded"
+    )
+
+
 def _receipt_artifacts(receipt: Mapping[str, object]) -> dict[str, FileDigest]:
     raw = receipt.get("artifacts")
     if not isinstance(raw, list):
         raise ControllerRunError("Grid5000 receipt artifacts must be a list")
     artifacts: dict[str, FileDigest] = {}
     for raw_artifact in raw:
-        if not isinstance(raw_artifact, Mapping):
-            raise ControllerRunError("Grid5000 receipt artifact must be an object")
-        relative = raw_artifact.get("relative_path")
-        size = raw_artifact.get("size")
-        digest = raw_artifact.get("sha256")
-        if (
-            not isinstance(relative, str)
-            or not isinstance(size, int)
-            or not isinstance(digest, str)
-        ):
-            raise ControllerRunError("Grid5000 receipt artifact has invalid fields")
-        if relative in artifacts:
-            raise ControllerRunError(f"Grid5000 receipt has duplicate artifact: {relative}")
-        artifacts[relative] = FileDigest(
-            relative_path=relative,
-            size=size,
-            sha256=digest,
-        )
+        artifact = _receipt_artifact(raw_artifact)
+        if artifact.relative_path in artifacts:
+            raise ControllerRunError(
+                f"Grid5000 receipt has duplicate artifact: {artifact.relative_path}"
+            )
+        artifacts[artifact.relative_path] = artifact
     return artifacts
+
+
+def _receipt_artifact(raw_artifact: object) -> FileDigest:
+    if not isinstance(raw_artifact, Mapping):
+        raise ControllerRunError("Grid5000 receipt artifact must be an object")
+    typed_artifact = cast(Mapping[str, object], raw_artifact)
+    relative = typed_artifact.get("relative_path")
+    size = typed_artifact.get("size")
+    digest = typed_artifact.get("sha256")
+    if not isinstance(relative, str) or not isinstance(size, int) or not isinstance(digest, str):
+        raise ControllerRunError("Grid5000 receipt artifact has invalid fields")
+    return FileDigest(relative_path=relative, size=size, sha256=digest)
+
+
+def _normalized_receipt_value(key: str, actual: object) -> object:
+    if key == "stems" and isinstance(actual, list):
+        return tuple(str(stem) for stem in actual)
+    return actual
 
 
 def _receipt_digest(artifacts: Mapping[str, FileDigest], relative: str) -> FileDigest:
@@ -987,21 +1087,29 @@ def _is_source_commit_migration_safe(ledger: Mapping[str, object]) -> bool:
     raw_batches = ledger.get("batches")
     if not isinstance(raw_batches, list) or not raw_batches:
         return False
-    for raw_batch in raw_batches:
-        if not isinstance(raw_batch, Mapping):
-            return False
-        if raw_batch.get("state") not in {"planned", "failed"}:
-            return False
-        if raw_batch.get("state") == "planned" and raw_batch.get("oar_job_id") not in (None, ""):
-            return False
-        if (
-            raw_batch.get("state") == "failed"
-            and raw_batch.get("oar_job_id") not in (None, "")
-            and raw_batch.get("error") not in _RETRYABLE_ARTIFACT_FAILURES
-        ):
-            return False
-        if raw_batch.get("hf_commit") not in (None, ""):
-            return False
+    return all(_source_commit_batch_is_safe(raw_batch) for raw_batch in raw_batches)
+
+
+def _source_commit_batch_is_safe(batch: object) -> bool:
+    if not isinstance(batch, Mapping):
+        return False
+    typed_batch = cast(Mapping[str, object], batch)
+    state = typed_batch.get("state")
+    if state not in {"planned", "failed"}:
+        return False
+    if not _source_commit_job_is_safe(typed_batch, state):
+        return False
+    return typed_batch.get("hf_commit") in (None, "")
+
+
+def _source_commit_job_is_safe(batch: Mapping[str, object], state: object) -> bool:
+    if state == "planned":
+        return batch.get("oar_job_id") in (None, "")
+    if state == "failed":
+        return (
+            batch.get("oar_job_id") in (None, "")
+            or batch.get("error") in _RETRYABLE_ARTIFACT_FAILURES
+        )
     return True
 
 

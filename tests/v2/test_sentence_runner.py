@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -13,7 +13,19 @@ from osm_polygon_wikidata_only.domain.ids import content_hash
 from osm_polygon_wikidata_only.v2.sentence_checkpoints import SentenceCheckpoint
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from osm_polygon_wikidata_only.v2.sentence_runner import (
+    SentenceRegionSummary,
+    _load_manifest_payload,
+    _load_manifest_summaries,
+    _manifest_metadata,
+    _manifest_payload,
+    _manifest_region_summary,
+    _manifest_uses_segmenter,
     _process_source,
+    _requested_stems,
+    _run_project,
+    _selected_stems,
+    _summary_from_mapping,
+    _write_checkpoint_batches,
     _write_output,
     run_v2_sentence_split,
 )
@@ -66,6 +78,109 @@ class _FakeSegmenter:
             raise RuntimeError("segmentation interruption")
         assert language == "en"
         return [[text[: text.index(".") + 2], text[text.index(".") + 2 :]] for text in texts]
+
+
+def test_summary_decoder_preserves_manifest_values() -> None:
+    summary = _summary_from_mapping(
+        {
+            "stem": "region-latest",
+            "project": "wikipedia",
+            "sections": 3,
+            "split_sections": 2,
+            "unsplit_sections": 1,
+            "sentence_rows": 4,
+            "supported_languages": ["en"],
+            "unsupported_languages": ["xx"],
+        },
+        error="invalid summary",
+    )
+
+    assert summary == SentenceRegionSummary(
+        stem="region-latest",
+        project="wikipedia",
+        sections=3,
+        split_sections=2,
+        unsplit_sections=1,
+        sentence_rows=4,
+        supported_languages=("en",),
+        unsupported_languages=("xx",),
+    )
+
+
+def test_manifest_metadata_is_shared_by_writer_and_reader() -> None:
+    assert _manifest_metadata(_FakeSegmenter()) == {
+        "contract_version": "v2-sentence-splitting-v1",
+        "segmenter": "sat-3l-sm",
+        "model_id": "segment-any-text/sat-3l-sm",
+        "model_revision": "model-a",
+        "segmenter_version": "test",
+    }
+
+
+def test_requested_stems_are_sorted_and_deduplicated() -> None:
+    manifest = {"b-latest": {}, "a-latest": {}}
+
+    assert _requested_stems(manifest, ("b-latest", "a-latest", "b-latest")) == (
+        "a-latest",
+        "b-latest",
+    )
+    assert _requested_stems(manifest, None) == ("a-latest", "b-latest")
+
+
+def test_manifest_region_summary_decodes_one_region() -> None:
+    region = _manifest_region_summary(
+        {
+            "stem": "region-latest",
+            "project": "wikipedia",
+            "sections": 1,
+            "split_sections": 1,
+            "unsplit_sections": 0,
+            "sentence_rows": 2,
+            "supported_languages": ["en"],
+            "unsupported_languages": [],
+        },
+        path=Path("manifest.json"),
+    )
+
+    assert region.stem == "region-latest"
+    assert region.sentence_rows == 2
+
+
+def test_manifest_payload_keeps_regions_and_language_policy() -> None:
+    summary = SentenceRegionSummary(
+        stem="region-latest",
+        project="wikipedia",
+        sections=1,
+        split_sections=1,
+        unsplit_sections=0,
+        sentence_rows=2,
+        supported_languages=("en",),
+        unsupported_languages=("xx",),
+    )
+
+    payload = _manifest_payload(_FakeSegmenter(), [summary])
+
+    assert payload["regions"] == [asdict(summary)]
+    assert payload["unsupported_languages"] == ["xx"]
+    assert payload["unsupported_language_policy"] == "one unsplit row; never passed to SaT"
+
+
+def test_manifest_payload_loader_decodes_a_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "sentence_splitting.json"
+    payload = {"regions": [], "segmenter": "sat-3l-sm"}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert _load_manifest_payload(path) == payload
+
+
+def test_manifest_segmenter_identity_is_checked_against_all_metadata() -> None:
+    payload = _manifest_metadata(_FakeSegmenter())
+
+    assert _manifest_uses_segmenter(payload, _FakeSegmenter())
+    assert not _manifest_uses_segmenter(
+        {**payload, "model_revision": "other-revision"},
+        _FakeSegmenter(),
+    )
 
 
 def test_v2_sentence_split_resumes_without_rewriting_sections(tmp_path: Path) -> None:
@@ -130,6 +245,133 @@ def test_v2_sentence_split_resumes_without_rewriting_sections(tmp_path: Path) ->
     manifest = result.manifest_path.read_text(encoding="utf-8")
     assert '"unsupported_languages":["xx"]' in manifest
     assert '"model_id":"segment-any-text/sat-3l-sm"' in manifest
+
+    cached_segmenter = _FakeSegmenter()
+    cached_result = run_v2_sentence_split(
+        data_root,
+        segmenter=cached_segmenter,
+        batch_size=1,
+    )
+    assert cached_segmenter.calls == 0
+    assert cached_result.regions == result.regions
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_v2_sentence_split_rejects_non_positive_batch_size(
+    tmp_path: Path,
+    batch_size: int,
+) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    with pytest.raises(ValueError, match="batch_size must be positive"):
+        run_v2_sentence_split(data_root, segmenter=_FakeSegmenter(), batch_size=batch_size)
+
+
+def test_v2_sentence_split_requires_supported_segmenter(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    segmenter = _FakeSegmenter(model_id="other/model")
+    with pytest.raises(ValueError, match="Only sat-3l-sm is supported"):
+        run_v2_sentence_split(data_root, segmenter=segmenter)
+
+
+def test_selected_stems_rejects_missing_empty_and_invalid_values() -> None:
+    with pytest.raises(FileNotFoundError, match="No finalized V2 regions"):
+        _selected_stems({}, None)
+    with pytest.raises(ValueError, match="not finalized"):
+        _selected_stems({"region-latest": {}}, ("missing-latest",))
+    with pytest.raises(ValueError, match="At least one"):
+        _selected_stems({"region-latest": {}}, ())
+    with pytest.raises(ValueError, match="Invalid V2 stem"):
+        _selected_stems({".": {}}, (".",))
+
+
+def test_run_project_rejects_missing_section_source(tmp_path: Path) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+
+    with pytest.raises(FileNotFoundError, match="V2 section source is missing"):
+        _run_project(
+            data_root,
+            stem="region-latest",
+            project="wikipedia",
+            segmenter=_FakeSegmenter(),
+            batch_size=1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "Invalid sentence manifest"),
+        ({"regions": {}}, "Invalid sentence manifest regions"),
+        ({"regions": [None]}, "Invalid sentence manifest region"),
+        ({"regions": [{}]}, "Invalid sentence manifest region"),
+    ],
+)
+def test_sentence_manifest_rejects_invalid_payloads(
+    tmp_path: Path,
+    payload: object,
+    message: str,
+) -> None:
+    path = tmp_path / "sentence_splitting.json"
+    if isinstance(payload, dict):
+        payload = {**_manifest_metadata(_FakeSegmenter()), **payload}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        _load_manifest_summaries(path, segmenter=_FakeSegmenter())
+
+
+def test_sentence_manifest_rejects_different_segmenter(tmp_path: Path) -> None:
+    path = tmp_path / "sentence_splitting.json"
+    path.write_text(
+        json.dumps(
+            {
+                "contract_version": "v2-sentence-splitting-v1",
+                "segmenter": "sat-3l-sm",
+                "model_id": "other/model",
+                "model_revision": "model-a",
+                "segmenter_version": "test",
+                "regions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="different segmenter"):
+        _load_manifest_summaries(path, segmenter=_FakeSegmenter())
+
+
+def test_sentence_output_cleans_temporary_file_on_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=1,
+    )
+    checkpoint.write_batch(0, [{"sentence_id": "sentence-1", "text": "First."}])
+
+    def fail_validation(path: Path, schema: object) -> None:
+        raise RuntimeError(f"invalid output: {path}")
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.sentence_runner._validate_schema",
+        fail_validation,
+    )
+
+    with pytest.raises(RuntimeError, match="invalid output"):
+        _write_output(tmp_path / "sentences.parquet", checkpoint, batch_count=1)
+
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 def test_partial_sentence_run_preserves_previous_manifest_regions(tmp_path: Path) -> None:
@@ -273,3 +515,27 @@ def test_sentence_output_writes_validated_checkpoint_tables_directly(
     assert output.schema.equals(sentence_schema(), check_metadata=True)
     assert output.column("sentence_id").to_pylist() == ["sentence-1", "sentence-2"]
     assert output.column("text").to_pylist() == ["First.", "Second."]
+
+
+def test_checkpoint_batch_writer_skips_empty_tables(tmp_path: Path) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
+    checkpoint.write_batch(0, [{"sentence_id": "sentence-1", "text": "First."}])
+    checkpoint.write_batch(1, [])
+
+    written_rows: list[int] = []
+
+    class _Writer:
+        def write_table(self, table: object) -> None:
+            written_rows.append(table.num_rows)
+
+    _write_checkpoint_batches(_Writer(), checkpoint, batch_count=2)
+
+    assert written_rows == [1]

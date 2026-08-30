@@ -31,17 +31,26 @@ class CrapEntry:
 def crap_score(complexity: int, coverage: float) -> float:
     """Return ``complexity^2 * (1 - coverage)^3 + complexity``."""
 
-    if isinstance(complexity, bool) or not isinstance(complexity, int) or complexity < 1:
+    valid_complexity = _validate_complexity(complexity)
+    fraction = _validate_coverage(coverage)
+    return valid_complexity**2 * (1.0 - fraction) ** 3 + valid_complexity
+
+
+def _validate_complexity(value: object) -> int:
+    if isinstance(value, bool):
         raise ValueError("complexity must be a positive integer")
-    if (
-        isinstance(coverage, bool)
-        or not isinstance(coverage, (int, float))
-        or not math.isfinite(float(coverage))
-        or not 0.0 <= float(coverage) <= 1.0
-    ):
+    if not isinstance(value, int) or value < 1:
+        raise ValueError("complexity must be a positive integer")
+    return value
+
+
+def _validate_coverage(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("coverage must be a finite fraction between 0 and 1")
-    fraction = float(coverage)
-    return complexity**2 * (1.0 - fraction) ** 3 + complexity
+    fraction = float(value)
+    if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+        raise ValueError("coverage must be a finite fraction between 0 and 1")
+    return fraction
 
 
 def evaluate_threshold(entries: Iterable[CrapEntry], *, maximum: float) -> list[CrapEntry]:
@@ -55,6 +64,80 @@ def evaluate_threshold(entries: Iterable[CrapEntry], *, maximum: float) -> list[
     )
 
 
+def _entries_for_file(
+    raw_path: object,
+    raw_blocks: object,
+    coverage_files: Mapping[str, object],
+) -> list[CrapEntry]:
+    path, blocks = _radon_file_parts(raw_path, raw_blocks)
+    entries: list[CrapEntry] = []
+    for raw_block in blocks:
+        block = _mapping(raw_block, "Radon function entry")
+        if block.get("type") not in {"function", "method"}:
+            continue
+        qualified_name, complexity, line, endline = _radon_function_parts(block)
+        file_data = _coverage_file(coverage_files, path)
+        function = _function_coverage(file_data, qualified_name)
+        coverage = (
+            _function_coverage_fraction(function)
+            if function
+            else _line_coverage_fraction(file_data, line, endline)
+        )
+        entries.append(CrapEntry(path, qualified_name, complexity, coverage, line))
+    return entries
+
+
+def _radon_file_parts(
+    raw_path: object,
+    raw_blocks: object,
+) -> tuple[str, list[object]]:
+    if not isinstance(raw_path, str):
+        raise ValueError("Radon report has an invalid file entry")
+    if not isinstance(raw_blocks, list):
+        raise ValueError("Radon report has an invalid file entry")
+    return raw_path, cast(list[object], raw_blocks)
+
+
+def _radon_function_parts(
+    block: Mapping[str, object],
+) -> tuple[str, int, int, int]:
+    name = _required_string(block.get("name"), "Radon function entry is malformed")
+    classname = _optional_string(block.get("classname"), "Radon function classname is malformed")
+    complexity = _required_int(
+        block.get("complexity"),
+        "Radon function entry is malformed",
+    )
+    line = _required_int(block.get("lineno", 0), "Radon function line is malformed")
+    endline = _required_int(
+        block.get("endline", line),
+        "Radon function endline is malformed",
+    )
+    if endline < line:
+        raise ValueError("Radon function endline is malformed")
+    qualified_name = f"{classname}.{name}" if classname else name
+    return qualified_name, complexity, line, endline
+
+
+def _required_string(value: object, error: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(error)
+    return value
+
+
+def _optional_string(value: object, error: str) -> str | None:
+    if value is None:
+        return None
+    return _required_string(value, error)
+
+
+def _required_int(value: object, error: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(error)
+    if not isinstance(value, int):
+        raise ValueError(error)
+    return value
+
+
 def entries_from_reports(
     coverage_report: Mapping[str, object],
     complexity_report: Mapping[str, object],
@@ -62,48 +145,11 @@ def entries_from_reports(
     """Join coverage.py function data with Radon function complexity."""
 
     coverage_files = _mapping_value(coverage_report, "files")
-    entries: list[CrapEntry] = []
-    for raw_path, raw_blocks in complexity_report.items():
-        if not isinstance(raw_path, str) or not isinstance(raw_blocks, list):
-            raise ValueError("Radon report has an invalid file entry")
-        for raw_block in raw_blocks:
-            block = _mapping(raw_block, "Radon function entry")
-            if block.get("type") not in {"function", "method"}:
-                continue
-            name = block.get("name")
-            classname = block.get("classname")
-            complexity = block.get("complexity")
-            line = block.get("lineno", 0)
-            if (
-                not isinstance(name, str)
-                or not isinstance(complexity, int)
-                or isinstance(complexity, bool)
-            ):
-                raise ValueError("Radon function entry is malformed")
-            if classname is not None and not isinstance(classname, str):
-                raise ValueError("Radon function classname is malformed")
-            if not isinstance(line, int) or isinstance(line, bool):
-                raise ValueError("Radon function line is malformed")
-            endline = block.get("endline", line)
-            if not isinstance(endline, int) or isinstance(endline, bool) or endline < line:
-                raise ValueError("Radon function endline is malformed")
-            qualified_name = f"{classname}.{name}" if classname else name
-            file_data = _coverage_file(coverage_files, raw_path)
-            function = _function_coverage(file_data, qualified_name)
-            coverage = (
-                _function_coverage_fraction(function)
-                if function
-                else _line_coverage_fraction(file_data, line, endline)
-            )
-            entries.append(
-                CrapEntry(
-                    raw_path,
-                    qualified_name,
-                    complexity,
-                    coverage,
-                    line,
-                )
-            )
+    entries = [
+        entry
+        for raw_path, raw_blocks in complexity_report.items()
+        for entry in _entries_for_file(raw_path, raw_blocks, coverage_files)
+    ]
     if not entries:
         raise ValueError("reports contain no function entries")
     return entries
@@ -152,11 +198,15 @@ def _line_coverage_fraction(file_data: Mapping[str, object], start: int, end: in
 
 
 def _line_numbers(value: object, label: str) -> set[int]:
-    if not isinstance(value, list) or any(
-        isinstance(line, bool) or not isinstance(line, int) for line in value
-    ):
+    if not isinstance(value, list):
+        raise ValueError(f"coverage {label} must be a list of line numbers")
+    if any(_invalid_line_number(line) for line in value):
         raise ValueError(f"coverage {label} must be a list of line numbers")
     return {cast(int, line) for line in value}
+
+
+def _invalid_line_number(value: object) -> bool:
+    return isinstance(value, bool) or not isinstance(value, int)
 
 
 def _function_coverage_fraction(function: Mapping[str, object]) -> float:

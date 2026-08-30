@@ -9,6 +9,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
 from osm_polygon_wikidata_only.v2 import card
 from osm_polygon_wikidata_only.v2.card import (
+    _document_batch_columns,
     _word_column,
     compute_v2_card_stats,
     render_v2_card,
@@ -61,6 +62,26 @@ def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:
     assert _word_column({"article_length_words", "text_length_words"}) == ("article_length_words")
     assert _word_column({"text_length_words"}) == "text_length_words"
     assert _word_column({"document_id"}) is None
+
+
+def test_document_batch_columns_decode_only_requested_columns() -> None:
+    batch = pa.table(
+        {
+            "document_id": ["doc-1"],
+            "language": ["en"],
+            "article_length_words": [4],
+        }
+    ).to_batches()[0]
+
+    columns = _document_batch_columns(
+        batch,
+        positions={"document_id": 0, "language": 1, "article_length_words": 2},
+        has_document_id=True,
+        has_language=True,
+        word_column="article_length_words",
+    )
+
+    assert columns == (["doc-1"], ["en"], [4])
 
 
 def test_record_numeric_value_ignores_empty_ids_and_rejects_conflicts() -> None:
