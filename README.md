@@ -109,6 +109,10 @@ Sentence-level V2 sidecars are a separate opt-in stage. It uses only
 codes remain as one unsplit row with explicit unsupported-language provenance;
 they are never passed to SaT.
 
+The completed split covers 85 languages and produces 73,322,752 split sentence
+rows. Another 1,469,177 unsupported-language rows are preserved unsplit, for
+74,791,929 total sentence-sidecar rows.
+
 ---
 
 ## Repository layout
