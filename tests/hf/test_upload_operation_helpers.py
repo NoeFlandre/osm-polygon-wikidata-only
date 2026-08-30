@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from osm_polygon_wikidata_only.hf._upload_retry import _run_upload_attempts
 from osm_polygon_wikidata_only.hf._uploader import operations
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
 
@@ -20,6 +21,32 @@ def test_upload_operation_validation_rejects_empty_and_duplicate_paths() -> None
     ]
     with pytest.raises(UploadError, match="duplicate remote paths"):
         operations._validate_upload_operations(duplicate)
+
+
+def test_run_upload_attempts_retries_until_success() -> None:
+    calls: list[int] = []
+
+    def upload(_ops: list, _message: str) -> None:
+        calls.append(1)
+        if len(calls) < 3:
+            raise UploadError("temporary failure")
+
+    _run_upload_attempts(upload, [], "retry", attempts=3)
+
+    assert len(calls) == 3
+
+
+def test_run_upload_attempts_reraises_final_failure() -> None:
+    calls: list[int] = []
+
+    def upload(_ops: list, _message: str) -> None:
+        calls.append(1)
+        raise UploadError(f"failure {len(calls)}")
+
+    with pytest.raises(UploadError, match="failure 3"):
+        _run_upload_attempts(upload, [], "retry", attempts=3)
+
+    assert len(calls) == 3
 
 
 def test_absent_delete_filter_is_a_noop_without_delete_paths() -> None:

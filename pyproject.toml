@@ -134,6 +134,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
     "src/osm_polygon_wikidata_only/io/pbf_reader.py",
     "src/osm_polygon_wikidata_only/hf/_upload_state.py",
+    "src/osm_polygon_wikidata_only/hf/_upload_retry.py",
     "src/osm_polygon_wikidata_only/v2/sentence_logic.py",
     "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py",
 ]

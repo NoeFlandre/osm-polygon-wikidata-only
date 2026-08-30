@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from osm_polygon_wikidata_only.hf._upload_retry import _run_upload_attempts
 from osm_polygon_wikidata_only.hf._upload_state import (
     QUEUE_CONTRACT_VERSION,
     UploadStateStore,
@@ -192,15 +193,7 @@ class BackgroundUploadQueue:
 
     def _upload_with_retries(self, job: _UploadJob) -> None:
         """Attempt one upload up to the configured retry count."""
-        last_error: Exception | None = None
-        for _ in range(self._attempts):
-            try:
-                self._upload(job.ops, job.message)
-                return
-            except Exception as error:
-                last_error = error
-        if last_error is not None:
-            raise last_error
+        _run_upload_attempts(self._upload, job.ops, job.message, attempts=self._attempts)
 
 
 __all__ = ["QUEUE_CONTRACT_VERSION", "BackgroundUploadQueue", "UploadOperation", "UploadOps"]

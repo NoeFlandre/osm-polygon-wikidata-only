@@ -138,9 +138,11 @@ just check
 ### Mutation and complexity gates
 
 The advanced gate covers the pure, deterministic Wikipedia and Wikidata parser
-helpers and the durable upload queue. V2 comparison/checkpoint, geographic
-parquet/rendering, DatasetStats, optional SaT dependency, Grid5000 subprocess,
-and Hugging Face inventory boundaries remain under focused tests and CRAP
+helpers and the durable upload queue retry policy. The queue's threading and
+network orchestration remains under focused tests and CRAP gates. V2
+comparison/checkpoint, geographic parquet/rendering, DatasetStats, optional
+SaT dependency, Grid5000 subprocess, and Hugging Face inventory boundaries
+remain under focused tests and CRAP
 gates; they are intentionally outside mutation testing because they cross
 file-system, subprocess, network, or external-runtime boundaries. The mutation
 run keeps reports in `/tmp` and uses two workers to limit peak Mac memory

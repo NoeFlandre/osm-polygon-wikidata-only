@@ -321,6 +321,18 @@ def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
         assert test_path not in mutation["pytest_add_cli_args_test_selection"]
 
 
+def test_upload_retry_policy_is_in_mutation_scope() -> None:
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    mutation = config["tool"]["mutmut"]
+
+    assert "src/osm_polygon_wikidata_only/hf/_upload_retry.py" in mutation["source_paths"]
+    assert (
+        "tests/hf/test_upload_operation_helpers.py"
+        in mutation["pytest_add_cli_args_test_selection"]
+    )
+
+
 def test_diff_review_executes_unmerged_path_check() -> None:
     """The diff-review recipe must evaluate, not quote, its command substitution."""
 
