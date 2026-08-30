@@ -54,6 +54,103 @@ def test_parse_language_list_rejects_non_string_values(value: object) -> None:
     assert aggregation._parse_language_list(value) == []
 
 
+def test_polygon_language_values_are_decoded_once_per_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repeated = '["en","en","fr"]'
+    malformed = "not-json"
+    table = pa.table(
+        {
+            "wikidata": ["Q1", "Q2", "Q3", "Q4"],
+            "region": ["a", "a", "a", "a"],
+            "has_wikipedia": [True, True, False, False],
+            "text_available": [True, True, False, False],
+            "has_english_wikipedia": [True, True, False, False],
+            "wikipedia_language_count": [3, 3, 0, 0],
+            "wikipedia_languages": [repeated, repeated, malformed, "[]"],
+        }
+    )
+    decoded: list[object] = []
+    original_loads = aggregation.json.loads
+
+    def counting_loads(value: object) -> object:
+        decoded.append(value)
+        return original_loads(value)
+
+    monkeypatch.setattr(aggregation.json, "loads", counting_loads)
+    stats = aggregation._StatsAccumulator()
+
+    aggregation._accumulate_polygon_table(stats, table)
+    aggregation._accumulate_polygon_table(stats, table.slice(0, 2))
+
+    assert decoded == [repeated, malformed]
+    assert stats.polygons_per_language == {"en": 8, "fr": 4}
+
+
+def test_native_polygon_reductions_preserve_chunked_null_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = pa.table(
+        {
+            "wikidata": pa.chunked_array([["Q1", None], ["", "Q2", "Q2"]]),
+            "region": pa.chunked_array([["a", "a"], [None, "b", ""]]),
+            "has_wikipedia": pa.chunked_array([[True, True], [None, False, True]]),
+            "text_available": pa.chunked_array([[True, None], [False, True, False]]),
+            "has_english_wikipedia": pa.chunked_array([[True, None], [False, None, False]]),
+            "wikipedia_language_count": pa.chunked_array([[1, 2], [None, 5, 10]]),
+            "wikipedia_languages": pa.chunked_array(
+                [['["en"]', '["fr"]'], ["[]", '["de"]', '["es"]']]
+            ),
+        }
+    )
+
+    def fail_legacy_helper(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("native Arrow columns used a Python scalar helper")
+
+    monkeypatch.setattr(aggregation, "_count_truthy", fail_legacy_helper)
+    monkeypatch.setattr(aggregation, "_count_non_english", fail_legacy_helper)
+    monkeypatch.setattr(aggregation, "_count_language_buckets", fail_legacy_helper)
+    stats = aggregation._StatsAccumulator()
+
+    aggregation._accumulate_polygon_table(stats, table)
+
+    assert stats.polygon_count == 5
+    assert stats.unique_wikidata == {"Q1", "Q2"}
+    assert stats.distinct_regions == {"a", "b"}
+    assert stats.polygons_with_wikipedia == 3
+    assert stats.polygons_with_text == 2
+    assert stats.polygons_with_english == 1
+    assert stats.polygons_with_no_english_other_lang == 2
+    assert stats.polygons_with_2plus_langs == 3
+    assert stats.polygons_with_5plus_langs == 2
+    assert stats.polygons_with_10plus_langs == 1
+
+
+def test_native_article_reductions_preserve_totals_and_tie_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = pa.table(
+        {
+            "language": pa.chunked_array([["fr", "en", None], ["", "en", "fr"]]),
+            "article_length_words": pa.chunked_array([[10, None, 5], [1, 4, 6]]),
+            "article_length_tokens_estimate": pa.chunked_array([[2, 3, None], [1, 1, 2]]),
+        }
+    )
+
+    def fail_legacy_helper(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("native Arrow columns used a Python scalar helper")
+
+    monkeypatch.setattr(aggregation, "_sum_numeric", fail_legacy_helper)
+    stats = aggregation._StatsAccumulator()
+
+    aggregation._accumulate_article_table(stats, table)
+
+    assert stats.article_count == 6
+    assert stats.total_words == 26
+    assert stats.total_tokens_estimate == 9
+    assert list(stats.to_stats().articles_per_language.items()) == [("fr", 2), ("en", 2)]
+
+
 def test_link_stats_use_bounded_parallel_metadata_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
