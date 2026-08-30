@@ -87,6 +87,34 @@ def test_polygon_language_values_are_decoded_once_per_scan(
     assert stats.polygons_per_language == {"en": 8, "fr": 4}
 
 
+def test_polygon_language_cache_cap_preserves_uncached_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(aggregation, "_LANGUAGE_CACHE_MAX_ENTRIES", 1)
+    decoded: list[object] = []
+    original_loads = aggregation.json.loads
+
+    def counting_loads(value: object) -> object:
+        decoded.append(value)
+        return original_loads(value)
+
+    monkeypatch.setattr(aggregation.json, "loads", counting_loads)
+    stats = aggregation._StatsAccumulator()
+    table = pa.table({"wikipedia_languages": ['["en"]', '["fr"]']})
+
+    for _ in range(2):
+        stats.polygons_per_language.update(
+            aggregation._count_polygon_language_column(
+                table.column("wikipedia_languages"),
+                stats.language_lists,
+            )
+        )
+
+    assert stats.language_lists == {'["en"]': ("en",)}
+    assert decoded == ['["en"]', '["fr"]', '["fr"]']
+    assert stats.polygons_per_language == {"en": 2, "fr": 2}
+
+
 def test_native_polygon_reductions_preserve_chunked_null_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,6 +152,37 @@ def test_native_polygon_reductions_preserve_chunked_null_semantics(
     assert stats.polygons_with_2plus_langs == 3
     assert stats.polygons_with_5plus_langs == 2
     assert stats.polygons_with_10plus_langs == 1
+
+
+def test_polygon_identity_columns_are_uniqued_before_python_set_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = pa.table(
+        {
+            "wikidata": ["Q1", "Q1", "", "Q2"],
+            "region": ["a", "a", "b", "b"],
+            "has_wikipedia": [False] * 4,
+            "text_available": [False] * 4,
+            "has_english_wikipedia": [False] * 4,
+            "wikipedia_language_count": [0] * 4,
+            "wikipedia_languages": ["[]"] * 4,
+        }
+    )
+    observed: list[tuple[object, ...]] = []
+    original_update = aggregation._update_unique_values
+
+    def tracking_update(values: list[object], target: set[str]) -> None:
+        observed.append(tuple(values))
+        original_update(values, target)
+
+    monkeypatch.setattr(aggregation, "_update_unique_values", tracking_update)
+    stats = aggregation._StatsAccumulator()
+
+    aggregation._accumulate_polygon_table(stats, table)
+
+    assert observed == [("Q1", "", "Q2"), ("a", "b")]
+    assert stats.unique_wikidata == {"Q1", "Q2"}
+    assert stats.distinct_regions == {"a", "b"}
 
 
 def test_native_article_reductions_preserve_totals_and_tie_order(
