@@ -13,6 +13,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000 import sentence_job
+from osm_polygon_wikidata_only.grid5000.sentence_job import _parse_gpu_output
 from osm_polygon_wikidata_only.v2.sentence_logic import (
     SAT_MODEL_ID,
     sentence_schema,
@@ -69,6 +70,48 @@ def _gpu_runner(_args: object) -> CompletedProcess[str]:
         stdout="NVIDIA A100, GPU-uuid-1, 40960 MiB\n",
         stderr="",
     )
+
+
+def test_parse_gpu_output_ignores_blank_lines_and_preserves_order() -> None:
+    output = "GPU A, uuid-a, 40960 MiB\n\nGPU B, uuid-b, 24576 MiB\n"
+
+    assert _parse_gpu_output(output) == (
+        sentence_job.GpuIdentity("GPU A", "uuid-a", "40960 MiB"),
+        sentence_job.GpuIdentity("GPU B", "uuid-b", "24576 MiB"),
+    )
+
+
+def test_job_environment_removes_hub_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HF_TOKEN", "secret-token")
+    monkeypatch.setenv("GRID5000_TEST_VALUE", "retained")
+
+    environment = sentence_job._job_environment()
+
+    assert "HF_TOKEN" not in environment
+    assert environment["GRID5000_TEST_VALUE"] == "retained"
+
+
+def test_run_command_uses_capture_and_sanitized_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> CompletedProcess[str]:
+        calls.update(args=args, **kwargs)
+        return CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sentence_job.subprocess, "run", fake_run)
+
+    result = sentence_job._run_command(("nvidia-smi", "--version"))
+
+    assert result.returncode == 0
+    assert calls["args"] == ["nvidia-smi", "--version"]
+    assert calls["check"] is False
+    assert calls["capture_output"] is True
+    assert calls["text"] is True
+    environment = calls["env"]
+    assert isinstance(environment, dict)
+    assert "HF_TOKEN" not in environment
 
 
 def test_sentence_job_requires_nvidia_smi_and_writes_sanitized_failure_receipt(

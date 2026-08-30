@@ -22,7 +22,11 @@ from osm_polygon_wikidata_only.hf.publication import (
     load_existing_core_artifacts,
 )
 from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
-from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.remote_inventory import (
+    RemoteInventory,
+    _remote_file_fields,
+    _resolve_hub_client,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
 from osm_polygon_wikidata_only.io import manifest as manifest_io
 
@@ -70,6 +74,43 @@ def test_remote_inventory_fetch_explicit_hub_no_credentials() -> None:
         _resolve_token=failing_resolver,
     )
     assert inventory.contains("polygons/mexico-latest.parquet")
+
+
+def test_resolve_hub_client_builds_api_once_without_explicit_hub() -> None:
+    calls: list[tuple[str | None, object]] = []
+    expected = SimpleNamespace(name="hub", token="resolved-token")
+
+    def resolve_token(token: str | None) -> str:
+        calls.append((token, "resolve"))
+        return "resolved-token"
+
+    def api_factory(**kwargs: object) -> SimpleNamespace:
+        calls.append((None, kwargs))
+        return expected
+
+    client = _resolve_hub_client(
+        hub=None,
+        token="provided-token",
+        resolve_token=resolve_token,
+        api_factory=api_factory,
+    )
+
+    assert client is expected
+    assert calls == [("provided-token", "resolve"), (None, {"token": "resolved-token"})]
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        (SimpleNamespace(path="README.md", size=8), ("README.md", 8)),
+        (SimpleNamespace(path=None, size=8), None),
+        (SimpleNamespace(path="README.md", size=None), None),
+    ],
+)
+def test_remote_file_fields_accept_only_path_and_integer_size(
+    entry: object, expected: tuple[str, int] | None
+) -> None:
+    assert _remote_file_fields(entry) == expected
 
 
 def test_remote_inventory_fetch_paths_reads_exact_file_metadata() -> None:

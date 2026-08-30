@@ -42,11 +42,12 @@ class RemoteInventory:
         _api_factory: Any = None,
     ) -> RemoteInventory:
         """Fetch files in dataset repository exactly once."""
-        if hub is not None:
-            client = hub
-        else:
-            resolved_token = _resolve_token(token)
-            client = _build_hf_api(resolved_token, api_factory=_api_factory)
+        client = _resolve_hub_client(
+            hub=hub,
+            token=token,
+            resolve_token=_resolve_token,
+            api_factory=_api_factory,
+        )
         try:
             files = client.list_repo_files(repo_id=repo_id, repo_type="dataset")
             return cls(set(files))
@@ -65,11 +66,12 @@ class RemoteInventory:
         _api_factory: Any = None,
     ) -> RemoteInventory:
         """Fetch metadata for exactly the requested remote paths."""
-        if hub is not None:
-            client = hub
-        else:
-            resolved_token = _resolve_token(token)
-            client = _build_hf_api(resolved_token, api_factory=_api_factory)
+        client = _resolve_hub_client(
+            hub=hub,
+            token=token,
+            resolve_token=_resolve_token,
+            api_factory=_api_factory,
+        )
         get_paths_info = getattr(client, "get_paths_info", None)
         if not callable(get_paths_info):
             return cls.fetch(repo_id, hub=client, token=token)
@@ -100,13 +102,35 @@ class RemoteInventory:
         return self._metadata.get(path_in_repo)
 
 
+def _resolve_hub_client(
+    *,
+    hub: HfHub | None,
+    token: str | None,
+    resolve_token: Any,
+    api_factory: Any,
+) -> HfHub:
+    if hub is not None:
+        return hub
+    return _build_hf_api(resolve_token(token), api_factory=api_factory)
+
+
 def _remote_file_info(entry: Any) -> RemoteFileInfo | None:
+    fields = _remote_file_fields(entry)
+    if fields is None:
+        return None
+    path, size = fields
+    return RemoteFileInfo(path=path, size=size, sha256=_remote_sha256(entry))
+
+
+def _remote_file_fields(entry: Any) -> tuple[str, int] | None:
     path = getattr(entry, "path", None)
     size = getattr(entry, "size", None)
-    if not isinstance(path, str) or not isinstance(size, int):
-        return None
+    if isinstance(path, str) and isinstance(size, int):
+        return path, size
+    return None
+
+
+def _remote_sha256(entry: Any) -> str | None:
     lfs = getattr(entry, "lfs", None)
     sha256 = getattr(lfs, "sha256", None) if lfs is not None else None
-    if not isinstance(sha256, str) or len(sha256) != 64:
-        sha256 = None
-    return RemoteFileInfo(path=path, size=size, sha256=sha256)
+    return sha256 if isinstance(sha256, str) and len(sha256) == 64 else None

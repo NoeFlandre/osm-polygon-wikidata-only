@@ -188,12 +188,14 @@ def _query_gpus(command_runner: CommandRunner) -> tuple[GpuIdentity, ...]:
     result = command_runner(_NVIDIA_SMI_ARGS)
     if result.returncode != 0:
         raise RuntimeError("nvidia-smi GPU preflight failed")
-    identities = tuple(
-        _parse_gpu_line(line) for line in (result.stdout or "").splitlines() if line.strip()
-    )
+    identities = _parse_gpu_output(result.stdout)
     if not identities:
         raise RuntimeError("nvidia-smi returned no GPUs")
     return identities
+
+
+def _parse_gpu_output(stdout: str | None) -> tuple[GpuIdentity, ...]:
+    return tuple(_parse_gpu_line(line) for line in (stdout or "").splitlines() if line.strip())
 
 
 def _parse_gpu_line(line: str) -> GpuIdentity:

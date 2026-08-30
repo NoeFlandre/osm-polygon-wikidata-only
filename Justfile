@@ -81,7 +81,19 @@ crap-sat:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/v2/sat.py > /tmp/osm-polygon-wikidata-sat-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-sat-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-sat-crap-complexity.json --maximum 6
 
-crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat
+# Enforce a CRAP score below 6 for the Grid5000 GPU job boundary.
+crap-job:
+    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-job-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-job-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/grid5000/test_sentence_job.py --cov=osm_polygon_wikidata_only.grid5000.sentence_job --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-job-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/grid5000/sentence_job.py > /tmp/osm-polygon-wikidata-job-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-job-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-job-crap-complexity.json --maximum 6
+
+# Enforce a CRAP score below 6 for the read-only Hub inventory boundary.
+crap-inventory:
+    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-inventory-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-inventory-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_reconciliation.py --cov=osm_polygon_wikidata_only.hf.remote_inventory --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-inventory-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/remote_inventory.py > /tmp/osm-polygon-wikidata-inventory-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-inventory-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-inventory-crap-complexity.json --maximum 6
+
+crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory
 
 # Run mutmut with two workers to keep peak Mac memory bounded. The explicit
 # source scope contains only pure deterministic helpers, and the gate refuses
@@ -107,9 +119,9 @@ qa-gauntlet: quality-gauntlet
 
 # Run opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat
+quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory
 
-quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat mutation
+quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory mutation
 
 lint:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff check src tests scripts

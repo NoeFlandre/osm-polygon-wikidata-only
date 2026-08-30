@@ -267,6 +267,32 @@ def test_crap_scopes_cover_the_remaining_deterministic_refactor_targets() -> Non
     ) in justfile
 
 
+def test_crap_scopes_cover_gpu_job_and_remote_inventory_boundaries() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    for recipe, test_path, source_path in (
+        (
+            "crap-job:",
+            "tests/grid5000/test_sentence_job.py",
+            "src/osm_polygon_wikidata_only/grid5000/sentence_job.py",
+        ),
+        (
+            "crap-inventory:",
+            "tests/hf/test_reconciliation.py",
+            "src/osm_polygon_wikidata_only/hf/remote_inventory.py",
+        ),
+    ):
+        assert recipe in justfile
+        assert test_path in justfile
+        assert source_path in justfile
+
+    assert (
+        "crap-all: crap crap-sync crap-upload crap-quality crap-geography "
+        "crap-geography-inputs crap-stats crap-sat crap-job crap-inventory"
+    ) in justfile
+
+
 def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
