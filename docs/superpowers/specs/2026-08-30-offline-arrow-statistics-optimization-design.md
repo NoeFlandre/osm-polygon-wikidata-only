@@ -46,6 +46,28 @@ passed 768 tests in 364.91 seconds before implementation.
 5. Do not add dependencies, downloads, network calls, file-level concurrency,
    persistent caches, or changes to processed data.
 
+## Measured result
+
+The finalized implementation produced the exact baseline `DatasetStats`
+SHA-256 on every complete V1 scan. The first conservative post-change scan
+completed in 84.555 seconds, an 18.1% reduction from 103.252 seconds. Further
+warm scans completed in 56.058, 81.579, and 50.120 seconds. The range reflects
+external-drive and operating-system cache variance; the unchanged digest is
+`878029edfc723db6f52b8d64120e19c785bd0df823a5c5a7ebd252b10c422ee4`.
+
+An isolated in-memory comparison over the same 60,000-row polygon and article
+fixtures measured a 5.629-second baseline median and a 0.319-second optimized
+median: 17.7 times faster, or 94.3% less aggregation time. Both processes
+produced SHA-256
+`34674cf0498fc3545317ef548a3c617f6995361758767c5c1f28626db0473682`.
+This separates the CPU improvement from filesystem caching.
+
+The optimized profile reduced Python calls from 27,019,415 to 5,690,088. Its
+117.727-second instrumented scan was already 41.4% faster than the
+200.875-second baseline profile before the final Arrow-side identity-column
+deduplication refinement. The finalized uninstrumented scan used a measured
+peak resident set of 195,969,024 bytes.
+
 ## Alternatives rejected
 
 ### Parallel whole-file aggregation
@@ -95,3 +117,12 @@ test suite and repeat the same full-tree benchmark. Accept the optimization
 only if the exact SHA-256 remains unchanged and wall time improves materially;
 otherwise revert the optimization rather than trading maintainability for a
 marginal result.
+
+Final offline verification on 2026-08-31 completed with 2,646 tests passing
+and 2 expected opt-in skips. The branch-coverage run reached 93.15% against
+the 80% threshold. Ruff linting, Ruff formatting, `ty`, and a strict MkDocs
+build all passed. The focused CRAP report covered 34 functions with a maximum
+score of 4.13. The changed aggregation mutation scope produced 428 killed
+mutants with zero survivors, timeouts, suspicious, or untested results. A
+local package build could not run because Hatchling was not installed or
+cached; no dependency was downloaded under the offline constraint.
