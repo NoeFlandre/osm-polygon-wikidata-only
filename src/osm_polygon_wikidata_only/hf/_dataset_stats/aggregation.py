@@ -17,15 +17,17 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from .models import DatasetStats
 from .scanning import safe_metadata_row_count, safe_table, sorted_parquets
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.dataset_stats")
 _METADATA_READ_WORKERS = 4
+_LANGUAGE_CACHE_MAX_ENTRIES = 100_000
 
 
 @dataclass(slots=True)
@@ -47,6 +49,10 @@ class _StatsAccumulator:
     articles_per_language: Counter[str] = field(default_factory=Counter)
     link_count: int = 0
     dataset_size_bytes: int = 0
+    language_lists: dict[str | bytes, tuple[str, ...]] = field(
+        default_factory=dict,
+        repr=False,
+    )
 
     def to_stats(self) -> DatasetStats:
         return DatasetStats(
@@ -110,20 +116,32 @@ def _accumulate_polygon_files(stats: _StatsAccumulator, polygons_dir: Path) -> N
 
 def _accumulate_polygon_table(stats: _StatsAccumulator, table: pa.Table) -> None:
     stats.polygon_count += table.num_rows
-    _update_unique_values(table.column("wikidata").to_pylist(), stats.unique_wikidata)  # type: ignore[no-untyped-call]
-    _update_unique_values(table.column("region").to_pylist(), stats.distinct_regions)  # type: ignore[no-untyped-call]
-    stats.polygons_with_wikipedia += _count_truthy(table.column("has_wikipedia").to_pylist())  # type: ignore[no-untyped-call]
-    stats.polygons_with_text += _count_truthy(table.column("text_available").to_pylist())  # type: ignore[no-untyped-call]
-    stats.polygons_with_english += _count_truthy(table.column("has_english_wikipedia").to_pylist())  # type: ignore[no-untyped-call]
-    stats.polygons_with_no_english_other_lang += _count_non_english(  # type: ignore[no-untyped-call]
-        table.column("has_wikipedia").to_pylist(), table.column("has_english_wikipedia").to_pylist()
+    _update_unique_values(
+        _unique_column_values(table.column("wikidata")),
+        stats.unique_wikidata,
     )
-    buckets = _count_language_buckets(table.column("wikipedia_language_count").to_pylist())  # type: ignore[no-untyped-call]
+    _update_unique_values(
+        _unique_column_values(table.column("region")),
+        stats.distinct_regions,
+    )
+    has_wikipedia = table.column("has_wikipedia")
+    has_english = table.column("has_english_wikipedia")
+    stats.polygons_with_wikipedia += _count_truthy_column(has_wikipedia)
+    stats.polygons_with_text += _count_truthy_column(table.column("text_available"))
+    stats.polygons_with_english += _count_truthy_column(has_english)
+    stats.polygons_with_no_english_other_lang += _count_non_english_columns(
+        has_wikipedia,
+        has_english,
+    )
+    buckets = _count_language_bucket_column(table.column("wikipedia_language_count"))
     stats.polygons_with_2plus_langs += buckets[0]
     stats.polygons_with_5plus_langs += buckets[1]
     stats.polygons_with_10plus_langs += buckets[2]
-    stats.polygons_per_language.update(  # type: ignore[no-untyped-call]
-        _count_polygon_languages(table.column("wikipedia_languages").to_pylist())
+    stats.polygons_per_language.update(
+        _count_polygon_language_column(
+            table.column("wikipedia_languages"),
+            stats.language_lists,
+        )
     )
 
 
@@ -133,8 +151,20 @@ def _update_unique_values(values: list[object], target: set[str]) -> None:
             target.add(str(value))
 
 
+def _unique_column_values(values: pa.ChunkedArray) -> list[object]:
+    if not _is_serialized_string(values.type):
+        return values.to_pylist()  # type: ignore[no-untyped-call]
+    return _compute_array("unique", values).to_pylist()  # type: ignore[no-untyped-call]
+
+
 def _count_truthy(values: list[object]) -> int:
     return sum(1 for value in values if value)
+
+
+def _count_truthy_column(values: pa.ChunkedArray) -> int:
+    if not pa.types.is_boolean(values.type):
+        return _count_truthy(values.to_pylist())  # type: ignore[no-untyped-call]
+    return _scalar_int(_compute_scalar("sum", values))
 
 
 def _count_non_english(wikipedia: list[object], english: list[object]) -> int:
@@ -145,16 +175,44 @@ def _count_non_english(wikipedia: list[object], english: list[object]) -> int:
     )
 
 
-def _count_language_buckets(values: list[object]) -> tuple[int, int, int]:
+def _count_non_english_columns(
+    wikipedia: pa.ChunkedArray,
+    english: pa.ChunkedArray,
+) -> int:
+    if not pa.types.is_boolean(wikipedia.type) or not pa.types.is_boolean(english.type):
+        return _count_non_english(
+            wikipedia.to_pylist(),  # type: ignore[no-untyped-call]
+            english.to_pylist(),  # type: ignore[no-untyped-call]
+        )
+    has_no_english = _compute_array("invert", pc.fill_null(english, False))
+    active = _compute_array("and", wikipedia, has_no_english)
+    return _scalar_int(_compute_scalar("sum", active))
+
+
+def _count_language_buckets(values: list[Any]) -> tuple[int, int, int]:
     counts = [0, 0, 0]
     for value in values:
         if value is None:
             continue
-        number = cast(Any, value)
-        counts[0] += int(number >= 2)
-        counts[1] += int(number >= 5)
-        counts[2] += int(number >= 10)
+        counts[0] += int(value >= 2)
+        counts[1] += int(value >= 5)
+        counts[2] += int(value >= 10)
     return counts[0], counts[1], counts[2]
+
+
+def _count_language_bucket_column(values: pa.ChunkedArray) -> tuple[int, int, int]:
+    if not pa.types.is_integer(values.type):
+        return _count_language_buckets(values.to_pylist())  # type: ignore[no-untyped-call]
+    return (
+        _count_at_least(values, 2),
+        _count_at_least(values, 5),
+        _count_at_least(values, 10),
+    )
+
+
+def _count_at_least(values: pa.ChunkedArray, minimum: int) -> int:
+    matches = _compute_array("greater_equal", values, pa.scalar(minimum))
+    return _scalar_int(_compute_scalar("sum", matches))
 
 
 def _count_polygon_languages(values: list[object]) -> Counter[str]:
@@ -164,6 +222,59 @@ def _count_polygon_languages(values: list[object]) -> Counter[str]:
         for language in languages:
             counts[str(language)] += 1
     return counts
+
+
+def _count_polygon_language_column(
+    values: pa.ChunkedArray,
+    cache: dict[str | bytes, tuple[str, ...]],
+) -> Counter[str]:
+    if not _is_serialized_string(values.type):
+        return _count_polygon_languages(values.to_pylist())  # type: ignore[no-untyped-call]
+    counts: Counter[str] = Counter()
+    for value, frequency in _arrow_value_counts(values):
+        for language in _cached_languages(value, cache):
+            counts[language] += frequency
+    return counts
+
+
+def _cached_languages(
+    value: object,
+    cache: dict[str | bytes, tuple[str, ...]],
+) -> tuple[str, ...]:
+    serialized = _serialized_language_value(value)
+    if serialized is None:
+        return ()
+    cached = cache.get(serialized)
+    if cached is not None:
+        return cached
+    return _decode_languages(serialized, cache)
+
+
+def _serialized_language_value(value: object) -> str | bytes | None:
+    if not isinstance(value, (str, bytes)):
+        return None
+    if not value or value == "[]":
+        return None
+    return value
+
+
+def _decode_languages(
+    value: str | bytes,
+    cache: dict[str | bytes, tuple[str, ...]],
+) -> tuple[str, ...]:
+    languages = tuple(str(language) for language in _decoded_language_list(value))
+    if len(cache) < _LANGUAGE_CACHE_MAX_ENTRIES:
+        cache[value] = languages
+    return languages
+
+
+def _is_serialized_string(data_type: pa.DataType) -> bool:
+    return bool(
+        pa.types.is_string(data_type)
+        or pa.types.is_large_string(data_type)
+        or pa.types.is_binary(data_type)
+        or pa.types.is_large_binary(data_type)
+    )
 
 
 def _parse_language_list(value: object) -> list[object]:
@@ -195,19 +306,65 @@ def _accumulate_article_files(stats: _StatsAccumulator, articles_dir: Path) -> N
 
 def _accumulate_article_table(stats: _StatsAccumulator, table: pa.Table) -> None:
     stats.article_count += table.num_rows
-    stats.articles_per_language.update(  # type: ignore[no-untyped-call]
-        str(language)
-        for language in table.column("language").to_pylist()  # type: ignore[no-untyped-call]
-        if language
-    )
-    stats.total_words += _sum_numeric(table.column("article_length_words").to_pylist())  # type: ignore[no-untyped-call]
-    stats.total_tokens_estimate += _sum_numeric(  # type: ignore[union-attr]
-        table.column("article_length_tokens_estimate").to_pylist()
+    stats.articles_per_language.update(_count_value_strings(table.column("language")))
+    stats.total_words += _sum_numeric_column(table.column("article_length_words"))
+    stats.total_tokens_estimate += _sum_numeric_column(
+        table.column("article_length_tokens_estimate")
     )
 
 
-def _sum_numeric(values: list[object]) -> int:
-    return sum(int(cast(Any, value)) for value in values if value is not None)
+def _count_value_strings(values: pa.ChunkedArray) -> Counter[str]:
+    if not _is_serialized_string(values.type):
+        return _count_python_value_strings(values.to_pylist())  # type: ignore[no-untyped-call]
+    return _count_serialized_value_strings(values)
+
+
+def _count_python_value_strings(values: list[object]) -> Counter[str]:
+    return Counter(str(value) for value in values if value)
+
+
+def _count_serialized_value_strings(values: pa.ChunkedArray) -> Counter[str]:
+    return Counter(
+        {str(value): frequency for value, frequency in _arrow_value_counts(values) if value}
+    )
+
+
+def _arrow_value_counts(values: pa.ChunkedArray) -> list[tuple[object, int]]:
+    frequencies = _compute_array("value_counts", values)
+    distinct_values = frequencies.field("values").to_pylist()  # type: ignore[no-untyped-call]
+    counts = frequencies.field("counts").to_pylist()  # type: ignore[no-untyped-call]
+    return [(value, int(count)) for value, count in zip(distinct_values, counts, strict=True)]
+
+
+def _sum_numeric(values: list[Any]) -> int:
+    return sum(int(value) for value in values if value is not None)
+
+
+def _sum_numeric_column(values: pa.ChunkedArray) -> int:
+    if not pa.types.is_integer(values.type):
+        return _sum_numeric(values.to_pylist())  # type: ignore[no-untyped-call]
+    return _scalar_int(_compute_scalar("sum", values))
+
+
+def _compute_array(
+    function: str,
+    *arguments: pa.Array | pa.ChunkedArray | pa.Scalar,
+) -> pa.Array | pa.ChunkedArray:
+    result: Any = pc.call_function(function, list(arguments))
+    return result
+
+
+def _compute_scalar(
+    function: str,
+    *arguments: pa.Array | pa.ChunkedArray | pa.Scalar,
+) -> pa.Scalar:
+    result: Any = pc.call_function(function, list(arguments))
+    return result
+
+
+def _scalar_int(value: pa.Scalar) -> int:
+    raw = value.as_py()
+    return 0 if raw is None else int(raw)
 
 
 def _accumulate_link_files(stats: _StatsAccumulator, links_dir: Path) -> None:

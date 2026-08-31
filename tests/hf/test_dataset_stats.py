@@ -8,6 +8,7 @@ the expected figures.
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import pyarrow as pa
@@ -22,6 +23,182 @@ from osm_polygon_wikidata_only.hf.dataset_stats import (
 )
 
 # --- helpers ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("canonical_layout", [False, True])
+def test_compute_dataset_stats_routes_exact_layout_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    canonical_layout: bool,
+) -> None:
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    canonical_articles = processed / "wikipedia" / "documents"
+    if canonical_layout:
+        canonical_articles.mkdir(parents=True)
+    observed: list[Path] = []
+
+    def record_path(_stats: object, path: Path) -> None:
+        observed.append(path)
+
+    monkeypatch.setattr(aggregation, "_accumulate_polygon_files", record_path)
+    monkeypatch.setattr(aggregation, "_accumulate_article_files", record_path)
+    monkeypatch.setattr(aggregation, "_accumulate_link_files", record_path)
+
+    stats = aggregation.compute_dataset_stats(processed)
+
+    expected_articles = canonical_articles if canonical_layout else processed / "articles"
+    assert observed == [
+        processed / "polygons",
+        expected_articles,
+        processed / "polygon_articles",
+    ]
+    assert stats == aggregation._StatsAccumulator().to_stats()
+
+
+def test_file_scans_accumulate_sizes_and_counts_from_existing_totals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    polygon_dir = tmp_path / "polygons"
+    article_dir = tmp_path / "articles"
+    links_dir = tmp_path / "polygon_articles"
+    for directory in (polygon_dir, article_dir, links_dir):
+        directory.mkdir()
+        (directory / "part.parquet").write_bytes(b"abc")
+
+    monkeypatch.setattr(aggregation, "safe_table", lambda *_args: None)
+    monkeypatch.setattr(aggregation, "_count_link_rows", lambda _paths: 4)
+    stats = aggregation._StatsAccumulator(dataset_size_bytes=7, link_count=3)
+
+    aggregation._accumulate_polygon_files(stats, polygon_dir)
+    aggregation._accumulate_article_files(stats, article_dir)
+    aggregation._accumulate_link_files(stats, links_dir)
+
+    assert stats.dataset_size_bytes == 16
+    assert stats.link_count == 7
+
+
+def test_polygon_table_accumulates_into_existing_totals() -> None:
+    table = pa.table(
+        {
+            "wikidata": ["Q1", "Q2"],
+            "region": ["a", "b"],
+            "has_wikipedia": [True, True],
+            "text_available": [True, False],
+            "has_english_wikipedia": [True, False],
+            "wikipedia_language_count": [10, 1],
+            "wikipedia_languages": ["[]", "[]"],
+        }
+    )
+    stats = aggregation._StatsAccumulator(
+        polygon_count=5,
+        polygons_with_wikipedia=5,
+        polygons_with_text=5,
+        polygons_with_english=5,
+        polygons_with_no_english_other_lang=5,
+        polygons_with_2plus_langs=5,
+        polygons_with_5plus_langs=5,
+        polygons_with_10plus_langs=5,
+    )
+
+    aggregation._accumulate_polygon_table(stats, table)
+
+    assert stats.polygon_count == 7
+    assert stats.polygons_with_wikipedia == 7
+    assert stats.polygons_with_text == 6
+    assert stats.polygons_with_english == 6
+    assert stats.polygons_with_no_english_other_lang == 6
+    assert stats.polygons_with_2plus_langs == 6
+    assert stats.polygons_with_5plus_langs == 6
+    assert stats.polygons_with_10plus_langs == 6
+
+
+def test_article_table_accumulates_into_existing_totals() -> None:
+    table = pa.table(
+        {
+            "language": ["fr", "en"],
+            "article_length_words": [2, 3],
+            "article_length_tokens_estimate": [4, 5],
+        }
+    )
+    stats = aggregation._StatsAccumulator(
+        article_count=5,
+        total_words=7,
+        total_tokens_estimate=11,
+        articles_per_language=Counter({"fr": 3}),
+    )
+
+    aggregation._accumulate_article_table(stats, table)
+
+    assert stats.article_count == 7
+    assert stats.total_words == 12
+    assert stats.total_tokens_estimate == 20
+    assert stats.articles_per_language == {"fr": 4, "en": 1}
+
+
+def test_python_reductions_preserve_boundaries_and_strict_pairing() -> None:
+    assert aggregation._count_language_buckets([2, None, 5, 10, 10]) == (4, 3, 2)
+    assert aggregation._sum_numeric([1.9, None, 2.2, 0.9]) == 3
+    with pytest.raises(ValueError):
+        aggregation._count_non_english([True], [])
+
+
+def test_mixed_boolean_columns_use_python_non_english_fallback() -> None:
+    wikipedia = pa.chunked_array([[True, False]])
+    english = pa.chunked_array([[0, 1]])
+
+    assert aggregation._count_non_english_columns(wikipedia, english) == 1
+
+
+@pytest.mark.parametrize(
+    "data_type",
+    [pa.string(), pa.large_string(), pa.binary(), pa.large_binary()],
+)
+def test_serialized_arrow_types_are_recognized(data_type: pa.DataType) -> None:
+    assert aggregation._is_serialized_string(data_type)
+
+
+def test_value_string_counting_routes_by_arrow_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    def count_python(_values: list[object]) -> Counter[str]:
+        observed.append("python")
+        return Counter({"python": 1})
+
+    def count_serialized(_values: pa.ChunkedArray) -> Counter[str]:
+        observed.append("serialized")
+        return Counter({"serialized": 1})
+
+    monkeypatch.setattr(aggregation, "_count_python_value_strings", count_python)
+    monkeypatch.setattr(aggregation, "_count_serialized_value_strings", count_serialized)
+
+    assert aggregation._count_value_strings(pa.chunked_array([["en"]])) == {"serialized": 1}
+    assert aggregation._count_value_strings(pa.chunked_array([[1]])) == {"python": 1}
+    assert observed == ["serialized", "python"]
+
+
+def test_arrow_value_counts_rejects_misaligned_kernel_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MisalignedFrequencies:
+        def field(self, name: str) -> pa.Array:
+            return pa.array(["en", "fr"] if name == "values" else [1])
+
+    monkeypatch.setattr(
+        aggregation,
+        "_compute_array",
+        lambda *_args: MisalignedFrequencies(),
+    )
+
+    with pytest.raises(ValueError):
+        aggregation._arrow_value_counts(pa.chunked_array([["en"]]))
+
+
+def test_scalar_int_maps_null_to_zero() -> None:
+    assert aggregation._scalar_int(pa.scalar(None, type=pa.int64())) == 0
 
 
 def test_parse_language_list_does_not_decode_canonical_empty_lists(
@@ -210,6 +387,58 @@ def test_native_article_reductions_preserve_totals_and_tie_order(
     assert list(stats.to_stats().articles_per_language.items()) == [("fr", 2), ("en", 2)]
 
 
+def test_non_native_arrow_columns_preserve_python_fallback_semantics() -> None:
+    polygon_table = pa.table(
+        {
+            "wikidata": [1, 1, None],
+            "region": [7, 8, 8],
+            "has_wikipedia": [1, 0, None],
+            "text_available": ["yes", "", None],
+            "has_english_wikipedia": [0, 1, None],
+            "wikipedia_language_count": [2.0, 5.0, None],
+            "wikipedia_languages": [["en"], ["fr"], None],
+        }
+    )
+    article_table = pa.table(
+        {
+            "language": [1, 1, 0, None],
+            "article_length_words": [1.9, None, 2.2, 0.9],
+            "article_length_tokens_estimate": [None, 3.8, 4.2, 0.0],
+        }
+    )
+    stats = aggregation._StatsAccumulator()
+
+    aggregation._accumulate_polygon_table(stats, polygon_table)
+    aggregation._accumulate_article_table(stats, article_table)
+
+    assert stats.unique_wikidata == {"1"}
+    assert stats.distinct_regions == {"7", "8"}
+    assert stats.polygons_with_wikipedia == 1
+    assert stats.polygons_with_text == 1
+    assert stats.polygons_with_english == 1
+    assert stats.polygons_with_no_english_other_lang == 1
+    assert stats.polygons_with_2plus_langs == 2
+    assert stats.polygons_with_5plus_langs == 1
+    assert stats.polygons_with_10plus_langs == 0
+    assert stats.polygons_per_language == {}
+    assert stats.articles_per_language == {"1": 2}
+    assert stats.total_words == 3
+    assert stats.total_tokens_estimate == 7
+
+
+def test_python_polygon_language_fallback_preserves_supported_inputs() -> None:
+    assert aggregation._count_polygon_languages(
+        [
+            '["en","en"]',
+            b'["fr"]',
+            bytearray(b'["de"]'),
+            ["ignored"],
+            "not-json",
+            None,
+        ]
+    ) == {"en": 2, "fr": 1, "de": 1}
+
+
 def test_link_stats_use_bounded_parallel_metadata_reads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -221,9 +450,11 @@ def test_link_stats_use_bounded_parallel_metadata_reads(
 
     original_executor = aggregation.ThreadPoolExecutor
     worker_counts: list[int] = []
+    thread_name_prefixes: list[str] = []
 
     def tracking_executor(*args: object, **kwargs: object):
         worker_counts.append(int(kwargs["max_workers"]))
+        thread_name_prefixes.append(str(kwargs["thread_name_prefix"]))
         return original_executor(*args, **kwargs)
 
     monkeypatch.setattr(aggregation, "ThreadPoolExecutor", tracking_executor)
@@ -233,6 +464,7 @@ def test_link_stats_use_bounded_parallel_metadata_reads(
 
     assert stats.link_count == 3
     assert worker_counts == [3]
+    assert thread_name_prefixes == ["dataset-stats-metadata"]
 
 
 def test_count_link_rows_returns_zero_for_no_files() -> None:
