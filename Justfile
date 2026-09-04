@@ -93,7 +93,13 @@ crap-inventory:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/remote_inventory.py > /tmp/osm-polygon-wikidata-inventory-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-inventory-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-inventory-crap-complexity.json --maximum 6
 
-crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory
+# Enforce a CRAP score below 6 for the one durable-publication ritual.
+crap-atomic:
+    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-atomic-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-atomic-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/io/test_atomic.py tests/io/test_atomic_write.py tests/io/test_atomic_parquet.py --cov=osm_polygon_wikidata_only.io.atomic --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-atomic-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/io/atomic.py > /tmp/osm-polygon-wikidata-atomic-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-atomic-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-atomic-crap-complexity.json --maximum 6
+
+crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic
 
 # Run mutmut with two workers to keep peak Mac memory bounded. The explicit
 # source scope contains only pure deterministic helpers, and the gate refuses
@@ -119,9 +125,9 @@ qa-gauntlet: quality-gauntlet
 
 # Run opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory
+quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic
 
-quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory mutation
+quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic mutation
 
 lint:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff check src tests scripts

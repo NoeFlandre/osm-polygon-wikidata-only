@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
-import tempfile
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,9 +11,8 @@ from typing import cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
@@ -467,24 +463,8 @@ def _install_checkpoint_tree(
 ) -> None:
     local_root.mkdir(parents=True, exist_ok=True)
     for source in batch_paths:
-        _copy_file_atomically(source, local_root / source.name)
-    atomic_write_text(local_root / "metadata.json", json_dumps(dict(metadata)) + "\n")
-
-
-def _copy_file_atomically(source: Path, target: Path) -> None:
-    fd, raw_temporary = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-    )
-    temporary = Path(raw_temporary)
-    try:
-        with source.open("rb") as source_stream, os.fdopen(fd, "wb") as target_stream:
-            shutil.copyfileobj(source_stream, target_stream)
-            target_stream.flush()
-            os.fsync(target_stream.fileno())
-        os.replace(temporary, target)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+        atomic_copy_file(source, local_root / source.name)
+    atomic_write_json(local_root / "metadata.json", dict(metadata))
 
 
 def _validate_stem(stem: str) -> None:

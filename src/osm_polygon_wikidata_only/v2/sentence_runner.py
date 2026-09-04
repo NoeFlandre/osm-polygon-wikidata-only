@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -14,9 +12,8 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.sentence_checkpoints import SentenceCheckpoint
 from osm_polygon_wikidata_only.v2.sentence_logic import (
@@ -351,22 +348,11 @@ def _summary_from_checkpoint(checkpoint: SentenceCheckpoint) -> SentenceRegionSu
 
 
 def _write_output(output_path: Path, checkpoint: SentenceCheckpoint, *, batch_count: int) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw = tempfile.mkstemp(
-        prefix=f".{output_path.name}.",
-        suffix=".tmp",
-        dir=output_path.parent,
-    )
-    os.close(fd)
-    temporary = Path(raw)
     schema = sentence_schema()
-    try:
+    with atomic_replacement(output_path) as temporary:
         with pq.ParquetWriter(temporary, schema, compression="snappy") as writer:
             _write_checkpoint_batches(writer, checkpoint, batch_count=batch_count)
         _validate_schema(temporary, schema)
-        os.replace(temporary, output_path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _write_checkpoint_batches(
@@ -395,7 +381,7 @@ def _write_manifest(
     }
     merged.update({(summary.stem, summary.project): summary for summary in summaries})
     ordered_summaries = [merged[key] for key in sorted(merged)]
-    atomic_write_text(path, json_dumps(_manifest_payload(segmenter, ordered_summaries)) + "\n")
+    atomic_write_json(path, _manifest_payload(segmenter, ordered_summaries))
 
 
 def _load_manifest_summaries(

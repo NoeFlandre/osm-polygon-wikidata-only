@@ -13,8 +13,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
+from osm_polygon_wikidata_only.io.atomic import atomic_write_json
 from osm_polygon_wikidata_only.v2.sat import (
     DEFAULT_SAT_MODEL_REVISION,
     SaT3lSegmenter,
@@ -234,7 +233,7 @@ def _collect_artifacts(
 
 
 def _write_receipt(path: Path, receipt: JobReceipt) -> None:
-    atomic_write_text(path, json_dumps(receipt.to_payload()) + "\n")
+    atomic_write_json(path, receipt.to_payload())
 
 
 def _write_receipt_safely(path: Path, receipt: JobReceipt) -> None:

@@ -10,8 +10,6 @@ parsed section batches without treating a partial region as publishable.
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -19,7 +17,7 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
@@ -64,11 +62,7 @@ def region_input_fingerprint(polygons: list[dict[str, Any]] | tuple[dict[str, An
 
 
 def _atomic_write_table(path: Path, rows: list[dict[str, Any]], schema: pa.Schema) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    os.close(fd)
-    temporary = Path(raw_tmp)
-    try:
+    with atomic_replacement(path) as temporary:
         pq.write_table(
             pa.Table.from_pylist(
                 [{field.name: row.get(field.name) for field in schema} for row in rows],
@@ -77,14 +71,6 @@ def _atomic_write_table(path: Path, rows: list[dict[str, Any]], schema: pa.Schem
             temporary,
             compression="snappy",
         )  # type: ignore[no-untyped-call]
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def _atomic_write_json(path: Path, value: Any) -> None:
-    atomic_write_text(path, json_dumps(value) + "\n")
 
 
 def _expected_direct_refs(refs: Any) -> list[dict[str, Any]]:
@@ -289,7 +275,7 @@ class ExtractionCheckpoint:
                 "chunk_count": 0,
                 "row_count": 0,
             }
-            _atomic_write_json(self.metadata_path, raw)
+            atomic_write_json(self.metadata_path, raw)
         return raw
 
     def _clear_files(self) -> None:
@@ -322,7 +308,7 @@ class ExtractionCheckpoint:
                 "row_count": 0,
             }
             self._next_chunk = 0
-            _atomic_write_json(self.metadata_path, self._metadata)
+            atomic_write_json(self.metadata_path, self._metadata)
             return []
         if not self.complete:
             self._metadata = {
@@ -331,7 +317,7 @@ class ExtractionCheckpoint:
                 "chunk_count": len(chunks),
                 "row_count": len(rows),
             }
-            _atomic_write_json(self.metadata_path, self._metadata)
+            atomic_write_json(self.metadata_path, self._metadata)
         return rows
 
     def append(self, rows: list[dict[str, Any]]) -> None:
@@ -352,7 +338,7 @@ class ExtractionCheckpoint:
             "chunk_count": next_chunk + 1,
             "row_count": previous_rows + len(rows),
         }
-        _atomic_write_json(self.metadata_path, self._metadata)
+        atomic_write_json(self.metadata_path, self._metadata)
 
     def mark_complete(self) -> None:
         chunks = self._chunks()
@@ -361,7 +347,7 @@ class ExtractionCheckpoint:
             "complete": True,
             "chunk_count": len(chunks),
         }
-        _atomic_write_json(self.metadata_path, self._metadata)
+        atomic_write_json(self.metadata_path, self._metadata)
 
     def clear(self) -> None:
         """Remove only this checkpoint's owned files after final publication."""
@@ -430,7 +416,7 @@ class RegionFetchCheckpoint:
         self.root.mkdir(parents=True, exist_ok=True)
         self.direct_root.mkdir(exist_ok=True)
         self.sections_root.mkdir(exist_ok=True)
-        _atomic_write_json(self.metadata_path, self._metadata_payload())
+        atomic_write_json(self.metadata_path, self._metadata_payload())
 
     def _metadata_payload(self) -> dict[str, Any]:
         return {
@@ -483,7 +469,7 @@ class RegionFetchCheckpoint:
             "links": list(result.links),
             "statuses": statuses,
         }
-        _atomic_write_json(self.direct_root / f"{self._key(polygon_id)}.json", payload)
+        atomic_write_json(self.direct_root / f"{self._key(polygon_id)}.json", payload)
 
     def load_direct(self, polygon_id: str, refs: Any) -> Any | None:
         path = self.direct_root / f"{self._key(polygon_id)}.json"
@@ -510,7 +496,7 @@ class RegionFetchCheckpoint:
     def save_sections(self, document_id: str, rows: list[dict[str, Any]]) -> None:
         if any(str(row.get("document_id", "")) != document_id for row in rows):
             raise ValueError(f"Section checkpoint rows do not match document {document_id!r}")
-        _atomic_write_json(
+        atomic_write_json(
             self.sections_root / f"{self._key(document_id)}.json",
             {"document_id": document_id, "rows": rows},
         )

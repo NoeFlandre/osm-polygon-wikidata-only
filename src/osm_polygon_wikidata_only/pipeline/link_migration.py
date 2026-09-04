@@ -26,8 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -67,7 +65,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
     qids_from_osm_tag as _qids_from_osm_tag,
 )
-from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
 from osm_polygon_wikidata_only.pipeline._link_migration.conversion import (
     build_canonical_rows as _build_canonical_rows,
 )
@@ -138,25 +136,9 @@ def _file_content_hash(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
-    atomic_write_parquet(path, table)
-
-
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp_path = Path(raw_tmp)
-    os.close(fd)
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    """Publish a migration journal in its readable, indented JSON format."""
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def _polygon_qid_set(polygons_table: pa.Table) -> set[str]:
@@ -599,7 +581,7 @@ def _stage_canonical_link(
 ) -> Path:
     """Stage the canonical polygon/article parquet artifact."""
     staged_target = staged_dir / links_path.name
-    _atomic_write_parquet(staged_target, canonical_table)
+    atomic_write_parquet(staged_target, canonical_table)
     return staged_target
 
 
@@ -856,7 +838,7 @@ def _stage_retained_voyage_table(
 ) -> Path:
     """Stage one normalized Wikivoyage table using its original schema."""
     staged_path = staged_dir / target.name
-    _atomic_write_parquet(
+    atomic_write_parquet(
         staged_path,
         pa.Table.from_pylist(rows, schema=pq.read_schema(target)),  # type: ignore[no-untyped-call]
     )

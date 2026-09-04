@@ -326,11 +326,6 @@ def _assert_canonical_preserves_legacy(
             )
 
 
-def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
-    """Write a Parquet file atomically via temp file and os.replace."""
-    atomic_write_parquet(path, table)
-
-
 def _validate_stem_path(stem: str, docs_dir: Path) -> Path:
     """Validate a stem name and return the safe target path.
 
@@ -811,7 +806,7 @@ def _execute_actions(
             continue
         target = safe_targets[stem_plan.stem]
         canonical_table = _rebuild_table_for_write(stem_plan, processed_dir, target)
-        _atomic_write_parquet(target, canonical_table)
+        atomic_write_parquet(target, canonical_table)
         _record_applied_stem(stem_plan, created_stems, upgraded_stems)
     return created_stems, upgraded_stems, skipped_stems
 

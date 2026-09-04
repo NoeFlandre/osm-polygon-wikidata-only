@@ -28,9 +28,6 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.augmentation.integrity import (
-    _atomic_overwrite_parquet,
-)
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     SECTION_COLUMNS,
@@ -41,7 +38,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
     qids_from_osm_tag as _qids_from_osm_tag,
 )
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
 
 LEDGER_CONTRACT_VERSION = "rejection-ledger-v1"
 LEDGER_FILENAME = "rejection_ledger.json"
@@ -418,7 +415,7 @@ def _write_retained_table(
         if rows
         else pa.table({column: [] for column in columns}, schema=schema)
     )
-    _atomic_overwrite_parquet(path, table)
+    atomic_write_parquet(path, table)
 
 
 def _write_integrity_ledgers(

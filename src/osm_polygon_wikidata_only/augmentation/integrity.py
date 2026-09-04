@@ -67,7 +67,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import POLYGON_ARTICLE_COLUMNS
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
 from osm_polygon_wikidata_only.io.parquet import write_polygon_articles
 
 INTEGRITY_CONTRACT_VERSION = "join-integrity-v1"
@@ -243,23 +243,6 @@ def _read_table_required(path: Path, *, label: str, columns: tuple[str, ...]) ->
         raise FileNotFoundError(f"{label} parquet missing: {path}")
     table: pa.Table = pq.read_table(path, columns=list(columns))  # type: ignore[no-untyped-call]
     return table
-
-
-def _atomic_overwrite_parquet(path: Path, table: pa.Table) -> None:
-    """Write *table* to *path* atomically (temp + replace)."""
-    import os
-    import tempfile
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp_path = Path(raw_tmp)
-    os.close(fd)
-    try:
-        pq.write_table(table, tmp_path, compression="snappy")  # type: ignore[no-untyped-call]
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _filter_rows(table: pa.Table, mask: list[bool]) -> pa.Table:
@@ -512,12 +495,12 @@ def _write_wikivoyage_integrity_tables(
 ) -> None:
     """Atomically rewrite only the Wikivoyage tables that changed."""
     if rewrite_documents:
-        _atomic_overwrite_parquet(
+        atomic_write_parquet(
             documents_path,
             _table_from_rows(retained_documents, DOCUMENT_COLUMNS, document_schema()),
         )
     if rewrite_sections:
-        _atomic_overwrite_parquet(
+        atomic_write_parquet(
             sections_path,
             _table_from_rows(retained_sections, SECTION_COLUMNS, section_schema()),
         )

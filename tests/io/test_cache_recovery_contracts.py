@@ -77,7 +77,7 @@ def test_atomic_cache_write_failure_preserves_previous_bytes(
     def fail(*_args: object, **_kwargs: object) -> None:
         raise OSError("simulated cache write failure")
 
-    monkeypatch.setattr("osm_polygon_wikidata_only.io.cache.atomic_write_text", fail)
+    monkeypatch.setattr("osm_polygon_wikidata_only.io.cache.atomic_write_json", fail)
     with pytest.raises(OSError, match="simulated cache write failure"):
         cache.set("entry", {"value": "new"})
 

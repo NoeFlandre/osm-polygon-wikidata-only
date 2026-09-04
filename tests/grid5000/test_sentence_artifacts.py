@@ -10,7 +10,6 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.grid5000 import sentence_protocol
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
-    _copy_file_atomically,
     _manifest_region_identity,
     _read_checkpoint_metadata,
     _validate_existing_checkpoint,
@@ -388,29 +387,25 @@ def test_read_checkpoint_metadata_uses_utf8_encoding(
     assert captured == {"encoding": "utf-8"}
 
 
-def test_copy_file_atomically_uses_same_directory_and_hidden_temp_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_install_checkpoint_tree_publishes_batches_without_temporary_leftovers(
+    tmp_path: Path,
 ) -> None:
-    source = tmp_path / "source.txt"
-    target = tmp_path / "target.txt"
-    source.write_text("payload", encoding="utf-8")
-    captured: dict[str, object] = {}
-    original_mkstemp = sentence_protocol.tempfile.mkstemp
+    """Imported batches land beside their metadata with nothing partial left."""
+    source = tmp_path / "staged" / "batch-00000000.parquet"
+    _write_table(source, sentence_schema())
+    local_root = tmp_path / "checkpoint"
 
-    def recording_mkstemp(**kwargs: object) -> tuple[int, str]:
-        captured.update(kwargs)
-        return original_mkstemp(**kwargs)
+    sentence_protocol._install_checkpoint_tree(local_root, [source], {"complete": True})
 
-    monkeypatch.setattr(sentence_protocol.tempfile, "mkstemp", recording_mkstemp)
-
-    _copy_file_atomically(source, target)
-
-    assert captured == {
-        "prefix": ".target.txt.",
-        "suffix": ".tmp",
-        "dir": target.parent,
+    installed = local_root / "batch-00000000.parquet"
+    assert installed.read_bytes() == source.read_bytes()
+    assert json.loads((local_root / "metadata.json").read_text(encoding="utf-8")) == {
+        "complete": True
     }
-    assert target.read_text(encoding="utf-8") == "payload"
+    assert sorted(path.name for path in local_root.iterdir()) == [
+        "batch-00000000.parquet",
+        "metadata.json",
+    ]
 
 
 def test_failed_checkpoint_import_leaves_prior_local_state_unchanged(tmp_path: Path) -> None:

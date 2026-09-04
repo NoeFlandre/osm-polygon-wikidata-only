@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +12,7 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
 from .containment_policy import (
@@ -207,17 +205,8 @@ def audit_rule(processed_dir: Path, rule: ContainmentRule) -> RuleAudit:
 
 
 def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
+    with atomic_replacement(path) as temporary:
         pq.write_table(table, temporary)  # type: ignore[no-untyped-call]
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _identity(row: dict[str, Any], contract: TableContract) -> tuple[Any, ...]:
@@ -538,17 +527,9 @@ def _copy_once(source: Path, target: Path) -> None:
 
 
 def _install_file(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
+    """Install ``source`` at ``target``, preserving the source's metadata."""
+    with atomic_replacement(target) as temporary:
         shutil.copy2(source, temporary)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _remove_active_children(processed_dir: Path, children: tuple[str, ...]) -> None:

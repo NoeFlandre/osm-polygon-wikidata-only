@@ -117,10 +117,11 @@ just smoke-test
 just diff-review
 ```
 
-`crap-all` combines the ten bounded CRAP scopes for domain/V2 helpers, parsing
-and sync helpers, the durable upload queue, quality-reporting scripts,
+`crap-all` combines the eleven bounded CRAP scopes for domain/V2 helpers,
+parsing and sync helpers, the durable upload queue, quality-reporting scripts,
 geographic rendering and parquet inputs, DatasetStats aggregation, the SaT
-adapter, the Grid5000 GPU job, and the read-only Hub inventory.
+adapter, the Grid5000 GPU job, the read-only Hub inventory, and the shared
+atomic-publication ritual.
 The sentence runner is included in the domain/V2 scope. The architecture stage also
 builds the package and strict MkDocs site before running its contracts. The
 smoke stage checks both public CLI help paths without reading a data root or
@@ -141,10 +142,15 @@ The advanced gate covers the pure, deterministic Wikipedia and Wikidata parser
 helpers and the durable upload queue retry policy. The queue's threading and
 network orchestration remains under focused tests and CRAP gates. V2
 comparison/checkpoint, geographic parquet/rendering, DatasetStats, optional
-SaT dependency, Grid5000 subprocess, and Hugging Face inventory boundaries
-remain under focused tests and CRAP
+SaT dependency, Grid5000 subprocess, Hugging Face inventory, and shared
+atomic-publication boundaries remain under focused tests and CRAP
 gates; they are intentionally outside mutation testing because they cross
-file-system, subprocess, network, or external-runtime boundaries. The mutation
+file-system, subprocess, network, or external-runtime boundaries. For
+`io/atomic.py` specifically, the remaining mutable surface is keyword values
+that the standard library and pyarrow normalize on their own -- `"UTF-8"` for
+`"utf-8"`, an omitted `compression` for pyarrow's own snappy default -- so
+those mutants are equivalent and no test can kill them; branch coverage and
+CRAP are the honest gate there. The mutation
 run keeps reports in `/tmp` and uses two workers to limit peak Mac memory
 without reading production data.
 HTML cleaning remains covered by the CRAP and branch-coverage gates; mutmut 3.7 cannot execute mutations inside
@@ -159,7 +165,8 @@ just quality-advanced
 
 `just crap`, `just crap-sync`, `just crap-upload`, `just crap-quality`,
 `just crap-geography`, `just crap-geography-inputs`, `just crap-stats`,
-`just crap-sat`, `just crap-job`, and `just crap-inventory` join coverage.py
+`just crap-sat`, `just crap-job`, `just crap-inventory`, and
+`just crap-atomic` join coverage.py
 and Radon function reports and fail when any function reaches CRAP 6; every
 measured score must therefore be below 6.
 `just mutation` runs mutmut over the explicit deterministic module scope and
@@ -189,6 +196,7 @@ just crap-stats
 just crap-sat
 just crap-job
 just crap-inventory
+just crap-atomic
 ```
 
 `mutmut` deliberately changes those helpers and requires every generated

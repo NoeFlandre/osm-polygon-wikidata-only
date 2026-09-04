@@ -621,12 +621,13 @@ def test_render_writes_through_temporary_file(
         return original_replace(src, dst)
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf._geographic.rendering.os.replace",
+        "osm_polygon_wikidata_only.io.atomic.os.replace",
         tracking_replace,
     )
     out = tmp_path / "coverage.png"
     render_geographic_text_coverage(_cell_fixture(), out)
     assert any(dst == out for _, dst in seen_replaces)
+    assert all(src.parent == out.parent for src, dst in seen_replaces if dst == out)
 
 
 def test_render_deterministic_with_fixed_inputs(tmp_path: Path) -> None:

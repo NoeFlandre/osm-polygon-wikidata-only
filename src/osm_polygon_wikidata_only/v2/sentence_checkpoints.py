@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -12,9 +10,8 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 
@@ -75,7 +72,7 @@ class SentenceCheckpoint:
             "batch_count": 0,
             "row_count": 0,
         }
-        _atomic_write_json(self.metadata_path, metadata)
+        atomic_write_json(self.metadata_path, metadata)
         return metadata
 
     def _reset(self) -> None:
@@ -157,11 +154,7 @@ class SentenceCheckpoint:
     def write_batch(self, index: int, rows: list[dict[str, Any]]) -> None:
         """Atomically write one completed batch, including an empty batch."""
         path = self._batch_path(index)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-        os.close(fd)
-        temporary = Path(raw)
-        try:
+        with atomic_replacement(path) as temporary:
             normalized = [
                 {field.name: row.get(field.name) for field in sentence_schema()} for row in rows
             ]
@@ -170,15 +163,11 @@ class SentenceCheckpoint:
                 temporary,
                 compression="snappy",
             )  # type: ignore[no-untyped-call]
-            os.replace(temporary, path)
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
         self._metadata = {
             **self._metadata,
             "complete": False,
         }
-        _atomic_write_json(self.metadata_path, self._metadata)
+        atomic_write_json(self.metadata_path, self._metadata)
 
     def mark_complete(self, *, batch_count: int, row_count: int) -> None:
         """Record complete accounting only after every batch is present."""
@@ -196,7 +185,7 @@ class SentenceCheckpoint:
             "batch_count": batch_count,
             "row_count": row_count,
         }
-        _atomic_write_json(self.metadata_path, self._metadata)
+        atomic_write_json(self.metadata_path, self._metadata)
 
     def finalize(
         self,
@@ -214,7 +203,7 @@ class SentenceCheckpoint:
             "output_hash": output_hash,
             "summary": dict(summary),
         }
-        _atomic_write_json(self.metadata_path, self._metadata)
+        atomic_write_json(self.metadata_path, self._metadata)
         self._remove_payloads()
 
     def output_matches(self, output_path: Path, *, output_hash: str) -> bool:
@@ -294,10 +283,6 @@ def _batch_index(path: Path) -> int | None:
 def _validate_component(value: str, name: str) -> None:
     if not value or value in {".", ".."} or "/" in value or "\\" in value:
         raise ValueError(f"Invalid sentence checkpoint {name}: {value!r}")
-
-
-def _atomic_write_json(path: Path, value: Any) -> None:
-    atomic_write_text(path, json_dumps(value) + "\n")
 
 
 __all__ = ["SENTENCE_CHECKPOINT_CONTRACT_VERSION", "SentenceCheckpoint"]

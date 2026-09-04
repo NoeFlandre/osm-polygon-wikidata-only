@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shlex
 import shutil
@@ -19,10 +18,9 @@ from typing import Any, Protocol, cast
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.run_lock import exclusive_run_lock
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import (
     V2_ADDED_WIKIPEDIA_TAG_MAP_PATH,
@@ -335,7 +333,7 @@ class Grid5000SentenceController:
         if self._ledger is None:
             raise ControllerRunError("Cannot write an uninitialized sentence ledger")
         self._ledger["updated_at"] = _timestamp()
-        atomic_write_text(self.ledger_path, json_dumps(self._ledger) + "\n")
+        atomic_write_json(self.ledger_path, self._ledger)
 
     def _submit_batch(self, batch: dict[str, Any]) -> None:
         batch["attempt"] = int(batch.get("attempt", 0)) + 1
@@ -593,7 +591,7 @@ class Grid5000SentenceController:
                     )
                 )
         for source in files_to_copy:
-            _copy_file_atomically(*source)
+            atomic_copy_file(*source)
         self._import_checkpoints(batch, received_data)
 
     def _import_partial(self, batch: Mapping[str, object], received_data: DataRoot) -> None:
@@ -1050,23 +1048,6 @@ def _verified_incoming_artifact(
     if path.stat().st_size != digest.size or sha256_file(path) != digest.sha256:
         raise ControllerRunError(f"Grid5000 artifact hash mismatch: {relative}")
     return path
-
-
-def _copy_file_atomically(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_temporary = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-    )
-    temporary = Path(raw_temporary)
-    try:
-        with source.open("rb") as source_stream, os.fdopen(fd, "wb") as target_stream:
-            shutil.copyfileobj(source_stream, target_stream)
-            target_stream.flush()
-            os.fsync(target_stream.fileno())
-        os.replace(temporary, target)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def _copy_required(source: Path, target: Path) -> None:

@@ -2,13 +2,15 @@
 
 The :func:`atomic_write_text` and :func:`atomic_save_png` helpers
 write to a temporary file then atomically rename to the final path.
-The ``except BaseException`` boundary they use is intentional: temp
-files must be cleaned up even when the writer is interrupted
-(``KeyboardInterrupt``, ``SystemExit``), not only on ordinary
-exception types.
+The ``except BaseException`` boundary they share via
+:func:`osm_polygon_wikidata_only.io.atomic.atomic_replacement` is
+intentional: temp files must be cleaned up even when the writer is
+interrupted (``KeyboardInterrupt``, ``SystemExit``), not only on
+ordinary exception types.
 
-These tests pin that contract so any future narrowing is forced to
-re-examine cleanup guarantees.
+These tests pin that contract at the two writers so any future
+narrowing is forced to re-examine cleanup guarantees; the shared
+mechanism itself is pinned in ``tests/io/test_atomic.py``.
 """
 
 from __future__ import annotations
@@ -42,10 +44,10 @@ def test_atomic_write_text_cleans_up_temp_on_failure(
 
     target = tmp_path / "x.txt"
 
-    def _broken_fdopen(*args: Any, **kwargs: Any) -> Any:
+    def _broken_fsync(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("simulated write failure")
 
-    monkeypatch.setattr(atomic.os, "fdopen", _broken_fdopen)
+    monkeypatch.setattr(atomic.os, "fsync", _broken_fsync)
     with pytest.raises(RuntimeError, match="simulated write failure"):
         atomic.atomic_write_text(target, "never written")
     # The temp file must NOT remain in the directory.
@@ -68,7 +70,7 @@ def test_atomic_write_text_cleans_up_temp_on_keyboard_interrupt(
     def _interrupted(*args: Any, **kwargs: Any) -> Any:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(atomic.os, "fdopen", _interrupted)
+    monkeypatch.setattr(atomic.os, "fsync", _interrupted)
     with pytest.raises(KeyboardInterrupt):
         atomic.atomic_write_text(target, "never written")
     leftover = list(tmp_path.iterdir())

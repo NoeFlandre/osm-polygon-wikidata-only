@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import shutil
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.augmentation.steps import sha256_file
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
-from osm_polygon_wikidata_only.utils.json import dumps, loads
+from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
+from osm_polygon_wikidata_only.utils.json import loads
 
 _TRANSACTION_VERSION = "wikidata-recovery-transaction-v1"
 
@@ -159,7 +157,7 @@ def _validate_journal_entries(entries: object, path: Path) -> None:
 
 
 def _write_journal(path: Path, journal: dict[str, Any]) -> None:
-    atomic_write_text(path, dumps(journal) + "\n")
+    atomic_write_json(path, journal)
 
 
 def _roll_forward(journal: dict[str, Any]) -> None:
@@ -176,7 +174,7 @@ def _roll_forward_entry(entry: dict[str, Any]) -> None:
         return
     if not _file_matches_hash(staged, staged_hash):
         raise RuntimeError(f"Recovery transaction staged file is unavailable: {staged}")
-    _atomic_copy(staged, target)
+    atomic_copy_file(staged, target)
     if sha256_file(target) != staged_hash:
         raise RuntimeError(f"Recovery transaction verification failed: {target}")
 
@@ -198,27 +196,11 @@ def _rollback_entry(entry: dict[str, Any]) -> None:
     if bool(entry["existed"]):
         if not backup.is_file():
             raise RuntimeError(f"Recovery transaction backup is unavailable: {backup}")
-        _atomic_copy(backup, target)
+        atomic_copy_file(backup, target)
         if sha256_file(target) != str(entry["original_hash"]):
             raise RuntimeError(f"Recovery transaction rollback verification failed: {target}")
     elif target.exists():
         target.unlink()
-
-
-def _atomic_copy(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
-    temporary = Path(raw_tmp)
-    os.close(fd)
-    try:
-        with source.open("rb") as input_stream, temporary.open("wb") as output_stream:
-            shutil.copyfileobj(input_stream, output_stream)
-            output_stream.flush()
-            os.fsync(output_stream.fileno())
-        os.replace(temporary, target)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def _cleanup(directory: Path, journal: dict[str, Any]) -> None:

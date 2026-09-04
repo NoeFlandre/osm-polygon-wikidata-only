@@ -23,11 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
-from .atomic import atomic_write_text
+from .atomic import atomic_write_json
 
 LOGGER = logging.getLogger(__name__)
 _READ_ERROR = object()
@@ -189,7 +188,7 @@ class JsonFileCache:
         }
         path = self._path_for(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, json_dumps({"meta": meta, "payload": payload}) + "\n")
+        atomic_write_json(path, {"meta": meta, "payload": payload})
         rm_value: object = meta["response_metadata"]
         rm: dict[str, Any] = rm_value if isinstance(rm_value, dict) else {}
         return CacheEntry(

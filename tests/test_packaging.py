@@ -293,6 +293,28 @@ def test_crap_scopes_cover_gpu_job_and_remote_inventory_boundaries() -> None:
     ) in justfile
 
 
+def test_shared_atomic_publication_is_crap_gated() -> None:
+    """The one durable-publication ritual has its own bounded CRAP scope."""
+
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "crap-atomic:" in justfile
+    assert "src/osm_polygon_wikidata_only/io/atomic.py" in justfile
+    assert "--cov=osm_polygon_wikidata_only.io.atomic" in justfile
+    for test_path in (
+        "tests/io/test_atomic.py",
+        "tests/io/test_atomic_write.py",
+        "tests/io/test_atomic_parquet.py",
+    ):
+        assert test_path in justfile
+
+    assert (
+        "crap-all: crap crap-sync crap-upload crap-quality crap-geography "
+        "crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic"
+    ) in justfile
+
+
 def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -316,6 +338,13 @@ def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
             "tests/hf/test_dataset_stats.py",
         ),
         ("src/osm_polygon_wikidata_only/v2/sat.py", "tests/v2/test_sat.py"),
+        # `io/atomic.py` is the shared temp-sibling + `os.replace` ritual. Its
+        # remaining mutable surface is keyword values that the standard library
+        # and pyarrow normalize themselves -- `"UTF-8"` for `"utf-8"`, an
+        # omitted `compression` for pyarrow's own snappy default -- so those
+        # mutants are equivalent and no test can kill them. It stays under the
+        # `crap-atomic` scope instead.
+        ("src/osm_polygon_wikidata_only/io/atomic.py", "tests/io/test_atomic.py"),
     ):
         assert source_path not in mutation["source_paths"]
         assert test_path not in mutation["pytest_add_cli_args_test_selection"]

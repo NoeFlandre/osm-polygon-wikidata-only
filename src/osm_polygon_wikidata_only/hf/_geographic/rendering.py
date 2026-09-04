@@ -2,9 +2,9 @@
 
 This module owns:
 
-* ``atomic_save_png``: write a matplotlib figure to disk via a
-  temporary file then atomic rename, with cleanup on success and
-  failure.
+* ``atomic_save_png``: publish a matplotlib figure through the shared
+  :func:`osm_polygon_wikidata_only.io.atomic.atomic_replacement` ritual,
+  so a partial render is never visible at the output path.
 * ``format_percent_tick`` / ``format_count_tick``: colorbar tick
   formatters used by the coverage and count visualizations.
 
@@ -16,32 +16,21 @@ specific (colormap, alpha, threshold, caption) belongs here.
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
+
+from osm_polygon_wikidata_only.io.atomic import atomic_replacement
 
 
 def atomic_save_png(fig: Any, output_path: Path) -> None:
     """Save ``fig`` to ``output_path`` via a temporary file then atomic rename."""
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{output_path.name}.",
-        suffix=".tmp",
-        dir=str(output_path.parent),
-        delete=False,
-    ) as tmp_file:
-        tmp_path = Path(tmp_file.name)
-    try:
+    with atomic_replacement(output_path) as temporary:
         fig.savefig(
-            str(tmp_path),
+            str(temporary),
             format="png",
             facecolor="white",
             metadata={"Software": "osm-polygon-wikidata-only"},
         )
-        os.replace(tmp_path, output_path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def format_percent_tick(value: float, _position: int | None = None) -> str:

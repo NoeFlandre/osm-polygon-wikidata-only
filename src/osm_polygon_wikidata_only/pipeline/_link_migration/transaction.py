@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 import shutil
-import tempfile
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 
 TRANSACTION_VERSION = "link-migration-transaction-v1"
 
@@ -272,24 +273,8 @@ def _file_content_hash(path: Path) -> str:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, raw_tmp = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    temporary = Path(raw_tmp)
-    os.close(descriptor)
-    try:
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+    """Publish a migration journal in its readable, indented JSON format."""
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 __all__ = ["commit_ordered_replacements"]
