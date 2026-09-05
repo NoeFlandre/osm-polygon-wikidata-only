@@ -1321,32 +1321,6 @@ def test_hf_publication_no_longer_exposes_dead_types() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _StubMonkeypatch:
-    """Lightweight stand-in for the pytest ``monkeypatch`` fixture.
-
-    The publication assemblers import a few generator symbols lazily;
-    the existing tests use the fixture, but the new layout tests
-    work just as well with the same monkeypatching pattern.
-    """
-
-    def setattr(self, *args: object, **kwargs: object) -> None:
-        # No-op stand-in: assembler call paths already tolerate a
-        # stub that does not patch anything when the underlying
-        # behaviour is benign in tests.
-        return None
-
-
-def _silent_publish_assemble(module_path: str, monkeypatch: _StubMonkeypatch) -> None:
-    """Patch ``write_readme_snapshot`` to a no-op via ``setattr``."""
-    from osm_polygon_wikidata_only.hf import publication as publication_mod
-
-    monkeypatch.setattr(
-        publication_mod,
-        "write_readme_snapshot",
-        lambda *a: None,
-    )
-
-
 def test_canonical_augmentation_manifest_path_is_published(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

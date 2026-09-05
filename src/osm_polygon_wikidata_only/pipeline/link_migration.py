@@ -79,9 +79,6 @@ from osm_polygon_wikidata_only.pipeline._link_migration.transaction import (
 )
 from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 
-_LINK_TRANSACTION_VERSION = "link-migration-transaction-v1"
-
-
 # ---------------------------------------------------------------------------
 # Schema classification
 # ---------------------------------------------------------------------------
@@ -139,20 +136,6 @@ def _file_content_hash(path: Path) -> str:
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     """Publish a migration journal in its readable, indented JSON format."""
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
-def _polygon_qid_set(polygons_table: pa.Table) -> set[str]:
-    """Return the union of QIDs in the polygon's ``wikidata`` column.
-
-    The polygon's ``wikidata`` is the OSM-tag value; this delegates to
-    the canonical :func:`qids_from_osm_tag` parser. An invalid tag
-    value contributes no QIDs and is surfaced downstream as a BLOCKED
-    reason.
-    """
-    qids: set[str] = set()
-    for raw in polygons_table.column("wikidata").to_pylist():
-        qids.update(_qids_from_osm_tag(str(raw)))
-    return qids
 
 
 def _read_table(path: Path) -> pa.Table:

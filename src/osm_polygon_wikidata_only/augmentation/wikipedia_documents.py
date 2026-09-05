@@ -119,10 +119,7 @@ class WikipediaDocumentConversionError(Exception):
 
 def _validate_qid(value: object, field: str) -> str:
     """Validate that value is a valid Wikidata QID string (Q[1-9][0-9]*)."""
-    if not isinstance(value, str):
-        raise WikipediaDocumentConversionError(
-            f"Field '{field}': expected str, got {type(value).__name__}"
-        )
+    value = _require_exact_str(value, field)
     if not is_valid_qid(value):
         raise WikipediaDocumentConversionError(
             f"Field '{field}': invalid Wikidata QID '{value}' (must match Q[1-9][0-9]*)"
@@ -132,22 +129,10 @@ def _validate_qid(value: object, field: str) -> str:
 
 def _validate_language(value: object, field: str) -> str:
     """Validate that value is a non-empty language string without colons or whitespace."""
-    language = _require_language_string(value, field)
-    _validate_language_format(language, field)
+    language = _require_exact_str(value, field)
+    _validate_language_whitespace(language, field)
+    _validate_language_colon(language, field)
     return language
-
-
-def _require_language_string(value: object, field: str) -> str:
-    if not isinstance(value, str):
-        raise WikipediaDocumentConversionError(
-            f"Field '{field}': expected str, got {type(value).__name__}"
-        )
-    return value
-
-
-def _validate_language_format(value: str, field: str) -> None:
-    _validate_language_whitespace(value, field)
-    _validate_language_colon(value, field)
 
 
 def _validate_language_whitespace(value: str, field: str) -> None:
@@ -166,10 +151,7 @@ def _validate_language_colon(value: str, field: str) -> None:
 
 def _validate_positive_int(value: object, field: str) -> int:
     """Validate that value is a positive int (not bool)."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise WikipediaDocumentConversionError(
-            f"Field '{field}': expected int (not bool), got {type(value).__name__}"
-        )
+    value = _require_exact_int(value, field)
     if value <= 0:
         raise WikipediaDocumentConversionError(f"Field '{field}': must be positive, got {value}")
     return value

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from osm_polygon_wikidata_only.pipeline.stats import StreamingStats, accumulate_stats
+from osm_polygon_wikidata_only.pipeline.stats import accumulate_stats
 
 
 def test_accumulate_stats_consumes_links_without_materializing_them() -> None:
@@ -22,13 +22,15 @@ def test_accumulate_stats_consumes_links_without_materializing_them() -> None:
         def __len__(self) -> int:
             raise AssertionError("link iterables must not be materialized")
 
-    stats = accumulate_stats((), (), LinkStream(3))
+    links = LinkStream(3)
+    stats = accumulate_stats((), (), links)
 
     assert stats.polygon_count == 0
     assert stats.article_count == 0
+    assert links._remaining == 0
 
 
-def test_accumulate_stats_matches_streaming_stats() -> None:
+def test_accumulate_stats_preserves_manifest_values() -> None:
     from types import SimpleNamespace
 
     polygon = SimpleNamespace(
@@ -41,11 +43,17 @@ def test_accumulate_stats_matches_streaming_stats() -> None:
     )
     article = SimpleNamespace(language="en", article_length_chars=12)
 
-    expected = StreamingStats()
-    expected.add_polygon(polygon)
-    expected.add_article(article)
-    expected.add_link(object())
-
     actual = accumulate_stats((polygon,), (article,), (object(),))
 
-    assert actual.to_dict() == expected.finalize().to_dict()
+    assert actual.to_dict() == {
+        "polygon_count": 1,
+        "unique_wikidata_count": 1,
+        "article_count": 1,
+        "language_count": 1,
+        "languages": ["en"],
+        "rows_with_wikipedia": 1,
+        "rows_with_full_text": 1,
+        "total_full_text_chars": 12,
+        "area_bucket_counts": {"1k_m2-10k_m2": 1},
+        "top_tag_keys": {"name": 1, "wikidata": 1},
+    }

@@ -220,11 +220,6 @@ class TestCanonicalSchema:
             "content_hash",
         )
 
-    def test_existing_document_schema_unchanged(self) -> None:
-        ds = document_schema()
-        assert len(ds) == 23
-        assert tuple(ds.names) == DOCUMENT_COLUMNS
-
     def test_parquet_round_trip_preserves_complete_schema(self, tmp_path: Path) -> None:
         """Parquet round-trip must preserve field types AND metadata."""
         table = _make_article_table()
@@ -873,9 +868,6 @@ class TestLegacyCompatibility:
 
         fields = [f.name for f in dataclasses.fields(Document)]
         assert tuple(fields) == DOCUMENT_COLUMNS
-
-    def test_legacy_document_columns_frozen(self) -> None:
-        assert len(DOCUMENT_COLUMNS) == 23
 
     def test_legacy_document_schema_frozen(self) -> None:
         ds = document_schema()

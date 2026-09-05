@@ -382,35 +382,6 @@ def _article_tail_counts(articles_per_language: dict[str, int]) -> dict[str, int
 # ---------------------------------------------------------------------------
 
 
-def _render_augmentation_coverage_table(stats: AugmentationStats) -> str:
-    total = max(stats.core_region_count, 1)
-    lines = ["| Metric | Count | Percentage |", "| --- | ---: | ---: |"]
-    lines.append(f"| Core regions | {_fmt_int(stats.core_region_count)} | 100.0% |")
-    fully_pct = (stats.fully_augmented_count / total) * 100.0
-    partial_pct = (stats.partial_augmented_count / total) * 100.0
-    not_pct = (stats.not_augmented_count / total) * 100.0
-    lines.append(
-        f"| Fully augmented | {_fmt_int(stats.fully_augmented_count)} | {_fmt_pct(fully_pct)} |"
-    )
-    lines.append(
-        f"| Partially augmented | {_fmt_int(stats.partial_augmented_count)} | {_fmt_pct(partial_pct)} |"
-    )
-    lines.append(f"| Not augmented | {_fmt_int(stats.not_augmented_count)} | {_fmt_pct(not_pct)} |")
-    orphan_text = _fmt_int(len(stats.orphan_sidecar_stems)) if stats.orphan_sidecar_stems else "0"
-    lines.append(f"| Orphan sidecar stems | {orphan_text} | - |")
-    lines.append("")
-    lines.append(
-        "Augmentation is additive and a zero-row sidecar may still "
-        "represent a completed region. Orphan sidecars (a sidecar with "
-        "no matching core polygon) do not count toward core regions."
-    )
-    if stats.orphan_sidecar_stems:
-        orphan_list = ", ".join(stats.orphan_sidecar_stems)
-        lines.append("")
-        lines.append(f"Orphan stems: {orphan_list}")
-    return "\n".join(lines)
-
-
 def _render_project_section(title: str, project: ProjectTextStats, *, kind: str) -> str:
     """Render a Wikipedia or Wikivoyage documents / sections subsection.
 

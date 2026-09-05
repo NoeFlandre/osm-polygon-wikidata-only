@@ -17,7 +17,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
     POLYGON_ARTICLE_COLUMNS,
@@ -218,8 +217,6 @@ def test_assign_h3_cell_returns_string_at_resolution_3() -> None:
     cell = assign_h3_cell(43.73, 7.42, resolution=3)
     assert isinstance(cell, str)
     assert cell.startswith("83")  # res-3 hex IDs begin with "83"
-    # Resolution must be encoded in the leading nibble of the second pair.
-    assert int(cell[1], 16) == 3
 
 
 def test_assign_h3_cell_matches_known_value_for_known_coordinate() -> None:
@@ -558,8 +555,6 @@ def _cell_fixture() -> list[CoverageCell]:
 def test_render_creates_valid_png(tmp_path: Path) -> None:
     out = tmp_path / "coverage.png"
     render_geographic_text_coverage(_cell_fixture(), out)
-    assert out.exists()
-    assert out.stat().st_size > 0
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
@@ -630,16 +625,6 @@ def test_render_writes_through_temporary_file(
     assert all(src.parent == out.parent for src, dst in seen_replaces if dst == out)
 
 
-def test_render_deterministic_with_fixed_inputs(tmp_path: Path) -> None:
-    cells = _cell_fixture()
-    out1 = tmp_path / "a.png"
-    out2 = tmp_path / "b.png"
-    render_geographic_text_coverage(cells, out1)
-    render_geographic_text_coverage(cells, out2)
-    # Inputs are identical and config is fixed -> byte-identical output.
-    assert out1.read_bytes() == out2.read_bytes()
-
-
 def test_render_text_coverage_is_byte_deterministic_within_run(
     tmp_path: Path,
 ) -> None:
@@ -662,43 +647,15 @@ def test_render_text_coverage_is_byte_deterministic_within_run(
     assert out1.read_bytes() == out2.read_bytes()
 
 
-def test_render_polygon_count_is_byte_deterministic_within_run(
-    tmp_path: Path,
-) -> None:
-    """Rendering the polygon-count PNG twice from identical synthetic
-    inputs during the same test run must produce byte-identical
-    output."""
-    from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
-        PolygonCountCell,
-    )
-
-    out1 = tmp_path / "a.png"
-    out2 = tmp_path / "b.png"
-    cells = _cell_fixture()
-    count_cells = [
-        PolygonCountCell(
-            h3_cell=cell.h3_cell,
-            polygon_count=cell.polygon_count,
-            is_low_sample=cell.is_low_sample,
-        )
-        for cell in cells
-    ]
-    render_geographic_polygon_count(count_cells, out1)
-    render_geographic_polygon_count(count_cells, out2)
-    assert out1.read_bytes() == out2.read_bytes()
-
-
 def test_render_handles_antimeridian_crossing_cells(tmp_path: Path) -> None:
-    # Use a H3 cell id known to sit near the antimeridian. We do not assert
-    # on geographic correctness of that cell; we just ensure rendering
-    # does not crash or produce an empty file.
     import h3
 
-    boundary = h3.cell_to_boundary("83754efffffffff")
-    assert boundary, "boundary must be available for the cell we render"
+    cell_id = "837eb5fffffffff"
+    longitudes = [longitude for _, longitude in h3.cell_to_boundary(cell_id)]
+    assert max(longitudes) - min(longitudes) > 180
     cells = [
         CoverageCell(
-            h3_cell="83754efffffffff",
+            h3_cell=cell_id,
             polygon_count=25,
             covered_polygon_count=10,
             coverage_rate=10 / 25,
@@ -707,7 +664,7 @@ def test_render_handles_antimeridian_crossing_cells(tmp_path: Path) -> None:
     ]
     out = tmp_path / "coverage.png"
     render_geographic_text_coverage(cells, out)
-    assert out.exists()
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 # --- End-to-end generation ---------------------------------------------
@@ -716,14 +673,11 @@ def test_render_handles_antimeridian_crossing_cells(tmp_path: Path) -> None:
 def test_generate_writes_deterministic_path(tmp_path: Path) -> None:
     polygons = tuple((f"p:way:{idx}", idx * 0.01, idx * 0.01) for idx in range(30))
     processed = _build_processed_root(tmp_path, polygons=polygons)
-    data_root = DataRoot(tmp_path / "data_root")
-    data_root.ensure()
     result = generate_geographic_text_coverage(
         processed,
         tmp_path / "assets" / "geographic_wikipedia_text_coverage.png",
     )
     out = result.output_path
-    assert out.exists()
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
@@ -876,21 +830,9 @@ def test_render_caption_reflects_non_default_threshold(tmp_path: Path) -> None:
     assert out.exists()
     # The render call must surface the caption text so callers can introspect
     # or audit it. The caption must cite the configured threshold.
-    caption = getattr(result, "caption", None)
-    if caption is None:  # backwards-compat with the older Path-only return
-        caption = _extract_caption_from_render(out)
-    assert caption is not None
+    caption = result.caption
     assert "fewer than 42 polygons" in caption
     assert "fewer than 20 polygons" not in caption
-
-
-def _extract_caption_from_render(rendered_path: Path) -> str | None:
-    """Best-effort caption extraction if the renderer does not return it."""
-    try:
-        with Image.open(rendered_path) as img:  # noqa: F821  (Pillow optional)
-            return img.info.get("caption")  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover - Pillow is optional
-        return None
 
 
 def test_colorbar_ticks_are_formatted_as_percentages(tmp_path: Path) -> None:
@@ -952,7 +894,7 @@ def test_colorbar_ticks_are_formatted_as_percentages(tmp_path: Path) -> None:
     assert _VMAX == 1.0
 
 
-def test_coverage_cell_renderer_does_not_use_count_opacity(tmp_path: Path) -> None:
+def test_coverage_cell_renderer_does_not_use_count_opacity() -> None:
     """The renderer must no longer import or use the polygon-count opacity encoder."""
     from osm_polygon_wikidata_only.hf import geographic_text_coverage as module
 
@@ -1013,7 +955,7 @@ def test_coverage_caption_omits_polygon_count_opacity_claim(tmp_path: Path) -> N
     """The rendered caption must not state that cell opacity encodes polygon count."""
     out = tmp_path / "coverage.png"
     result = render_geographic_text_coverage(_cell_fixture(), out)
-    caption = getattr(result, "caption", None) or ""
+    caption = result.caption
     assert "opacity" not in caption.lower(), (
         f"Coverage caption must not mention opacity: {caption!r}"
     )
@@ -1129,9 +1071,6 @@ def test_polygon_count_each_polygon_counted_once(tmp_path: Path) -> None:
     )
     processed = _build_processed_root(tmp_path, polygons=polygons)
     cells = aggregate_geographic_polygon_count(processed)
-    assert sum(c.polygon_count for c in cells) == 60
-    # Polygons are deterministic per cell, so the total of individual cell
-    # counts must equal the input.
     assert sum(c.polygon_count for c in cells) == len(polygons)
 
 
@@ -1141,7 +1080,6 @@ def test_polygon_count_each_polygon_counted_once(tmp_path: Path) -> None:
 def test_render_polygon_count_creates_valid_png(tmp_path: Path) -> None:
     out = tmp_path / "count.png"
     render_geographic_polygon_count(_count_cell_fixture(), out)
-    assert out.exists()
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
@@ -1166,11 +1104,10 @@ def test_render_polygon_count_uses_log_normalization(tmp_path: Path) -> None:
     def capture_savefig(self: Any, *args: Any, **kwargs: Any) -> Any:
         for ax in self.axes:
             # Collect every ScalarMappable-like attribute that exposes a norm.
-            for attr in ("collections",):
-                for coll in getattr(ax, attr, []):
-                    norm = getattr(coll, "norm", None)
-                    if norm is not None:
-                        captured.setdefault("norms", []).append(norm)
+            for coll in getattr(ax, "collections", []):
+                norm = getattr(coll, "norm", None)
+                if norm is not None:
+                    captured.setdefault("norms", []).append(norm)
         return real_savefig(self, *args, **kwargs)
 
     matplotlib.figure.Figure.savefig = capture_savefig  # type: ignore[assignment]
@@ -1272,14 +1209,11 @@ def test_render_polygon_count_does_not_perform_network_calls(
 def test_generate_polygon_count_writes_deterministic_path(tmp_path: Path) -> None:
     polygons = tuple((f"p:way:{idx}", idx * 0.01, idx * 0.01) for idx in range(30))
     processed = _build_processed_root(tmp_path, polygons=polygons)
-    data_root = DataRoot(tmp_path / "data_root")
-    data_root.ensure()
     result = generate_geographic_polygon_count(
         processed,
         tmp_path / "assets" / "geographic_polygon_count.png",
     )
     out = result.output_path
-    assert out.exists()
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 

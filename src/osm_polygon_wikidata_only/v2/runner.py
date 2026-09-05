@@ -542,23 +542,4 @@ def _region_files_match(
     return True
 
 
-def _region_is_current(
-    processed_v2: Path,
-    stem: str,
-    manifest: dict[str, dict[str, Any]],
-    *,
-    hash_cache: V2FileHashCache | None = None,
-) -> bool:
-    """Return whether a region has current artifacts and final reconciliation."""
-    return (
-        _region_artifacts_are_current(
-            processed_v2,
-            stem,
-            manifest,
-            hash_cache=hash_cache,
-        )
-        and manifest[stem].get("v1_index_reconciled", True) is True
-    )
-
-
 __all__ = ["run_v2_sync"]

@@ -14,8 +14,7 @@ The phase:
   one via :func:`os.replace`.
 * If any write or replace fails, the temporary files are deleted
   in the ``finally`` block so a half-published PBF cannot survive.
-* Streams manifest stats from the article, polygon and link rows
-  through :class:`StreamingStats` -- O(N) memory, not O(N^2).
+* Computes manifest stats with :func:`accumulate_stats` from the existing rows.
 * Calls :func:`osm_polygon_wikidata_only.io.manifest.upsert_entry`
   to atomically merge the canonical entry into
   ``processed_pbfs.json``.
@@ -61,7 +60,7 @@ from osm_polygon_wikidata_only.io.parquet import (
     write_polygon_articles,
     write_polygons,
 )
-from osm_polygon_wikidata_only.pipeline.stats import StreamingStats
+from osm_polygon_wikidata_only.pipeline.stats import accumulate_stats
 
 LOGGER = logging.getLogger(__name__)
 # Lifecycle log message ("Built N unique articles and M polygon-article
@@ -96,18 +95,6 @@ def _remote_path(subdir: str, stem: str) -> str:
     return f"{subdir}/{stem}.parquet"
 
 
-def _polygon_row(p: Polygon) -> dict[str, Any]:
-    return dict(p.__dict__)
-
-
-def _article_row(a: Article) -> dict[str, Any]:
-    return dict(a.__dict__)
-
-
-def _link_row(link: PolygonArticleLink) -> dict[str, Any]:
-    return dict(link.__dict__)
-
-
 def _persistence_paths(data_root: DataRoot, stem: str) -> tuple[Path, Path, Path]:
     """Return the canonical polygon, article, and link paths."""
     return (
@@ -133,9 +120,9 @@ def _write_parquet_to_temporary(
     temporary_paths: tuple[Path, Path, Path],
 ) -> None:
     """Write row collections to their temporary parquet siblings."""
-    write_polygons(temporary_paths[0], [_polygon_row(p) for p in polygons])
-    write_articles(temporary_paths[1], [_article_row(a) for a in articles])
-    write_polygon_articles(temporary_paths[2], [_link_row(link) for link in links])
+    write_polygons(temporary_paths[0], [dict(p.__dict__) for p in polygons])
+    write_articles(temporary_paths[1], [dict(a.__dict__) for a in articles])
+    write_polygon_articles(temporary_paths[2], [dict(link.__dict__) for link in links])
 
 
 def _replace_persistence_files(
@@ -163,22 +150,6 @@ def _write_persistence_files(
         for temporary in temporary_paths:
             temporary.unlink(missing_ok=True)
     return time.perf_counter() - write_started
-
-
-def _persistence_stats(
-    polygons: list[Polygon],
-    articles: list[Article],
-    links: list[PolygonArticleLink],
-) -> ManifestStats:
-    """Stream row statistics without retaining another copy of the rows."""
-    stats = StreamingStats()
-    for polygon in polygons:
-        stats.add_polygon(polygon)
-    for article in articles:
-        stats.add_article(article)
-    for link in links:
-        stats.add_link(link)
-    return stats.finalize()
 
 
 def _write_manifest_entry(
@@ -271,7 +242,7 @@ def run_persistence_phase(
         data_root,
         stem,
         source_pbf,
-        _persistence_stats(polygons, articles, links),
+        accumulate_stats(polygons, articles, links),
     )
 
     PROCESSOR_LOGGER.info(

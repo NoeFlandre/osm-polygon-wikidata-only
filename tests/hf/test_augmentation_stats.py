@@ -62,7 +62,7 @@ def _write_parquet(path: Path, columns: list[str], rows: list[dict]) -> Path:
     return path
 
 
-def _write_wikipedia_documents(
+def _write_documents(
     path: Path,
     rows: list[dict],
 ) -> Path:
@@ -82,48 +82,7 @@ def _write_wikipedia_documents(
     )
 
 
-def _write_wikipedia_sections(
-    path: Path,
-    rows: list[dict],
-) -> Path:
-    return _write_parquet(
-        path,
-        [
-            "section_id",
-            "document_id",
-            "wikidata",
-            "project",
-            "language",
-            "text",
-            "text_length_chars",
-            "text_length_words",
-            "text_length_tokens_estimate",
-        ],
-        rows,
-    )
-
-
-def _write_wikivoyage_documents(
-    path: Path,
-    rows: list[dict],
-) -> Path:
-    return _write_parquet(
-        path,
-        [
-            "document_id",
-            "wikidata",
-            "project",
-            "language",
-            "full_text",
-            "article_length_chars",
-            "article_length_words",
-            "article_length_tokens_estimate",
-        ],
-        rows,
-    )
-
-
-def _write_wikivoyage_sections(
+def _write_sections(
     path: Path,
     rows: list[dict],
 ) -> Path:
@@ -180,10 +139,6 @@ def _setup_processed_dir(tmp_path: Path) -> Path:
     return processed
 
 
-def _cache_dir(tmp_path: Path) -> Path:
-    return tmp_path / "cache"
-
-
 def _empty_dataset_stats() -> DatasetStats:
     return DatasetStats(
         polygon_count=0,
@@ -208,32 +163,33 @@ def _empty_dataset_stats() -> DatasetStats:
 
 
 def _stats(processed: Path, tmp_path: Path) -> AugmentationStats:
-    return compute_augmentation_stats(processed, cache_index_dir=_cache_dir(tmp_path))
+    return compute_augmentation_stats(processed, cache_index_dir=tmp_path / "cache")
 
 
 # --- coverage classification ------------------------------------------
 
 
 def test_fully_augmented_classified_when_all_five_sidecars_present(tmp_path: Path) -> None:
+    """Readable sidecars count as present even when they contain zero rows."""
     processed = _setup_processed_dir(tmp_path)
     _write_parquet(
         processed / "polygons" / "monaco-latest.parquet",
         ["wikidata"],
         [{"wikidata": "Q1"}],
     )
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [],
     )
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         [],
     )
-    _write_wikivoyage_documents(
+    _write_documents(
         processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
         [],
     )
-    _write_wikivoyage_sections(
+    _write_sections(
         processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
         [],
     )
@@ -254,7 +210,7 @@ def test_partial_augmented_classified_when_some_sidecars_present(tmp_path: Path)
         ["wikidata"],
         [{"wikidata": "Q1"}],
     )
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [],
     )
@@ -281,7 +237,7 @@ def test_not_augmented_classified_when_no_sidecars_present(tmp_path: Path) -> No
 
 def test_orphan_sidecar_stems_classified_when_no_core_polygon(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "ghost-latest.parquet",
         [],
     )
@@ -290,40 +246,12 @@ def test_orphan_sidecar_stems_classified_when_no_core_polygon(tmp_path: Path) ->
     assert stats.orphan_sidecar_stems == ("ghost-latest",)
 
 
-def test_augmented_region_can_be_empty_rows_but_still_structural(tmp_path: Path) -> None:
-    processed = _setup_processed_dir(tmp_path)
-    _write_parquet(
-        processed / "polygons" / "monaco-latest.parquet",
-        ["wikidata"],
-        [{"wikidata": "Q1"}],
-    )
-    _write_wikipedia_documents(
-        processed / "wikipedia" / "documents" / "monaco-latest.parquet",
-        [],
-    )
-    _write_wikipedia_sections(
-        processed / "wikipedia" / "sections" / "monaco-latest.parquet",
-        [],
-    )
-    _write_wikivoyage_documents(
-        processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
-        [],
-    )
-    _write_wikivoyage_sections(
-        processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
-        [],
-    )
-    _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
-    stats = _stats(processed, tmp_path)
-    assert stats.fully_augmented_count == 1
-
-
 # --- wikipedia documents ------------------------------------------------
 
 
 def test_wikipedia_documents_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -368,7 +296,7 @@ def test_wikipedia_documents_basic_counts(tmp_path: Path) -> None:
 
 def test_wikipedia_documents_non_empty_and_empty_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -438,7 +366,7 @@ def test_wikipedia_documents_top_languages_deterministic_ties(tmp_path: Path) ->
                     "article_length_tokens_estimate": 1,
                 }
             )
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         rows,
     )
@@ -450,7 +378,7 @@ def test_wikipedia_documents_top_languages_deterministic_ties(tmp_path: Path) ->
 
 def test_wikipedia_documents_total_words_and_tokens(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -486,7 +414,7 @@ def test_wikipedia_documents_total_words_and_tokens(tmp_path: Path) -> None:
 
 def test_wikipedia_sections_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         [
             {
@@ -551,7 +479,7 @@ def test_wikipedia_sections_avg_per_represented_doc(tmp_path: Path) -> None:
         }
         for i in range(4)
     ]
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         rows,
     )
@@ -569,7 +497,7 @@ def test_wikipedia_sections_avg_per_represented_doc(tmp_path: Path) -> None:
 
 def test_wikivoyage_documents_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikivoyage_documents(
+    _write_documents(
         processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -604,7 +532,7 @@ def test_wikivoyage_documents_basic_counts(tmp_path: Path) -> None:
 
 def test_wikivoyage_sections_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
-    _write_wikivoyage_sections(
+    _write_sections(
         processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
         [
             {
@@ -643,7 +571,7 @@ def test_wikivoyage_language_distribution(tmp_path: Path) -> None:
                     "article_length_tokens_estimate": 1,
                 }
             )
-    _write_wikivoyage_documents(
+    _write_documents(
         processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
         rows,
     )
@@ -909,7 +837,7 @@ def test_storage_bytes_separate_core_augmentation_total(tmp_path: Path) -> None:
         ["wikidata"],
         [{"wikidata": "Q1"}],
     )
-    wiki_doc_path = _write_wikipedia_documents(
+    wiki_doc_path = _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -1023,30 +951,6 @@ def test_compute_augmentation_stats_records_one_region_per_core_stem(tmp_path: P
     stats = _stats(processed, tmp_path)
     assert stats.core_region_count == 2
     assert stats.not_augmented_count == 2
-
-
-# --- ProjectTextStats / dataclass contract ----------------------------
-
-
-def test_augmentation_stats_private_models_are_unfrozen_with_slots() -> None:
-    """The augmentation models are private; verify the frozen/slot shape."""
-    aug = AugmentationStats(
-        core_region_count=0,
-        fully_augmented_count=0,
-        partial_augmented_count=0,
-        not_augmented_count=0,
-        orphan_sidecar_stems=[],
-        wikipedia_documents=ProjectTextStats(),
-        wikipedia_sections=ProjectTextStats(),
-        wikivoyage_documents=ProjectTextStats(),
-        wikivoyage_sections=ProjectTextStats(),
-        wikidata_facts=WikidataFactStats(),
-        core_parquet_bytes=0,
-        augmentation_parquet_bytes=0,
-        total_parquet_bytes=0,
-        unreadable_file_count=0,
-    )
-    assert aug.core_region_count == 0
 
 
 # --- render: backwards-compatible callers ------------------------------
@@ -1235,7 +1139,7 @@ def test_render_stats_section_distinguishes_missing_vs_present_empty() -> None:
             cache_index_dir=missing_path / "cache",
         )
         aug_empty = compute_augmentation_stats(
-            _setup_empty_processed(empty_path),
+            _setup_processed_dir(empty_path),
             cache_index_dir=empty_path / "cache",
         )
     md_missing = render_stats_section(stats, augmentation_stats=aug_missing)
@@ -1259,7 +1163,7 @@ def test_render_stats_section_present_zero_row_sidecar_distinct(tmp_path: Path) 
     "No data exists yet." to "This sidecar is present but empty."
     while leaving headline rows unchanged.
     """
-    processed_dir = _setup_zero_row_present(tmp_path)
+    processed_dir = _setup_processed_dir_with_zero_row_parquets(tmp_path)
     aug = compute_augmentation_stats(
         processed_dir,
         cache_index_dir=tmp_path / "cache",
@@ -1271,28 +1175,24 @@ def test_render_stats_section_present_zero_row_sidecar_distinct(tmp_path: Path) 
 
 def _setup_processed_dir_with_zero_row_parquets(base: Path) -> Path:
     processed = _setup_processed_dir(base)
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [],
     )
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         [],
     )
-    _write_wikivoyage_documents(
+    _write_documents(
         processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
         [],
     )
-    _write_wikivoyage_sections(
+    _write_sections(
         processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
         [],
     )
     _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
     return processed
-
-
-def _setup_zero_row_present(base: Path) -> Path:
-    return _setup_processed_dir_with_zero_row_parquets(base)
 
 
 def _setup_missing_processed(tmp_path: Path) -> Path:
@@ -1301,12 +1201,6 @@ def _setup_missing_processed(tmp_path: Path) -> Path:
     processed = _setup_processed_dir(tmp_path)
     for d in ("wikipedia", "wikivoyage", "wikidata"):
         shutil.rmtree(processed / d)
-    return processed
-
-
-def _setup_empty_processed(tmp_path: Path) -> Path:
-    processed = _setup_processed_dir(tmp_path)
-    # Sub-directories are already present but contain no files.
     return processed
 
 
@@ -1430,7 +1324,6 @@ def test_render_stats_headline_renames_document_corpus_words() -> None:
     aug = _sample_augmentation_stats()
     md = render_stats_section(stats, augmentation_stats=aug)
     assert "| Document corpus words |" not in md
-    assert "| Wikipedia + Wikivoyage document words |" in md
     wiki = aug.wikipedia_documents.total_words
     voy = aug.wikivoyage_documents.total_words
     assert f"| Wikipedia + Wikivoyage document words | {_fmt_int(wiki + voy)} |" in md, (
@@ -1451,7 +1344,6 @@ def test_render_stats_headline_section_words_excluded_from_corpus_total() -> Non
     sec = aug.wikipedia_sections.total_words + aug.wikivoyage_sections.total_words
     combined = wiki + voy
     assert sec > 0, "fixture must include non-zero section words to prove exclusion"
-    assert combined != wiki + voy + sec
     assert f"| Wikipedia + Wikivoyage document words | {_fmt_int(combined)} |" in md
 
 
@@ -1615,7 +1507,7 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
         ["wikidata"],
         [{"wikidata": "Q1"}],
     )
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -1630,7 +1522,7 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
             }
         ],
     )
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         [
             {
@@ -1646,17 +1538,17 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
             }
         ],
     )
-    _write_wikivoyage_documents(
+    _write_documents(
         processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
         [],
     )
-    _write_wikivoyage_sections(
+    _write_sections(
         processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
         [],
     )
     _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
 
-    cache_dir = _cache_dir(tmp_path)
+    cache_dir = tmp_path / "cache"
 
     # Cold refresh: many safe_table calls.
     real_safe_table = augmod.safe_table
@@ -1702,7 +1594,7 @@ def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
         ["wikidata"],
         [{"wikidata": "Q1"}],
     )
-    docs_path = _write_wikipedia_documents(
+    docs_path = _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -1717,7 +1609,7 @@ def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
             }
         ],
     )
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         [
             {
@@ -1733,17 +1625,17 @@ def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
             }
         ],
     )
-    _write_wikivoyage_documents(
+    _write_documents(
         processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
         [],
     )
-    _write_wikivoyage_sections(
+    _write_sections(
         processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
         [],
     )
     _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
 
-    cache_dir = _cache_dir(tmp_path)
+    cache_dir = tmp_path / "cache"
     # Cold then warm refresh.
     compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     compute_augmentation_stats(processed, cache_index_dir=cache_dir)
@@ -1752,7 +1644,7 @@ def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
     import time
 
     time.sleep(0.01)
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -1807,7 +1699,7 @@ def test_deleted_files_removed_from_aggregates(tmp_path: Path) -> None:
         ["wikidata"],
         [{"wikidata": "Q1"}],
     )
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [
             {
@@ -1822,7 +1714,7 @@ def test_deleted_files_removed_from_aggregates(tmp_path: Path) -> None:
             }
         ],
     )
-    _write_wikipedia_sections(
+    _write_sections(
         processed / "wikipedia" / "sections" / "monaco-latest.parquet",
         [
             {
@@ -1838,13 +1730,11 @@ def test_deleted_files_removed_from_aggregates(tmp_path: Path) -> None:
             }
         ],
     )
-    _write_wikivoyage_documents(
-        processed / "wikivoyage" / "documents" / "monaco-latest.parquet", []
-    )
-    _write_wikivoyage_sections(processed / "wikivoyage" / "sections" / "monaco-latest.parquet", [])
+    _write_documents(processed / "wikivoyage" / "documents" / "monaco-latest.parquet", [])
+    _write_sections(processed / "wikivoyage" / "sections" / "monaco-latest.parquet", [])
     _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
     docs_path = processed / "wikipedia" / "documents" / "monaco-latest.parquet"
-    cache_dir = _cache_dir(tmp_path)
+    cache_dir = tmp_path / "cache"
 
     first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     assert first.wikipedia_documents.rows == 1
@@ -2006,31 +1896,24 @@ def test_scan_paths_skips_missing_subdirectories_and_sorts_files(tmp_path: Path)
 
 
 def test_cache_write_cleanups_sibling_on_interruption(tmp_path: Path, monkeypatch) -> None:
-    """If the atomic write raises mid-flight, no stale temp file remains.
-
-    We simulate a write failure: ``atomic_write_text`` raises, but the
-    ``Path.unlink`` on the temporary file runs in the ``except`` branch.
-    This test asserts the file system shows no leftover ``.tmp`` siblings.
-    """
-    import pytest as _pytest
-
+    """A failed replacement preserves the old index and removes the written temporary."""
     from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
+    from osm_polygon_wikidata_only.io import atomic
 
-    cachemod.cache_dir(tmp_path / "cache").mkdir(parents=True, exist_ok=True)
+    cachemod.write_cache_index(tmp_path / "cache", {"old": {"rows": 1}})
     index_path = cachemod.index_path(tmp_path / "cache")
+    original = index_path.read_bytes()
 
-    def explode(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    def explode(source: Path, target: Path) -> None:
+        assert source.read_bytes() != original
+        assert target == index_path
         raise RuntimeError("simulated crash mid-write")
 
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf._dataset_stats.cache.atomic_write_text",
-        explode,
-    )
-    with _pytest.raises(RuntimeError, match="simulated crash mid-write"):
-        cachemod.write_cache_index(tmp_path / "cache", {"x": 1})
-    leftovers = [p for p in (tmp_path / "cache" / cachemod.CACHE_SUBDIR).glob("*.tmp")]
-    assert leftovers == []
-    assert not index_path.exists()
+    monkeypatch.setattr(atomic.os, "replace", explode)
+    with pytest.raises(RuntimeError, match="simulated crash mid-write"):
+        cachemod.write_cache_index(tmp_path / "cache", {"new": {"rows": 2}})
+    assert list(index_path.parent.iterdir()) == [index_path]
+    assert index_path.read_bytes() == original
 
 
 # --- Cache contract version ------------------------------------------
@@ -2065,7 +1948,7 @@ def test_cache_load_rejects_missing_version_and_rebuilds(tmp_path: Path) -> None
     processed = _setup_processed_dir(tmp_path)
     docs_path = processed / "wikipedia" / "documents" / "monaco-latest.parquet"
     docs_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_wikipedia_documents(
+    _write_documents(
         docs_path,
         [
             {
@@ -2081,7 +1964,7 @@ def test_cache_load_rejects_missing_version_and_rebuilds(tmp_path: Path) -> None
         ],
     )
 
-    cache_dir = _cache_dir(tmp_path)
+    cache_dir = tmp_path / "cache"
     cachemod.cache_dir(cache_dir).mkdir(parents=True, exist_ok=True)
     # Plant a fingerprint-matching, version-MISSING entry. If the
     # loader trusts this, it returns rows=999 instead of 1.
@@ -2167,7 +2050,7 @@ def test_scan_failed_entry_is_retried_on_next_refresh(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     docs_path = processed / "wikipedia" / "documents" / "monaco-latest.parquet"
     docs_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_wikipedia_documents(
+    _write_documents(
         docs_path,
         [
             {
@@ -2183,7 +2066,7 @@ def test_scan_failed_entry_is_retried_on_next_refresh(tmp_path: Path) -> None:
         ],
     )
 
-    cache_dir = _cache_dir(tmp_path)
+    cache_dir = tmp_path / "cache"
     first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     assert first.wikipedia_documents.rows == 1
     assert first.unreadable_file_count == 0
@@ -2217,26 +2100,17 @@ def test_scan_failed_entry_is_retried_on_next_refresh(tmp_path: Path) -> None:
 # --- Stronger file invalidation ---------------------------------------
 
 
-def test_fingerprint_detects_same_size_replacement_preserving_mtime(tmp_path: Path) -> None:
-    """The fingerprint must catch a same-size replacement that preserves
-    mtime. Size + mtime_ns alone is insufficient. We add inode + ctime_ns
-    to the fingerprint and assert that a swap of content with identical
-    bytes-of-length and identical mtime still triggers a rescan.
-
-    To truly exercise the bug, we plant an ``old_fingerprint`` in the
-    cache that pinpoints the regression: a string with the SAME
-    ``size`` and ``mtime_ns`` as the current file. A correct
-    implementation must add more keys to the fingerprint so that this
-    fabricated stale entry no longer matches the live file.
-    """
+def test_fingerprint_detects_same_size_replacement_preserving_mtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Replacing a cached file must trigger a rescan even when size and mtime match."""
     import os
 
-    from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
+    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
 
     processed = _setup_processed_dir(tmp_path)
     docs_path = processed / "wikipedia" / "documents" / "monaco-latest.parquet"
-    docs_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_wikipedia_documents(
+    _write_documents(
         docs_path,
         [
             {
@@ -2252,60 +2126,16 @@ def test_fingerprint_detects_same_size_replacement_preserving_mtime(tmp_path: Pa
         ],
     )
 
-    cache_dir = _cache_dir(tmp_path)
-    cachemod.cache_dir(cache_dir).mkdir(parents=True, exist_ok=True)
+    cache_dir = tmp_path / "cache"
+    first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     stat = docs_path.stat()
-    raw_size_mtime_fp = f"{stat.st_size}:{stat.st_mtime_ns}"
-    # Plant a stale cache entry whose fingerprint is exactly the
-    # legacy ``size:mtime_ns`` form. A correct fingerprint includes
-    # inode/ctime_ns, so the live fingerprint must NOT equal the
-    # planted one.
-    cachemod.write_cache_index(
-        cache_dir,
-        {
-            "wikipedia/documents/monaco-latest.parquet": {
-                "relative_path": "wikipedia/documents/monaco-latest.parquet",
-                "fingerprint": raw_size_mtime_fp,
-                "file_size_bytes": stat.st_size,
-                "kind": "documents",
-                "scan_failed": False,
-                "rows": 999,
-                "non_empty": 999,
-                "empty_or_null": 0,
-                "total_chars": 11,
-                "total_words": 2,
-                "total_tokens_estimate": 3,
-                "document_ids": ["d1"],
-                "section_ids": [],
-                "qids": ["Q1"],
-                "languages": {"en": 1},
-                "fact_rows": 0,
-                "fact_ids": [],
-                "subject_qids": [],
-                "property_ids": [],
-                "property_labels": {},
-                "property_counts": {},
-                "with_property_en_label": 0,
-                "with_value_en_label": 0,
-                "with_qualifiers": 0,
-                "with_references": 0,
-                "unavailable_qualifiers": 0,
-                "unavailable_references": 0,
-                "value_type_counts": {},
-            }
-        },
-    )
-
-    # Live fingerprint must differ from the planted stale one.
-    live_fp = cachemod._file_fingerprint(docs_path)
-    assert live_fp != raw_size_mtime_fp, (
-        "Fingerprint must encode more than size:mtime_ns; same-size "
-        "same-mtime replacements must invalidate the cache"
-    )
-
-    # Warm refresh detects the change and re-scans, returning the
-    # real row count (1, not the planted 999).
-    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
+    replacement = docs_path.with_suffix(".replacement")
+    replacement.write_bytes(docs_path.read_bytes())
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    replacement.replace(docs_path)
+    replaced = docs_path.stat()
+    assert (replaced.st_size, replaced.st_mtime_ns) == (stat.st_size, stat.st_mtime_ns)
+    assert replaced.st_ino != stat.st_ino
 
     real = augmod.safe_table
     calls: list[Path] = []
@@ -2314,17 +2144,10 @@ def test_fingerprint_detects_same_size_replacement_preserving_mtime(tmp_path: Pa
         calls.append(Path(path))
         return real(path, cols)
 
-    augmod.safe_table = spy  # type: ignore[assignment]
-    try:
-        stats = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
-    finally:
-        augmod.safe_table = real  # type: ignore[assignment]
-    assert stats.wikipedia_documents.rows == 1
-    assert any(c == docs_path for c in calls), (
-        "Warm refresh must rescan the file even when size+mtime match"
-    )
-    # Suppress unused import lint.
-    _ = os.path
+    monkeypatch.setattr(augmod, "safe_table", spy)
+    stats = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
+    assert stats.wikipedia_documents == first.wikipedia_documents
+    assert calls == [docs_path]
 
 
 # --- Empty-data classification ----------------------------------------
@@ -2341,15 +2164,15 @@ def test_subdir_present_requires_at_least_one_readable_parquet(tmp_path: Path) -
       ``True``).
     """
     processed = _setup_processed_dir(tmp_path)
-    stats = compute_augmentation_stats(processed, cache_index_dir=_cache_dir(tmp_path))
+    stats = compute_augmentation_stats(processed, cache_index_dir=tmp_path / "cache")
     assert stats.wikipedia_documents.subdir_present is False
     assert stats.wikivoyage_documents.subdir_present is False
 
-    _write_wikipedia_documents(
+    _write_documents(
         processed / "wikipedia" / "documents" / "monaco-latest.parquet",
         [],
     )
-    stats = compute_augmentation_stats(processed, cache_index_dir=_cache_dir(tmp_path))
+    stats = compute_augmentation_stats(processed, cache_index_dir=tmp_path / "cache")
     assert stats.wikipedia_documents.subdir_present is True
     assert stats.wikipedia_sections.subdir_present is False
     assert stats.wikivoyage_documents.subdir_present is False
@@ -2359,7 +2182,7 @@ def test_subdir_present_requires_at_least_one_readable_parquet(tmp_path: Path) -
 # --- Document corpus words --------------------------------------------
 
 
-def test_headline_document_corpus_words_excludes_sections(tmp_path: Path) -> None:
+def test_headline_document_corpus_words_excludes_sections() -> None:
     """The headline ``Wikipedia + Wikivoyage document words`` must
     aggregate document-only word totals (Wikipedia + Wikivoyage
     documents), not sections. Section word totals stay in their

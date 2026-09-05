@@ -45,7 +45,6 @@ from .sentence_protocol import (
 )
 
 _LEDGER_FILENAME = "grid5000_sentence_run.json"
-_RUN_DIRECTORY = "grid5000_sentence_runs"
 _REMOTE_NAMESPACE = "$HOME/osm-polygon-wikidata-only-grid5000"
 _SEGMENTER_VERSION = "2.2.1"
 _GRID5000_UV_VERSION = "0.11.16"
@@ -187,7 +186,7 @@ class Grid5000SentenceController:
         return ledger
 
     def _load_existing_ledger(self) -> dict[str, Any]:
-        ledger = _read_ledger(self.ledger_path)
+        ledger = _read_json_mapping(self.ledger_path)
         stored_run_id = ledger.get("run_id")
         if not isinstance(stored_run_id, str):
             raise ControllerRunError("Sentence ledger has no valid run_id")
@@ -967,10 +966,6 @@ def _read_json_mapping(path: Path) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ControllerRunError(f"JSON artifact is not an object: {path}")
     return cast(dict[str, Any], raw)
-
-
-def _read_ledger(path: Path) -> dict[str, Any]:
-    return _read_json_mapping(path)
 
 
 def _validate_ledger_baselines(ledger: Mapping[str, object]) -> None:

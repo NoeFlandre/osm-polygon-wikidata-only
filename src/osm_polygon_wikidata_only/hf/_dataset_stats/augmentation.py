@@ -840,11 +840,6 @@ def _load_or_scan_summary(
     return _scan_one_file(processed_dir, parquet_path)
 
 
-def _subdir_prefix(rel: str) -> str:
-    parts = rel.split("/", 2)
-    return "/".join(parts[:2])
-
-
 def _append_summary(
     by_subdir: dict[str, list[PerFileSummary]],
     rel: str,

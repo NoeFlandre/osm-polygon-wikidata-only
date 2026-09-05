@@ -74,8 +74,7 @@ def test_request_scheduler_snapshot_is_hashable() -> None:
         cooling_down_hosts=0,
         cooldown_remaining_s=0.0,
     )
-    # Slots + frozen dataclasses are hashable.
-    assert hash(snapshot) == hash(snapshot)
+    assert len({snapshot, dataclasses.replace(snapshot)}) == 1
 
 
 def test_wikimedia_auth_snapshot_fields() -> None:

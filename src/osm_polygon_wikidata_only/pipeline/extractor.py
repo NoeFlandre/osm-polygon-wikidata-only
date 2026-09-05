@@ -102,10 +102,6 @@ def _compute_geom(geom_json: str) -> tuple[PolygonGeometry, dict[str, object]] |
     return pg, geom
 
 
-def _row_dict(polygon: Polygon) -> dict[str, Any]:
-    return dict(polygon.__dict__)
-
-
 def _candidate_tag_data(tags: dict[str, str]) -> tuple[str, dict[str, str]] | None:
     """Return the required QID and cleaned tags for one candidate."""
     wikidata = tags.get("wikidata", "").strip()
@@ -171,7 +167,7 @@ def candidate_to_polygon(
 
 def polygon_to_dict(p: Polygon) -> dict[str, Any]:
     """Convert a :class:`Polygon` to the row dict used by :mod:`io.parquet`."""
-    return _row_dict(p)
+    return dict(p.__dict__)
 
 
 def extract_pbf(pbf_path: Path, *, settings: Settings) -> ExtractedPbf:

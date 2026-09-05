@@ -245,11 +245,6 @@ def _read_table_required(path: Path, *, label: str, columns: tuple[str, ...]) ->
     return table
 
 
-def _filter_rows(table: pa.Table, mask: list[bool]) -> pa.Table:
-    """Return the rows of *table* where ``mask`` is True, preserving schema."""
-    return table.filter(pa.array(mask))
-
-
 # ---------------------------------------------------------------------------
 # enforce_polygon_articles_integrity
 # ---------------------------------------------------------------------------

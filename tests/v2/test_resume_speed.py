@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from osm_polygon_wikidata_only.v2.resume import V2FileHashCache
-from osm_polygon_wikidata_only.v2.runner import _region_is_current
+from osm_polygon_wikidata_only.v2.runner import _region_artifacts_are_current
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest, write_v2_region
 
 
@@ -53,7 +53,7 @@ def test_hash_cache_treats_invalid_cache_documents_as_empty(tmp_path: Path, payl
     assert V2FileHashCache(path)._entries == {}
 
 
-def test_region_current_check_reuses_persisted_file_digests(
+def test_region_artifact_check_reuses_persisted_file_digests(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -73,16 +73,16 @@ def test_region_current_check_reuses_persisted_file_digests(
         return original(path)
 
     monkeypatch.setattr(resume, "sha256_file", counted)
-    monkeypatch.delattr(resume, "_sha256", raising=False)
-    assert _region_is_current(
+    assert _region_artifacts_are_current(
         tmp_path,
         "region-latest",
         {"region-latest": entry},
         hash_cache=cache,
     )
+    assert calls == 4
     cache.flush()
     restored = V2FileHashCache(cache_path)
-    assert _region_is_current(
+    assert _region_artifacts_are_current(
         tmp_path,
         "region-latest",
         {"region-latest": entry},
@@ -91,14 +91,11 @@ def test_region_current_check_reuses_persisted_file_digests(
     assert calls == 4
 
 
-def test_region_current_check_rehashes_changed_file(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_region_artifact_check_rehashes_changed_file(tmp_path: Path) -> None:
     write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
     entry = load_v2_manifest(tmp_path)["region-latest"]
     cache = V2FileHashCache(tmp_path / "cache" / "resume-hashes.json")
-    assert _region_is_current(
+    assert _region_artifacts_are_current(
         tmp_path,
         "region-latest",
         {"region-latest": entry},
@@ -106,7 +103,7 @@ def test_region_current_check_rehashes_changed_file(
     )
     changed = tmp_path / "polygons" / "region-latest.parquet"
     changed.write_bytes(changed.read_bytes() + b"changed")
-    assert not _region_is_current(
+    assert not _region_artifacts_are_current(
         tmp_path,
         "region-latest",
         {"region-latest": entry},

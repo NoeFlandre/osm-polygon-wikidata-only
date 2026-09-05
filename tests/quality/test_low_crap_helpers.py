@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pyarrow as pa
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.integrity import (
@@ -26,15 +25,7 @@ from osm_polygon_wikidata_only.domain.models import ManifestStats
 from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary
 from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataEntity
 from osm_polygon_wikidata_only.hf._dataset_stats.combined_languages import _parse_cached_stats
-from osm_polygon_wikidata_only.hf._dataset_stats.models import (
-    AugmentationStats,
-    CombinedLanguageStats,
-    ProjectTextStats,
-    WikidataFactStats,
-)
-from osm_polygon_wikidata_only.hf._dataset_stats.rendering import (
-    _render_augmentation_coverage_table,
-)
+from osm_polygon_wikidata_only.hf._dataset_stats.models import CombinedLanguageStats
 from osm_polygon_wikidata_only.hf.upload_queue import (
     QUEUE_CONTRACT_VERSION,
     _read_envelope,
@@ -68,7 +59,6 @@ from osm_polygon_wikidata_only.pipeline._wikidata_recovery.validation import (
 from osm_polygon_wikidata_only.pipeline.containment_migration import _remap_link
 from osm_polygon_wikidata_only.pipeline.link_migration import (
     _ensure_migration_plan_safe,
-    _polygon_qid_set,
 )
 from osm_polygon_wikidata_only.pipeline.persistence import (
     _enforce_integrity_if_needed,
@@ -269,32 +259,6 @@ def test_parse_languages_trims_deduplicates_and_sorts() -> None:
     assert parse_languages(" fr, en,fr ,, de ") == ("de", "en", "fr")
 
 
-def test_render_augmentation_coverage_table_includes_orphans() -> None:
-    stats = AugmentationStats(
-        core_region_count=4,
-        fully_augmented_count=2,
-        partial_augmented_count=1,
-        not_augmented_count=1,
-        orphan_sidecar_stems=("orphan-latest",),
-        wikipedia_documents=ProjectTextStats(),
-        wikipedia_sections=ProjectTextStats(),
-        wikivoyage_documents=ProjectTextStats(),
-        wikivoyage_sections=ProjectTextStats(),
-        wikidata_facts=WikidataFactStats(),
-        core_parquet_bytes=0,
-        augmentation_parquet_bytes=0,
-        total_parquet_bytes=0,
-        unreadable_file_count=0,
-        combined_languages=CombinedLanguageStats(),
-    )
-
-    rendered = _render_augmentation_coverage_table(stats)
-
-    assert "| Core regions | 4 | 100.0% |" in rendered
-    assert "| Fully augmented | 2 | 50.0% |" in rendered
-    assert "Orphan stems: orphan-latest" in rendered
-
-
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
@@ -321,12 +285,6 @@ def test_unique_recovery_helpers_keep_rows_and_reject_duplicates() -> None:
         _unique_mapping([rows[0], rows[0]], "id", "value", "id")
     with pytest.raises(RecoveryRepairError):
         _unique_rows([rows[0], rows[0]], "id", "id")
-
-
-def test_polygon_qid_set_parses_distinct_osm_tag_qids() -> None:
-    table = pa.table({"wikidata": ["Q1; Q2", "Q2", ""]})
-
-    assert _polygon_qid_set(table) == {"Q1", "Q2"}
 
 
 def test_integrity_metadata_serializes_rejections() -> None:

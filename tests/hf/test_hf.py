@@ -18,7 +18,6 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
     local_to_remote,
-    remote_dataset_card_path,
     remote_parquet_path,
 )
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
@@ -45,10 +44,6 @@ def test_remote_parquet_path() -> None:
         remote_parquet_path(REMOTE_LINKS_DIR, "monaco-latest")
         == "polygon_articles/monaco-latest.parquet"
     )
-
-
-def test_remote_dataset_card_path() -> None:
-    assert remote_dataset_card_path() == "README.md"
 
 
 def test_local_to_remote() -> None:

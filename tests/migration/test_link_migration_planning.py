@@ -1,13 +1,4 @@
-"""Phase 2 / Group B: legacy/canonical schema detection and migration planning.
-
-Red tests for ``osm_polygon_wikidata_only.pipeline.link_migration``.
-
-Real schemas used throughout -- ``polygon_schema()``,
-``wikipedia_document_schema()`` (the canonical document schema),
-``document_schema()`` (the legacy document schema) and the legacy
-``polygon_article_schema()``. The planner must classify stems strictly
-into ``legacy``, ``canonical`` or ``BLOCKED`` -- never "incomplete".
-"""
+"""Classify link shards as legacy, canonical, or blocked using real Parquet schemas."""
 
 from __future__ import annotations
 
@@ -20,9 +11,6 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     document_schema,
-)
-from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-    wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_COLUMNS,
@@ -160,46 +148,6 @@ def _legacy_link_row(
     }
 
 
-def _wiki_document_row(
-    document_id: str, article_id: str, qid: str, *, revision_id: int = 1
-) -> dict:
-    """Build a canonical Wikipedia-document row using the canonical schema."""
-    return {
-        "document_id": document_id,
-        "article_id": article_id,
-        "wikidata": qid,
-        "project": "wikipedia",
-        "language": "en",
-        "site": "enwiki",
-        "title": "T",
-        "url": "https://en.wikipedia.org/wiki/T",
-        "page_id": 1,
-        "revision_id": revision_id,
-        "revision_timestamp": "2026-01-01T00:00:00Z",
-        "retrieved_at": "2026-01-01T00:00:00Z",
-        "wikidata_label": "T",
-        "wikidata_description": "",
-        "wikidata_aliases": "[]",
-        "lead_text": "",
-        "extract": "",
-        "full_text": "body",
-        "full_text_format": "plain_text",
-        "article_length_chars": 4,
-        "article_length_words": 1,
-        "article_length_tokens_estimate": 1,
-        "thumbnail_url": "",
-        "thumbnail_width": None,
-        "thumbnail_height": None,
-        "categories": "[]",
-        "license": "CC-BY-SA",
-        "attribution": "Wikipedia contributors",
-        "source_api": "mediawiki_action_api",
-        "fetch_status": "ok",
-        "fetch_error": "",
-        "content_hash": hashlib.sha256(b"body").hexdigest(),
-    }
-
-
 def _legacy_document_row(document_id: str, article_id: str, qid: str) -> dict:
     """Build a legacy 23-column document row (using DOCUMENT_COLUMNS schema)."""
     return {
@@ -251,13 +199,6 @@ def _write_legacy_documents(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     normalized = [{col: row.get(col) for col in DOCUMENT_COLUMNS} for row in rows]
     pa_table = pa.Table.from_pylist(normalized, schema=document_schema())
-    pa.parquet.write_table(pa_table, path, compression="snappy")
-
-
-def _write_canonical_documents(path: Path, rows: list[dict]) -> None:
-    pa = _pyarrow()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pa_table = pa.Table.from_pylist(rows, schema=wikipedia_document_schema())
     pa.parquet.write_table(pa_table, path, compression="snappy")
 
 

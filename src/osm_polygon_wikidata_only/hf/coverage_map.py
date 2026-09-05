@@ -264,13 +264,9 @@ def _draw_land_feature(ax: Any, feature: dict[str, Any]) -> None:
     gtype = geom.get("type")
     coords = geom.get("coordinates")
     if gtype == "Polygon" and coords:
-        _draw_land_polygon(ax, coords)
+        _draw_polygon_rings(ax, coords)
     elif gtype == "MultiPolygon" and coords:
         _draw_land_multipolygon(ax, coords)
-
-
-def _draw_land_polygon(ax: Any, coords: list[list[list[float]]]) -> None:
-    _draw_polygon_rings(ax, coords)
 
 
 def _draw_land_multipolygon(ax: Any, coords: list[list[list[list[float]]]]) -> None:
