@@ -53,8 +53,8 @@ crap-upload:
 
 # Enforce a CRAP score below 6 for the quality-reporting scripts themselves.
 crap-quality:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-quality-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/quality/test_crap_score.py tests/quality/test_mutation_gate.py tests/quality/test_audit_containment.py --cov=scripts.quality.crap_score --cov=scripts.quality.mutation_gate --cov=scripts.audit_containment --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-quality-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j scripts/quality/crap_score.py scripts/quality/mutation_gate.py scripts/audit_containment.py > /tmp/osm-polygon-wikidata-quality-crap-complexity.json
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-quality-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/quality/test_crap_score.py tests/quality/test_mutation_gate.py tests/quality/test_mutation_equivalents.py tests/quality/test_audit_containment.py --cov=scripts.quality.crap_score --cov=scripts.quality.mutation_gate --cov=scripts.quality.mutation_equivalents --cov=scripts.audit_containment --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-quality-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j scripts/quality/crap_score.py scripts/quality/mutation_gate.py scripts/quality/mutation_equivalents.py scripts/audit_containment.py > /tmp/osm-polygon-wikidata-quality-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-quality-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-quality-crap-complexity.json --maximum 6
 
 # Enforce a CRAP score below 6 for deterministic centroid-file handling.
@@ -87,6 +87,13 @@ crap-job:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/grid5000/sentence_job.py > /tmp/osm-polygon-wikidata-job-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-job-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-job-crap-complexity.json --maximum 6
 
+# Enforce a CRAP score below 6 for the geographic NER pilot boundary.
+crap-ner:
+    @test -f scripts/prepare_geographic_ner_pilot.py || (echo 'Missing sampler source: scripts/prepare_geographic_ner_pilot.py' >&2; exit 1)
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-ner-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/ner/test_job.py tests/ner/test_otter.py tests/ner/test_pipeline.py tests/ner/test_publication.py tests/grid5000/test_ner_controller.py tests/ner/test_pilot.py --cov=osm_polygon_wikidata_only.ner --cov=osm_polygon_wikidata_only.grid5000.ner_controller --cov=scripts.grid5000_geographic_ner --cov=scripts.prepare_geographic_ner_pilot --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-ner-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/ner/job.py src/osm_polygon_wikidata_only/ner/otter.py src/osm_polygon_wikidata_only/ner/pipeline.py src/osm_polygon_wikidata_only/ner/publication.py src/osm_polygon_wikidata_only/grid5000/ner_controller.py scripts/grid5000_geographic_ner.py scripts/prepare_geographic_ner_pilot.py > /tmp/osm-polygon-wikidata-ner-crap-complexity.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-ner-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-ner-crap-complexity.json --maximum 6
+
 # Enforce a CRAP score below 6 for the read-only Hub inventory boundary.
 crap-inventory:
     MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-inventory-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-inventory-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_reconciliation.py --cov=osm_polygon_wikidata_only.hf.remote_inventory --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-inventory-crap-coverage.json
@@ -99,14 +106,15 @@ crap-atomic:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/io/atomic.py > /tmp/osm-polygon-wikidata-atomic-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-atomic-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-atomic-crap-complexity.json --maximum 6
 
-crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic
+crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic crap-ner
 
 # Run mutmut with two workers to keep peak Mac memory bounded. The explicit
 # source scope contains only pure deterministic helpers, and the gate refuses
-# any survivor, timeout, or untested mutant.
+# any unreviewed survivor, timeout, or untested mutant. Equivalent mutations
+# remain visible and require exact source-bound reviews.
 mutation:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mutmut run --max-children 2
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mutmut results --all=true | UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/mutation_gate.py
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mutmut results --all=true | UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python -m scripts.quality.mutation_gate --equivalents quality/mutation-equivalents.json
 
 smoke-test:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run osm-polygon-wikidata-only --help
@@ -125,9 +133,9 @@ qa-gauntlet: quality-gauntlet
 
 # Run opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic
+quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic crap-ner
 
-quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic mutation
+quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic crap-ner mutation
 
 lint:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff check src tests scripts

@@ -44,6 +44,28 @@ def test_ensure_all_killed_rejects_empty_reports() -> None:
         ensure_all_killed([])
 
 
+def test_reviewed_survivor_is_not_confused_with_a_killed_mutant() -> None:
+    results = [("one", "killed"), ("equivalent", "survived")]
+    ensure_all_killed(results, equivalents=frozenset({"equivalent"}))
+    assert results[1] == ("equivalent", "survived")
+
+
+@pytest.mark.parametrize(
+    "status", ["timeout", "no tests", "not checked", "suspicious", "skipped", "segfault"]
+)
+def test_equivalence_cannot_excuse_an_incomplete_check(status) -> None:
+    with pytest.raises(MutationGateError, match=f"equivalent: {status}"):
+        ensure_all_killed([("equivalent", status)], equivalents=frozenset({"equivalent"}))
+
+
+def test_review_does_not_allow_a_different_survivor() -> None:
+    with pytest.raises(MutationGateError, match="different: survived"):
+        ensure_all_killed(
+            [("equivalent", "survived"), ("different", "survived")],
+            equivalents=frozenset({"equivalent"}),
+        )
+
+
 def test_non_killed_extracts_only_actionable_mutants() -> None:
     assert _non_killed([("one", "killed"), ("two", "survived")]) == [("two", "survived")]
 

@@ -79,6 +79,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: tests that read a real PBF fixture",
@@ -116,7 +117,7 @@ line-ending = "lf"
 
 [tool.coverage.run]
 branch = true
-source = ["src/osm_polygon_wikidata_only"]
+source = ["src/osm_polygon_wikidata_only", "scripts"]
 
 [tool.coverage.report]
 show_missing = true
@@ -137,10 +138,19 @@ source_paths = [
     "src/osm_polygon_wikidata_only/hf/_upload_retry.py",
     "src/osm_polygon_wikidata_only/v2/sentence_logic.py",
     "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py",
+    "src/osm_polygon_wikidata_only/ner/job.py",
+    "src/osm_polygon_wikidata_only/ner/otter.py",
+    "src/osm_polygon_wikidata_only/ner/pipeline.py",
+    "src/osm_polygon_wikidata_only/ner/publication.py",
+    "src/osm_polygon_wikidata_only/grid5000/ner_controller.py",
+    "scripts/grid5000_geographic_ner.py",
+    "scripts/prepare_geographic_ner_pilot.py",
 ]
-also_copy = ["src/osm_polygon_wikidata_only"]
+also_copy = ["src/osm_polygon_wikidata_only", "requirements"]
 mutate_only_covered_lines = true
-max_stack_depth = 8
+# Generated dataclass frames have no filesystem path. Unlimited stack depth
+# also avoids omitting tests that reach validation through several adapters.
+max_stack_depth = -1
 pytest_add_cli_args = ["--no-cov", "-q"]
 pytest_add_cli_args_test_selection = [
     "tests/v2/test_deduplication.py",
@@ -160,4 +170,11 @@ pytest_add_cli_args_test_selection = [
     "tests/v2/test_sentence_logic.py",
     "tests/grid5000/test_sentence_protocol.py",
     "tests/grid5000/test_sentence_artifacts.py",
+    "tests/ner/test_job.py",
+    "tests/ner/test_otter.py",
+    "tests/ner/test_pipeline.py",
+    "tests/ner/test_publication.py",
+    "tests/grid5000/test_ner_controller.py",
+    "tests/ner/test_pilot.py",
+    "tests/ner/test_utf8_metadata.py",
 ]
