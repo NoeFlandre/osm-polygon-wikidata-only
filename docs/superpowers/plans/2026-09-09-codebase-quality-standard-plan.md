@@ -163,4 +163,3 @@ Review the final diff for duplicated scope declarations, new wrappers, broad exc
 
     git add .github/workflows/ci.yml .github/workflows/docs.yml Justfile pyproject.toml docs/development.md scripts/quality tests preprocessing
     git commit -m "refactor: strengthen repository quality boundaries"
-
