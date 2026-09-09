@@ -1,0 +1,20 @@
+# macOS-generated files
+.DS_Store
+
+# Project data
+/data/
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+.pytest_cache/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local Git worktrees
+/.worktrees/
