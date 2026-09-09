@@ -105,6 +105,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S", "B", "SIM"]
+"preprocessing/tests/test_article_deduplication.py" = ["S608"]  # Fixture SQL escapes paths
 "src/osm_polygon_wikidata_only/enrichment/*.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/coverage_map.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/uploader.py" = ["S310"]

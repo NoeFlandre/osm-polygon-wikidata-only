@@ -129,6 +129,18 @@ making a network request. The Docker runtime has its own `docker-help` recipe
 and CI container contract.
 `diff-review` runs `git diff --check` and a short branch status check.
 
+### Nested preprocessing package
+
+The repository contains a separate locked distribution under `preprocessing/`.
+Its tests and wheel build use `preprocessing/uv.lock`; the root Ruff and ty
+installations lint and type-check its source without merging the two package
+environments. Run the boundary gate before changing that package:
+
+    just preprocessing-check
+
+The gate runs frozen preprocessing tests, Ruff, ty, and a temporary wheel build.
+It does not read production data or publish artifacts.
+
 `just check` and the short alias `just qa-gauntlet` run the same deterministic
 completion gate locally:
 

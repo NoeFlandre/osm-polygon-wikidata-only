@@ -36,9 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-    duplicate_noun = (
-        "duplicate" if stats.duplicate_articles_removed == 1 else "duplicates"
-    )
+    duplicate_noun = "duplicate" if stats.duplicate_articles_removed == 1 else "duplicates"
     print(
         f"Articles: {stats.input_articles} -> {stats.output_articles} "
         f"({stats.duplicate_articles_removed} {duplicate_noun} removed)"

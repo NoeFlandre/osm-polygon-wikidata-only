@@ -24,6 +24,16 @@ def test_package_declares_inline_typing_support() -> None:
     assert marker.is_file()
 
 
+def test_hatch_force_includes_reference_existing_public_resources() -> None:
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    force_include = config["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+
+    for source, target in force_include.items():
+        assert (root / source).is_file(), source
+        assert target.startswith("osm_polygon_wikidata_only/"), target
+
+
 def test_project_uses_ty_as_its_only_static_type_checker() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))

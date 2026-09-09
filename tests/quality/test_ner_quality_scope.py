@@ -10,37 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+from scripts.quality.scope_manifest import NER_SCOPE, validate_scope
+
 ROOT = Path(__file__).resolve().parents[2]
 
-NER_MUTATION_SOURCES = frozenset(
-    {
-        "src/osm_polygon_wikidata_only/ner/job.py",
-        "src/osm_polygon_wikidata_only/ner/otter.py",
-        "src/osm_polygon_wikidata_only/ner/pipeline.py",
-        "src/osm_polygon_wikidata_only/ner/publication.py",
-        "src/osm_polygon_wikidata_only/grid5000/ner_controller.py",
-        "scripts/grid5000_geographic_ner.py",
-    }
-)
-NER_MUTATION_TESTS = frozenset(
-    {
-        "tests/ner/test_job.py",
-        "tests/ner/test_otter.py",
-        "tests/ner/test_pipeline.py",
-        "tests/ner/test_publication.py",
-        "tests/grid5000/test_ner_controller.py",
-    }
-)
-PILOT_SAMPLER_SOURCES = frozenset(
-    {
-        "scripts/prepare_geographic_ner_pilot.py",
-    }
-)
-PILOT_SAMPLER_TESTS = frozenset(
-    {
-        "tests/ner/test_pilot.py",
-    }
-)
 LEGACY_MUTATION_SOURCES = frozenset(
     {
         "src/osm_polygon_wikidata_only/v2/deduplication.py",
@@ -89,8 +62,34 @@ def test_mutation_scope_keeps_legacy_paths_and_covers_ner() -> None:
     source_paths = set(mutmut["source_paths"])
     test_selection = set(mutmut["pytest_add_cli_args_test_selection"])
     assert LEGACY_MUTATION_SOURCES <= source_paths
-    assert NER_MUTATION_SOURCES | PILOT_SAMPLER_SOURCES <= source_paths
-    assert NER_MUTATION_TESTS | PILOT_SAMPLER_TESTS <= test_selection
+    assert set(NER_SCOPE.source_paths) <= source_paths
+    assert set(NER_SCOPE.test_paths) <= test_selection
+
+
+def test_ner_quality_scope_paths_exist() -> None:
+    validate_scope(NER_SCOPE, ROOT)
+
+
+def test_mutation_config_matches_the_manifest_for_ner_paths() -> None:
+    mutation = _pyproject()["tool"]["mutmut"]
+    ner_sources = {
+        path
+        for path in mutation["source_paths"]
+        if path.startswith("src/osm_polygon_wikidata_only/ner/")
+        or path
+        in {
+            "src/osm_polygon_wikidata_only/grid5000/ner_controller.py",
+            "scripts/grid5000_geographic_ner.py",
+            "scripts/prepare_geographic_ner_pilot.py",
+        }
+    }
+    ner_tests = {
+        path
+        for path in mutation["pytest_add_cli_args_test_selection"]
+        if path.startswith("tests/ner/") or path == "tests/grid5000/test_ner_controller.py"
+    }
+    assert ner_sources == set(NER_SCOPE.source_paths)
+    assert ner_tests == set(NER_SCOPE.test_paths)
 
 
 def test_mutation_statistics_accept_generated_dataclass_frames(monkeypatch) -> None:
@@ -159,14 +158,10 @@ def test_quality_tests_collect_without_a_shell_pythonpath() -> None:
 def test_ner_crap_scope_is_explicit_and_in_every_strength_aggregate() -> None:
     text = _justfile()
     recipe = _recipe(text, "crap-ner")
-    paths = (
-        *NER_MUTATION_SOURCES,
-        *NER_MUTATION_TESTS,
-        *PILOT_SAMPLER_SOURCES,
-        *PILOT_SAMPLER_TESTS,
-    )
-    for path in paths:
-        assert path in recipe
+    assert "--scope ner --kind source" in recipe
+    assert "--scope ner --kind test" in recipe
+    for path in (*NER_SCOPE.source_paths[:-1], *NER_SCOPE.test_paths):
+        assert path not in recipe
     assert "--maximum 6" in recipe
     assert re.search(r"^crap-all:.*\bcrap-ner\b", text, re.MULTILINE)
     assert re.search(r"^quality-strength:.*\bcrap-ner\b", text, re.MULTILINE)

@@ -1,11 +1,9 @@
 from shutil import copyfile
 
 import pytest
-
 from osm_polygon_wikidata_only_preprocessing.deduplication.pipeline import (
     deduplicate_region,
 )
-
 from test_article_deduplication import _write_source_files
 
 

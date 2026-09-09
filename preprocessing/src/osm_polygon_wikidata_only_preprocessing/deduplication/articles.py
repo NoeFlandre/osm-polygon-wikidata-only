@@ -21,12 +21,17 @@ class DeduplicationStats:
     output_links: int
 
 
-def _sql_path(path: Path) -> str:
-    return str(path).replace("'", "''")
-
-
 def _sql_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _execute_one(connection: duckdb.DuckDBPyConnection, query: str) -> tuple[int, ...]:
+    """Execute an aggregate query that must return exactly one row."""
+
+    row = connection.execute(query).fetchone()
+    if row is None:
+        raise RuntimeError("DuckDB aggregate query returned no row")
+    return tuple(int(value) for value in row)
 
 
 def _require_new_outputs(paths: tuple[Path, ...]) -> None:
@@ -66,18 +71,19 @@ def deduplicate_article_files(
 
     connection = duckdb.connect()
     try:
-        connection.execute(
-            f"""
+        # The SQL expression is static; the source path remains a bound parameter.
+        source_articles_query = f"""
             CREATE TEMP TABLE source_articles AS
             SELECT *, {CANONICAL_ARTICLE_ID_SQL} AS canonical_id
-            FROM read_parquet('{_sql_path(articles_path)}')
-            """
-        )
+            FROM read_parquet(?)
+            """  # noqa: S608
+        connection.execute(source_articles_query, [str(articles_path)])
         connection.execute(
-            f"""
-            CREATE TEMP TABLE source_links AS
-            SELECT * FROM read_parquet('{_sql_path(links_path)}')
             """
+            CREATE TEMP TABLE source_links AS
+            SELECT * FROM read_parquet(?)
+            """,
+            [str(links_path)],
         )
         source_columns = [
             row[0] for row in connection.execute("DESCRIBE source_articles").fetchall()
@@ -88,19 +94,17 @@ def deduplicate_article_files(
             if column == "wikidata" or column.startswith("wikidata_")
         ]
         canonical_exclusions = ", ".join(
-            _sql_identifier(column)
-            for column in ("article_id", *wikidata_columns, "canonical_id")
+            _sql_identifier(column) for column in ("article_id", *wikidata_columns, "canonical_id")
         )
-        entity_projection = ", ".join(
-            _sql_identifier(column) for column in wikidata_columns
-        )
+        entity_projection = ", ".join(_sql_identifier(column) for column in wikidata_columns)
 
         (
             null_article_ids,
             null_identity_components,
             null_content_hashes,
             invalid_sites,
-        ) = connection.execute(
+        ) = _execute_one(
+            connection,
             """
             SELECT
                 count(*) FILTER (WHERE article_id IS NULL),
@@ -110,8 +114,8 @@ def deduplicate_article_files(
                 count(*) FILTER (WHERE content_hash IS NULL),
                 count(*) FILTER (WHERE contains(site, ':'))
             FROM source_articles
-            """
-        ).fetchone()
+            """,
+        )
         if null_article_ids:
             raise DeduplicationError("article_id must not be null")
         if null_identity_components:
@@ -123,21 +127,23 @@ def deduplicate_article_files(
         if invalid_sites:
             raise DeduplicationError("site must not contain ':'")
 
-        duplicate_ids = connection.execute(
+        duplicate_ids = _execute_one(
+            connection,
             """
             SELECT count(*) - count(DISTINCT article_id)
             FROM source_articles
-            """
-        ).fetchone()[0]
+            """,
+        )[0]
         if duplicate_ids:
             raise DeduplicationError("Input article_id values must be unique")
 
-        duplicate_links = connection.execute(
+        duplicate_links = _execute_one(
+            connection,
             """
             SELECT count(*) - count(DISTINCT (polygon_id, article_id))
             FROM source_links
-            """
-        ).fetchone()[0]
+            """,
+        )[0]
         if duplicate_links:
             raise DeduplicationError(
                 "Input polygon links must be unique by polygon_id and article_id"
@@ -158,22 +164,23 @@ def deduplicate_article_files(
                 f"Duplicate article revisions have conflicting content: {identifiers}"
             )
 
-        orphan_links = connection.execute(
+        orphan_links = _execute_one(
+            connection,
             """
             SELECT count(*)
             FROM source_links AS links
             LEFT JOIN source_articles AS articles USING (article_id)
             WHERE articles.article_id IS NULL
-            """
-        ).fetchone()[0]
+            """,
+        )[0]
         if orphan_links:
             noun = "reference" if orphan_links == 1 else "references"
             raise DeduplicationError(
                 f"Input polygon links contain {orphan_links} orphan article {noun}"
             )
 
-        connection.execute(
-            f"""
+        # Schema-derived identifiers are escaped before interpolation.
+        canonical_articles_query = f"""
             CREATE TEMP VIEW canonical_articles AS
             SELECT
                 canonical_id AS article_id,
@@ -182,18 +189,18 @@ def deduplicate_article_files(
             QUALIFY row_number() OVER (
                 PARTITION BY canonical_id ORDER BY article_id
             ) = 1
-            """
-        )
-        connection.execute(
-            f"""
+            """  # noqa: S608
+        connection.execute(canonical_articles_query)
+        # Schema-derived identifiers are escaped before interpolation.
+        article_entities_query = f"""
             CREATE TEMP VIEW article_entities AS
             SELECT
                 canonical_id AS article_id,
                 article_id AS original_article_id,
                 {entity_projection}
             FROM source_articles
-            """
-        )
+            """  # noqa: S608
+        connection.execute(article_entities_query)
         connection.execute(
             """
             CREATE TEMP VIEW remapped_links AS
@@ -212,7 +219,8 @@ def deduplicate_article_files(
             entity_mappings,
             input_links,
             output_links,
-        ) = connection.execute(
+        ) = _execute_one(
+            connection,
             """
             SELECT
                 (SELECT count(*) FROM source_articles),
@@ -220,38 +228,41 @@ def deduplicate_article_files(
                 (SELECT count(*) FROM article_entities),
                 (SELECT count(*) FROM source_links),
                 (SELECT count(*) FROM remapped_links)
-            """
-        ).fetchone()
+            """,
+        )
 
         for path in output_paths:
             path.parent.mkdir(parents=True, exist_ok=True)
 
         connection.execute(
-            f"""
-            COPY (SELECT * FROM canonical_articles ORDER BY article_id)
-            TO '{_sql_path(temporary_paths[0])}'
-            (FORMAT PARQUET, COMPRESSION ZSTD)
             """
+            COPY (SELECT * FROM canonical_articles ORDER BY article_id)
+            TO ?
+            (FORMAT PARQUET, COMPRESSION ZSTD)
+            """,
+            [str(temporary_paths[0])],
         )
         connection.execute(
-            f"""
+            """
             COPY (
                 SELECT * FROM article_entities
                 ORDER BY article_id, original_article_id
             )
-            TO '{_sql_path(temporary_paths[1])}'
+            TO ?
             (FORMAT PARQUET, COMPRESSION ZSTD)
-            """
+            """,
+            [str(temporary_paths[1])],
         )
         connection.execute(
-            f"""
+            """
             COPY (
                 SELECT * FROM remapped_links
                 ORDER BY polygon_id, article_id, wikidata
             )
-            TO '{_sql_path(temporary_paths[2])}'
+            TO ?
             (FORMAT PARQUET, COMPRESSION ZSTD)
-            """
+            """,
+            [str(temporary_paths[2])],
         )
     except Exception:
         _cleanup_outputs(temporary_paths)
@@ -261,9 +272,7 @@ def deduplicate_article_files(
 
     published_paths: list[Path] = []
     try:
-        for temporary_path, output_path in zip(
-            temporary_paths, output_paths, strict=True
-        ):
+        for temporary_path, output_path in zip(temporary_paths, output_paths, strict=True):
             output_path.hardlink_to(temporary_path)
             published_paths.append(output_path)
         _cleanup_outputs(temporary_paths)

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.assemble_docs_site import PRESENTATION_FILES
+
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
@@ -77,6 +79,7 @@ def test_pages_workflow_builds_strict_site_and_deploys_artifact() -> None:
     deploy = workflow["jobs"]["deploy"]
     build_run = "\n".join(step.get("run", "") for step in build["steps"] if isinstance(step, dict))
     assert "mkdocs build --strict --site-dir site" in build_run
+    assert "uv run python scripts/assemble_docs_site.py --site-dir site" in build_run
     assert any(step.get("uses") == "actions/upload-pages-artifact@v3" for step in build["steps"])
     assert build["permissions"] == {"contents": "read", "pages": "read"}
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
@@ -193,14 +196,9 @@ def test_architecture_documents_geographic_coverage_generation() -> None:
 
 def test_pages_workflow_publishes_dataset_presentation() -> None:
     workflow = (REPOSITORY / ".github/workflows/docs.yml").read_text(encoding="utf-8")
-    for path in (
-        "presentations/dataset.html",
-        "presentations/codebase.html",
-        "presentations/assets/coverage_map.png",
-        "presentations/assets/text_density.png",
-        "presentations/assets/text_presence.png",
-    ):
-        assert path in workflow
+    assert "scripts/assemble_docs_site.py" in workflow
+    assert "cp presentations/" not in workflow
+    for path in PRESENTATION_FILES:
         assert (REPOSITORY / path).is_file(), f"missing tracked Pages source {path}"
 
 

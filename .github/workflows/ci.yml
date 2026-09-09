@@ -25,6 +25,20 @@ jobs:
       - name: Run the deterministic QA gauntlet
         run: just quality-gauntlet
 
+  preprocessing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: taiki-e/install-action@just
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Run preprocessing quality checks
+        run: just preprocessing-check
+
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 20

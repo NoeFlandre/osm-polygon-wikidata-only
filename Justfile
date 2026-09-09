@@ -5,6 +5,14 @@ UV_CACHE_DIR := "/tmp/osm-polygon-wikidata-only-uv"
 default:
     @just --list
 
+preprocessing-check:
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv sync --frozen --directory preprocessing
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --directory preprocessing --frozen pytest -q
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ruff check preprocessing/src preprocessing/tests
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ruff format --check preprocessing/src preprocessing/tests
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ty check --project preprocessing --python preprocessing/.venv preprocessing/src
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv build --directory preprocessing
+
 sync:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv sync --frozen
 
@@ -90,8 +98,8 @@ crap-job:
 # Enforce a CRAP score below 6 for the geographic NER pilot boundary.
 crap-ner:
     @test -f scripts/prepare_geographic_ner_pilot.py || (echo 'Missing sampler source: scripts/prepare_geographic_ner_pilot.py' >&2; exit 1)
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-ner-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/ner/test_job.py tests/ner/test_otter.py tests/ner/test_pipeline.py tests/ner/test_publication.py tests/grid5000/test_ner_controller.py tests/ner/test_pilot.py --cov=osm_polygon_wikidata_only.ner --cov=osm_polygon_wikidata_only.grid5000.ner_controller --cov=scripts.grid5000_geographic_ner --cov=scripts.prepare_geographic_ner_pilot --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-ner-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/ner/job.py src/osm_polygon_wikidata_only/ner/otter.py src/osm_polygon_wikidata_only/ner/pipeline.py src/osm_polygon_wikidata_only/ner/publication.py src/osm_polygon_wikidata_only/grid5000/ner_controller.py scripts/grid5000_geographic_ner.py scripts/prepare_geographic_ner_pilot.py > /tmp/osm-polygon-wikidata-ner-crap-complexity.json
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-ner-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q $(UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --no-project python -m scripts.quality.scope_manifest --scope ner --kind test) --cov=osm_polygon_wikidata_only.ner --cov=osm_polygon_wikidata_only.grid5000.ner_controller --cov=scripts.grid5000_geographic_ner --cov=scripts.prepare_geographic_ner_pilot --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-ner-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j $(UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --no-project python -m scripts.quality.scope_manifest --scope ner --kind source) > /tmp/osm-polygon-wikidata-ner-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-ner-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-ner-crap-complexity.json --maximum 6
 
 # Enforce a CRAP score below 6 for the read-only Hub inventory boundary.
@@ -157,6 +165,7 @@ build:
 
 docs:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mkdocs build --strict --site-dir /tmp/osm-polygon-wikidata-only-site
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/assemble_docs_site.py --site-dir /tmp/osm-polygon-wikidata-only-site
 
 trackio:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run osm-polygon-wikidata-only-trackio

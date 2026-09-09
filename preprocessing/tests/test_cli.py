@@ -4,7 +4,6 @@ from osm_polygon_wikidata_only_preprocessing.cli import main
 from osm_polygon_wikidata_only_preprocessing.deduplication.articles import (
     DeduplicationError,
 )
-
 from test_article_deduplication import _write_source_files
 
 

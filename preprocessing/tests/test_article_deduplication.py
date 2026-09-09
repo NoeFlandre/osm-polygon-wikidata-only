@@ -2,7 +2,6 @@ from pathlib import Path
 
 import duckdb
 import pytest
-
 from osm_polygon_wikidata_only_preprocessing.deduplication import (
     articles as articles_module,
 )
@@ -47,9 +46,7 @@ def _write_source_files(tmp_path: Path) -> tuple[Path, Path]:
         ) AS source(polygon_id, article_id, wikidata)
         """
     )
-    connection.execute(
-        f"COPY articles TO '{_sql_path(articles_path)}' (FORMAT PARQUET)"
-    )
+    connection.execute(f"COPY articles TO '{_sql_path(articles_path)}' (FORMAT PARQUET)")
     connection.execute(f"COPY links TO '{_sql_path(links_path)}' (FORMAT PARQUET)")
     connection.close()
     return articles_path, links_path
@@ -71,8 +68,7 @@ def test_deduplicates_articles_and_preserves_entity_and_polygon_links(tmp_path):
 
     connection = duckdb.connect()
     articles = connection.execute(
-        "SELECT article_id, site, page_id, revision_id FROM read_parquet(?) "
-        "ORDER BY article_id",
+        "SELECT article_id, site, page_id, revision_id FROM read_parquet(?) ORDER BY article_id",
         [str(output_articles)],
     ).fetchall()
     entities = connection.execute(
@@ -81,8 +77,7 @@ def test_deduplicates_articles_and_preserves_entity_and_polygon_links(tmp_path):
         [str(output_entities)],
     ).fetchall()
     links = connection.execute(
-        "SELECT polygon_id, article_id, wikidata FROM read_parquet(?) "
-        "ORDER BY polygon_id",
+        "SELECT polygon_id, article_id, wikidata FROM read_parquet(?) ORDER BY polygon_id",
         [str(output_links)],
     ).fetchall()
     article_columns = {
@@ -204,9 +199,7 @@ def test_rejects_duplicate_source_article_ids(tmp_path):
     )
     connection.close()
 
-    with pytest.raises(
-        DeduplicationError, match="Input article_id values must be unique"
-    ):
+    with pytest.raises(DeduplicationError, match="Input article_id values must be unique"):
         deduplicate_article_files(
             duplicated_articles,
             links_path,
@@ -372,3 +365,19 @@ def test_does_not_overwrite_output_created_after_preflight(tmp_path, monkeypatch
 
     assert outputs[0].read_bytes() == b"concurrent-output"
     assert all(not path.exists() for path in outputs[1:])
+
+
+def test_deduplication_accepts_paths_with_apostrophes(tmp_path):
+    source_root = tmp_path / "operator's data"
+    source_root.mkdir()
+    articles_path, links_path = _write_source_files(source_root)
+
+    stats = deduplicate_article_files(
+        articles_path,
+        links_path,
+        source_root / "processed-articles.parquet",
+        source_root / "article-entities.parquet",
+        source_root / "processed-links.parquet",
+    )
+
+    assert stats.output_articles == 2
