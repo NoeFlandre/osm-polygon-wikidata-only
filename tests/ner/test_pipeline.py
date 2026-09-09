@@ -115,6 +115,15 @@ def test_receipt_persists_the_contract_payload(api, tmp_path):
     assert receipt["contract"]["languages"] == ["en"]
 
 
+def test_contract_rejects_the_post_pilot_wikineural_model(api):
+    with raises_exactly(PINNED_MODEL):
+        api.Contract(
+            languages=("en",),
+            model_id="Babelscape/wikineural-multilingual-ner",
+            model_revision="89ab4613336445bde46866ddc825561fe69e6e6c",
+        )
+
+
 def test_single_row_batches_are_valid(api, tmp_path):
     receipt = api.run_shard(
         source(tmp_path, ("Paris",)),

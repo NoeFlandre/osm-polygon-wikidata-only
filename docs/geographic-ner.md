@@ -8,6 +8,8 @@ source text.
 The pilot uses `whoisjones/otter-cross-mmbert`, pinned at
 `8729188e4f5fc7948d0e9dfd7d7e6d36c2e7270d`, with the single label
 `named geographic location` and an uncalibrated score threshold of `0.5`.
+The codebase intentionally contains only this pilot-era model path; no
+secondary-model or silver-validation path is included.
 Long sentences use overlapping token windows; character offsets always refer
 to the unchanged original sentence. A place mention is not evidence that the
 place is the polygon linked to its document.
@@ -34,60 +36,24 @@ reported by the worker's exit status. `validation_status` is
 The pilot must not report precision, recall, or validated-language coverage
 until a human-labelled geographic-name gold set exists.
 
-## Automatic silver validation
+## Pilot execution record
 
-When a human-labelled set is unavailable, an additive silver check compares the
-Otter output with a second NER model and deterministic references. It counts
-primary spans matching successful, non-empty document titles, labels, or
-aliases and linked OSM polygon names; separately counts obvious artifacts such
-as QIDs, URLs, and numeric strings; and reports second-model agreement,
-per-language and per-project counts, unique linked documents, and
-unique/entity-bearing OSM polygons. These are quality proxies, not precision or
-recall.
+The pilot was executed end to end on Grid5000 on 8 September 2026 using the
+single pilot-era Otter pipeline:
 
-The cross-check uses the WikiNEuRal model
-`Babelscape/wikineural-multilingual-ner` at pinned revision
-`89ab4613336445bde46866ddc825561fe69e6e6c`. Its contract covers the six
-languages overlapping this pilot (`de`, `en`, `es`, `fr`, `pt`, `ru`); the other
-pilot languages remain explicitly outside the cross-check contract.
+- 1,000 input sentence rows from 507 documents: 500 Wikipedia and 500
+  Wikivoyage rows, sampled across `ar`, `de`, `en`, `es`, `fr`, `hy`, `ja`,
+  `pt`, `ru`, and `zh`;
+- Rennes `besteffort`, one NVIDIA A40, OAR job 4096718, completed in about
+  48 seconds; and
+- eight checksummed output batches (seven of 128 rows and one of 104 rows),
+  with `receipt.json` reporting `completed` and `validation_status` set to
+  `pilot_unvalidated`.
 
-Prepare a cross-check from the selected primary pilot, stage it, and run it
-through the same resumable short-job controller:
-
-```sh
-export NER_CROSSCHECK_DIR="$NER_DATA_ROOT/geographic-ner/crosscheck-20260908"
-export NER_CROSSCHECK_STAGING="$NER_DATA_ROOT/geographic-ner/staging/geographic-ner-crosscheck-20260908"
-export NER_CROSSCHECK_RUN_DIR="$NER_DATA_ROOT/geographic-ner/runs/geographic-ner-crosscheck-20260908"
-
-.venv/bin/python scripts/prepare_geographic_ner_crosscheck.py \
-  --pilot-dir "$NER_PILOT_DIR" \
-  --output-dir "$NER_CROSSCHECK_DIR"
-.venv/bin/python scripts/grid5000_geographic_ner.py \
-  --staging-dir "$NER_CROSSCHECK_STAGING" \
-  --source "$NER_CROSSCHECK_DIR/input.parquet" \
-  --contract "$NER_CROSSCHECK_DIR/contract.json" \
-  --source-root "$PWD" \
-  --requirements-lock "$PWD/requirements/geographic-ner-gpu.txt" \
-  --prepare-only
-.venv/bin/python scripts/grid5000_geographic_ner.py \
-  --staging-dir "$NER_CROSSCHECK_STAGING" \
-  --run-dir "$NER_CROSSCHECK_RUN_DIR" \
-  --run-id geographic-ner-crosscheck-20260908 \
-  --site rennes --queue besteffort --gpu-model A40 --period day \
-  --repo-id "$NER_REPO_ID"
-```
-
-Evaluate the completed primary and cross-check outputs locally; this writes no
-Hub files:
-
-```sh
-.venv/bin/python scripts/evaluate_geographic_ner_pilot.py \
-  --data-root "$NER_DATA_ROOT" \
-  --pilot-dir "$NER_PILOT_DIR" \
-  --primary-output "$NER_RUN_DIR/output" \
-  --secondary-output "$NER_CROSSCHECK_RUN_DIR/output" \
-  --output "$NER_CROSSCHECK_RUN_DIR/silver-validation.json"
-```
+The recorded Hugging Face target is
+`NoeFlandre/osm-polygon-wikidata-and-wikipedia`, under the additive namespace
+`geographic_ner/geographic-ner-pilot-20260908/`. Publication must preserve the
+existing dataset card and README. The full dataset has not been run through NER.
 
 Every run binds its contract, model revision, source SHA-256, and batch size in
 `receipt.json`. Completed batches are separate `batch-XXXXXX.parquet` sidecars,

@@ -24,9 +24,6 @@ from osm_polygon_wikidata_only.io.run_lock import exclusive_run_lock
 
 MODEL_ID = "whoisjones/otter-cross-mmbert"
 MODEL_REVISION = "8729188e4f5fc7948d0e9dfd7d7e6d36c2e7270d"
-WIKINEURAL_MODEL_ID = "Babelscape/wikineural-multilingual-ner"
-WIKINEURAL_MODEL_REVISION = "89ab4613336445bde46866ddc825561fe69e6e6c"
-WIKINEURAL_LANGUAGES = ("de", "en", "es", "fr", "pt", "ru")
 LABEL = "named geographic location"
 INPUT_COLUMNS = ("sentence_id", "document_id", "project", "language", "text", "segmentation_status")
 _IDENTITY_COLUMNS = INPUT_COLUMNS[:4]
@@ -75,10 +72,7 @@ class Contract:
     def __post_init__(self) -> None:
         _validate_languages(self.languages)
         _validate_threshold(self.threshold)
-        if (self.model_id, self.model_revision, self.label) not in {
-            (MODEL_ID, MODEL_REVISION, LABEL),
-            (WIKINEURAL_MODEL_ID, WIKINEURAL_MODEL_REVISION, LABEL),
-        }:
+        if (self.model_id, self.model_revision, self.label) != (MODEL_ID, MODEL_REVISION, LABEL):
             raise ValueError("Only the pinned geographic NER model and label are supported")
         _validate_status(self.validation_status)
 
@@ -98,7 +92,7 @@ def _validate_threshold(threshold: object) -> None:
 
 
 def _validate_status(status: str) -> None:
-    if status not in ("pilot_unvalidated", "silver_unvalidated", "validated"):
+    if status not in ("pilot_unvalidated", "validated"):
         raise ValueError("Unknown language validation status")
 
 

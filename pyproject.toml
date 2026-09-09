@@ -142,13 +142,9 @@ source_paths = [
     "src/osm_polygon_wikidata_only/ner/otter.py",
     "src/osm_polygon_wikidata_only/ner/pipeline.py",
     "src/osm_polygon_wikidata_only/ner/publication.py",
-    "src/osm_polygon_wikidata_only/ner/silver_validation.py",
-    "src/osm_polygon_wikidata_only/ner/wikineural.py",
     "src/osm_polygon_wikidata_only/grid5000/ner_controller.py",
-    "scripts/evaluate_geographic_ner_pilot.py",
     "scripts/grid5000_geographic_ner.py",
     "scripts/prepare_geographic_ner_pilot.py",
-    "scripts/prepare_geographic_ner_crosscheck.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only", "requirements"]
 mutate_only_covered_lines = true
@@ -178,11 +174,7 @@ pytest_add_cli_args_test_selection = [
     "tests/ner/test_otter.py",
     "tests/ner/test_pipeline.py",
     "tests/ner/test_publication.py",
-    "tests/ner/test_silver_evaluator.py",
-    "tests/ner/test_silver_validation.py",
-    "tests/ner/test_wikineural.py",
     "tests/grid5000/test_ner_controller.py",
     "tests/ner/test_pilot.py",
-    "tests/ner/test_crosscheck_pilot.py",
     "tests/ner/test_utf8_metadata.py",
 ]
