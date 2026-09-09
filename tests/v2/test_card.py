@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -16,6 +17,7 @@ from osm_polygon_wikidata_only.v2.card import (
     write_v2_card,
 )
 from osm_polygon_wikidata_only.v2.schema import wikipedia_document_v2_schema
+from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
 
@@ -56,6 +58,269 @@ def test_card_documents_exact_sentence_split_scope_when_sidecars_exist(tmp_path:
     assert "never passed to SaT" in card_text
     assert "wikipedia/sentences/<stem>.parquet" in card_text
     assert "wikipedia_sentences" in card_text
+
+
+def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path) -> None:
+    write_v2_region(
+        tmp_path,
+        "region-latest",
+        polygons=[
+            {"polygon_id": "p1", "text_available": True},
+            {"polygon_id": "p2", "text_available": True},
+            {"polygon_id": "p3", "text_available": False},
+        ],
+        documents=[
+            {
+                "document_id": "doc-en",
+                "language": "en",
+                "full_text": "English body",
+                "fetch_status": "ok",
+                "article_length_words": 1,
+            },
+            {
+                "document_id": "doc-xx",
+                "language": "xx",
+                "full_text": "Other body",
+                "fetch_status": "ok",
+                "article_length_words": 1,
+            },
+        ],
+        links=[
+            {
+                "polygon_id": "p1",
+                "document_id": "doc-en",
+                "project": "wikipedia",
+                "osm_type": "way",
+                "osm_id": 1,
+            },
+            {
+                "polygon_id": "p2",
+                "document_id": "doc-xx",
+                "project": "wikipedia",
+                "osm_type": "way",
+                "osm_id": 2,
+            },
+            {"polygon_id": "p3", "document_id": "doc-voy", "project": "wikivoyage"},
+        ],
+    )
+
+    def sentence_row(document_id: str, language: str, status: str) -> dict[str, object]:
+        row = {field.name: None for field in sentence_schema()}
+        row.update(
+            {
+                "document_id": document_id,
+                "project": "wikipedia",
+                "language": language,
+                "segmentation_status": status,
+            }
+        )
+        return row
+
+    sentence_path = tmp_path / "wikipedia/sentences/region-latest.parquet"
+    sentence_path.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                sentence_row("doc-en", "en", "split"),
+                sentence_row("doc-en", "en", "split"),
+                sentence_row("doc-xx", "xx", "unsupported_language"),
+            ],
+            schema=sentence_schema(),
+        ),
+        sentence_path,
+    )
+    voyage_path = tmp_path / "wikivoyage/sentences/region-latest.parquet"
+    voyage_path.parent.mkdir(parents=True)
+    voyage_row = sentence_row("doc-voy", "en", "split")
+    voyage_row["project"] = "wikivoyage"
+    pq.write_table(
+        pa.Table.from_pylist([voyage_row], schema=sentence_schema()),
+        voyage_path,
+    )
+    manifest = {
+        "contract_version": "v2-sentence-splitting-v1",
+        "segmenter": "sat-3l-sm",
+        "model_id": "segment-any-text/sat-3l-sm",
+        "model_revision": "revision",
+        "segmenter_version": "2.2.1",
+        "supported_languages": ["en"],
+        "unsupported_language_policy": "one unsplit row; never passed to SaT",
+        "unsupported_languages": ["xx"],
+        "regions": [
+            {
+                "stem": "region-latest",
+                "project": "wikipedia",
+                "sections": 2,
+                "split_sections": 1,
+                "unsplit_sections": 1,
+                "sentence_rows": 3,
+                "supported_languages": ["en"],
+                "unsupported_languages": ["xx"],
+            },
+            {
+                "stem": "region-latest",
+                "project": "wikivoyage",
+                "sections": 1,
+                "split_sections": 1,
+                "unsplit_sections": 0,
+                "sentence_rows": 1,
+                "supported_languages": ["en"],
+                "unsupported_languages": [],
+            },
+        ],
+    }
+    (tmp_path / "manifests/sentence_splitting.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    stats = compute_v2_card_stats(tmp_path)
+    assert stats.sentence_stats is not None
+    assert stats.sentence_stats.total_rows == 4
+    assert stats.sentence_stats.split_rows == 3
+    assert stats.sentence_stats.unsupported_rows == 1
+    assert stats.sentence_stats.polygon_count == 3
+    assert stats.non_empty_text_polygons == 2
+
+    card_text = render_v2_card(tmp_path, stats=stats)
+    assert "**Polygons with non-empty Wikipedia or Wikivoyage text:** 2" in card_text
+    assert (
+        "73,322,752 split sentence rows" not in card_text
+        and (
+            "Data-derived totals: 3 split sentence rows plus "
+            "1 unsupported-language rows retained unsplit = 4 total rows; "
+            "1 supported language codes; 3 polygons linked to sentence-sidecar "
+            "documents across 1 Wikipedia and 1 Wikivoyage sidecars."
+        )
+        in card_text
+    )
+
+
+def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity(
+    tmp_path: Path,
+) -> None:
+    write_v2_region(
+        tmp_path,
+        "region-latest",
+        polygons=[
+            {
+                "polygon_id": "north:way:101",
+                "osm_type": "way",
+                "osm_id": 101,
+                "text_available": True,
+            },
+            {
+                "polygon_id": "south:way:101",
+                "osm_type": "way",
+                "osm_id": 101,
+                "text_available": True,
+            },
+            {
+                "polygon_id": "region:relation:202",
+                "osm_type": "relation",
+                "osm_id": 202,
+                "text_available": True,
+            },
+            {
+                "polygon_id": "region:relation:303",
+                "osm_type": "relation",
+                "osm_id": 303,
+                "text_available": True,
+            },
+            {
+                "polygon_id": "region:relation:404",
+                "osm_type": "relation",
+                "osm_id": 404,
+                "text_available": True,
+            },
+        ],
+        documents=[
+            {
+                "document_id": "wiki-ok",
+                "project": "wikipedia",
+                "full_text": "  Wikipedia body  ",
+                "fetch_status": "ok",
+                "article_length_words": 2,
+            },
+            {
+                "document_id": "wiki-failed",
+                "project": "wikipedia",
+                "full_text": "Fetched-looking body",
+                "fetch_status": "http_error",
+                "article_length_words": 2,
+            },
+            {
+                "document_id": "wiki-blank",
+                "project": "wikipedia",
+                "full_text": " \t ",
+                "fetch_status": "ok",
+                "article_length_words": 0,
+            },
+        ],
+        links=[
+            {
+                "polygon_id": "north:way:101",
+                "document_id": "wiki-ok",
+                "project": "wikipedia",
+                "osm_type": "way",
+                "osm_id": 101,
+            },
+            {
+                "polygon_id": "south:way:101",
+                "document_id": "wiki-ok",
+                "project": "wikipedia",
+                "osm_type": "way",
+                "osm_id": 101,
+            },
+            {
+                "polygon_id": "region:relation:202",
+                "document_id": "wiki-failed",
+                "project": "wikipedia",
+                "osm_type": "relation",
+                "osm_id": 202,
+            },
+            {
+                "polygon_id": "region:relation:303",
+                "document_id": "wiki-blank",
+                "project": "wikipedia",
+                "osm_type": "relation",
+                "osm_id": 303,
+            },
+            {
+                "polygon_id": "region:relation:404",
+                "document_id": "voyage-ok",
+                "project": "wikivoyage",
+                "osm_type": "relation",
+                "osm_id": 404,
+            },
+        ],
+    )
+
+    voyage_path = tmp_path / "wikivoyage/documents/region-latest.parquet"
+    voyage_path.parent.mkdir(parents=True)
+    voyage_row = {field.name: None for field in wikipedia_document_v2_schema()}
+    voyage_row.update(
+        {
+            "document_id": "voyage-ok",
+            "project": "wikivoyage",
+            "full_text": "  Wikivoyage body  ",
+            "fetch_status": "ok",
+            "article_length_words": 2,
+        }
+    )
+    pq.write_table(
+        pa.Table.from_pylist([voyage_row], schema=wikipedia_document_v2_schema()),
+        voyage_path,
+    )
+
+    stats = compute_v2_card_stats(tmp_path)
+
+    assert stats.non_empty_text_polygons == 2
+    card_text = render_v2_card(tmp_path, stats=stats)
+    assert "**Polygons with non-empty Wikipedia or Wikivoyage text:** 2" in card_text
+    assert "Counted once per unique `(osm_type, osm_id)` in polygon-document links" in card_text
+    assert "`fetch_status=ok`" in card_text
+    assert "trimmed non-empty `full_text`" in card_text
+    assert "`text_available` are not used" in card_text
 
 
 def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
@@ -30,6 +32,8 @@ from osm_polygon_wikidata_only.v2.config import (
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
 _METADATA_READ_WORKERS = 4
+_SUCCESSFUL_FETCH_STATUS = "ok"
+_TEXT_DOCUMENT_PROJECTS = frozenset({"wikipedia", "wikivoyage"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +67,8 @@ class V2CardStats:
     new_wikipedia_documents_sharing_v1_content: int | None = None
     additional_unique_sections_vs_v1: int | None = None
     new_wikipedia_tag_document_polygons_vs_v1: int | None = None
+    non_empty_text_polygons: int | None = None
+    sentence_stats: _SentenceCardStats | None = None
 
     @property
     def documents(self) -> int:
@@ -102,10 +108,24 @@ class _CardMetrics:
     text_funnel: tuple[tuple[str, int], ...]
     top_languages: tuple[tuple[str, int], ...]
     polygon_row_count: int
+    non_empty_text_polygon_count: int
     wikipedia_document_row_count: int
     wikivoyage_document_row_count: int
     wikidata_fact_row_count: int
     link_row_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SentenceCardStats:
+    """Data-derived counts for the optional sentence sidecars."""
+
+    total_rows: int
+    split_rows: int
+    unsupported_rows: int
+    polygon_count: int
+    supported_language_count: int
+    wikipedia_sidecars: int
+    wikivoyage_sidecars: int
 
 
 @dataclass(slots=True)
@@ -116,6 +136,7 @@ class _DocumentMetrics:
     languages: set[str]
     text_document_languages: dict[str, str]
     wikipedia_language_counts: Counter[str]
+    non_empty_text_document_keys: set[tuple[str, str]] = field(default_factory=set)
     wikipedia_document_row_count: int = 0
     wikivoyage_document_row_count: int = 0
     document_words: int = 0
@@ -165,7 +186,8 @@ def compute_v2_card_stats(
     files = _collect_card_files(processed_v2)
     metrics = _compute_card_metrics(files)
     comparison = _compute_v1_comparison(v1_processed, files, metrics)
-    return _build_card_stats(files, metrics, comparison)
+    sentence_stats = _compute_sentence_stats(processed_v2)
+    return _build_card_stats(files, metrics, comparison, sentence_stats=sentence_stats)
 
 
 def _collect_card_files(processed_v2: Path) -> _CardFiles:
@@ -211,6 +233,10 @@ def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
         files.link_files,
     )
     polygon_metrics = _scan_polygon_metrics(files.polygon_files)
+    non_empty_text_polygon_count = _count_linked_non_empty_text_polygons(
+        files.link_files,
+        document_metrics.non_empty_text_document_keys,
+    )
     wikipedia_section_count = _sum_metadata(files.wikipedia_section_files)
     wikivoyage_section_count = _sum_metadata(files.wikivoyage_section_files)
     wikidata_fact_count = _sum_metadata(files.wikidata_fact_files)
@@ -227,6 +253,7 @@ def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
         text_funnel=(("All polygons", len(polygon_metrics.polygon_ids)), *text_funnel[1:]),
         top_languages=top_languages,
         polygon_row_count=polygon_metrics.polygon_row_count,
+        non_empty_text_polygon_count=non_empty_text_polygon_count,
         wikipedia_document_row_count=document_metrics.wikipedia_document_row_count,
         wikivoyage_document_row_count=document_metrics.wikivoyage_document_row_count,
         wikidata_fact_row_count=wikidata_fact_count,
@@ -378,6 +405,8 @@ def _build_card_stats(
     files: _CardFiles,
     metrics: _CardMetrics,
     comparison: _V1Comparison,
+    *,
+    sentence_stats: _SentenceCardStats | None = None,
 ) -> V2CardStats:
     return V2CardStats(
         regions=len(files.stems),
@@ -407,6 +436,8 @@ def _build_card_stats(
         new_wikipedia_documents_sharing_v1_content=comparison.documents_sharing_content,
         additional_unique_sections_vs_v1=comparison.unique_sections,
         new_wikipedia_tag_document_polygons_vs_v1=comparison.wikipedia_tag_document_polygons,
+        non_empty_text_polygons=metrics.non_empty_text_polygon_count,
+        sentence_stats=sentence_stats,
     )
 
 
@@ -442,6 +473,8 @@ def render_v2_card(
                 f"- **Hugging Face dataset:** [{V2_REPO_ID}](https://huggingface.co/datasets/{V2_REPO_ID})",
                 f"- **Regions:** {snapshot.regions:,}",
                 f"- **Polygons:** {snapshot.polygons:,}",
+                f"- **Polygons with non-empty Wikipedia or Wikivoyage text:** {_non_empty_text_polygon_count(snapshot):,}",
+                "Counted once per unique `(osm_type, osm_id)` in polygon-document links. Only linked Wikipedia or Wikivoyage documents with `fetch_status=ok` and trimmed non-empty `full_text` qualify; regional rows and `text_available` are not used.",
                 f"- **Unique Wikidata entities:** {snapshot.unique_wikidata_entities:,}",
                 f"- **Wikipedia documents:** {snapshot.wikipedia_documents:,}",
                 f"- **Wikivoyage documents:** {snapshot.wikivoyage_documents:,}",
@@ -485,8 +518,7 @@ def render_v2_card(
                 "",
                 "## Sentence-level text",
                 "",
-                "Sentence sidecars are opt-in and use `sat-3l-sm` only for the exact ISO codes listed in `docs/sentence-splitting.md` in the [source repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/docs/sentence-splitting.md). Any other language code remains one unsplit row with `segmentation_status=unsupported_language`; it is never passed to SaT.",
-                "When generated, sentence rows are stored in `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet`; `manifests/sentence_splitting.json` records the model, revision, and observed routing.",
+                *_sentence_section_lines(snapshot.sentence_stats),
                 "",
                 "## Repository layout",
                 "",
@@ -582,6 +614,127 @@ def _render_front_matter(snapshot: V2CardStats, *, processed_v2: Path) -> str:
 
 def _has_parquet(directory: Path) -> bool:
     return any(directory.glob("*.parquet"))
+
+
+def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
+    sentence_paths = {
+        project: sorted((processed_v2 / project / "sentences").glob("*.parquet"))
+        for project in ("wikipedia", "wikivoyage")
+    }
+    manifest_path = processed_v2 / "manifests" / "sentence_splitting.json"
+    if not manifest_path.is_file() or not any(sentence_paths.values()):
+        return None
+
+    raw_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_manifest, Mapping):
+        raise ValueError(f"Invalid sentence manifest: {manifest_path}")
+    regions = raw_manifest.get("regions")
+    supported_languages = raw_manifest.get("supported_languages")
+    if not isinstance(regions, list) or not isinstance(supported_languages, list):
+        raise ValueError(f"Invalid sentence manifest: {manifest_path}")
+
+    total_rows = 0
+    unsupported_rows = 0
+    for region in regions:
+        if not isinstance(region, Mapping):
+            raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
+        total_rows += int(region.get("sentence_rows", 0))
+        unsupported_rows += int(region.get("unsplit_sections", 0))
+    if unsupported_rows > total_rows:
+        raise ValueError(f"Invalid sentence row totals: {manifest_path}")
+
+    document_ids = {
+        project: _sentence_document_ids(paths) for project, paths in sentence_paths.items()
+    }
+    return _SentenceCardStats(
+        total_rows=total_rows,
+        split_rows=total_rows - unsupported_rows,
+        unsupported_rows=unsupported_rows,
+        polygon_count=_sentence_polygon_count(processed_v2, document_ids),
+        supported_language_count=len(supported_languages),
+        wikipedia_sidecars=len(sentence_paths["wikipedia"]),
+        wikivoyage_sidecars=len(sentence_paths["wikivoyage"]),
+    )
+
+
+def _sentence_document_ids(paths: Iterable[Path]) -> set[str]:
+    values: set[str] = set()
+    for path in paths:
+        with pq.ParquetFile(path) as parquet_file:
+            if "document_id" not in parquet_file.schema_arrow.names:
+                continue
+            for batch in parquet_file.iter_batches(columns=["document_id"], batch_size=65_536):
+                values.update(
+                    str(value)
+                    for value in _compute_array("unique", batch.column(0)).to_pylist()
+                    if value
+                )
+    return values
+
+
+def _sentence_polygon_count(
+    processed_v2: Path,
+    document_ids: Mapping[str, set[str]],
+) -> int:
+    value_sets = {
+        project: pa.array(sorted(values), type=pa.string())
+        for project, values in document_ids.items()
+        if values
+    }
+    if not value_sets:
+        return 0
+
+    polygon_ids: set[str] = set()
+    for path in sorted((processed_v2 / "polygon_document_links").glob("*.parquet")):
+        with pq.ParquetFile(path) as parquet_file:
+            columns = {"polygon_id", "document_id", "project"}
+            if not columns.issubset(parquet_file.schema_arrow.names):
+                continue
+            for batch in parquet_file.iter_batches(
+                columns=["polygon_id", "document_id", "project"],
+                batch_size=65_536,
+            ):
+                polygon_column, document_column, project_column = batch.columns
+                for project, value_set in value_sets.items():
+                    matches = _compute_array(
+                        "and",
+                        _compute_array("equal", project_column, project),
+                        _compute_array(
+                            "is_in",
+                            document_column,
+                            options=pc.SetLookupOptions(value_set),
+                        ),
+                    )
+                    polygon_ids.update(
+                        str(value)
+                        for value in _compute_array("filter", polygon_column, matches).to_pylist()
+                        if value
+                    )
+    return len(polygon_ids)
+
+
+def _compute_array(function: str, *arguments: Any, options: Any = None) -> Any:
+    return pc.call_function(function, list(arguments), options=options)
+
+
+def _non_empty_text_polygon_count(snapshot: V2CardStats) -> int:
+    if snapshot.non_empty_text_polygons is not None:
+        return snapshot.non_empty_text_polygons
+    return dict(snapshot.text_coverage_funnel).get("With non-empty text", 0)
+
+
+def _sentence_section_lines(stats: _SentenceCardStats | None) -> tuple[str, ...]:
+    lines = (
+        "Sentence sidecars are opt-in and use `sat-3l-sm` only for the exact ISO codes listed in `docs/sentence-splitting.md` in the [source repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/docs/sentence-splitting.md). Any other language code remains one unsplit row with `segmentation_status=unsupported_language`; it is never passed to SaT.",
+    )
+    if stats is not None:
+        lines += (
+            f"Data-derived totals: {stats.split_rows:,} split sentence rows plus {stats.unsupported_rows:,} unsupported-language rows retained unsplit = {stats.total_rows:,} total rows; {stats.supported_language_count:,} supported language codes; {stats.polygon_count:,} polygons linked to sentence-sidecar documents across {stats.wikipedia_sidecars:,} Wikipedia and {stats.wikivoyage_sidecars:,} Wikivoyage sidecars.",
+        )
+    return (
+        *lines,
+        "When generated, sentence rows are stored in `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet`; `manifests/sentence_splitting.json` records the model, revision, and observed routing.",
+    )
 
 
 def _render_comparison(snapshot: V2CardStats) -> str:
@@ -985,8 +1138,12 @@ def _document_columns(
     if has_document_id and word_column is not None:
         # Keep the historical failure for a text-bearing document file
         # without a language column: the old text scan requested it too.
-        return ["document_id", "language", word_column]
-    return [column for column in _document_column_names(word_column) if column in names]
+        columns = ["document_id", "language", word_column]
+    else:
+        columns = [column for column in _document_column_names(word_column) if column in names]
+    if has_document_id:
+        columns.extend(column for column in ("fetch_status", "full_text") if column in names)
+    return columns
 
 
 def _document_column_names(word_column: str | None) -> tuple[str, ...]:
@@ -1070,6 +1227,16 @@ def _scan_document_batch(
         has_language=has_language,
         word_column=word_column,
     )
+    fetch_status = _batch_column(
+        batch,
+        positions,
+        "fetch_status" if "fetch_status" in positions else None,
+    )
+    full_text = _batch_column(
+        batch,
+        positions,
+        "full_text" if "full_text" in positions else None,
+    )
     has_text_columns = has_document_id and word_column is not None
     for index in range(batch.num_rows):
         _record_document_row(
@@ -1081,6 +1248,8 @@ def _scan_document_batch(
             has_document_id=has_document_id,
             has_text_columns=has_text_columns,
             has_word_column=words is not None,
+            fetch_status=_batch_value(fetch_status, index),
+            full_text=_batch_value(full_text, index),
         )
 
 
@@ -1094,6 +1263,8 @@ def _record_document_row(
     has_document_id: bool,
     has_text_columns: bool,
     has_word_column: bool,
+    fetch_status: Any,
+    full_text: Any,
 ) -> None:
     _record_document_language(
         metrics,
@@ -1110,6 +1281,33 @@ def _record_document_row(
         has_text_columns=has_text_columns,
     )
     _record_document_words(metrics, word_count, has_word_column=has_word_column)
+    _record_non_empty_text_document(
+        metrics,
+        identity,
+        fetch_status=fetch_status,
+        full_text=full_text,
+        is_wikipedia=is_wikipedia,
+    )
+
+
+def _record_non_empty_text_document(
+    metrics: _DocumentMetrics,
+    identity: Any,
+    *,
+    fetch_status: Any,
+    full_text: Any,
+    is_wikipedia: bool,
+) -> None:
+    if (
+        not identity
+        or fetch_status != _SUCCESSFUL_FETCH_STATUS
+        or not isinstance(full_text, str)
+        or not full_text.strip()
+    ):
+        return
+    project = "wikipedia" if is_wikipedia else "wikivoyage"
+    if project in _TEXT_DOCUMENT_PROJECTS:
+        metrics.non_empty_text_document_keys.add((project, str(identity)))
 
 
 def _record_wikipedia_document_identity(
@@ -1157,6 +1355,72 @@ def _record_document_language(
     metrics.languages.add(language_value)
     if is_wikipedia and has_document_id:
         metrics.wikipedia_language_counts[language_value] += 1
+
+
+def _count_linked_non_empty_text_polygons(
+    paths: Iterable[Path],
+    eligible_document_keys: set[tuple[str, str]],
+) -> int:
+    """Count unique OSM identities linked to successful non-empty documents."""
+    polygon_identities: set[tuple[str, int]] = set()
+    if not eligible_document_keys:
+        return 0
+    for path in paths:
+        _collect_linked_non_empty_text_polygons(
+            path,
+            eligible_document_keys,
+            polygon_identities,
+        )
+    return len(polygon_identities)
+
+
+def _collect_linked_non_empty_text_polygons(
+    path: Path,
+    eligible_document_keys: set[tuple[str, str]],
+    polygon_identities: set[tuple[str, int]],
+) -> None:
+    with pq.ParquetFile(path) as parquet_file:
+        columns = {"osm_type", "osm_id", "document_id", "project"}
+        if not columns.issubset(parquet_file.schema_arrow.names):
+            return
+        for batch in parquet_file.iter_batches(
+            columns=["osm_type", "osm_id", "document_id", "project"],
+            batch_size=65_536,
+        ):
+            _merge_linked_non_empty_text_polygons(
+                batch,
+                eligible_document_keys,
+                polygon_identities,
+            )
+
+
+def _merge_linked_non_empty_text_polygons(
+    batch: Any,
+    eligible_document_keys: set[tuple[str, str]],
+    polygon_identities: set[tuple[str, int]],
+) -> None:
+    for osm_type, osm_id, document_id, project in zip(
+        batch.column(0).to_pylist(),
+        batch.column(1).to_pylist(),
+        batch.column(2).to_pylist(),
+        batch.column(3).to_pylist(),
+        strict=True,
+    ):
+        document_key = (str(project), str(document_id))
+        if document_key not in eligible_document_keys:
+            continue
+        identity = _osm_polygon_identity(osm_type, osm_id)
+        if identity is not None:
+            polygon_identities.add(identity)
+
+
+def _osm_polygon_identity(osm_type: Any, osm_id: Any) -> tuple[str, int] | None:
+    if osm_type in (None, "") or osm_id in (None, ""):
+        return None
+    try:
+        return str(osm_type), int(osm_id)
+    except (TypeError, ValueError):
+        return None
 
 
 def _scan_polygon_metrics(paths: Iterable[Path]) -> _PolygonMetrics:
@@ -1227,7 +1491,8 @@ def _record_polygon_row(
     has_wikidata: Any,
 ) -> None:
     if polygon_id:
-        metrics.polygon_ids.add(str(polygon_id))
+        polygon_identity = str(polygon_id)
+        metrics.polygon_ids.add(polygon_identity)
     if wikidata:
         metrics.qids.update(qids_from_osm_tag(str(wikidata)))
     if has_wikidata is False:
