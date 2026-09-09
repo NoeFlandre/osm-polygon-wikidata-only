@@ -18,8 +18,12 @@ NER_MUTATION_SOURCES = frozenset(
         "src/osm_polygon_wikidata_only/ner/otter.py",
         "src/osm_polygon_wikidata_only/ner/pipeline.py",
         "src/osm_polygon_wikidata_only/ner/publication.py",
+        "src/osm_polygon_wikidata_only/ner/silver_validation.py",
+        "src/osm_polygon_wikidata_only/ner/wikineural.py",
         "src/osm_polygon_wikidata_only/grid5000/ner_controller.py",
+        "scripts/evaluate_geographic_ner_pilot.py",
         "scripts/grid5000_geographic_ner.py",
+        "scripts/prepare_geographic_ner_crosscheck.py",
     }
 )
 NER_MUTATION_TESTS = frozenset(
@@ -28,7 +32,11 @@ NER_MUTATION_TESTS = frozenset(
         "tests/ner/test_otter.py",
         "tests/ner/test_pipeline.py",
         "tests/ner/test_publication.py",
+        "tests/ner/test_silver_evaluator.py",
+        "tests/ner/test_silver_validation.py",
+        "tests/ner/test_wikineural.py",
         "tests/grid5000/test_ner_controller.py",
+        "tests/ner/test_crosscheck_pilot.py",
     }
 )
 PILOT_SAMPLER_SOURCES = frozenset(
@@ -184,6 +192,13 @@ def test_ner_runtime_imports_are_declared_and_locked() -> None:
     assert {"huggingface-hub", "pyarrow", "torch", "transformers"} <= _locked_packages(
         ROOT / "requirements/geographic-ner-gpu.txt"
     )
+
+
+def test_silver_validation_runbook_is_explicit_about_its_limits() -> None:
+    runbook = (ROOT / "docs/geographic-ner.md").read_text(encoding="utf-8")
+    assert "silver validation" in runbook.lower()
+    assert "WikiNEuRal" in runbook
+    assert "human-labelled" in runbook
 
 
 def test_runbook_shell_examples_parse_without_executing() -> None:

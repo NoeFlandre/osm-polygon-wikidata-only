@@ -15,7 +15,13 @@ from huggingface_hub import snapshot_download
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json
 from osm_polygon_wikidata_only.ner.otter import OtterLocationExtractor
-from osm_polygon_wikidata_only.ner.pipeline import Contract, run_shard
+from osm_polygon_wikidata_only.ner.pipeline import (
+    MODEL_ID,
+    WIKINEURAL_MODEL_ID,
+    Contract,
+    run_shard,
+)
+from osm_polygon_wikidata_only.ner.wikineural import WikiNeuralLocationExtractor
 
 
 def gpu_identity() -> dict[str, str]:
@@ -58,6 +64,18 @@ def _language_collection(value: object) -> tuple[Any, ...]:
     return tuple(value)
 
 
+def _extractor(contract: Contract, directory: Path, batch_size: int):
+    if contract.model_id == MODEL_ID:
+        return OtterLocationExtractor(
+            directory, batch_size=batch_size, threshold=contract.threshold
+        )
+    if contract.model_id == WIKINEURAL_MODEL_ID:
+        return WikiNeuralLocationExtractor(
+            directory, batch_size=batch_size, threshold=contract.threshold
+        )
+    raise ValueError(f"Unsupported geographic NER model: {contract.model_id}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Download the pinned snapshot only on the GPU node, then resume its shard."""
     args = _parser().parse_args(argv)
@@ -74,9 +92,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_dir=args.model_cache,
         max_workers=2,
     )
-    extractor = OtterLocationExtractor(
-        Path(directory), batch_size=args.inference_batch_size, threshold=contract.threshold
-    )
+    extractor = _extractor(contract, Path(directory), args.inference_batch_size)
     execution = {"job_id": os.environ["OAR_JOB_ID"], "gpu": gpu, "status": "failed"}
     try:
         receipt = run_shard(

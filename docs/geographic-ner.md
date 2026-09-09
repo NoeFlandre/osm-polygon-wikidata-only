@@ -34,6 +34,61 @@ reported by the worker's exit status. `validation_status` is
 The pilot must not report precision, recall, or validated-language coverage
 until a human-labelled geographic-name gold set exists.
 
+## Automatic silver validation
+
+When a human-labelled set is unavailable, an additive silver check compares the
+Otter output with a second NER model and deterministic references. It counts
+primary spans matching successful, non-empty document titles, labels, or
+aliases and linked OSM polygon names; separately counts obvious artifacts such
+as QIDs, URLs, and numeric strings; and reports second-model agreement,
+per-language and per-project counts, unique linked documents, and
+unique/entity-bearing OSM polygons. These are quality proxies, not precision or
+recall.
+
+The cross-check uses the WikiNEuRal model
+`Babelscape/wikineural-multilingual-ner` at pinned revision
+`89ab4613336445bde46866ddc825561fe69e6e6c`. Its contract covers the six
+languages overlapping this pilot (`de`, `en`, `es`, `fr`, `pt`, `ru`); the other
+pilot languages remain explicitly outside the cross-check contract.
+
+Prepare a cross-check from the selected primary pilot, stage it, and run it
+through the same resumable short-job controller:
+
+```sh
+export NER_CROSSCHECK_DIR="$NER_DATA_ROOT/geographic-ner/crosscheck-20260908"
+export NER_CROSSCHECK_STAGING="$NER_DATA_ROOT/geographic-ner/staging/geographic-ner-crosscheck-20260908"
+export NER_CROSSCHECK_RUN_DIR="$NER_DATA_ROOT/geographic-ner/runs/geographic-ner-crosscheck-20260908"
+
+.venv/bin/python scripts/prepare_geographic_ner_crosscheck.py \
+  --pilot-dir "$NER_PILOT_DIR" \
+  --output-dir "$NER_CROSSCHECK_DIR"
+.venv/bin/python scripts/grid5000_geographic_ner.py \
+  --staging-dir "$NER_CROSSCHECK_STAGING" \
+  --source "$NER_CROSSCHECK_DIR/input.parquet" \
+  --contract "$NER_CROSSCHECK_DIR/contract.json" \
+  --source-root "$PWD" \
+  --requirements-lock "$PWD/requirements/geographic-ner-gpu.txt" \
+  --prepare-only
+.venv/bin/python scripts/grid5000_geographic_ner.py \
+  --staging-dir "$NER_CROSSCHECK_STAGING" \
+  --run-dir "$NER_CROSSCHECK_RUN_DIR" \
+  --run-id geographic-ner-crosscheck-20260908 \
+  --site rennes --queue besteffort --gpu-model A40 --period day \
+  --repo-id "$NER_REPO_ID"
+```
+
+Evaluate the completed primary and cross-check outputs locally; this writes no
+Hub files:
+
+```sh
+.venv/bin/python scripts/evaluate_geographic_ner_pilot.py \
+  --data-root "$NER_DATA_ROOT" \
+  --pilot-dir "$NER_PILOT_DIR" \
+  --primary-output "$NER_RUN_DIR/output" \
+  --secondary-output "$NER_CROSSCHECK_RUN_DIR/output" \
+  --output "$NER_CROSSCHECK_RUN_DIR/silver-validation.json"
+```
+
 Every run binds its contract, model revision, source SHA-256, and batch size in
 `receipt.json`. Completed batches are separate `batch-XXXXXX.parquet` sidecars,
 each recorded with a SHA-256 and row count. `predictions.sqlite3` is a local

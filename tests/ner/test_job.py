@@ -262,6 +262,61 @@ def test_job_pins_snapshot_and_records_execution(tmp_path, monkeypatch, seconds,
     }
 
 
+def test_job_selects_the_pinned_wikineural_extractor(tmp_path, monkeypatch):
+    job = importlib.import_module("osm_polygon_wikidata_only.ner.job")
+    from dataclasses import asdict
+
+    from osm_polygon_wikidata_only.ner.pipeline import (
+        WIKINEURAL_LANGUAGES,
+        WIKINEURAL_MODEL_ID,
+        WIKINEURAL_MODEL_REVISION,
+    )
+    from scripts.prepare_geographic_ner_crosscheck import build_contract
+
+    monkeypatch.setenv("OAR_JOB_ID", "12345")
+    contract = build_contract()
+    assert contract.languages == WIKINEURAL_LANGUAGES
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps(asdict(contract)))
+    monkeypatch.setattr(
+        job, "gpu_identity", lambda: {"name": "A40", "torch": "2.8.0", "cuda": "12.8"}
+    )
+    downloads = []
+    monkeypatch.setattr(
+        job,
+        "snapshot_download",
+        lambda **kwargs: downloads.append(kwargs) or str(tmp_path / "model"),
+    )
+    extractors = []
+    monkeypatch.setattr(
+        job,
+        "WikiNeuralLocationExtractor",
+        lambda *args, **kwargs: extractors.append((args, kwargs)) or "wikineural",
+    )
+    monkeypatch.setattr(
+        job,
+        "run_shard",
+        lambda *args, **kwargs: {"processed_rows": 1, "status": "completed"},
+    )
+
+    job.main(
+        [
+            "--source",
+            str(tmp_path / "input.parquet"),
+            "--output-dir",
+            str(tmp_path),
+            "--contract",
+            str(contract_path),
+            "--model-cache",
+            str(tmp_path),
+        ]
+    )
+
+    assert downloads[0]["repo_id"] == WIKINEURAL_MODEL_ID
+    assert downloads[0]["revision"] == WIKINEURAL_MODEL_REVISION
+    assert extractors == [((Path(tmp_path / "model"),), {"batch_size": 16, "threshold": 0.5})]
+
+
 def test_job_records_failed_execution_when_shard_raises(tmp_path, monkeypatch):
     job = importlib.import_module("osm_polygon_wikidata_only.ner.job")
     from dataclasses import asdict
