@@ -36,8 +36,11 @@ def parse_results(report: str) -> list[MutationResult]:
         if ": " not in stripped:
             continue
         name, status = stripped.rsplit(": ", 1)
-        if status in _STATUSES:
-            results.append((name, status))
+        if not name.strip():
+            raise MutationGateError("Malformed mutation record: missing mutant name")
+        if status not in _STATUSES:
+            raise MutationGateError(f"Unknown mutation status: {status}")
+        results.append((name, status))
     return results
 
 

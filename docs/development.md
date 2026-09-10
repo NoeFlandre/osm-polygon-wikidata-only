@@ -117,13 +117,13 @@ just smoke-test
 just diff-review
 ```
 
-`crap-all` combines the eleven bounded CRAP scopes for domain/V2 helpers,
+`crap-all` combines the twelve configured bounded CRAP scopes for domain/V2 helpers,
 parsing and sync helpers, the durable upload queue, quality-reporting scripts,
 geographic rendering and parquet inputs, DatasetStats aggregation, the SaT
 adapter, the Grid5000 GPU job, the read-only Hub inventory, and the shared
-atomic-publication ritual.
+atomic-publication ritual and geographic NER pilot boundary.
 The sentence runner is included in the domain/V2 scope. The architecture stage also
-builds the package and strict MkDocs site before running its contracts. The
+builds the package, strict MkDocs site, and isolated package-install smoke before running its contracts. The
 smoke stage checks both public CLI help paths without reading a data root or
 making a network request. The Docker runtime has its own `docker-help` recipe
 and CI container contract.
@@ -138,7 +138,8 @@ environments. Run the boundary gate before changing that package:
 
     just preprocessing-check
 
-The gate runs frozen preprocessing tests, Ruff, ty, and a temporary wheel build.
+The gate runs frozen preprocessing tests, Ruff, ty, and an offline isolated wheel
+build/install smoke.
 It does not read production data or publish artifacts.
 
 `just check` and the short alias `just qa-gauntlet` run the same deterministic
@@ -178,7 +179,7 @@ just quality-advanced
 `just crap`, `just crap-sync`, `just crap-upload`, `just crap-quality`,
 `just crap-geography`, `just crap-geography-inputs`, `just crap-stats`,
 `just crap-sat`, `just crap-job`, `just crap-inventory`, and
-`just crap-atomic` join coverage.py
+`just crap-atomic`, and `just crap-ner` join coverage.py
 and Radon function reports and fail when any function reaches CRAP 6; every
 measured score must therefore be below 6.
 `just mutation` runs mutmut over the explicit deterministic module scope and
@@ -209,6 +210,7 @@ just crap-sat
 just crap-job
 just crap-inventory
 just crap-atomic
+just crap-ner
 ```
 
 `mutmut` deliberately changes those helpers and requires every generated

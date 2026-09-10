@@ -146,6 +146,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/grid5000/ner_controller.py",
     "scripts/grid5000_geographic_ner.py",
     "scripts/prepare_geographic_ner_pilot.py",
+    "scripts/quality/package_smoke.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only", "requirements"]
 mutate_only_covered_lines = true
@@ -178,4 +179,5 @@ pytest_add_cli_args_test_selection = [
     "tests/grid5000/test_ner_controller.py",
     "tests/ner/test_pilot.py",
     "tests/ner/test_utf8_metadata.py",
+    "tests/quality/test_package_smoke.py",
 ]

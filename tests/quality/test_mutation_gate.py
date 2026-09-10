@@ -30,6 +30,19 @@ def test_parse_results_reads_mutmut_status_lines() -> None:
     ]
 
 
+def test_parse_results_rejects_unknown_statuses() -> None:
+    report = "future-mutant: changed behavior"
+
+    with pytest.raises(MutationGateError, match="Unknown mutation status"):
+        parse_results(report)
+
+
+@pytest.mark.parametrize("report", [": killed", "   : survived"])
+def test_parse_results_rejects_missing_mutant_names(report: str) -> None:
+    with pytest.raises(MutationGateError, match="missing mutant name"):
+        parse_results(report)
+
+
 def test_ensure_all_killed_accepts_only_killed_mutants() -> None:
     ensure_all_killed([("one", "killed"), ("two", "killed")])
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 from typing import Any
 
+import pytest
+
 from osm_polygon_wikidata_only.v2 import reuse
+from osm_polygon_wikidata_only.v2 import sections as sections_module
 from osm_polygon_wikidata_only.v2.sections import (
     SectionClient,
     _string_field,
@@ -90,3 +94,48 @@ def test_string_field_preserves_empty_value_defaults() -> None:
     assert _string_field({"value": None}, "value") == ""
     assert _string_field({"value": 0}, "value") == ""
     assert _string_field({"value": "kept"}, "value") == "kept"
+
+
+def test_section_builder_raises_the_first_input_failure_not_completion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ImmediateExecutor:
+        def __init__(self, *, max_workers: int) -> None:
+            self.max_workers = max_workers
+
+        def __enter__(self) -> ImmediateExecutor:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(
+            self,
+            _function: object,
+            row: dict[str, Any],
+            _section_client: SectionClient,
+        ) -> Future[list[dict[str, Any]]]:
+            future: Future[list[dict[str, Any]]] = Future()
+            if row["document_id"] == "first":
+                future.set_exception(ValueError("first input failed"))
+            else:
+                future.set_exception(RuntimeError("second input failed"))
+            return future
+
+    def completion_order(futures: dict[object, object]) -> list[object]:
+        return list(reversed(list(futures)))
+
+    monkeypatch.setattr(sections_module, "ThreadPoolExecutor", ImmediateExecutor)
+    monkeypatch.setattr(sections_module, "as_completed", completion_order)
+
+    class UnusedClient:
+        def parse_html(self, *_args: object) -> str:
+            raise AssertionError("the executor should not invoke the client")
+
+    with pytest.raises(ValueError, match="first input failed"):
+        build_missing_sections(
+            [_document("first"), _document("second")],
+            [],
+            section_client=UnusedClient(),
+            section_workers=2,
+        )

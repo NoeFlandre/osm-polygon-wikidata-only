@@ -109,6 +109,8 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "typecheck:",
         "ty:",
         "build:",
+        "package-smoke:",
+        "preprocessing-package-smoke:",
         "docs:",
         "trackio:",
         "mutation:",
@@ -380,3 +382,36 @@ def test_diff_review_executes_unmerged_path_check() -> None:
 
     assert 'test -z "$(git diff --name-only --diff-filter=U)"' in justfile
     assert 'test -z "$$(git diff --name-only --diff-filter=U)"' not in justfile
+
+
+def test_installed_artifact_smoke_is_in_root_and_nested_gates() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "package-smoke:" in justfile
+    assert "preprocessing-package-smoke:" in justfile
+    assert "just package-smoke" in justfile
+    assert "just preprocessing-package-smoke" in justfile
+    assert "scripts/quality/package_smoke.py" in justfile
+
+
+def test_package_smoke_helpers_are_quality_gated() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    mutation = config["tool"]["mutmut"]
+
+    assert "tests/quality/test_package_smoke.py" in justfile
+    assert "--cov=scripts.quality.package_smoke" in justfile
+    assert "scripts/quality/package_smoke.py" in justfile
+    assert "scripts/quality/package_smoke.py" in mutation["source_paths"]
+    assert "tests/quality/test_package_smoke.py" in mutation["pytest_add_cli_args_test_selection"]
+
+
+def test_documentation_assembly_is_crap_gated() -> None:
+    root = Path(__file__).parents[1]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert "tests/test_docs_assembly.py" in justfile
+    assert "--cov=scripts.assemble_docs_site" in justfile
+    assert "scripts/assemble_docs_site.py" in justfile

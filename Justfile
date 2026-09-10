@@ -11,8 +11,18 @@ preprocessing-check:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ruff check preprocessing/src preprocessing/tests
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ruff format --check preprocessing/src preprocessing/tests
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ty check --project preprocessing --python preprocessing/.venv preprocessing/src
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv build --directory preprocessing
+    just preprocessing-package-smoke
 
+preprocessing-package-smoke:
+    @smoke_dir=$(mktemp -d -t osm-polygon-wikidata-preprocessing-smoke) && \
+        trap 'rm -rf "$smoke_dir"' EXIT && \
+        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv build --directory preprocessing --out-dir "$smoke_dir/dist" && \
+        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv venv "$smoke_dir/venv" && \
+        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv pip install --no-deps --python "$smoke_dir/venv/bin/python" "$smoke_dir/dist/"*.whl && \
+        "$smoke_dir/venv/bin/python" scripts/quality/package_smoke.py \
+        --distribution osm-polygon-wikidata-only-preprocessing \
+        --package osm_polygon_wikidata_only_preprocessing \
+        --entry-point osm-polygon-wikidata-only-preprocessing
 sync:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv sync --frozen
 
@@ -39,6 +49,7 @@ acceptance-tests:
 architecture-checks:
     just build
     just docs
+    just package-smoke
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/contracts tests/test_mkdocs.py tests/test_documentation.py tests/test_docker.py
 
 # Enforce a CRAP score below 6 for the V2 data-integrity helper scope.
@@ -61,8 +72,8 @@ crap-upload:
 
 # Enforce a CRAP score below 6 for the quality-reporting scripts themselves.
 crap-quality:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-quality-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/quality/test_crap_score.py tests/quality/test_mutation_gate.py tests/quality/test_mutation_equivalents.py tests/quality/test_audit_containment.py --cov=scripts.quality.crap_score --cov=scripts.quality.mutation_gate --cov=scripts.quality.mutation_equivalents --cov=scripts.audit_containment --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-quality-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j scripts/quality/crap_score.py scripts/quality/mutation_gate.py scripts/quality/mutation_equivalents.py scripts/audit_containment.py > /tmp/osm-polygon-wikidata-quality-crap-complexity.json
+    COVERAGE_FILE=/tmp/osm-polygon-wikidata-quality-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/quality/test_crap_score.py tests/quality/test_mutation_gate.py tests/quality/test_mutation_equivalents.py tests/quality/test_audit_containment.py tests/quality/test_package_smoke.py tests/test_docs_assembly.py --cov=scripts.quality.crap_score --cov=scripts.quality.mutation_gate --cov=scripts.quality.mutation_equivalents --cov=scripts.audit_containment --cov=scripts.quality.package_smoke --cov=scripts.assemble_docs_site --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-quality-crap-coverage.json
+    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j scripts/quality/crap_score.py scripts/quality/mutation_gate.py scripts/quality/mutation_equivalents.py scripts/audit_containment.py scripts/quality/package_smoke.py scripts/assemble_docs_site.py > /tmp/osm-polygon-wikidata-quality-crap-complexity.json
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-quality-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-quality-crap-complexity.json --maximum 6
 
 # Enforce a CRAP score below 6 for deterministic centroid-file handling.
@@ -163,6 +174,23 @@ ty:
 build:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv build
 
+package-smoke:
+    @smoke_dir=$(mktemp -d -t osm-polygon-wikidata-package-smoke) && \
+        trap 'rm -rf "$smoke_dir"' EXIT && \
+        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv build --out-dir "$smoke_dir/dist" && \
+        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv venv "$smoke_dir/venv" && \
+        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv pip install --no-deps --python "$smoke_dir/venv/bin/python" "$smoke_dir/dist/"*.whl && \
+        "$smoke_dir/venv/bin/python" scripts/quality/package_smoke.py \
+        --distribution osm-polygon-wikidata-only \
+        --package osm_polygon_wikidata_only \
+        --resource hf/ne_110m_admin_0_countries.geojson \
+        --resource assets/dataset_hero.png \
+        --resource assets/dataset_hero_v2.png \
+        --entry-point osm-polygon-wikidata-only \
+        --entry-point osm-polygon-wikidata-only-enforce-integrity \
+        --entry-point osm-polygon-wikidata-only-audit-remote \
+        --entry-point osm-polygon-wikidata-only-trackio \
+        --entry-point osm-polygon-wikidata-and-wikipedia-trackio
 docs:
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mkdocs build --strict --site-dir /tmp/osm-polygon-wikidata-only-site
     UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/assemble_docs_site.py --site-dir /tmp/osm-polygon-wikidata-only-site

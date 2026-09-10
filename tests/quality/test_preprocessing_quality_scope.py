@@ -13,6 +13,9 @@ def test_preprocessing_declares_its_quality_dependencies_and_gate() -> None:
 
     justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
     assert "preprocessing-check:" in justfile
+    assert "preprocessing-package-smoke:" in justfile
+    assert "just preprocessing-package-smoke" in justfile
+    assert "scripts/quality/package_smoke.py" in justfile
     assert "uv sync --frozen --directory preprocessing" in justfile
     assert "preprocessing/src" in justfile
     assert "preprocessing/tests" in justfile

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Protocol
 
 from osm_polygon_wikidata_only.augmentation.models import Document
@@ -114,25 +114,30 @@ def _fetch_missing_sections(
     on_document: Callable[[str, list[dict[str, Any]]], None] | None,
 ) -> list[dict[str, Any]]:
     with ThreadPoolExecutor(max_workers=max(1, section_workers)) as executor:
-        futures = {executor.submit(_fetch_one, row, section_client): row for row in missing}
+        futures = {
+            executor.submit(_fetch_one, row, section_client): (position, row)
+            for position, row in enumerate(missing)
+        }
         new_sections: list[dict[str, Any]] = []
-        errors: list[Exception] = []
+        errors: list[tuple[int, Exception]] = []
         for future in as_completed(futures):
+            position, row = futures[future]
             error = _record_section_future(
                 future,
-                futures[future],
+                row,
                 on_document,
                 new_sections,
             )
             if error is not None:
-                errors.append(error)
+                errors.append((position, error))
         if errors:
-            raise errors[0]
+            _, first_error = min(errors, key=lambda item: item[0])
+            raise first_error
     return new_sections
 
 
 def _record_section_future(
-    future: Any,
+    future: Future[list[dict[str, Any]]],
     row: dict[str, Any],
     on_document: Callable[[str, list[dict[str, Any]]], None] | None,
     new_sections: list[dict[str, Any]],
@@ -156,7 +161,7 @@ def _fetch_one(row: dict[str, Any], section_client: SectionClient) -> list[dict[
     return [section.to_dict() for section in parse_sections(document, html)]
 
 
-def _future_result(future: Any) -> list[dict[str, Any]] | Exception:
+def _future_result(future: Future[list[dict[str, Any]]]) -> list[dict[str, Any]] | Exception:
     try:
         return future.result()
     except Exception as error:

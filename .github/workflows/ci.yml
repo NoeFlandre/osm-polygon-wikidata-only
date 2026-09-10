@@ -11,7 +11,7 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    # The deterministic gate includes the full suite, three CRAP scopes, and
+    # The deterministic gate includes the full suite, all configured CRAP scopes, and
     # bounded mutation tests. Keep enough time for a cold runner.
     timeout-minutes: 90
     steps:
