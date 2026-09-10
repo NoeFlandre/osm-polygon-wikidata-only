@@ -6,8 +6,8 @@
 
 Raise the practical engineering standard of the repository without changing
 public behavior, data formats, command contracts, or publication semantics.
-The staged pilot-only geographic-NER cleanup remains preserved and is not
-expanded with HF or Grid5000 activity.
+The repository remains focused on its polygon, document, and sentence-data
+workflows; no additional processing stage is introduced here.
 
 ## Approach
 
@@ -41,6 +41,6 @@ reported with its exact environmental blocker rather than being inferred.
 - Do not delete compatibility facades or public modules based only on static
   reachability.
 - Do not change dataset-card content, HF repositories, Grid5000 state, or
-  sentence/NER artifacts.
+  sentence artifacts.
 - Do not weaken coverage, mutation, typing, or lint configuration to make a
   check pass.

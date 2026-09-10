@@ -117,11 +117,11 @@ just smoke-test
 just diff-review
 ```
 
-`crap-all` combines the twelve configured bounded CRAP scopes for domain/V2 helpers,
+`crap-all` combines the eleven configured bounded CRAP scopes for domain/V2 helpers,
 parsing and sync helpers, the durable upload queue, quality-reporting scripts,
 geographic rendering and parquet inputs, DatasetStats aggregation, the SaT
 adapter, the Grid5000 GPU job, the read-only Hub inventory, and the shared
-atomic-publication ritual and geographic NER pilot boundary.
+atomic-publication ritual.
 The sentence runner is included in the domain/V2 scope. The architecture stage also
 builds the package, strict MkDocs site, and isolated package-install smoke before running its contracts. The
 smoke stage checks both public CLI help paths without reading a data root or
@@ -179,7 +179,7 @@ just quality-advanced
 `just crap`, `just crap-sync`, `just crap-upload`, `just crap-quality`,
 `just crap-geography`, `just crap-geography-inputs`, `just crap-stats`,
 `just crap-sat`, `just crap-job`, `just crap-inventory`, and
-`just crap-atomic`, and `just crap-ner` join coverage.py
+`just crap-atomic` join coverage.py
 and Radon function reports and fail when any function reaches CRAP 6; every
 measured score must therefore be below 6.
 `just mutation` runs mutmut over the explicit deterministic module scope and
@@ -210,7 +210,6 @@ just crap-sat
 just crap-job
 just crap-inventory
 just crap-atomic
-just crap-ner
 ```
 
 `mutmut` deliberately changes those helpers and requires every generated
