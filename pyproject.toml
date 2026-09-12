@@ -84,6 +84,7 @@ pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: tests that read a real PBF fixture",
+    "repository: contracts that need a full source checkout, not a pruned build context",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:botocore.*",

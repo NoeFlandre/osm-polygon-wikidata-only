@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 import yaml
 
 from scripts.assemble_docs_site import PRESENTATION_FILES
@@ -194,7 +195,9 @@ def test_architecture_documents_geographic_coverage_generation() -> None:
     assert "logarithmic" in architecture.lower()
 
 
+@pytest.mark.repository
 def test_pages_workflow_publishes_dataset_presentation() -> None:
+    """`presentations/` is excluded from the Docker context by design."""
     workflow = (REPOSITORY / ".github/workflows/docs.yml").read_text(encoding="utf-8")
     assert "scripts/assemble_docs_site.py" in workflow
     assert "cp presentations/" not in workflow

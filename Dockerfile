@@ -59,7 +59,10 @@ USER app
 # resolves the ambient root.
 ENV PATH=/app/.venv/bin:$PATH
 WORKDIR /app
-CMD ["uv", "run", "pytest", "-q"]
+# `presentations/` is excluded from the build context by design, so the
+# repository-completeness contracts that read it cannot run here. The quality
+# CI job runs them against a full checkout.
+CMD ["uv", "run", "pytest", "-q", "-m", "not repository"]
 
 # Runtime images contain only the installed application and its runtime
 # dependencies. No token, PBF, generated artifact, or local cache is copied

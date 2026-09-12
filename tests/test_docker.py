@@ -63,7 +63,7 @@ def test_dockerfile_installs_just_only_in_development() -> None:
 
     assert "apt-get install --no-install-recommends -y just" in development
     assert "apt-get install --no-install-recommends -y just" not in runtime
-    assert 'CMD ["uv", "run", "pytest", "-q"]' in development
+    assert 'CMD ["uv", "run", "pytest", "-q", "-m", "not repository"]' in development
 
 
 def test_dockerignore_excludes_local_data_secrets_and_presentations() -> None:

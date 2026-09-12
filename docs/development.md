@@ -70,6 +70,13 @@ just docker-test
 just docker-check
 ```
 
+The development image declares no ambient `OSM_POLYGON_DATA_ROOT`; the suite
+resolves its own temporary roots, and only the runtime image declares that
+contract with the `/data` volume behind it. The image also runs
+`pytest -m "not repository"`, because `presentations/` is deliberately kept out
+of the build context. Those repository-completeness contracts run in the
+`quality` CI job against a full checkout.
+
 To run the opt-in workflow, provide a host data root containing `raw/`:
 
 ```bash
