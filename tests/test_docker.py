@@ -42,6 +42,18 @@ def test_dockerfile_uses_locked_uv_install_and_safe_runtime() -> None:
     assert "HF_TOKEN" not in dockerfile
 
 
+def test_development_stage_declares_no_ambient_data_root() -> None:
+    """The suite resolves its own roots; an undeclared /data fails every ambient test."""
+
+    dockerfile = _read("Dockerfile")
+    development = dockerfile.split("FROM build AS development", maxsplit=1)[1].split(
+        "FROM ${UV_IMAGE} AS runtime", maxsplit=1
+    )[0]
+
+    assert "OSM_POLYGON_DATA_ROOT=" not in development
+    assert 'VOLUME ["/data"]' not in development
+
+
 def test_dockerfile_installs_just_only_in_development() -> None:
     dockerfile = _read("Dockerfile")
     development = dockerfile.split("FROM build AS development", maxsplit=1)[1].split(

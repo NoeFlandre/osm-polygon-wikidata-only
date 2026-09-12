@@ -51,8 +51,13 @@ RUN uv sync --frozen
 RUN groupadd --system app && useradd --system --gid app --create-home app \
     && chown -R app:app /app
 USER app
-ENV PATH=/app/.venv/bin:$PATH \
-    OSM_POLYGON_DATA_ROOT=/data
+
+# The development image runs the test suite, which resolves its own temporary
+# data roots. It deliberately inherits no ambient OSM_POLYGON_DATA_ROOT: the
+# runtime image declares that contract along with the /data volume that backs
+# it, and pointing the suite at an undeclared /data fails every test that
+# resolves the ambient root.
+ENV PATH=/app/.venv/bin:$PATH
 WORKDIR /app
 CMD ["uv", "run", "pytest", "-q"]
 
