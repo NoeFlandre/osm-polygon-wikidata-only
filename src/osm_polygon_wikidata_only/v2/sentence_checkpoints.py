@@ -162,7 +162,7 @@ class SentenceCheckpoint:
                 pa.Table.from_pylist(normalized, schema=sentence_schema()),
                 temporary,
                 compression="snappy",
-            )  # type: ignore[no-untyped-call]
+            )
         self._metadata = {
             **self._metadata,
             "complete": False,

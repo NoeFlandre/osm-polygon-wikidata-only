@@ -80,18 +80,24 @@ def test_deduplicates_articles_and_preserves_entity_and_polygon_links(tmp_path):
         "SELECT polygon_id, article_id, wikidata FROM read_parquet(?) ORDER BY polygon_id",
         [str(output_links)],
     ).fetchall()
-    article_columns = {
+    article_schema = [
         row[0]
         for row in connection.execute(
             "DESCRIBE SELECT * FROM read_parquet(?)", [str(output_articles)]
         ).fetchall()
-    }
-    entity_columns = {
+    ]
+    entity_schema = [
         row[0]
         for row in connection.execute(
             "DESCRIBE SELECT * FROM read_parquet(?)", [str(output_entities)]
         ).fetchall()
-    }
+    ]
+    link_schema = [
+        row[0]
+        for row in connection.execute(
+            "DESCRIBE SELECT * FROM read_parquet(?)", [str(output_links)]
+        ).fetchall()
+    ]
     connection.close()
 
     assert articles == [
@@ -108,14 +114,30 @@ def test_deduplicates_articles_and_preserves_entity_and_polygon_links(tmp_path):
         ("polygon-2", "enwiki:10:100", "Q2"),
         ("polygon-3", "frwiki:20:200", "Q3"),
     ]
-    assert "wikidata" not in article_columns
-    assert "wikidata_label" not in article_columns
-    assert "wikidata_sitelinks" not in article_columns
-    assert "wikidata_sitelinks" in entity_columns
+    assert article_schema == [
+        "article_id",
+        "site",
+        "page_id",
+        "revision_id",
+        "language",
+        "title",
+        "content_hash",
+    ]
+    assert entity_schema == [
+        "article_id",
+        "original_article_id",
+        "wikidata",
+        "wikidata_label",
+        "wikidata_description",
+        "wikidata_aliases",
+        "wikidata_sitelinks",
+    ]
+    assert link_schema == ["polygon_id", "article_id", "wikidata"]
     assert stats.input_articles == 3
     assert stats.output_articles == 2
     assert stats.duplicate_articles_removed == 1
     assert stats.entity_mappings == 3
+    assert stats.input_links == 3
     assert stats.output_links == 3
 
 
@@ -260,26 +282,35 @@ def test_rejects_null_canonical_identity_components(tmp_path):
         )
 
 
-def test_removes_partial_outputs_when_publishing_fails(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure_index", [0, 1, 2])
+def test_removes_partial_outputs_when_publishing_fails(tmp_path, monkeypatch, failure_index):
     articles_path, links_path = _write_source_files(tmp_path)
     outputs = (
         tmp_path / "processed-articles.parquet",
         tmp_path / "article-entities.parquet",
         tmp_path / "processed-links.parquet",
     )
+    stale_temporary = tmp_path / ".processed-articles.parquet.tmp"
+    stale_temporary.write_bytes(b"stale-output")
     original_hardlink_to = Path.hardlink_to
     publications = 0
+    staged_paths = []
 
-    def fail_second_publication(output, temporary):
+    def fail_publication(output, temporary):
         nonlocal publications
         publications += 1
-        if publications == 2:
-            raise OSError("simulated publish failure")
+        if publications - 1 == failure_index:
+            staged_paths.extend(
+                path
+                for output_path in outputs
+                for path in tmp_path.glob(f".{output_path.name}.*.tmp")
+            )
+            raise OSError(f"simulated publish failure {failure_index}")
         return original_hardlink_to(output, temporary)
 
-    monkeypatch.setattr(Path, "hardlink_to", fail_second_publication)
+    monkeypatch.setattr(Path, "hardlink_to", fail_publication)
 
-    with pytest.raises(OSError, match="simulated publish failure"):
+    with pytest.raises(OSError, match=f"simulated publish failure {failure_index}"):
         deduplicate_article_files(
             articles_path,
             links_path,
@@ -287,7 +318,9 @@ def test_removes_partial_outputs_when_publishing_fails(tmp_path, monkeypatch):
         )
 
     assert all(not path.exists() for path in outputs)
-    assert not list(tmp_path.glob(".*.tmp"))
+    assert staged_paths
+    assert all(not path.exists() for path in staged_paths)
+    assert stale_temporary.read_bytes() == b"stale-output"
 
 
 @pytest.mark.parametrize(

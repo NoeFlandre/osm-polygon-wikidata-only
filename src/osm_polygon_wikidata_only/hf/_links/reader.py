@@ -69,7 +69,7 @@ def _read_source_rows(
     processed_root: Path,
     path: Path,
 ) -> list[dict[str, Any]] | None:
-    schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+    schema = pq.read_schema(path)
     if is_canonical_link_schema(schema):
         return read_required_columns(
             path,
@@ -95,7 +95,7 @@ def _read_legacy_rows(processed_root: Path, path: Path) -> list[dict[str, Any]] 
     if documents_path is None:
         return None
     article_to_document = _article_document_map(documents_path)
-    legacy_rows = pq.read_table(path).to_pylist()  # type: ignore[no-untyped-call]
+    legacy_rows = pq.read_table(path).to_pylist()
     source_rows = [_legacy_row(row, article_to_document) for row in legacy_rows]
     if any(not row["document_id"] for row in source_rows):
         raise CoverageMapError(
@@ -113,7 +113,7 @@ def _legacy_documents_path(processed_root: Path, path: Path) -> Path | None:
 
 
 def _article_document_map(documents_path: Path) -> dict[str, str]:
-    document_schema = pq.read_schema(documents_path)  # type: ignore[no-untyped-call]
+    document_schema = pq.read_schema(documents_path)
     columns = (
         ("article_id", "document_id") if "document_id" in document_schema.names else ("article_id",)
     )

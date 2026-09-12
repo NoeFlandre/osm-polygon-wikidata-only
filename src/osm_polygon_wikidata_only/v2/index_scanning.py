@@ -89,7 +89,7 @@ def validated_parquet_file(path: Path, *, legacy_articles: bool):
     """Open and schema-check one V1 shard, closing handles on failure."""
     parquet_file: pq.ParquetFile | None = None
     try:
-        parquet_file = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
+        parquet_file = pq.ParquetFile(path)
         _validate_table_schema(parquet_file.schema_arrow, path, legacy_articles)
         opened = parquet_file
         parquet_file = None
@@ -100,7 +100,7 @@ def validated_parquet_file(path: Path, *, legacy_articles: bool):
         raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
     finally:
         if parquet_file is not None:
-            parquet_file.close()  # type: ignore[no-untyped-call]
+            parquet_file.close()
 
 
 def scan_index_row_group(

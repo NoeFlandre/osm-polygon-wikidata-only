@@ -47,6 +47,7 @@ nav:
   - Home: index.md
   - API reference: api.md
   - Architecture: architecture.md
+  - Quality boundary ADR: adr/0001-quality-boundaries.md
   - Development: development.md
   - V2 sentence splitting: sentence-splitting.md
   - Grid5000 sentence operations: grid5000-sentence-splitting.md

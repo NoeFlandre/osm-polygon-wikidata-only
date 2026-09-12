@@ -28,8 +28,8 @@ def _assert_legacy_rows_preserved(
     stem: str,
 ) -> None:
     """Require canonical documents to contain every converted legacy row."""
-    canonical = pq.read_table(canonical_path)  # type: ignore[no-untyped-call]
-    expected = build_wikipedia_document_table(pq.read_table(legacy_path))  # type: ignore[no-untyped-call]
+    canonical = pq.read_table(canonical_path)
+    expected = build_wikipedia_document_table(pq.read_table(legacy_path))
     try:
         _assert_canonical_preserves_legacy(canonical, expected, stem)
     except MigrationError as error:
@@ -40,7 +40,7 @@ def _assert_references_resolve(data_root: DataRoot, stem: str) -> None:
     documents_path = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
     links_path = data_root.processed_links / f"{stem}.parquet"
     sections_path = data_root.processed / "wikipedia" / "sections" / f"{stem}.parquet"
-    documents = pq.read_table(documents_path, columns=["article_id", "document_id"])  # type: ignore[no-untyped-call]
+    documents = pq.read_table(documents_path, columns=["article_id", "document_id"])
     article_ids = set(documents["article_id"].to_pylist())
     document_ids = set(documents["document_id"].to_pylist())
     _assert_link_references_resolve(links_path, article_ids, document_ids, stem)
@@ -55,7 +55,7 @@ def _assert_link_references_resolve(
 ) -> None:
     if not links_path.exists():
         return
-    link_schema = pq.read_schema(links_path)  # type: ignore[no-untyped-call]
+    link_schema = pq.read_schema(links_path)
     if "article_id" in link_schema.names:
         unresolved = _unresolved_article_links(links_path, article_ids)
     else:
@@ -65,12 +65,12 @@ def _assert_link_references_resolve(
 
 
 def _unresolved_article_links(links_path: Path, article_ids: set[object]) -> bool:
-    links = pq.read_table(links_path, columns=["article_id"])  # type: ignore[no-untyped-call]
+    links = pq.read_table(links_path, columns=["article_id"])
     return any(article_id not in article_ids for article_id in links["article_id"].to_pylist())
 
 
 def _unresolved_document_links(links_path: Path, document_ids: set[object]) -> bool:
-    links = pq.read_table(links_path, columns=["document_id", "project"])  # type: ignore[no-untyped-call]
+    links = pq.read_table(links_path, columns=["document_id", "project"])
     return any(
         project == "wikipedia" and document_id not in document_ids
         for document_id, project in zip(
@@ -86,7 +86,7 @@ def _assert_section_references_resolve(
 ) -> None:
     if not sections_path.exists():
         return
-    sections = pq.read_table(sections_path, columns=["document_id"])  # type: ignore[no-untyped-call]
+    sections = pq.read_table(sections_path, columns=["document_id"])
     if any(document_id not in document_ids for document_id in sections["document_id"].to_pylist()):
         raise MigrationError(f"Stem {stem!r} has sections unresolved by canonical documents")
 
@@ -94,7 +94,7 @@ def _assert_section_references_resolve(
 def _validate_retirement_inputs(data_root: DataRoot, stem: str) -> tuple[Path, Path]:
     canonical = data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet"
     legacy = data_root.processed_articles / f"{stem}.parquet"
-    if not canonical.exists() or not pq.read_schema(canonical).equals(  # type: ignore[no-untyped-call]
+    if not canonical.exists() or not pq.read_schema(canonical).equals(
         wikipedia_document_schema(), check_metadata=True
     ):
         raise MigrationError(f"Stem {stem!r} has no valid canonical Wikipedia document")

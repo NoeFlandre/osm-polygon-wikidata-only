@@ -86,7 +86,7 @@ def atomic_write_json(path: Path, value: Any) -> None:
 def atomic_write_parquet(path: Path, table: pa.Table) -> None:
     """Publish ``table`` at ``path`` as a Snappy-compressed Parquet file."""
     with atomic_replacement(path) as temporary:
-        pq.write_table(table, temporary, compression="snappy")  # type: ignore[no-untyped-call]
+        pq.write_table(table, temporary, compression="snappy")
 
 
 def atomic_copy_file(source: Path, target: Path) -> None:

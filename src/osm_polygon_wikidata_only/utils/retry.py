@@ -99,6 +99,15 @@ def _is_transient_exception(error: BaseException) -> bool:
     return isinstance(error, OSError) and error.errno in _TRANSIENT_ERRNOS
 
 
+def _retry_error_kind(error: BaseException) -> str:
+    """Return the safe, stable label used in transient retry warnings."""
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    if isinstance(error, urllib.error.URLError) and isinstance(error.reason, BaseException):
+        return type(error.reason).__name__
+    return type(error).__name__
+
+
 def transient_retry_log_callback(
     context: str,
     *,
@@ -109,17 +118,11 @@ def transient_retry_log_callback(
     def on_retry(attempt: int, error: BaseException, delay: float) -> None:
         if attempt != 1 and attempt % 30 != 0:
             return
-        if isinstance(error, urllib.error.HTTPError):
-            error_kind = f"HTTP {error.code}"
-        elif isinstance(error, urllib.error.URLError) and isinstance(error.reason, BaseException):
-            error_kind = type(error.reason).__name__
-        else:
-            error_kind = type(error).__name__
         logger.warning(
             "%s temporarily unavailable (%s); attempt %d failed; "
             "retrying in %.1fs; pipeline remains active",
             context,
-            error_kind,
+            _retry_error_kind(error),
             attempt,
             delay,
         )

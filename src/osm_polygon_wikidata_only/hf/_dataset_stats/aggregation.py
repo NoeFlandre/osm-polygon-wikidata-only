@@ -153,8 +153,8 @@ def _update_unique_values(values: list[object], target: set[str]) -> None:
 
 def _unique_column_values(values: pa.ChunkedArray) -> list[object]:
     if not _is_serialized_string(values.type):
-        return values.to_pylist()  # type: ignore[no-untyped-call]
-    return _compute_array("unique", values).to_pylist()  # type: ignore[no-untyped-call]
+        return values.to_pylist()
+    return _compute_array("unique", values).to_pylist()
 
 
 def _count_truthy(values: list[object]) -> int:
@@ -163,7 +163,7 @@ def _count_truthy(values: list[object]) -> int:
 
 def _count_truthy_column(values: pa.ChunkedArray) -> int:
     if not pa.types.is_boolean(values.type):
-        return _count_truthy(values.to_pylist())  # type: ignore[no-untyped-call]
+        return _count_truthy(values.to_pylist())
     return _scalar_int(_compute_scalar("sum", values))
 
 
@@ -181,8 +181,8 @@ def _count_non_english_columns(
 ) -> int:
     if not pa.types.is_boolean(wikipedia.type) or not pa.types.is_boolean(english.type):
         return _count_non_english(
-            wikipedia.to_pylist(),  # type: ignore[no-untyped-call]
-            english.to_pylist(),  # type: ignore[no-untyped-call]
+            wikipedia.to_pylist(),
+            english.to_pylist(),
         )
     has_no_english = _compute_array("invert", pc.fill_null(english, False))
     active = _compute_array("and", wikipedia, has_no_english)
@@ -202,7 +202,7 @@ def _count_language_buckets(values: list[Any]) -> tuple[int, int, int]:
 
 def _count_language_bucket_column(values: pa.ChunkedArray) -> tuple[int, int, int]:
     if not pa.types.is_integer(values.type):
-        return _count_language_buckets(values.to_pylist())  # type: ignore[no-untyped-call]
+        return _count_language_buckets(values.to_pylist())
     return (
         _count_at_least(values, 2),
         _count_at_least(values, 5),
@@ -229,7 +229,7 @@ def _count_polygon_language_column(
     cache: dict[str | bytes, tuple[str, ...]],
 ) -> Counter[str]:
     if not _is_serialized_string(values.type):
-        return _count_polygon_languages(values.to_pylist())  # type: ignore[no-untyped-call]
+        return _count_polygon_languages(values.to_pylist())
     counts: Counter[str] = Counter()
     for value, frequency in _arrow_value_counts(values):
         for language in _cached_languages(value, cache):
@@ -315,7 +315,7 @@ def _accumulate_article_table(stats: _StatsAccumulator, table: pa.Table) -> None
 
 def _count_value_strings(values: pa.ChunkedArray) -> Counter[str]:
     if not _is_serialized_string(values.type):
-        return _count_python_value_strings(values.to_pylist())  # type: ignore[no-untyped-call]
+        return _count_python_value_strings(values.to_pylist())
     return _count_serialized_value_strings(values)
 
 
@@ -331,8 +331,8 @@ def _count_serialized_value_strings(values: pa.ChunkedArray) -> Counter[str]:
 
 def _arrow_value_counts(values: pa.ChunkedArray) -> list[tuple[object, int]]:
     frequencies = _compute_array("value_counts", values)
-    distinct_values = frequencies.field("values").to_pylist()  # type: ignore[no-untyped-call]
-    counts = frequencies.field("counts").to_pylist()  # type: ignore[no-untyped-call]
+    distinct_values = frequencies.field("values").to_pylist()
+    counts = frequencies.field("counts").to_pylist()
     return [(value, int(count)) for value, count in zip(distinct_values, counts, strict=True)]
 
 
@@ -342,7 +342,7 @@ def _sum_numeric(values: list[Any]) -> int:
 
 def _sum_numeric_column(values: pa.ChunkedArray) -> int:
     if not pa.types.is_integer(values.type):
-        return _sum_numeric(values.to_pylist())  # type: ignore[no-untyped-call]
+        return _sum_numeric(values.to_pylist())
     return _scalar_int(_compute_scalar("sum", values))
 
 

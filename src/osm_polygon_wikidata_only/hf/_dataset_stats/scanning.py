@@ -41,7 +41,7 @@ def safe_table(
     """
     try:
         with pq.ParquetFile(parquet_path) as parquet_file:
-            return parquet_file.read(columns=list(columns))  # type: ignore[no-untyped-call]
+            return parquet_file.read(columns=list(columns))
     except (OSError, KeyError, pa.ArrowInvalid) as e:
         LOGGER.warning("Skipping %s: %s", parquet_path, e)
         return None
@@ -50,7 +50,7 @@ def safe_table(
 def safe_metadata_row_count(parquet_path: Path) -> int | None:
     """Read the row count from parquet metadata with the same skip policy."""
     try:
-        rows = pq.read_metadata(parquet_path).num_rows  # type: ignore[no-untyped-call]
+        rows = pq.read_metadata(parquet_path).num_rows
     except (OSError, KeyError, pa.ArrowInvalid) as e:
         LOGGER.warning("Skipping %s: %s", parquet_path, e)
         return None

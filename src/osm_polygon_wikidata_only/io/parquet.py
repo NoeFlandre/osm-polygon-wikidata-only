@@ -61,14 +61,14 @@ def write_table(
         table = table.slice(0, 0)
     else:
         table = pa.Table.from_pylist(materialized, schema=schema)
-    pq.write_table(table, path, compression="snappy")  # type: ignore[no-untyped-call]
+    pq.write_table(table, path, compression="snappy")
     LOGGER.info("Wrote %d rows to %s", len(materialized), path)
     return len(materialized)
 
 
 def read_table(path: Path) -> pa.Table:
     """Read a parquet file at ``path`` and return a :class:`pa.Table`."""
-    result: pa.Table = pq.read_table(path)  # type: ignore[no-untyped-call]
+    result: pa.Table = pq.read_table(path)
     return result
 
 
@@ -87,11 +87,11 @@ def _open_parquet_file(path: Path) -> Iterator[pq.ParquetFile]:
     out of :data:`__all__`; external callers should reach for :func:`read_table`
     for eager whole-file reads.
     """
-    parquet_file: pq.ParquetFile = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
+    parquet_file: pq.ParquetFile = pq.ParquetFile(path)
     try:
         yield parquet_file
     finally:
-        parquet_file.close()  # type: ignore[no-untyped-call]
+        parquet_file.close()
 
 
 def write_polygons(path: Path, rows: Iterable[dict[str, object]]) -> int:

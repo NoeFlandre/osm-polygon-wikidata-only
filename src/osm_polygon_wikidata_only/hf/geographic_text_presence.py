@@ -95,7 +95,7 @@ def _wikipedia_text_ids(wikipedia_dir: Path) -> set[str]:
 
 
 def _wikipedia_file_text_ids(path: Path) -> set[str]:
-    identifier_column = _document_identity_column(set(pq.read_schema(path).names))  # type: ignore[no-untyped-call]
+    identifier_column = _document_identity_column(set(pq.read_schema(path).names))
     values: set[str] = set()
     for row in read_required_columns(path, (identifier_column, "full_text"), label="wikipedia"):
         if row.get(identifier_column) and _non_blank(row.get("full_text")):
@@ -145,8 +145,7 @@ def _linked_text_polygon_ids(
 
 def _has_canonical_links(source_links_dir: Path) -> bool:
     return any(
-        is_canonical_link_schema(pq.read_schema(path))  # type: ignore[no-untyped-call]
-        for path in sorted_parquets(source_links_dir)
+        is_canonical_link_schema(pq.read_schema(path)) for path in sorted_parquets(source_links_dir)
     )
 
 

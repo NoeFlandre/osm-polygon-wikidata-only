@@ -139,6 +139,33 @@ augmentation statistics from finalized tables before publication. The static
 `final-dataset-snapshot` Trackio run records headline dataset metrics and
 exactly three plots; it is a snapshot, not a processing timeline.
 
+## Quality boundaries and deterministic replay
+
+The quality cycle follows the same ownership boundaries as the runtime:
+
+- `domain` modules contain local data rules and may depend only on the local
+  domain layer;
+- `pipeline` modules orchestrate local state and must not import CLI modules;
+  CLI parsing and dependency wiring stay at the edge; and
+- local integration tests exercise real Parquet, JSON, and manifest formats,
+  while external clients are deterministic stubs.
+
+The AST checker inspects project-local imports and fails on cycles, domain-purity
+violations, or pipeline-to-CLI edges. It intentionally ignores third-party
+imports, so it is an architectural constraint rather than proof that runtime
+code has no side effects. Hypothesis properties cover sentence invariants;
+pytest-bdd acceptance tests replay an interrupted local run and compare it with
+a clean run, including rows, offsets, language routing, and manifest results.
+The rationale and boundary cleanup rule are recorded in [ADR 0001: Quality
+boundaries](adr/0001-quality-boundaries.md).
+
+The CRAP gate evaluates full source files in its configured inventory and uses
+Radon's `--show-closures` mode so nested functions are included. Mutation
+testing remains scoped to deterministic helpers and quality tools; live network,
+GPU, publication, and large-data behavior stays in focused integration or
+operational checks. These boundaries describe the quality design; static checks
+do not prove runtime side-effect safety.
+
 ## Container boundary
 
 The Docker `build` has `development` and `runtime` stages. The runtime image

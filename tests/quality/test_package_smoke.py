@@ -94,12 +94,18 @@ def test_module_resource_resolves_package_modules_and_rejects_other_packages(
     nested_init.write_text("", encoding="utf-8")
     dotted_module = package_root / "cli.py"
     dotted_module.write_text("", encoding="utf-8")
+    nested_dotted_module = nested / "cli.py"
+    nested_dotted_module.write_text("", encoding="utf-8")
 
     assert package_smoke._module_resource(package_root, "package", "package") == package_init
     assert package_smoke._module_resource(package_root, "package", "package.nested") == nested_init
     assert (
         package_smoke._module_resource(package_root, "package.nested", "package.nested.cli")
         == dotted_module
+    )
+    assert (
+        package_smoke._module_resource(package_root, "package", "package.nested.cli")
+        == nested_dotted_module
     )
     assert package_smoke._module_resource(package_root, "package", "other.cli") is None
 
@@ -313,7 +319,11 @@ def test_main_defaults_optional_contracts_to_empty(
 
 @pytest.mark.parametrize(
     "arguments",
-    [[], ["--distribution", "distribution"]],
+    [
+        [],
+        ["--distribution", "distribution"],
+        ["--package", "package"],
+    ],
 )
 def test_main_requires_distribution_and_package(arguments: list[str]) -> None:
     with pytest.raises(SystemExit) as error:

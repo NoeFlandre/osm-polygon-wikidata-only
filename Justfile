@@ -1,178 +1,165 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-UV_CACHE_DIR := "/tmp/osm-polygon-wikidata-only-uv"
+export QUALITY_RUNTIME_DIR := env_var_or_default("QUALITY_RUNTIME_DIR", "../quality-runtime")
+QUALITY_RUNTIME_PATH := absolute_path(QUALITY_RUNTIME_DIR)
+export QUALITY_REPORT_DIR := absolute_path(env_var_or_default("QUALITY_REPORT_DIR", QUALITY_RUNTIME_PATH + "/reports"))
+export QUALITY_CACHE_DIR := absolute_path(env_var_or_default("QUALITY_CACHE_DIR", QUALITY_RUNTIME_PATH + "/cache"))
+export UV_CACHE_DIR := absolute_path(env_var_or_default("UV_CACHE_DIR", QUALITY_CACHE_DIR + "/uv-cache"))
+export QUALITY_TMP_DIR := absolute_path(env_var_or_default("QUALITY_TMP_DIR", QUALITY_RUNTIME_PATH + "/tmp"))
+export TMPDIR := QUALITY_TMP_DIR
+export RUFF_CACHE_DIR := absolute_path(env_var_or_default("RUFF_CACHE_DIR", QUALITY_CACHE_DIR + "/ruff"))
+export HYPOTHESIS_STORAGE_DIRECTORY := absolute_path(env_var_or_default("HYPOTHESIS_STORAGE_DIRECTORY", QUALITY_CACHE_DIR + "/hypothesis"))
+export MPLCONFIGDIR := absolute_path(env_var_or_default("MPLCONFIGDIR", QUALITY_CACHE_DIR + "/matplotlib"))
+export UV_PYTHON_INSTALL_DIR := absolute_path(env_var_or_default("UV_PYTHON_INSTALL_DIR", QUALITY_CACHE_DIR + "/python"))
 
 default:
     @just --list
 
-preprocessing-check:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv sync --frozen --directory preprocessing
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --directory preprocessing --frozen pytest -q
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ruff check preprocessing/src preprocessing/tests
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ruff format --check preprocessing/src preprocessing/tests
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run --frozen ty check --project preprocessing --python preprocessing/.venv preprocessing/src
+quality-runtime:
+    @mkdir -p "{{ QUALITY_RUNTIME_PATH }}" "{{ QUALITY_REPORT_DIR }}" "{{ QUALITY_CACHE_DIR }}" "{{ QUALITY_TMP_DIR }}"
+
+preprocessing-check: quality-runtime
+    uv sync --frozen --directory preprocessing
+    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/preprocessing.coverage" uv run --directory preprocessing --frozen python -m pytest -q -p no:cacheprovider --basetemp="{{ TMPDIR }}/preprocessing-pytest" --cov=osm_polygon_wikidata_only_preprocessing --cov-branch --cov-fail-under=0 --cov-report=term-missing
+    uv run python -m coverage json --data-file="{{ QUALITY_REPORT_DIR }}/preprocessing.coverage" -o "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json"
+    uv run --frozen ruff check preprocessing/src preprocessing/tests
+    uv run --frozen ruff format --check preprocessing/src preprocessing/tests
+    uv run --frozen ty check --project preprocessing --python preprocessing/.venv preprocessing/src
     just preprocessing-package-smoke
 
-preprocessing-package-smoke:
-    @smoke_dir=$(mktemp -d -t osm-polygon-wikidata-preprocessing-smoke) && \
+preprocessing-package-smoke: quality-runtime
+    @smoke_dir=$(mktemp -d "{{ TMPDIR }}/preprocessing-package-smoke.XXXXXX") && \
         trap 'rm -rf "$smoke_dir"' EXIT && \
-        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv build --directory preprocessing --out-dir "$smoke_dir/dist" && \
-        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv venv "$smoke_dir/venv" && \
-        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv pip install --no-deps --python "$smoke_dir/venv/bin/python" "$smoke_dir/dist/"*.whl && \
+        UV_OFFLINE=1 uv build --directory preprocessing --out-dir "$smoke_dir/dist" && \
+        UV_OFFLINE=1 uv venv --python "$(uv run python -c 'import sys; print(sys.executable)')" "$smoke_dir/venv" && \
+        UV_OFFLINE=1 uv pip install --no-deps --python "$smoke_dir/venv/bin/python" "$smoke_dir/dist/"*.whl && \
         "$smoke_dir/venv/bin/python" scripts/quality/package_smoke.py \
         --distribution osm-polygon-wikidata-only-preprocessing \
         --package osm_polygon_wikidata_only_preprocessing \
         --entry-point osm-polygon-wikidata-only-preprocessing
-sync:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv sync --frozen
+sync: quality-runtime
+    uv sync --frozen
 
-baseline:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv sync --frozen
+baseline: quality-runtime
+    uv sync --frozen
+    uv run python -m pytest --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/baseline-pytest" -q
     @git status --short --branch
 
-test:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q
+test: quality-runtime
+    uv run python -m pytest --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/test-pytest" -q
 
-ruff:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff check src tests scripts
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff format --check src tests scripts
+ruff: quality-runtime
+    uv run ruff check src tests scripts preprocessing/src preprocessing/tests
+    uv run ruff format --check src tests scripts preprocessing/src preprocessing/tests
 
-coverage:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
+coverage: quality-runtime
+    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-coverage" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/coverage-pytest" -q
 
-tests:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest --cov=osm_polygon_wikidata_only --cov-report=term-missing -q
+tests: quality-runtime
+    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q
 
-acceptance-tests:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/pipeline/test_end_to_end.py tests/pipeline/test_sync_recovery_integration.py
+property-tests: quality-runtime
+    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" tests/property
 
-architecture-checks:
+acceptance-tests: quality-runtime
+    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/acceptance-pytest" tests/acceptance tests/pipeline/test_end_to_end.py tests/pipeline/test_sync_recovery_integration.py
+
+architecture-checks: quality-runtime
     just build
     just docs
     just package-smoke
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/contracts tests/test_mkdocs.py tests/test_documentation.py tests/test_docker.py
+    just preprocessing-check
+    uv run python scripts/quality/architecture.py
+    uv run python scripts/quality/architecture.py --source-root preprocessing/src/osm_polygon_wikidata_only_preprocessing --package osm_polygon_wikidata_only_preprocessing
+    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/architecture-pytest" tests/contracts tests/test_mkdocs.py tests/test_documentation.py tests/test_docker.py
 
-# Enforce a CRAP score below 6 for the V2 data-integrity helper scope.
-crap:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest tests/domain/test_filters.py tests/v2/test_deduplication.py tests/v2/test_fingerprints.py tests/v2/test_wikipedia_tags.py tests/v2/test_sentence_logic.py tests/v2/test_sentence_runner.py tests/v2/test_comparison.py tests/v2/test_sentence_checkpoints.py tests/grid5000/test_sentence_protocol.py tests/grid5000/test_sentence_artifacts.py --cov=osm_polygon_wikidata_only.domain.filters --cov=osm_polygon_wikidata_only.v2.deduplication --cov=osm_polygon_wikidata_only.v2.fingerprints --cov=osm_polygon_wikidata_only.v2.wikipedia_tags --cov=osm_polygon_wikidata_only.v2.sentence_logic --cov=osm_polygon_wikidata_only.v2.sentence_runner --cov=osm_polygon_wikidata_only.v2.comparison --cov=osm_polygon_wikidata_only.v2.sentence_checkpoints --cov=osm_polygon_wikidata_only.grid5000.sentence_protocol --cov-branch --cov-fail-under=0 --cov-report=lcov:/tmp/osm-polygon-wikidata-only-crap.lcov -q
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run crap4py --lcov /tmp/osm-polygon-wikidata-only-crap.lcov --max-crap 5.99 src/osm_polygon_wikidata_only/domain/filters.py src/osm_polygon_wikidata_only/v2/deduplication.py src/osm_polygon_wikidata_only/v2/fingerprints.py src/osm_polygon_wikidata_only/v2/wikipedia_tags.py src/osm_polygon_wikidata_only/v2/sentence_logic.py src/osm_polygon_wikidata_only/v2/sentence_runner.py src/osm_polygon_wikidata_only/v2/comparison.py src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py
+# Canonical full-source CRAP reporting consumes coverage produced by the
+# preceding root `tests` and nested preprocessing quality stages.
+crap-report: quality-runtime
+    @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
+    @test -s "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" || { echo "Run just preprocessing-check first to generate preprocessing coverage." >&2; exit 1; }
+    uv run python -m radon cc --show-closures -j src scripts > "{{ QUALITY_REPORT_DIR }}/complexity.json"
+    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/complexity.json" --maximum 6
+    uv run python -m radon cc --show-closures -j preprocessing/src > "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json"
+    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json" --maximum 6
 
-# Report function-level CRAP scores for the pure parsing/cleaning and sync
-# application scopes. Reports stay in /tmp so Mac storage remains bounded.
-crap-sync:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/enrichment/test_parsing_quality.py tests/enrichment/test_enrichment.py tests/cli/test_sync_application.py --cov=osm_polygon_wikidata_only.enrichment.wikipedia.parsing --cov=osm_polygon_wikidata_only.enrichment.wikidata.parsing --cov=osm_polygon_wikidata_only.enrichment.text_cleaning --cov=osm_polygon_wikidata_only.cli.sync_application --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py src/osm_polygon_wikidata_only/enrichment/text_cleaning.py src/osm_polygon_wikidata_only/cli/sync_application.py > /tmp/osm-polygon-wikidata-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-crap-complexity.json --maximum 6
+# Standalone CRAP runs refresh both coverage reports before reporting.
+crap-all: quality-runtime
+    just tests
+    just preprocessing-check
+    just crap-report
 
-# Enforce a CRAP score below 6 for durable upload-queue helpers.
-crap-upload:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/io/test_upload_queue_durability.py tests/io/test_upload_queue_amendment_8.py tests/io/test_upload_queue_real_legacy.py tests/hf/test_upload_operation_helpers.py tests/hf/test_upload_state.py --cov=osm_polygon_wikidata_only.hf.upload_queue --cov=osm_polygon_wikidata_only.hf._upload_state --cov=osm_polygon_wikidata_only.hf._upload_retry --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-upload-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/upload_queue.py src/osm_polygon_wikidata_only/hf/_upload_state.py src/osm_polygon_wikidata_only/hf/_upload_retry.py > /tmp/osm-polygon-wikidata-upload-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-upload-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-upload-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for the quality-reporting scripts themselves.
-crap-quality:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-quality-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/quality/test_crap_score.py tests/quality/test_mutation_gate.py tests/quality/test_mutation_equivalents.py tests/quality/test_audit_containment.py tests/quality/test_package_smoke.py tests/test_docs_assembly.py --cov=scripts.quality.crap_score --cov=scripts.quality.mutation_gate --cov=scripts.quality.mutation_equivalents --cov=scripts.audit_containment --cov=scripts.quality.package_smoke --cov=scripts.assemble_docs_site --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-quality-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j scripts/quality/crap_score.py scripts/quality/mutation_gate.py scripts/quality/mutation_equivalents.py scripts/audit_containment.py scripts/quality/package_smoke.py scripts/assemble_docs_site.py > /tmp/osm-polygon-wikidata-quality-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-quality-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-quality-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for deterministic centroid-file handling.
-crap-geography:
-    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-geography-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-geography-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_coverage_map.py --cov=osm_polygon_wikidata_only.hf.coverage_map --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-geography-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/coverage_map.py > /tmp/osm-polygon-wikidata-geography-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-geography-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-geography-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for deterministic geographic parquet inputs.
-crap-geography-inputs:
-    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-geography-inputs-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-geography-inputs-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_geographic_text_coverage.py --cov=osm_polygon_wikidata_only.hf._geographic.parquet_inputs --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-geography-inputs-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/_geographic/parquet_inputs.py > /tmp/osm-polygon-wikidata-geography-inputs-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-geography-inputs-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-geography-inputs-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for deterministic DatasetStats aggregation.
-crap-stats:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-stats-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_dataset_stats.py --cov=osm_polygon_wikidata_only.hf._dataset_stats.aggregation --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-stats-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/_dataset_stats/aggregation.py > /tmp/osm-polygon-wikidata-stats-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-stats-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-stats-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for the lazy SaT dependency/provider adapter.
-crap-sat:
-    COVERAGE_FILE=/tmp/osm-polygon-wikidata-sat-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/v2/test_sat.py --cov=osm_polygon_wikidata_only.v2.sat --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-sat-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/v2/sat.py > /tmp/osm-polygon-wikidata-sat-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-sat-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-sat-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for the Grid5000 GPU job boundary.
-crap-job:
-    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-job-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-job-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/grid5000/test_sentence_job.py --cov=osm_polygon_wikidata_only.grid5000.sentence_job --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-job-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/grid5000/sentence_job.py > /tmp/osm-polygon-wikidata-job-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-job-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-job-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for the read-only Hub inventory boundary.
-crap-inventory:
-    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-inventory-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-inventory-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/hf/test_reconciliation.py --cov=osm_polygon_wikidata_only.hf.remote_inventory --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-inventory-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/hf/remote_inventory.py > /tmp/osm-polygon-wikidata-inventory-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-inventory-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-inventory-crap-complexity.json --maximum 6
-
-# Enforce a CRAP score below 6 for the one durable-publication ritual.
-crap-atomic:
-    MPLBACKEND=Agg MPLCONFIGDIR=/tmp/osm-polygon-wikidata-atomic-crap-$$ COVERAGE_FILE=/tmp/osm-polygon-wikidata-atomic-crap-coverage-$$ UV_CACHE_DIR={{UV_CACHE_DIR}} uv run pytest -q tests/io/test_atomic.py tests/io/test_atomic_write.py tests/io/test_atomic_parquet.py --cov=osm_polygon_wikidata_only.io.atomic --cov-branch --cov-fail-under=0 --cov-report=json:/tmp/osm-polygon-wikidata-atomic-crap-coverage.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run radon cc -j src/osm_polygon_wikidata_only/io/atomic.py > /tmp/osm-polygon-wikidata-atomic-crap-complexity.json
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/crap_score.py --coverage /tmp/osm-polygon-wikidata-atomic-crap-coverage.json --complexity /tmp/osm-polygon-wikidata-atomic-crap-complexity.json --maximum 6
-
-crap-all: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic
+# Compatibility names retained for tooling that used the historical scopes.
+crap: crap-all
+crap-sync: crap-all
+crap-upload: crap-all
+crap-quality: crap-all
+crap-geography: crap-all
+crap-geography-inputs: crap-all
+crap-stats: crap-all
+crap-sat: crap-all
+crap-job: crap-all
+crap-inventory: crap-all
+crap-atomic: crap-all
+crap-preprocessing: crap-all
 
 # Run mutmut with two workers to keep peak Mac memory bounded. The explicit
 # source scope contains only pure deterministic helpers, and the gate refuses
 # any unreviewed survivor, timeout, or untested mutant. Equivalent mutations
 # remain visible and require exact source-bound reviews.
 mutation:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mutmut run --max-children 2
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mutmut results --all=true | UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python -m scripts.quality.mutation_gate
+    # Regenerate the mutant tree from scratch. Reusing incremental mutmut state
+    # after a source edit was observed to under-generate the mutant population
+    # (2801 instead of 3038 mutants), which silently weakens the gate.
+    rm -rf mutants
+    uv run python -m mutmut run --max-children 2
+    uv run python -m mutmut results --all=true | uv run python -m scripts.quality.mutation_gate
 
-smoke-test:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run osm-polygon-wikidata-only --help
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run osm-polygon-wikidata-only sync-dir --help
+smoke-test: quality-runtime
+    uv run osm-polygon-wikidata-only --help
+    uv run osm-polygon-wikidata-only sync-dir --help
 
 diff-review:
     git diff --check
     @test -z "$(git diff --name-only --diff-filter=U)"
     @git status --short --branch
 
-quality-gauntlet:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/quality/qa_gauntlet.py
+quality-gauntlet: quality-runtime
+    uv run python scripts/quality/qa_gauntlet.py
 
 # Compatibility alias retained for historical references in tooling.
 qa-gauntlet: quality-gauntlet
 
 # Run opt-in quality-strength checks; these are intentionally separate
 # from `just check` because mutation testing is substantially slower.
-quality-strength: mutation crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic
+quality-strength: crap-all mutation
 
-quality-advanced: crap crap-sync crap-upload crap-quality crap-geography crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic mutation
+quality-advanced: crap-all mutation
 
-lint:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff check src tests scripts
+lint: quality-runtime
+    uv run ruff check src tests scripts preprocessing/src preprocessing/tests
 
-format:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff format src tests scripts
+format: quality-runtime
+    uv run ruff format src tests scripts preprocessing/src preprocessing/tests
 
-format-check:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ruff format --check src tests scripts
+format-check: quality-runtime
+    uv run ruff format --check src tests scripts preprocessing/src preprocessing/tests
 
-typecheck:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ty check src scripts
+typecheck: quality-runtime
+    uv run ty check src scripts
 
-ty:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run ty check src scripts
+ty: quality-runtime
+    uv run ty check src scripts
 
-build:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv build
+build: quality-runtime
+    uv build
 
-package-smoke:
-    @smoke_dir=$(mktemp -d -t osm-polygon-wikidata-package-smoke) && \
+package-smoke: quality-runtime
+    @smoke_dir=$(mktemp -d "{{ TMPDIR }}/package-smoke.XXXXXX") && \
         trap 'rm -rf "$smoke_dir"' EXIT && \
-        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv build --out-dir "$smoke_dir/dist" && \
-        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv venv "$smoke_dir/venv" && \
-        UV_CACHE_DIR={{UV_CACHE_DIR}} UV_OFFLINE=1 uv pip install --no-deps --python "$smoke_dir/venv/bin/python" "$smoke_dir/dist/"*.whl && \
+        UV_OFFLINE=1 uv build --out-dir "$smoke_dir/dist" && \
+        UV_OFFLINE=1 uv venv --python "$(uv run python -c 'import sys; print(sys.executable)')" "$smoke_dir/venv" && \
+        UV_OFFLINE=1 uv pip install --no-deps --python "$smoke_dir/venv/bin/python" "$smoke_dir/dist/"*.whl && \
         "$smoke_dir/venv/bin/python" scripts/quality/package_smoke.py \
         --distribution osm-polygon-wikidata-only \
         --package osm_polygon_wikidata_only \
@@ -184,12 +171,12 @@ package-smoke:
         --entry-point osm-polygon-wikidata-only-audit-remote \
         --entry-point osm-polygon-wikidata-only-trackio \
         --entry-point osm-polygon-wikidata-and-wikipedia-trackio
-docs:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run mkdocs build --strict --site-dir /tmp/osm-polygon-wikidata-only-site
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run python scripts/assemble_docs_site.py --site-dir /tmp/osm-polygon-wikidata-only-site
+docs: quality-runtime
+    uv run python -m mkdocs build --strict --site-dir "{{ QUALITY_REPORT_DIR }}/site"
+    uv run python scripts/assemble_docs_site.py --site-dir "{{ QUALITY_REPORT_DIR }}/site"
 
-trackio:
-    UV_CACHE_DIR={{UV_CACHE_DIR}} uv run osm-polygon-wikidata-only-trackio
+trackio: quality-runtime
+    uv run osm-polygon-wikidata-only-trackio
 
 # Build the minimal non-root runtime image; this never touches a data root.
 docker-build:
@@ -208,15 +195,21 @@ docker-test:
 docker-check:
     docker build --target development --tag osm-polygon-wikidata-only:dev .
     docker run --rm osm-polygon-wikidata-only:dev bash -lc \
-        'UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run pytest -q && UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run ruff check src tests scripts && UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run ruff format --check src tests scripts && UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run ty check src scripts'
+        'task_dir=/tmp/osm-polygon-wikidata-only-docker-check && \
+        mkdir -p "$task_dir/tmp" "$task_dir/uv-cache" && \
+        export TMPDIR="$task_dir/tmp" UV_CACHE_DIR="$task_dir/uv-cache" && \
+        uv run pytest -q && \
+        uv run ruff check src tests scripts && \
+        uv run ruff format --check src tests scripts && \
+        uv run ty check src scripts'
 
 # Opt-in data/publish operation for a host root containing `raw/` and resumable state.
 docker-run data_root: docker-build
     docker run --rm -it \
         --user "$(id -u):$(id -g)" \
-        --env HOME=/tmp \
-        --mount "type=bind,src={{data_root}},dst=/data" \
-        --mount "type=bind,src={{data_root}}/raw,dst=/data/raw,readonly" \
+        --env HOME=/app/.quality-runtime/home \
+        --mount "type=bind,src={{ data_root }},dst=/data" \
+        --mount "type=bind,src={{ data_root }}/raw,dst=/data/raw,readonly" \
         --env HF_TOKEN \
         --env WIKIMEDIA_BOT_USERNAME \
         --env WIKIMEDIA_BOT_PASSWORD \

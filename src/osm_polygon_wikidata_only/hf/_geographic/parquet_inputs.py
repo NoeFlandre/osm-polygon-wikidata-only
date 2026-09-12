@@ -81,7 +81,7 @@ def iter_required_columns(
 def _metadata_columns(parquet_path: Path) -> tuple[set[str], bool]:
     """Return user columns and whether metadata inspection succeeded."""
     try:
-        metadata = pq.read_metadata(parquet_path)  # type: ignore[no-untyped-call]
+        metadata = pq.read_metadata(parquet_path)
     # ``except Exception`` retained: PyArrow's metadata API raises
     # across several unstable exception types depending on the
     # corruption mode. The ParquetFile schema remains the fallback.
@@ -105,7 +105,7 @@ def _iter_required_rows(
     actual: set[str],
     metadata_read: bool,
 ) -> Iterator[dict[str, Any]]:
-    with pq.ParquetFile(parquet_path) as parquet_file:  # type: ignore[no-untyped-call]
+    with pq.ParquetFile(parquet_path) as parquet_file:
         if not metadata_read:
             actual.update(set(parquet_file.schema.names) - PYARROW_INTERNAL_COLUMNS)
         missing = sorted(set(columns) - actual)

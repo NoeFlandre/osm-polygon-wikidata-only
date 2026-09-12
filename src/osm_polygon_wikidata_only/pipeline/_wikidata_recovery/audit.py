@@ -440,7 +440,7 @@ def _scan_region(
 def _load_region_rows(data_root: DataRoot, stem: str) -> _RegionRows:
     paths = {label: path for label, path, _ in _region_paths(data_root, stem)}
     _require_schema(paths["polygons"], polygon_schema())
-    link_schema = pq.read_schema(paths["polygon_articles"])  # type: ignore[no-untyped-call]
+    link_schema = pq.read_schema(paths["polygon_articles"])
     canonical_links = link_schema.equals(polygon_document_link_schema(), check_metadata=True)
     if not canonical_links:
         _require_schema(paths["polygon_articles"], polygon_article_schema())
@@ -686,13 +686,13 @@ def _orphan_fact_ids(rows: list[dict[str, Any]], valid_polygon_qids: set[str]) -
 
 
 def _require_schema(path: Path, expected: pa.Schema) -> None:
-    actual: pa.Schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+    actual: pa.Schema = pq.read_schema(path)
     if not actual.equals(expected, check_metadata=True):
         raise _ScanError(f"Recovery input schema mismatch: {path}")
 
 
 def _read_rows(path: Path, columns: list[str]) -> list[dict[str, Any]]:
-    table: pa.Table = pq.read_table(path, columns=columns)  # type: ignore[no-untyped-call]
+    table: pa.Table = pq.read_table(path, columns=columns)
     rows: list[dict[str, Any]] = table.to_pylist()
     return rows
 

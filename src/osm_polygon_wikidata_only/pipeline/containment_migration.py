@@ -75,7 +75,7 @@ RETIREMENT_CONTRACT_VERSION = "contained-region-v1"
 
 
 def _identity_set(path: Path, contract: TableContract) -> tuple[set[tuple[Any, ...]], int]:
-    table = pq.read_table(path, columns=list(contract.identity_columns))  # type: ignore[no-untyped-call]
+    table = pq.read_table(path, columns=list(contract.identity_columns))
     rows = table.to_pylist()
     identities = {tuple(row[column] for column in contract.identity_columns) for row in rows}
     return identities, len(rows) - len(identities)
@@ -119,8 +119,8 @@ def _audit_present_contract(
 ) -> tuple[TableAudit, list[str]]:
     """Audit one contract whose parent and child files are present."""
     try:
-        parent_schema = pq.read_schema(parent_path)  # type: ignore[no-untyped-call]
-        child_schema = pq.read_schema(child_path)  # type: ignore[no-untyped-call]
+        parent_schema = pq.read_schema(parent_path)
+        child_schema = pq.read_schema(child_path)
         if not parent_schema.equals(child_schema, check_metadata=True):
             return (
                 TableAudit(contract.subdir, 0, 0, 0, 0),
@@ -206,7 +206,7 @@ def audit_rule(processed_dir: Path, rule: ContainmentRule) -> RuleAudit:
 
 def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
     with atomic_replacement(path) as temporary:
-        pq.write_table(table, temporary)  # type: ignore[no-untyped-call]
+        pq.write_table(table, temporary)
 
 
 def _identity(row: dict[str, Any], contract: TableContract) -> tuple[Any, ...]:
@@ -295,7 +295,7 @@ def _merge_polygon_rows(
 ) -> tuple[list[dict[str, Any]], dict[tuple[Any, Any], dict[str, Any]]]:
     """Merge child polygon snapshots into canonical parent rows."""
     parent_path = processed_dir / "polygons" / f"{parent_stem}.parquet"
-    polygon_rows = pq.read_table(parent_path).to_pylist()  # type: ignore[no-untyped-call]
+    polygon_rows = pq.read_table(parent_path).to_pylist()
     polygon_positions = {
         (row["osm_type"], row["osm_id"]): position for position, row in enumerate(polygon_rows)
     }
@@ -304,7 +304,7 @@ def _merge_polygon_rows(
         _merge_child_polygon_rows(
             polygon_rows,
             polygon_positions,
-            pq.read_table(child_path).to_pylist(),  # type: ignore[no-untyped-call]
+            pq.read_table(child_path).to_pylist(),
             parent_stem,
         )
     parent_polygons = {(row["osm_type"], row["osm_id"]): row for row in polygon_rows}
@@ -365,12 +365,12 @@ def _merged_contract_rows(
 ) -> tuple[list[dict[str, Any]], pa.Schema]:
     """Merge one containment table and return rows plus its parent schema."""
     parent_path = processed_dir / contract.subdir / f"{parent_stem}.parquet"
-    parent = pq.read_table(parent_path)  # type: ignore[no-untyped-call]
+    parent = pq.read_table(parent_path)
     rows = polygon_rows if contract.subdir == "polygons" else parent.to_pylist()
     seen = {_identity(row, contract) for row in rows}
     for child in children:
         child_path = processed_dir / contract.subdir / f"{child}.parquet"
-        child_rows = pq.read_table(child_path).to_pylist()  # type: ignore[no-untyped-call]
+        child_rows = pq.read_table(child_path).to_pylist()
         _append_child_rows(
             rows,
             seen,
@@ -448,14 +448,14 @@ def _load_retirement_payload(processed_dir: Path) -> dict[str, Any]:
 
 def _parquet_row_count(path: Path) -> int:
     """Read only Parquet metadata when updating manifest row counts."""
-    metadata = pq.read_metadata(path)  # type: ignore[no-untyped-call]
+    metadata = pq.read_metadata(path)
     return cast(int, metadata.num_rows)
 
 
 def _canonical_manifest_stats(staged: StagedRule) -> dict[str, Any]:
     """Recompute the existing processed-manifest statistics from staged tables."""
-    polygons = pq.read_table(staged.artifact("polygons")).to_pylist()  # type: ignore[no-untyped-call]
-    documents = pq.read_table(  # type: ignore[no-untyped-call]
+    polygons = pq.read_table(staged.artifact("polygons")).to_pylist()
+    documents = pq.read_table(
         staged.artifact("wikipedia/documents"),
         columns=["language", "article_length_chars"],
     ).to_pylist()

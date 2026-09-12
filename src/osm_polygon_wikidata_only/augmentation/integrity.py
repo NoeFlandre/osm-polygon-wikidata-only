@@ -207,7 +207,7 @@ def _read_polygon_wikidata_map(polygons_path: Path) -> dict[str, str]:
     """
     if not polygons_path.is_file():
         raise FileNotFoundError(f"Polygons parquet missing: {polygons_path}")
-    table: pa.Table = pq.read_table(polygons_path, columns=["polygon_id", "wikidata"])  # type: ignore[no-untyped-call]
+    table: pa.Table = pq.read_table(polygons_path, columns=["polygon_id", "wikidata"])
     mapping: dict[str, str] = {}
     duplicates: set[str] = set()
     for row in zip(
@@ -234,14 +234,14 @@ def _read_polygon_wikidata_set(polygons_path: Path) -> set[str]:
     """Return the set of distinct wikidata QIDs in the polygons parquet."""
     if not polygons_path.is_file():
         raise FileNotFoundError(f"Polygons parquet missing: {polygons_path}")
-    table: pa.Table = pq.read_table(polygons_path, columns=["wikidata"])  # type: ignore[no-untyped-call]
+    table: pa.Table = pq.read_table(polygons_path, columns=["wikidata"])
     return {str(value) for value in table.column("wikidata").to_pylist() if value}
 
 
 def _read_table_required(path: Path, *, label: str, columns: tuple[str, ...]) -> pa.Table:
     if not path.is_file():
         raise FileNotFoundError(f"{label} parquet missing: {path}")
-    table: pa.Table = pq.read_table(path, columns=list(columns))  # type: ignore[no-untyped-call]
+    table: pa.Table = pq.read_table(path, columns=list(columns))
     return table
 
 

@@ -41,7 +41,7 @@ def _sorted_counts(counter: Counter[str]) -> tuple[tuple[str, int], ...]:
 def _read_available(path: Path, columns: tuple[str, ...]) -> list[dict[str, object]]:
     """Read the requested columns that exist in a structurally valid Parquet."""
     try:
-        available = set(pq.read_schema(path).names)  # type: ignore[no-untyped-call]
+        available = set(pq.read_schema(path).names)
     except (OSError, pa.ArrowInvalid):
         return []
     selected = [column for column in columns if column in available]
@@ -231,7 +231,7 @@ def _polygon_languages_from_links(
 
 def _has_canonical_links(processed_root: Path) -> bool:
     return any(
-        is_canonical_link_schema(pq.read_schema(path))  # type: ignore[no-untyped-call]
+        is_canonical_link_schema(pq.read_schema(path))
         for path in sorted_parquets(processed_root / "polygon_articles")
     )
 

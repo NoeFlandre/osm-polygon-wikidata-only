@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -65,7 +67,6 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     assert len(config["dependency-groups"]["dev"]) == len(set(config["dependency-groups"]["dev"]))
     assert {"typer", "rich", "tqdm", "trackio"} <= runtime_names
     assert {
-        "crap4py",
         "mutmut",
         "pytest",
         "pytest-cov",
@@ -92,53 +93,75 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
 
 def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
     root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    listed = subprocess.run(
+        ["just", "--list"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert listed.returncode == 0, listed.stderr
+    for recipe in (
+        "sync",
+        "test",
+        "coverage",
+        "baseline",
+        "ruff",
+        "lint",
+        "tests",
+        "property-tests",
+        "acceptance-tests",
+        "architecture-checks",
+        "format",
+        "format-check",
+        "typecheck",
+        "ty",
+        "build",
+        "package-smoke",
+        "preprocessing-package-smoke",
+        "docs",
+        "trackio",
+        "mutation",
+        "crap",
+        "crap-report",
+        "crap-quality",
+        "crap-all",
+        "crap-preprocessing",
+        "crap-upload",
+        "quality-strength",
+        "smoke-test",
+        "diff-review",
+        "qa-gauntlet",
+        "quality-gauntlet",
+        "check",
+    ):
+        assert recipe in listed.stdout
 
     for recipe in (
-        "sync:",
-        "test:",
-        "coverage:",
-        "baseline:",
-        "ruff:",
-        "lint:",
-        "tests:",
-        "acceptance-tests:",
-        "architecture-checks:",
-        "format:",
-        "format-check:",
-        "typecheck:",
-        "ty:",
-        "build:",
-        "package-smoke:",
-        "preprocessing-package-smoke:",
-        "docs:",
-        "trackio:",
-        "mutation:",
-        "crap:",
-        "crap-quality:",
-        "crap-all:",
-        "crap-upload:",
-        "quality-strength:",
-        "smoke-test:",
-        "diff-review:",
-        "qa-gauntlet:",
-        "quality-gauntlet:",
-        "check:",
+        "baseline",
+        "ruff",
+        "ty",
+        "tests",
+        "property-tests",
+        "acceptance-tests",
+        "architecture-checks",
+        "crap-all",
+        "mutation",
+        "smoke-test",
+        "diff-review",
     ):
-        assert recipe in justfile
-    for command in (
-        "uv sync --frozen",
-        "uv run pytest",
-        "uv run ruff check src tests scripts",
-        "uv run ruff format --check src tests scripts",
-        "uv run ty check src scripts",
-        "uv build",
-        "uv run mkdocs build --strict",
-        "git diff --check",
-    ):
-        assert command in justfile
-    assert "mypy" not in justfile
+        rendered = subprocess.run(
+            ["just", "--dry-run", recipe],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert rendered.returncode == 0, rendered.stderr
+
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
     assert "scripts/quality/qa_gauntlet.py" in justfile
+    assert "mypy" not in justfile
 
 
 def test_github_actions_runs_the_canonical_gauntlet_once() -> None:
@@ -186,145 +209,93 @@ def test_quality_gauntlet_is_the_single_canonical_completion_gate() -> None:
     assert "run: just qa-gauntlet" not in workflow
 
 
-def test_coverage_recipes_use_isolated_temporary_databases() -> None:
+def test_coverage_recipes_use_configured_runtime_paths(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    runtime = tmp_path / "quality runtime"
+    environment = os.environ.copy()
+    environment["QUALITY_RUNTIME_DIR"] = str(runtime)
+    environment["TMPDIR"] = "/var/folders/hostile"
+    for name in (
+        "QUALITY_REPORT_DIR",
+        "QUALITY_CACHE_DIR",
+        "QUALITY_TMP_DIR",
+        "UV_CACHE_DIR",
+    ):
+        environment.pop(name, None)
+    rendered = subprocess.run(
+        ["just", "--dry-run", "tests"],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-    assert "COVERAGE_FILE=/tmp/osm-polygon-wikidata-only-coverage-$$" in justfile
+    assert rendered.returncode == 0, rendered.stderr
+    output = rendered.stdout + rendered.stderr
+    assert str(runtime / "reports" / "coverage.json") in output
+    assert str(runtime / "tmp" / "tests-pytest") in output
+    assert "/var/folders/hostile" not in output
 
 
-def test_crap_gate_keeps_the_existing_v2_fingerprint_scope() -> None:
+def test_crap_report_covers_root_and_preprocessing_sources(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    runtime = tmp_path / "quality runtime"
+    environment = os.environ.copy()
+    environment["QUALITY_RUNTIME_DIR"] = str(runtime)
+    for name in (
+        "QUALITY_REPORT_DIR",
+        "QUALITY_CACHE_DIR",
+        "QUALITY_TMP_DIR",
+        "UV_CACHE_DIR",
+    ):
+        environment.pop(name, None)
+    rendered = subprocess.run(
+        ["just", "--dry-run", "crap-report"],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-    assert "src/osm_polygon_wikidata_only/v2/fingerprints.py" in justfile
-    assert "--cov-fail-under=0" in justfile
+    assert rendered.returncode == 0, rendered.stderr
+    output = rendered.stdout + rendered.stderr
+    assert "radon cc --show-closures -j src scripts" in output
+    assert "radon cc --show-closures -j preprocessing/src" in output
+    assert str(runtime / "reports" / "coverage.json") in output
+    assert str(runtime / "reports" / "preprocessing-coverage.json") in output
+    assert "crap4py" not in output
 
 
-def test_crap_gate_measures_sentence_runner_and_quality_scripts() -> None:
+def test_crap_all_refreshes_reports_before_running_the_canonical_reporter() -> None:
     root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
+    rendered = subprocess.run(
+        ["just", "--dry-run", "crap-all"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-    assert "tests/v2/test_sentence_runner.py" in justfile
-    assert "src/osm_polygon_wikidata_only/v2/sentence_runner.py" in justfile
-    assert "crap-all: crap crap-sync crap-upload crap-quality" in justfile
-    assert "crap-quality:" in justfile
-    assert "scripts/quality/crap_score.py" in justfile
-    assert "scripts/quality/mutation_gate.py" in justfile
-    assert "tests/quality/test_audit_containment.py" in justfile
-    assert "scripts/audit_containment.py" in justfile
+    assert rendered.returncode == 0, rendered.stderr
+    output = rendered.stdout + rendered.stderr
+    assert output.index("just tests") < output.index("just preprocessing-check")
+    assert output.index("just preprocessing-check") < output.index("just crap-report")
+    assert "crap4py" not in output
 
 
 def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:
     root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     mutation = config["tool"]["mutmut"]
 
     protocol_source = "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py"
     protocol_tests = "tests/grid5000/test_sentence_protocol.py"
     artifact_tests = "tests/grid5000/test_sentence_artifacts.py"
-    assert protocol_source in justfile
-    assert "--cov=osm_polygon_wikidata_only.grid5000.sentence_protocol" in justfile
-    assert artifact_tests in justfile
     assert protocol_source in mutation["source_paths"]
     assert protocol_tests in mutation["pytest_add_cli_args_test_selection"]
     assert artifact_tests in mutation["pytest_add_cli_args_test_selection"]
-
-
-def test_crap_gate_measures_comparison_and_sentence_checkpoint_helpers() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    assert "tests/v2/test_comparison.py" in justfile
-    assert "src/osm_polygon_wikidata_only/v2/comparison.py" in justfile
-    assert "tests/v2/test_sentence_checkpoints.py" in justfile
-    assert "src/osm_polygon_wikidata_only/v2/sentence_checkpoints.py" in justfile
-
-
-def test_crap_all_includes_the_isolated_geography_scope() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    assert "crap-geography:" in justfile
-    assert "tests/hf/test_coverage_map.py" in justfile
-    assert "src/osm_polygon_wikidata_only/hf/coverage_map.py" in justfile
-    assert "crap-all: crap crap-sync crap-upload crap-quality crap-geography" in justfile
-
-
-def test_crap_scopes_cover_the_remaining_deterministic_refactor_targets() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    for recipe, test_path, source_path in (
-        (
-            "crap-geography-inputs:",
-            "tests/hf/test_geographic_text_coverage.py",
-            "src/osm_polygon_wikidata_only/hf/_geographic/parquet_inputs.py",
-        ),
-        (
-            "crap-stats:",
-            "tests/hf/test_dataset_stats.py",
-            "src/osm_polygon_wikidata_only/hf/_dataset_stats/aggregation.py",
-        ),
-        ("crap-sat:", "tests/v2/test_sat.py", "src/osm_polygon_wikidata_only/v2/sat.py"),
-    ):
-        assert recipe in justfile
-        assert test_path in justfile
-        assert source_path in justfile
-
-    assert (
-        "crap-all: crap crap-sync crap-upload crap-quality crap-geography "
-        "crap-geography-inputs crap-stats crap-sat"
-    ) in justfile
-
-
-def test_crap_scopes_cover_gpu_job_and_remote_inventory_boundaries() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    for recipe, test_path, source_path in (
-        (
-            "crap-job:",
-            "tests/grid5000/test_sentence_job.py",
-            "src/osm_polygon_wikidata_only/grid5000/sentence_job.py",
-        ),
-        (
-            "crap-inventory:",
-            "tests/hf/test_reconciliation.py",
-            "src/osm_polygon_wikidata_only/hf/remote_inventory.py",
-        ),
-    ):
-        assert recipe in justfile
-        assert test_path in justfile
-        assert source_path in justfile
-
-    assert (
-        "crap-all: crap crap-sync crap-upload crap-quality crap-geography "
-        "crap-geography-inputs crap-stats crap-sat crap-job crap-inventory"
-    ) in justfile
-
-
-def test_shared_atomic_publication_is_crap_gated() -> None:
-    """The one durable-publication ritual has its own bounded CRAP scope."""
-
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    assert "crap-atomic:" in justfile
-    assert "src/osm_polygon_wikidata_only/io/atomic.py" in justfile
-    assert "--cov=osm_polygon_wikidata_only.io.atomic" in justfile
-    for test_path in (
-        "tests/io/test_atomic.py",
-        "tests/io/test_atomic_write.py",
-        "tests/io/test_atomic_parquet.py",
-    ):
-        assert test_path in justfile
-
-    assert (
-        "crap-all: crap crap-sync crap-upload crap-quality crap-geography "
-        "crap-geography-inputs crap-stats crap-sat crap-job crap-inventory crap-atomic"
-    ) in justfile
 
 
 def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
@@ -397,21 +368,8 @@ def test_installed_artifact_smoke_is_in_root_and_nested_gates() -> None:
 
 def test_package_smoke_helpers_are_quality_gated() -> None:
     root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     mutation = config["tool"]["mutmut"]
 
-    assert "tests/quality/test_package_smoke.py" in justfile
-    assert "--cov=scripts.quality.package_smoke" in justfile
-    assert "scripts/quality/package_smoke.py" in justfile
     assert "scripts/quality/package_smoke.py" in mutation["source_paths"]
     assert "tests/quality/test_package_smoke.py" in mutation["pytest_add_cli_args_test_selection"]
-
-
-def test_documentation_assembly_is_crap_gated() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    assert "tests/test_docs_assembly.py" in justfile
-    assert "--cov=scripts.assemble_docs_site" in justfile
-    assert "scripts/assemble_docs_site.py" in justfile

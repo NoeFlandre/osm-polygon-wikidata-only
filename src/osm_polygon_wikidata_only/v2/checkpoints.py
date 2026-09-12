@@ -70,7 +70,7 @@ def _atomic_write_table(path: Path, rows: list[dict[str, Any]], schema: pa.Schem
             ),
             temporary,
             compression="snappy",
-        )  # type: ignore[no-untyped-call]
+        )
 
 
 def _expected_direct_refs(refs: Any) -> list[dict[str, Any]]:

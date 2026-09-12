@@ -149,10 +149,10 @@ class RecoveryCheckpointStore:
 
     @staticmethod
     def _read(path: Path, schema: pa.Schema) -> list[dict[str, Any]]:
-        actual: pa.Schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+        actual: pa.Schema = pq.read_schema(path)
         if not actual.equals(schema, check_metadata=True):
             raise ValueError(f"Recovery checkpoint schema mismatch: {path}")
-        table: pa.Table = pq.read_table(path)  # type: ignore[no-untyped-call]
+        table: pa.Table = pq.read_table(path)
         rows: list[dict[str, Any]] = table.to_pylist()
         return rows
 
@@ -164,7 +164,7 @@ class RecoveryCheckpointStore:
         schema: pa.Schema,
     ) -> None:
         normalized = [{column: row.get(column) for column in columns} for row in rows]
-        pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path, compression="snappy")  # type: ignore[no-untyped-call]
+        pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path, compression="snappy")
 
 
 __all__: list[str] = []

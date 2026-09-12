@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ import osm_polygon_wikidata_only.cli.commands as commands
 from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 
 def test_parser_has_documented_subcommands() -> None:
@@ -38,6 +40,111 @@ def test_processing_inputs_preserve_the_cli_path(command: str, tmp_path: Path) -
     input_path = tmp_path / ("region.osm.pbf" if command == "process-pbf" else "raw")
 
     assert commands._processing_inputs(command, input_path) == [input_path]
+
+
+@pytest.mark.parametrize("push", [False, True])
+def test_processing_command_forwards_completion_to_optional_upload_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, push: bool
+) -> None:
+    root = DataRoot(tmp_path)
+    config = Settings(repo_id="example/repo")
+    input_path = tmp_path / "region.osm.pbf"
+    args = argparse.Namespace(
+        command="process-pbf",
+        input=input_path,
+        push=push,
+        dry_run=True,
+        upload_threads=1,
+        commit_message=None,
+    )
+    result = ProcessResult(
+        polygons_path=tmp_path / "polygons.parquet",
+        articles_path=tmp_path / "articles.parquet",
+        polygon_articles_path=tmp_path / "polygon-articles.parquet",
+        manifest_path=tmp_path / "manifest.json",
+        polygon_count=1,
+        article_count=1,
+        link_count=1,
+        manifest_entry={"source_pbf": "region.osm.pbf"},
+        stage_timings_s={},
+    )
+    queue_closed = False
+    enqueue_calls: list[tuple[object, DataRoot, str, str, ProcessResult]] = []
+
+    class FakeUploadQueue:
+        def close_and_wait(self) -> list[str]:
+            nonlocal queue_closed
+            queue_closed = True
+            return []
+
+    queue = FakeUploadQueue()
+
+    def fake_build_clients(
+        received_settings: Settings, *, data_root: DataRoot
+    ) -> tuple[str, str, str]:
+        assert received_settings is config
+        assert data_root is root
+        return "wikidata", "wikipedia", "cache"
+
+    def fake_build_upload_queue(
+        _args: argparse.Namespace,
+        _settings: Settings,
+        *,
+        data_root: DataRoot,
+    ) -> FakeUploadQueue | None:
+        assert data_root is root
+        return queue if push else None
+
+    def fake_orchestrate(
+        inputs: list[Path],
+        *,
+        data_root: DataRoot,
+        settings: Settings,
+        wikidata_client: str,
+        wikipedia_client: str,
+        cache: str,
+        on_complete: Callable[[ProcessResult], None],
+    ) -> list[ProcessResult]:
+        assert inputs == [input_path]
+        assert data_root is root
+        assert settings is config
+        assert (wikidata_client, wikipedia_client, cache) == (
+            "wikidata",
+            "wikipedia",
+            "cache",
+        )
+        on_complete(result)
+        return [result]
+
+    def fake_enqueue_core_upload(
+        received_queue: object,
+        *,
+        data_root: DataRoot,
+        repo_id: str,
+        commit_message: str,
+        result: ProcessResult,
+    ) -> None:
+        enqueue_calls.append((received_queue, data_root, repo_id, commit_message, result))
+
+    monkeypatch.setattr(commands, "_build_clients", fake_build_clients)
+    monkeypatch.setattr(commands, "_build_upload_queue", fake_build_upload_queue)
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", fake_enqueue_core_upload)
+
+    assert commands._run_processing_command(args, data_root=root, settings=config) == 0
+    assert queue_closed is push
+    if push:
+        assert enqueue_calls == [
+            (
+                queue,
+                root,
+                "example/repo",
+                "Update PBF region.osm.pbf",
+                result,
+            )
+        ]
+    else:
+        assert enqueue_calls == []
 
 
 def test_augmentation_stems_selects_one_region_or_completed_regions(

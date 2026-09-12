@@ -45,7 +45,7 @@ def _write_table(path: Path, rows: list[dict[str, Any]], schema: pa.Schema) -> N
     normalized = [{field.name: row.get(field.name) for field in schema} for row in rows]
     table = pa.Table.from_pylist(normalized, schema=schema)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, path, compression="snappy")  # type: ignore[no-untyped-call]
+    pq.write_table(table, path, compression="snappy")
 
 
 def _stage_path(final: Path) -> Path:

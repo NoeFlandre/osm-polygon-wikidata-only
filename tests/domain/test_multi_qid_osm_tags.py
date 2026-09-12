@@ -1,9 +1,9 @@
 """Phase 2 / Amendment 2: Multi-QID OSM tags.
 
-The domain layer MUST reuse the project's canonical
+The domain layer MUST use the project's canonical
 :func:`qids_from_osm_tag` parser from
-:mod:`osm_polygon_wikidata_only.enrichment.wikidata.parsing` -- no
-ad-hoc QID regex. Values like ``Q8254481;Q6033432`` are valid. The
+:mod:`osm_polygon_wikidata_only.domain.wikidata_qids` -- no ad-hoc QID
+regex. Values like ``Q8254481;Q6033432`` are valid. The
 canonical builder, validator, migration, and Wikivoyage integrity
 normalization must verify a link/document QID is a member of the
 polygon's parsed QID set. ``Q0`` and other invalid QIDs are rejected
@@ -59,13 +59,13 @@ def test_domain_layer_imports_canonical_qid_parser() -> None:
 
 
 def test_multi_qid_osm_tag_parses_distinct_qids() -> None:
-    from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
+    from osm_polygon_wikidata_only.domain.wikidata_qids import qids_from_osm_tag
 
     assert qids_from_osm_tag("Q8254481;Q6033432") == ("Q8254481", "Q6033432")
 
 
 def test_qid_zero_is_rejected_by_strict_validator() -> None:
-    from osm_polygon_wikidata_only.enrichment.wikidata.parsing import is_valid_qid
+    from osm_polygon_wikidata_only.domain.wikidata_qids import is_valid_qid
 
     assert not is_valid_qid("Q0")
     assert not is_valid_qid("Q00")

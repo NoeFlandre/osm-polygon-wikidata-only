@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import ModuleType
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -651,7 +653,10 @@ def test_retry_resets_remote_cleanup_state_for_the_new_attempt(tmp_path: Path) -
     assert any(removal.endswith("batch-00000000-attempt-02") for removal in transport.removals)
 
 
-def test_missing_receipt_marks_terminal_batch_failed_and_cleans_it(tmp_path: Path) -> None:
+def test_missing_receipt_marks_terminal_batch_failed_and_cleans_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path)
     publisher = _FakePublisher()
@@ -663,7 +668,7 @@ def test_missing_receipt_marks_terminal_batch_failed_and_cleans_it(tmp_path: Pat
         original_download(remote_root, local_root)
         (local_root / "receipt.json").unlink()
 
-    transport.download_tree = download_without_receipt  # type: ignore[method-assign]
+    monkeypatch.setattr(transport, "download_tree", download_without_receipt)
 
     with pytest.raises(sentence_controller.ControllerRunError, match="receipt"):
         controller.run()
@@ -899,3 +904,308 @@ def test_keyboard_interrupt_cancels_only_recorded_job_and_saves_ledger(tmp_path:
         command[0] == "oardel" and command[1] == "12345" for command in transport.frontend_calls
     )
     assert json.loads(controller.ledger_path.read_text())["batches"][0]["state"] == "cancelled"
+
+
+def test_rsync_download_tree_creates_destination_and_uses_resolved_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(tuple(args))
+        return CompletedProcess(
+            args,
+            0,
+            stdout="/home/test-user\n" if tuple(args[2:]) == ("printf", "%s", "$HOME") else "",
+            stderr="",
+        )
+
+    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
+    local_root = tmp_path / "received"
+
+    sentence_controller.SubprocessGrid5000Transport("grenoble").download_tree(
+        "$HOME/project/result",
+        local_root,
+    )
+
+    assert local_root.is_dir()
+    assert calls == [
+        ("ssh", "grenoble", "printf", "%s", "$HOME"),
+        ("rsync", "-a", "grenoble:/home/test-user/project/result/", f"{local_root}/"),
+    ]
+
+
+def test_rsync_download_tree_reports_transfer_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(args, **_kwargs):
+        if tuple(args[2:]) == ("printf", "%s", "$HOME"):
+            return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
+        return CompletedProcess(args, 23, stdout="", stderr="connection lost")
+
+    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
+
+    with pytest.raises(
+        sentence_controller.ControllerRunError, match="download failed: connection lost"
+    ):
+        sentence_controller.SubprocessGrid5000Transport("grenoble").download_tree(
+            "$HOME/project/result",
+            tmp_path / "received",
+        )
+
+
+@pytest.mark.parametrize(
+    ("returncode", "raises"),
+    [(0, False), (1, True)],
+)
+def test_remove_tree_runs_only_inside_run_namespace_and_reports_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    raises: bool,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(tuple(args))
+        if tuple(args[2:]) == ("printf", "%s", "$HOME"):
+            return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
+        return CompletedProcess(args, returncode, stdout="", stderr="cleanup unavailable")
+
+    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
+    transport = sentence_controller.SubprocessGrid5000Transport("grenoble")
+
+    if raises:
+        with pytest.raises(sentence_controller.ControllerRunError, match="cleanup failed"):
+            transport.remove_tree("$HOME/osm-polygon-wikidata-only-grid5000/run-1")
+    else:
+        transport.remove_tree("$HOME/osm-polygon-wikidata-only-grid5000/run-1")
+
+    assert calls == [
+        ("ssh", "grenoble", "printf", "%s", "$HOME"),
+        (
+            "ssh",
+            "grenoble",
+            "rm",
+            "-rf",
+            "/home/test-user/osm-polygon-wikidata-only-grid5000/run-1",
+        ),
+    ]
+
+
+def test_remove_tree_rejects_a_path_outside_the_run_namespace() -> None:
+    transport = sentence_controller.SubprocessGrid5000Transport("grenoble")
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="outside"):
+        transport.remove_tree("$HOME/other-project/run-1")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("job terminated", "terminated"),
+        ("job finishing", "finishing"),
+        ("job failed", "failed"),
+        ("job error", "error"),
+        ("job cancelled", "cancelled"),
+        ("job waiting", "waiting"),
+        ("job launching", "launching"),
+        ("job running", "running"),
+        ("scheduler returned no state", "unknown"),
+    ],
+)
+def test_infer_job_state_maps_known_status_words_and_unknown_output(
+    text: str,
+    expected: str,
+) -> None:
+    assert sentence_controller._infer_job_state(text) == expected
+
+
+def test_git_source_commit_returns_the_trimmed_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(tuple(args))
+        return CompletedProcess(args, 0, stdout="abc123\n", stderr="")
+
+    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: f"/fake/{name}")
+
+    assert sentence_controller._git_source_commit(tmp_path / "repo") == "abc123"
+    assert calls == [
+        ("/fake/git", "-C", str(tmp_path / "repo"), "rev-parse", "HEAD"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [(1, ""), (0, "\n")],
+)
+def test_git_source_commit_rejects_failed_or_empty_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: str,
+) -> None:
+    monkeypatch.setattr(
+        sentence_controller.subprocess,
+        "run",
+        lambda args, **_kwargs: CompletedProcess(args, returncode, stdout=stdout, stderr="fatal"),
+    )
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="source commit"):
+        sentence_controller._git_source_commit(tmp_path / "repo")
+
+
+def test_required_executable_returns_path_from_path_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sentence_controller.shutil, "which", lambda name: f"/bin/{name}")
+
+    assert sentence_controller._required_executable("rsync") == "/bin/rsync"
+
+
+def test_required_executable_rejects_missing_path_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sentence_controller.shutil, "which", lambda _name: None)
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="rsync"):
+        sentence_controller._required_executable("rsync")
+
+
+def test_download_hf_file_forwards_dataset_request_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    fake_huggingface = ModuleType("huggingface_hub")
+
+    def fake_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        target = Path(str(kwargs["local_dir"])) / str(kwargs["filename"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"fake HF file")
+        return str(target)
+
+    fake_huggingface.__dict__["hf_hub_download"] = fake_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_huggingface)
+    local_dir = tmp_path / "hf-cache"
+
+    result = sentence_controller._download_hf_file(
+        "example/dataset",
+        "README.md",
+        token="token",
+        local_dir=local_dir,
+    )
+
+    assert result == local_dir / "README.md"
+    assert calls == [
+        {
+            "repo_id": "example/dataset",
+            "filename": "README.md",
+            "repo_type": "dataset",
+            "token": "token",
+            "local_dir": str(local_dir),
+        }
+    ]
+
+
+def test_download_hf_file_reports_missing_runtime_dependency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "huggingface_hub", ModuleType("huggingface_hub"))
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="huggingface_hub"):
+        sentence_controller._download_hf_file(
+            "example/dataset",
+            "README.md",
+            token=None,
+            local_dir=tmp_path / "hf-cache",
+        )
+
+
+def test_run_frontend_allows_expected_nonzero_poll_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
+    result = CompletedProcess(("oarstat",), 1, stdout="", stderr="job disappeared")
+    monkeypatch.setattr(controller.transport, "run_frontend", lambda _args: result)
+
+    assert controller._run_frontend(("oarstat",), allow_failure=True) is result
+
+
+@pytest.mark.parametrize(
+    ("stderr", "message"),
+    [("permission denied", "permission denied"), ("", "frontend command failed")],
+)
+def test_run_frontend_rejects_unexpected_nonzero_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stderr: str,
+    message: str,
+) -> None:
+    controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
+    result = CompletedProcess(("oarsub",), 1, stdout="", stderr=stderr)
+    monkeypatch.setattr(controller.transport, "run_frontend", lambda _args: result)
+
+    with pytest.raises(sentence_controller.ControllerRunError, match=message):
+        controller._run_frontend(("oarsub",))
+
+
+def test_verified_incoming_artifact_accepts_matching_digest(tmp_path: Path) -> None:
+    root = tmp_path / "result"
+    path = root / "data/payload.txt"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"verified payload")
+    artifacts = {
+        "data/payload.txt": FileDigest(
+            "data/payload.txt",
+            path.stat().st_size,
+            sentence_controller.sha256_file(path),
+        )
+    }
+
+    assert (
+        sentence_controller._verified_incoming_artifact(root, artifacts, "data/payload.txt") == path
+    )
+
+
+@pytest.mark.parametrize(
+    ("relative", "size_delta", "hash_override", "message"),
+    [
+        ("../outside.txt", 0, None, "escapes result root"),
+        ("missing.txt", 0, None, "missing from result"),
+        ("data/payload.txt", 1, None, "hash mismatch"),
+        ("data/payload.txt", 0, "0" * 64, "hash mismatch"),
+    ],
+)
+def test_verified_incoming_artifact_rejects_untrusted_or_mismatched_files(
+    tmp_path: Path,
+    relative: str,
+    size_delta: int,
+    hash_override: str | None,
+    message: str,
+) -> None:
+    root = tmp_path / "result"
+    path = root / "data/payload.txt"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"verified payload")
+    actual_hash = sentence_controller.sha256_file(path)
+    artifacts = {
+        relative: FileDigest(
+            relative,
+            path.stat().st_size + size_delta,
+            hash_override or actual_hash,
+        )
+    }
+
+    with pytest.raises(sentence_controller.ControllerRunError, match=message):
+        sentence_controller._verified_incoming_artifact(root, artifacts, relative)

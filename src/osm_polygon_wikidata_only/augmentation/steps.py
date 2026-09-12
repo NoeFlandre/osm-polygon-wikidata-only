@@ -162,7 +162,7 @@ def _canonical_source_is_valid(sources: WikipediaSourcePaths) -> bool:
     if not sources.legacy.exists():
         return True
     try:
-        schema: pa.Schema = pq.read_schema(sources.canonical)  # type: ignore[no-untyped-call]
+        schema: pa.Schema = pq.read_schema(sources.canonical)
     except (OSError, pa.ArrowInvalid):
         return False
     return schema.equals(wikipedia_document_schema(), check_metadata=True)
@@ -207,7 +207,7 @@ def _write_atomic_from_rows(
 
 def _normalized_article_table(path: Path) -> pa.Table:
     """Read articles and fill only historically absent nullable columns."""
-    source = pq.read_table(path)  # type: ignore[no-untyped-call]
+    source = pq.read_table(path)
     unknown = set(source.column_names) - set(ARTICLE_COLUMNS)
     if unknown:
         raise ValueError(f"Core article Parquet has unknown columns at {path}: {sorted(unknown)}")
@@ -256,7 +256,7 @@ def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
     core_paths = (articles_path, polygons_path)
     core_hashes = {str(path): sha256_file(path) for path in core_paths}
     wikipedia_documents = _load_core_documents(articles_path)
-    polygon_rows = pq.read_table(polygons_path, columns=["wikidata"]).to_pylist()  # type: ignore[no-untyped-call]
+    polygon_rows = pq.read_table(polygons_path, columns=["wikidata"]).to_pylist()
     wikipedia_documents.sort(key=lambda row: row.document_id)
     qids = _core_qids(polygon_rows)
     return CoreInputs(
@@ -269,7 +269,7 @@ def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
 
 def _load_core_documents(path: Path) -> list[Document]:
     """Load canonical documents or normalize legacy article rows."""
-    source_table = pq.read_table(path)  # type: ignore[no-untyped-call]
+    source_table = pq.read_table(path)
     if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
         return [
             Document(**{column: row[column] for column in DOCUMENT_COLUMNS})
@@ -535,7 +535,7 @@ def _sidecar_document_table(
             schema=document_schema(),
         )
     try:
-        source_table = pq.read_table(articles_path)  # type: ignore[no-untyped-call]
+        source_table = pq.read_table(articles_path)
     except Exception as exc:
         raise ValueError(
             f"Failed to read core article Parquet from {articles_path}: {exc}"

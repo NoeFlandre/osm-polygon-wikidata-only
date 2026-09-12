@@ -15,6 +15,17 @@ The source checkout contains code, tests, and documentation. Keep PBFs, Parquet
 files, credentials, generated cards, and other run output in an
 operator-selected data root outside the checkout.
 
+Quality reports, temporary files, local tool state, and generated documentation
+also stay outside the checkout. `QUALITY_RUNTIME_DIR` defaults to the portable
+`../quality-runtime`; `QUALITY_TMP_DIR` defaults to its `tmp` directory. Set
+them explicitly when sharing a runtime location:
+
+```bash
+export QUALITY_RUNTIME_DIR="${QUALITY_RUNTIME_DIR:-../quality-runtime}"
+export QUALITY_TMP_DIR="${QUALITY_TMP_DIR:-${QUALITY_RUNTIME_DIR}/tmp}"
+just quality-runtime
+```
+
 The optional V2 sentence stage is installed separately so the normal pipeline
 does not pull a large model runtime:
 
@@ -101,33 +112,50 @@ The deterministic pre-completion gate is:
 just quality-gauntlet
 ```
 
-The command runs the following stages exactly once, in this order, and stops
-at the first failure:
+The command runs the current quality recipes once, in a fixed fail-fast order:
 
 ```bash
 just baseline
 just ruff
 just ty
 just tests
+just property-tests
 just acceptance-tests
 just architecture-checks
-just crap-all
+just crap-report
 just mutation
 just smoke-test
 just diff-review
 ```
 
-`crap-all` combines the eleven configured bounded CRAP scopes for domain/V2 helpers,
-parsing and sync helpers, the durable upload queue, quality-reporting scripts,
-geographic rendering and parquet inputs, DatasetStats aggregation, the SaT
-adapter, the Grid5000 GPU job, the read-only Hub inventory, and the shared
-atomic-publication ritual.
-The sentence runner is included in the domain/V2 scope. The architecture stage also
-builds the package, strict MkDocs site, and isolated package-install smoke before running its contracts. The
-smoke stage checks both public CLI help paths without reading a data root or
-making a network request. The Docker runtime has its own `docker-help` recipe
-and CI container contract.
+`just property-tests` runs deterministic Hypothesis properties for lossless
+sentence routing and batch-boundary invariance. `just acceptance-tests` runs
+the pytest-bdd resumability scenario plus local pipeline integration tests.
+Those checks use real local Parquet, JSON, and manifest formats while stubbing
+external clients; they do not require live network or GPU services. A resumed
+fixture run is compared with a clean replay so retry behavior cannot silently
+change rows, offsets, or routing.
+
+`just architecture-checks` runs the local import-graph rules for cycles,
+domain purity, and pipeline-to-CLI direction, alongside package, documentation,
+and CLI contract checks. The smoke stage checks both public CLI help paths
+without reading a data root or making a network request. The Docker runtime has
+its own `docker-help` recipe and CI container contract.
 `diff-review` runs `git diff --check` and a short branch status check.
+
+`just mutation` deletes the generated `mutants/` tree before each run. Mutation
+scope is configured in `pyproject.toml` and uses `mutate_only_covered_lines`,
+so the mutant population depends on mutmut's own coverage attribution. Reusing
+incremental mutmut state after a source edit was observed to generate 2801
+mutants instead of the 3038 produced from a clean tree, which weakens the gate
+without failing it. Regenerating from scratch keeps the reported mutant count
+reproducible, at the cost of a full run each time. The gate itself refuses any
+non-killed result and has no configured equivalence exemptions.
+
+The root coverage report combines `osm_polygon_wikidata_only` and `scripts`
+with branch measurement and enforces the configured 90% total coverage floor.
+Preprocessing coverage is reported separately before its full-source CRAP check;
+the aggregate floor does not replace the function-level CRAP threshold.
 
 ### Nested preprocessing package
 
@@ -151,24 +179,26 @@ just check
 
 ### Mutation and complexity gates
 
-The advanced gate covers the pure, deterministic Wikipedia and Wikidata parser
-helpers and the durable upload queue retry policy. The queue's threading and
-network orchestration remains under focused tests and CRAP gates. V2
-comparison/checkpoint, geographic parquet/rendering, DatasetStats, optional
-SaT dependency, Grid5000 subprocess, Hugging Face inventory, and shared
-atomic-publication boundaries remain under focused tests and CRAP
-gates; they are intentionally outside mutation testing because they cross
-file-system, subprocess, network, or external-runtime boundaries. For
-`io/atomic.py` specifically, the remaining mutable surface is keyword values
-that the standard library and pyarrow normalize on their own -- `"UTF-8"` for
-`"utf-8"`, an omitted `compression` for pyarrow's own snappy default -- so
-those mutants are equivalent and no test can kill them; branch coverage and
-CRAP are the honest gate there. The mutation
-run keeps reports in `/tmp` and uses two workers to limit peak Mac memory
-without reading production data.
-HTML cleaning remains covered by the CRAP and branch-coverage gates; mutmut 3.7 cannot execute mutations inside
-its `HTMLParser` subclass trampoline reliably, so those unsupported class
-mutations are not counted as actionable results:
+The canonical gate runs full-source CRAP after the root tests and the
+preprocessing checks included in `architecture-checks`. `just crap-report`
+joins those coverage reports with Radon reports for `src`, `scripts`, and
+`preprocessing/src`; `--show-closures` includes nested functions, and any
+function at CRAP 6 or higher fails. `just crap-all` is the standalone variant
+that refreshes both coverage reports before reporting. Historical `crap-*`
+aliases delegate to that same full-source run; they are compatibility names,
+not separate focused inventories.
+
+`just mutation` runs mutmut over the explicit deterministic helper and quality
+tool scope. The gate rejects unreviewed survivors, timeouts, untested results,
+and other non-killed statuses; exact source-bound equivalent mutations may
+pass only through the reviewed equivalence mechanism. Mutation remains
+intentionally scoped: network clients, large data, publication, live GPU work,
+and other external side effects are covered by focused integration or
+operational checks instead. Static Ruff and ty checks constrain source shape
+and types; they do not prove runtime side-effect safety. Reports and temporary
+files stay under the configured quality runtime, and mutation uses two workers
+to bound memory without reading production data. HTMLParser trampoline
+mutations remain unsupported by mutmut 3.7 and are not actionable.
 
 ```bash
 just crap
@@ -176,48 +206,25 @@ just mutation
 just quality-advanced
 ```
 
-`just crap`, `just crap-sync`, `just crap-upload`, `just crap-quality`,
-`just crap-geography`, `just crap-geography-inputs`, `just crap-stats`,
-`just crap-sat`, `just crap-job`, `just crap-inventory`, and
-`just crap-atomic` join coverage.py
-and Radon function reports and fail when any function reaches CRAP 6; every
-measured score must therefore be below 6.
-`just mutation` runs mutmut over the explicit deterministic module scope and
-fails unless every generated mutant is killed. These gates
-are deliberately narrow: network clients, large data files, and external
-publication are outside the mutation run.
-
 Run `uv run pre-commit run --all-files` before opening a pull request. The
 hooks intentionally run the fast Ruff and `ty` subset; `just check` and
 GitHub Actions both use the complete `just quality-gauntlet` gate.
 
 ## Test strength checks
 
-The normal gate measures regression coverage across the whole package. The
-opt-in `just quality-strength` recipe adds focused checks for identity helpers,
-parser/sync helpers, and durable upload-queue behavior:
+The normal gate already runs full-source CRAP and the scoped mutation gate.
+The opt-in `just quality-strength` recipe repeats the standalone full-source
+CRAP refresh and mutation checks; it does not add a narrower module inventory.
 
 ```bash
-just mutation
-just crap
-just crap-sync
-just crap-upload
-just crap-quality
-just crap-geography
-just crap-geography-inputs
-just crap-stats
-just crap-sat
-just crap-job
-just crap-inventory
-just crap-atomic
+just quality-strength
 ```
 
-`mutmut` deliberately changes those helpers and requires every generated
-mutant to be killed by the focused tests. `crap4py` reports the CRAP score,
-which combines cyclomatic complexity and line coverage, and fails if any
-targeted function reaches 6 or more. Keeping this gate focused makes the result
-exhaustive and repeatable without pretending that a single mutation run can
-meaningfully cover the entire I/O-heavy pipeline.
+Reviewed source-bound equivalent mutations are reported separately from
+killed mutants; incomplete or unreviewed mutation results still fail. The
+mutation scope deliberately excludes live network, GPU, publication, and
+large-data behavior, while full-source CRAP covers the configured source
+inventory including nested functions.
 
 ## Documentation and contribution
 
@@ -226,6 +233,10 @@ Build the site without starting a server:
 ```bash
 just docs
 ```
+
+The strict build writes the site and its assembled public artifacts below the
+configured quality runtime. It is safe to point the runtime at a portable
+operator-owned location; no generated site or report belongs in the checkout.
 
 Navigation targets must exist under `docs/`, links and images must resolve in a
 clean checkout, and public examples must use current CLI options. The Pages

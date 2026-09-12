@@ -38,6 +38,13 @@ RUN uv sync --frozen --no-dev --no-editable
 # deliberately separate from the runtime target so production images contain
 # no tests, docs, source checkout, or development tools.
 FROM build AS development
+
+# `just` is needed only by development recipe tests; keep the runtime image
+# free of the recipe runner and its package layer.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y just \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN uv sync --frozen
 

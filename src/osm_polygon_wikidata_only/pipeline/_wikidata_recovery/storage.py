@@ -33,10 +33,10 @@ def read_table(path: Path, schema: pa.Schema) -> list[dict[str, Any]]:
     """Read a Parquet artifact only when its full schema matches."""
     if not path.is_file():
         raise RecoveryRepairError(f"Recovery input is missing: {path}")
-    actual: pa.Schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+    actual: pa.Schema = pq.read_schema(path)
     if not actual.equals(schema, check_metadata=True):
         raise RecoveryRepairError(f"Recovery input schema mismatch: {path}")
-    table: pa.Table = pq.read_table(path)  # type: ignore[no-untyped-call]
+    table: pa.Table = pq.read_table(path)
     rows: list[dict[str, Any]] = table.to_pylist()
     return rows
 
@@ -50,7 +50,7 @@ def write_table(
     """Write rows using the supplied canonical column order and schema."""
     normalized = [{column: row.get(column) for column in columns} for row in rows]
     table = pa.Table.from_pylist(normalized, schema=schema)
-    pq.write_table(table, path, compression="snappy")  # type: ignore[no-untyped-call]
+    pq.write_table(table, path, compression="snappy")
 
 
 __all__ = ["read_table", "region_paths", "write_table"]

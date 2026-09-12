@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import threading
 import urllib.error
@@ -193,6 +194,34 @@ def test_transient_retry_warning_is_sparse_and_does_not_include_error_text(
     assert "attempt 1" in messages[0]
     assert "attempt 30" in messages[1]
     assert all("token=must-not-leak" not in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    ("error", "error_kind"),
+    [
+        (
+            urllib.error.HTTPError("https://example.test", 503, "unavailable", {}, None),
+            "HTTP 503",
+        ),
+        (urllib.error.URLError(TimeoutError("timed out")), "TimeoutError"),
+        (RuntimeError("unexpected failure"), "RuntimeError"),
+    ],
+)
+def test_transient_retry_warning_formats_each_error_kind(
+    error: BaseException,
+    error_kind: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logger = logging.getLogger("retry-characterization")
+    callback = transient_retry_log_callback("Wikimedia request", logger=logger)
+
+    with caplog.at_level("WARNING", logger=logger.name):
+        callback(1, error, 2.0)
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Wikimedia request temporarily unavailable "
+        f"({error_kind}); attempt 1 failed; retrying in 2.0s; pipeline remains active"
+    ]
 
 
 def test_dumps_preserves_unicode() -> None:

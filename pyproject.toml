@@ -64,7 +64,8 @@ packages = ["src/osm_polygon_wikidata_only"]
 
 [dependency-groups]
 dev = [
-    "crap4py>=0.1.1,<0.2",
+    "hypothesis>=6,<7",
+    "pytest-bdd>=8,<9",
     "mkdocs-material>=9.6,<10",
     "mutmut>=3.7,<4",
     "pre-commit>=4.6.1",
@@ -123,7 +124,7 @@ source = ["src/osm_polygon_wikidata_only", "scripts"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-fail_under = 80
+fail_under = 90
 
 [tool.mutmut]
 # Keep exhaustive mutation focused on pure deterministic helpers.
@@ -134,12 +135,15 @@ source_paths = [
     "src/osm_polygon_wikidata_only/v2/wikipedia_tags.py",
     "src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py",
     "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
+    "src/osm_polygon_wikidata_only/domain/wikidata_qids.py",
     "src/osm_polygon_wikidata_only/io/pbf_reader.py",
     "src/osm_polygon_wikidata_only/hf/_upload_state.py",
     "src/osm_polygon_wikidata_only/hf/_upload_retry.py",
     "src/osm_polygon_wikidata_only/v2/sentence_logic.py",
     "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py",
     "scripts/quality/package_smoke.py",
+    "scripts/quality/qa_gauntlet.py",
+    "scripts/quality/architecture.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only", "requirements"]
 mutate_only_covered_lines = true
@@ -153,6 +157,8 @@ pytest_add_cli_args_test_selection = [
     "tests/v2/test_wikipedia_tags.py",
     "tests/enrichment/test_parsing_quality.py",
     "tests/enrichment/test_enrichment.py",
+    "tests/domain/test_multi_qid_osm_tags.py",
+    "tests/domain/test_qid_parser_boundary.py",
     "tests/io/test_pbf_reader_area_quality.py",
     "tests/io/test_pbf_reader_contracts.py",
     "tests/io/test_upload_queue_amendment_8.py",
@@ -166,4 +172,7 @@ pytest_add_cli_args_test_selection = [
     "tests/grid5000/test_sentence_protocol.py",
     "tests/grid5000/test_sentence_artifacts.py",
     "tests/quality/test_package_smoke.py",
+    "tests/quality/test_qa_gauntlet.py",
+    "tests/quality/test_architecture.py",
+    "tests/quality/test_architecture_imports.py",
 ]

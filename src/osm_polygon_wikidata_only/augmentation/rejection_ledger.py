@@ -296,7 +296,7 @@ def _load_normalization_rows(
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not polygons_path.is_file():
         raise FileNotFoundError(f"Polygons parquet missing: {polygons_path}")
-    polygons_table = pq.read_table(polygons_path, columns=["wikidata"])  # type: ignore[no-untyped-call]
+    polygons_table = pq.read_table(polygons_path, columns=["wikidata"])
     valid_qids: set[str] = set()
     for raw in polygons_table.column("wikidata").to_pylist():
         valid_qids.update(_qids_from_osm_tag(str(raw)))
@@ -305,7 +305,7 @@ def _load_normalization_rows(
     sections_path = data_root.processed / "wikivoyage" / "sections" / f"{stem}.parquet"
     if not documents_path.is_file():
         raise FileNotFoundError(f"wikivoyage/documents parquet missing: {documents_path}")
-    documents_rows = pq.read_table(documents_path, columns=list(DOCUMENT_COLUMNS)).to_pylist()  # type: ignore[no-untyped-call]
+    documents_rows = pq.read_table(documents_path, columns=list(DOCUMENT_COLUMNS)).to_pylist()
     sections_rows = _read_sections(sections_path)
     return valid_qids, documents_rows, sections_rows
 
@@ -313,7 +313,7 @@ def _load_normalization_rows(
 def _read_sections(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    return pq.read_table(path, columns=list(SECTION_COLUMNS)).to_pylist()  # type: ignore[no-untyped-call]
+    return pq.read_table(path, columns=list(SECTION_COLUMNS)).to_pylist()
 
 
 def _retain_documents(

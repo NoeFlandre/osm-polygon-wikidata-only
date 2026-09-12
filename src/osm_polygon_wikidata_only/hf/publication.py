@@ -247,10 +247,10 @@ def _legacy_article_retirement_ops(
 
 def _snapshot_canonical_document(core: ProcessResult, destination: Path) -> Path:
     """Convert a core article table to the canonical document schema for publication."""
-    article_table = pq.read_table(core.articles_path)  # type: ignore[no-untyped-call]
+    article_table = pq.read_table(core.articles_path)
     canonical = build_wikipedia_document_table(article_table)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(canonical, destination, compression="snappy")  # type: ignore[no-untyped-call]
+    pq.write_table(canonical, destination, compression="snappy")
     return destination
 
 

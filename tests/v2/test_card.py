@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from pathlib import Path
 
 import pyarrow as pa
@@ -40,7 +41,9 @@ def test_card_is_factual_and_deterministic(tmp_path: Path) -> None:
         "Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff)."
     )
     assert first.index("## Citation") > first.index("## Reproducibility")
-    assert write_v2_card(tmp_path).read_text(encoding="utf-8") == first
+    output = write_v2_card(tmp_path)
+    assert output.read_text(encoding="utf-8") == first
+    assert output.read_bytes() == first.encode("utf-8")
 
 
 def test_card_documents_exact_sentence_split_scope_when_sidecars_exist(tmp_path: Path) -> None:
@@ -195,6 +198,86 @@ def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path)
     )
 
 
+def test_sentence_manifest_totals_preserve_validation_and_counting() -> None:
+    manifest_path = Path("sentence_splitting.json")
+
+    assert card._sentence_manifest_totals(
+        [
+            {"sentence_rows": 4, "unsplit_sections": 1},
+            {"sentence_rows": 2, "unsplit_sections": 0},
+        ],
+        manifest_path,
+    ) == (6, 1)
+
+    with pytest.raises(ValueError, match="Invalid sentence manifest region"):
+        card._sentence_manifest_totals([None], manifest_path)
+    with pytest.raises(ValueError, match="Invalid sentence row totals"):
+        card._sentence_manifest_totals(
+            [{"sentence_rows": 0, "unsplit_sections": 1}],
+            manifest_path,
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "Invalid sentence manifest"),
+        ({"regions": [], "supported_languages": {}}, "Invalid sentence manifest"),
+        ({"regions": [None], "supported_languages": []}, "Invalid sentence manifest region"),
+    ],
+)
+def test_compute_sentence_stats_preserves_invalid_manifest_failures(
+    tmp_path: Path,
+    payload: object,
+    message: str,
+) -> None:
+    write_v2_region(tmp_path, "region-latest", polygons=[], documents=[], links=[])
+    sentence_path = tmp_path / "wikipedia/sentences/region-latest.parquet"
+    sentence_path.parent.mkdir(parents=True)
+    sentence_path.touch()
+    manifest_path = tmp_path / "manifests/sentence_splitting.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        card._compute_sentence_stats(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("identity", "fetch_status", "full_text", "is_wikipedia", "expected"),
+    [
+        ("wiki-1", "ok", "  body  ", True, ("wikipedia", "wiki-1")),
+        ("voy-1", "ok", "  body  ", False, ("wikivoyage", "voy-1")),
+        (None, "ok", "body", True, None),
+        ("doc", "http_error", "body", True, None),
+        ("doc", "ok", " \t ", True, None),
+        ("doc", "ok", None, True, None),
+    ],
+)
+def test_record_non_empty_text_document_preserves_project_qualification(
+    identity: object,
+    fetch_status: object,
+    full_text: object,
+    is_wikipedia: bool,
+    expected: tuple[str, str] | None,
+) -> None:
+    metrics = card._DocumentMetrics(
+        document_ids=set(),
+        languages=set(),
+        text_document_languages={},
+        wikipedia_language_counts=Counter(),
+    )
+
+    card._record_non_empty_text_document(
+        metrics,
+        identity,
+        fetch_status=fetch_status,
+        full_text=full_text,
+        is_wikipedia=is_wikipedia,
+    )
+
+    assert metrics.non_empty_text_document_keys == ({expected} if expected else set())
+
+
 def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity(
     tmp_path: Path,
 ) -> None:
@@ -287,7 +370,7 @@ def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity
             },
             {
                 "polygon_id": "region:relation:404",
-                "document_id": "voyage-ok",
+                "document_id": "wiki-failed",
                 "project": "wikivoyage",
                 "osm_type": "relation",
                 "osm_id": 404,
@@ -300,7 +383,7 @@ def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity
     voyage_row = {field.name: None for field in wikipedia_document_v2_schema()}
     voyage_row.update(
         {
-            "document_id": "voyage-ok",
+            "document_id": "wiki-failed",
             "project": "wikivoyage",
             "full_text": "  Wikivoyage body  ",
             "fetch_status": "ok",
@@ -397,8 +480,6 @@ def test_card_metrics_scan_document_columns_once(
     def fail_if_document_scan_is_repeated(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("document columns must be scanned once")
 
-    monkeypatch.setattr(card, "_text_document_languages", fail_if_document_scan_is_repeated)
-    monkeypatch.setattr(card, "_wikipedia_language_counts", fail_if_document_scan_is_repeated)
     monkeypatch.setattr(card, "_sum_first_available", fail_if_document_scan_is_repeated)
     original_unique_values = card._unique_values
 
@@ -448,14 +529,31 @@ def test_card_metrics_scan_polygon_columns_once(
         raise AssertionError("polygon columns must be scanned once")
 
     monkeypatch.setattr(card, "_unique_values", fail_if_polygon_scan_is_repeated)
-    monkeypatch.setattr(card, "_unique_qids", fail_if_polygon_scan_is_repeated)
-    monkeypatch.setattr(card, "_count_boolean_false", fail_if_polygon_scan_is_repeated)
 
     metrics = card._compute_card_metrics(files)
 
     assert metrics.polygon_ids == {"polygon-1"}
     assert metrics.qids == {"Q42"}
     assert metrics.wikipedia_tag_only == 1
+
+
+@pytest.mark.parametrize(
+    ("osm_type", "osm_id", "expected"),
+    [
+        ("way", 101, ("way", 101)),
+        ("relation", "202", ("relation", 202)),
+        (None, 101, None),
+        ("way", None, None),
+        ("", 101, None),
+        ("way", "not-an-integer", None),
+    ],
+)
+def test_osm_polygon_identity_preserves_metric_input_boundaries(
+    osm_type: object,
+    osm_id: object,
+    expected: tuple[str, int] | None,
+) -> None:
+    assert card._osm_polygon_identity(osm_type, osm_id) == expected
 
 
 def test_card_metrics_preserve_rows_when_metric_columns_are_missing(tmp_path: Path) -> None:

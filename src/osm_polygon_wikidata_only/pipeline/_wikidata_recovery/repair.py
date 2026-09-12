@@ -155,7 +155,7 @@ def _load_repair_links(
     affected_qids: set[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], bool]:
     """Load either canonical or legacy links and preserve Wikivoyage rows."""
-    links_schema = pq.read_schema(paths["links"])  # type: ignore[no-untyped-call]
+    links_schema = pq.read_schema(paths["links"])
     canonical_links = links_schema.equals(polygon_document_link_schema(), check_metadata=True)
     if canonical_links:
         stored_links = _read_table(paths["links"], polygon_document_link_schema())

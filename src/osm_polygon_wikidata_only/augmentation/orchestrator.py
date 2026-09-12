@@ -409,7 +409,7 @@ def _processed_link_manifest_is_current(data_root: DataRoot, stem: str, links_pa
         return False
     return (
         processed_entry.get("link_schema_version") == "polygon-document-links-v1"
-        and processed_entry.get("link_count") == pq.read_metadata(links_path).num_rows  # type: ignore[no-untyped-call]
+        and processed_entry.get("link_count") == pq.read_metadata(links_path).num_rows
     )
 
 
@@ -594,7 +594,7 @@ def _validate_sidecar_file(path: Path, expected_schema: Any) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"Sidecar file is missing: {path}")
     try:
-        actual_schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+        actual_schema = pq.read_schema(path)
     except (OSError, ValueError) as exc:
         raise ValueError(f"Sidecar file is unreadable: {path} ({exc})") from exc
     if not actual_schema.equals(expected_schema, check_metadata=True):

@@ -44,6 +44,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Build the development test image
+        run: docker build --target development --tag osm-polygon-wikidata-only:ci-development .
+      - name: Run the development pytest suite
+        run: docker run --rm osm-polygon-wikidata-only:ci-development
       - name: Build the non-root runtime image
         run: docker build --target runtime --tag osm-polygon-wikidata-only:ci .
       - name: Verify the safe default command

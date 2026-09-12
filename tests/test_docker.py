@@ -42,12 +42,27 @@ def test_dockerfile_uses_locked_uv_install_and_safe_runtime() -> None:
     assert "HF_TOKEN" not in dockerfile
 
 
+def test_dockerfile_installs_just_only_in_development() -> None:
+    dockerfile = _read("Dockerfile")
+    development = dockerfile.split("FROM build AS development", maxsplit=1)[1].split(
+        "FROM ${UV_IMAGE} AS runtime", maxsplit=1
+    )[0]
+    runtime = dockerfile.split("FROM ${UV_IMAGE} AS runtime", maxsplit=1)[1]
+
+    assert "apt-get install --no-install-recommends -y just" in development
+    assert "apt-get install --no-install-recommends -y just" not in runtime
+    assert 'CMD ["uv", "run", "pytest", "-q"]' in development
+
+
 def test_dockerignore_excludes_local_data_secrets_and_presentations() -> None:
     dockerignore = _read(".dockerignore")
 
     for pattern in (
         ".git/",
         ".venv/",
+        "**/.venv/",
+        "mutants/",
+        ".quality-runtime/",
         "presentations/",
         "raw/",
         "processed/",
@@ -113,6 +128,43 @@ def test_ci_builds_and_smoke_tests_the_runtime_image() -> None:
     assert "uv run osm-polygon-wikidata-only sync-dir --help" in justfile
     assert "docker build --target runtime" in justfile
     assert "docker run --rm" in justfile
+
+
+@pytest.mark.parametrize("recipe", ["docker-test", "docker-check"])
+def test_docker_recipes_parse_without_a_git_checkout(tmp_path: Path, recipe: str) -> None:
+    just = shutil.which("just")
+    if just is None:
+        pytest.skip("just executable is not installed")
+
+    isolated_justfile = tmp_path / "Justfile"
+    isolated_justfile.write_text(_read("Justfile"), encoding="utf-8")
+    result = subprocess.run(
+        [just, "--justfile", str(isolated_justfile), "--dry-run", recipe],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "git " not in output
+    assert "docker build --target development" in output
+    if recipe == "docker-check":
+        assert "task_dir=/tmp/osm-polygon-wikidata-only-docker-check" in output
+        assert 'mkdir -p "$task_dir/tmp" "$task_dir/uv-cache"' in output
+        assert 'export TMPDIR="$task_dir/tmp" UV_CACHE_DIR="$task_dir/uv-cache"' in output
+        assert "/app/.quality-runtime" not in output
+
+
+def test_ci_container_job_runs_development_pytest_and_runtime_help() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+    container_job = workflow.split("  container:\n", maxsplit=1)[1]
+
+    assert "docker build --target development" in container_job
+    assert "docker run --rm osm-polygon-wikidata-only:ci-development" in container_job
+    assert "docker build --target runtime" in container_job
+    assert "docker run --rm osm-polygon-wikidata-only:ci --help" in container_job
 
 
 @pytest.mark.integration

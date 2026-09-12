@@ -25,10 +25,7 @@ from typing import Any, cast
 
 import pyarrow as pa
 
-from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
-    is_valid_qid,
-    qids_from_osm_tag,
-)
+from .wikidata_qids import is_valid_qid, qids_from_osm_tag
 
 CANONICAL_COLUMNS: tuple[str, ...] = (
     "polygon_id",

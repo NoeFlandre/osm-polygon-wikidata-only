@@ -370,10 +370,10 @@ class AugmentationCheckpointStore:
     @staticmethod
     def _read_table(path: Path, schema: pa.Schema) -> list[dict[str, Any]] | None:
         try:
-            actual: pa.Schema = pq.read_schema(path)  # type: ignore[no-untyped-call]
+            actual: pa.Schema = pq.read_schema(path)
             if not actual.equals(schema, check_metadata=True):
                 return None
-            table: pa.Table = pq.read_table(path)  # type: ignore[no-untyped-call]
+            table: pa.Table = pq.read_table(path)
             rows: list[dict[str, Any]] = table.to_pylist()
             return rows
         except (OSError, ValueError, TypeError, pa.ArrowException):
@@ -387,7 +387,7 @@ class AugmentationCheckpointStore:
         schema: pa.Schema,
     ) -> None:
         normalized = [{column: row.get(column) for column in columns} for row in rows]
-        pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path, compression="snappy")  # type: ignore[no-untyped-call]
+        pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path, compression="snappy")
 
     def _section_batch_path(self, index: int) -> Path:
         return self.plan_root / "sections" / f"batch-{self._validate_index(index):06d}"

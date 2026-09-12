@@ -52,6 +52,29 @@ def test_remote_inventory_fetch_success() -> None:
     assert inventory.files == {"polygons/mexico-latest.parquet", "README.md"}
 
 
+def test_remote_inventory_fetch_paths_uses_stub_metadata_for_existing_paths() -> None:
+    stub = StubHfHub(
+        remote_files={
+            "polygons/mexico-latest.parquet",
+            "README.md",
+            "not-requested.txt",
+        }
+    )
+
+    inventory = RemoteInventory.fetch_paths(
+        "test/repo",
+        paths=["polygons/mexico-latest.parquet", "missing.parquet"],
+        hub=stub,
+    )
+
+    assert inventory.files == {"polygons/mexico-latest.parquet"}
+    metadata = inventory.metadata("polygons/mexico-latest.parquet")
+    assert metadata is not None
+    assert metadata.path == "polygons/mexico-latest.parquet"
+    assert metadata.size == 0
+    assert metadata.sha256 is None
+
+
 def test_remote_inventory_fetch_failure() -> None:
     class FailingHub(StubHfHub):
         def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:

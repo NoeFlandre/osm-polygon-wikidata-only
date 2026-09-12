@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -625,24 +625,8 @@ def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
     if not manifest_path.is_file() or not any(sentence_paths.values()):
         return None
 
-    raw_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(raw_manifest, Mapping):
-        raise ValueError(f"Invalid sentence manifest: {manifest_path}")
-    regions = raw_manifest.get("regions")
-    supported_languages = raw_manifest.get("supported_languages")
-    if not isinstance(regions, list) or not isinstance(supported_languages, list):
-        raise ValueError(f"Invalid sentence manifest: {manifest_path}")
-
-    total_rows = 0
-    unsupported_rows = 0
-    for region in regions:
-        if not isinstance(region, Mapping):
-            raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
-        total_rows += int(region.get("sentence_rows", 0))
-        unsupported_rows += int(region.get("unsplit_sections", 0))
-    if unsupported_rows > total_rows:
-        raise ValueError(f"Invalid sentence row totals: {manifest_path}")
-
+    regions, supported_languages = _load_sentence_manifest(manifest_path)
+    total_rows, unsupported_rows = _sentence_manifest_totals(regions, manifest_path)
     document_ids = {
         project: _sentence_document_ids(paths) for project, paths in sentence_paths.items()
     }
@@ -657,19 +641,56 @@ def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
     )
 
 
+def _load_sentence_manifest(manifest_path: Path) -> tuple[list[object], list[object]]:
+    raw_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_manifest, Mapping):
+        raise ValueError(f"Invalid sentence manifest: {manifest_path}")
+    regions = raw_manifest.get("regions")
+    supported_languages = raw_manifest.get("supported_languages")
+    if not isinstance(regions, list) or not isinstance(supported_languages, list):
+        raise ValueError(f"Invalid sentence manifest: {manifest_path}")
+    return cast(list[object], regions), cast(list[object], supported_languages)
+
+
+def _sentence_manifest_totals(regions: Iterable[object], manifest_path: Path) -> tuple[int, int]:
+    total_rows = 0
+    unsupported_rows = 0
+    for region in regions:
+        region_total_rows, region_unsupported_rows = _sentence_region_totals(region, manifest_path)
+        total_rows += region_total_rows
+        unsupported_rows += region_unsupported_rows
+    if unsupported_rows > total_rows:
+        raise ValueError(f"Invalid sentence row totals: {manifest_path}")
+    return total_rows, unsupported_rows
+
+
+def _sentence_region_totals(region: object, manifest_path: Path) -> tuple[int, int]:
+    if not isinstance(region, Mapping):
+        raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
+    values = cast(Mapping[str, object], region)
+    # Keep the historical permissive int coercion for legacy JSON values.
+    return int(cast(Any, values.get("sentence_rows", 0))), int(
+        cast(Any, values.get("unsplit_sections", 0))
+    )
+
+
 def _sentence_document_ids(paths: Iterable[Path]) -> set[str]:
     values: set[str] = set()
     for path in paths:
-        with pq.ParquetFile(path) as parquet_file:
-            if "document_id" not in parquet_file.schema_arrow.names:
-                continue
-            for batch in parquet_file.iter_batches(columns=["document_id"], batch_size=65_536):
-                values.update(
-                    str(value)
-                    for value in _compute_array("unique", batch.column(0)).to_pylist()
-                    if value
-                )
+        _update_sentence_document_ids(path, values)
     return values
+
+
+def _update_sentence_document_ids(path: Path, values: set[str]) -> None:
+    with pq.ParquetFile(path) as parquet_file:
+        if "document_id" not in parquet_file.schema_arrow.names:
+            return
+        for batch in parquet_file.iter_batches(columns=["document_id"], batch_size=65_536):
+            values.update(_sentence_document_ids_batch(batch))
+
+
+def _sentence_document_ids_batch(batch: pa.RecordBatch) -> set[str]:
+    return {str(value) for value in _compute_array("unique", batch.column(0)).to_pylist() if value}
 
 
 def _sentence_polygon_count(
@@ -686,31 +707,48 @@ def _sentence_polygon_count(
 
     polygon_ids: set[str] = set()
     for path in sorted((processed_v2 / "polygon_document_links").glob("*.parquet")):
-        with pq.ParquetFile(path) as parquet_file:
-            columns = {"polygon_id", "document_id", "project"}
-            if not columns.issubset(parquet_file.schema_arrow.names):
-                continue
-            for batch in parquet_file.iter_batches(
-                columns=["polygon_id", "document_id", "project"],
-                batch_size=65_536,
-            ):
-                polygon_column, document_column, project_column = batch.columns
-                for project, value_set in value_sets.items():
-                    matches = _compute_array(
-                        "and",
-                        _compute_array("equal", project_column, project),
-                        _compute_array(
-                            "is_in",
-                            document_column,
-                            options=pc.SetLookupOptions(value_set),
-                        ),
-                    )
-                    polygon_ids.update(
-                        str(value)
-                        for value in _compute_array("filter", polygon_column, matches).to_pylist()
-                        if value
-                    )
+        _collect_sentence_polygon_ids(path, value_sets, polygon_ids)
     return len(polygon_ids)
+
+
+def _collect_sentence_polygon_ids(
+    path: Path,
+    value_sets: Mapping[str, pa.Array],
+    polygon_ids: set[str],
+) -> None:
+    with pq.ParquetFile(path) as parquet_file:
+        columns = {"polygon_id", "document_id", "project"}
+        if not columns.issubset(parquet_file.schema_arrow.names):
+            return
+        for batch in parquet_file.iter_batches(
+            columns=["polygon_id", "document_id", "project"],
+            batch_size=65_536,
+        ):
+            polygon_ids.update(_sentence_polygon_ids_from_batch(batch, value_sets))
+
+
+def _sentence_polygon_ids_from_batch(
+    batch: pa.RecordBatch,
+    value_sets: Mapping[str, pa.Array],
+) -> set[str]:
+    polygon_column, document_column, project_column = batch.columns
+    polygon_ids: set[str] = set()
+    for project, value_set in value_sets.items():
+        matches = _compute_array(
+            "and",
+            _compute_array("equal", project_column, project),
+            _compute_array(
+                "is_in",
+                document_column,
+                options=pc.SetLookupOptions(value_set),
+            ),
+        )
+        polygon_ids.update(
+            str(value)
+            for value in _compute_array("filter", polygon_column, matches).to_pylist()
+            if value
+        )
+    return polygon_ids
 
 
 def _compute_array(function: str, *arguments: Any, options: Any = None) -> Any:
@@ -824,7 +862,7 @@ def _sum_metadata(paths: Iterable[Path]) -> int:
 
 
 def _metadata_row_count(path: Path) -> int:
-    return int(pq.read_metadata(path).num_rows)  # type: ignore[no-untyped-call]
+    return int(pq.read_metadata(path).num_rows)
 
 
 def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
@@ -842,24 +880,6 @@ def _unique_values_file(path: Path, column: str) -> set[str]:
         for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536):
             values.update(_non_empty_strings(batch.column(0).to_pylist()))
     return values
-
-
-def _unique_qids(paths: Iterable[Path]) -> set[str]:
-    values: set[str] = set()
-    for raw in _unique_values(paths, "wikidata"):
-        values.update(qids_from_osm_tag(raw))
-    return values
-
-
-def _count_boolean_false(paths: Iterable[Path], column: str) -> int:
-    total = 0
-    for path in paths:
-        with pq.ParquetFile(path) as parquet_file:
-            if column not in parquet_file.schema_arrow.names:
-                continue
-            for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536):
-                total += sum(value is False for value in batch.column(0).to_pylist())
-    return total
 
 
 def _sum_first_available(paths: Iterable[Path], columns: tuple[str, ...]) -> int:
@@ -1063,17 +1083,6 @@ def _merge_link_sources(values: set[str], batch: Any, source: str, path: Path) -
             values.add(str(identity))
 
 
-def _text_metrics(
-    all_document_paths: Iterable[Path],
-    wikipedia_document_paths: Iterable[Path],
-    link_paths: Iterable[Path],
-) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
-    """Return a combined text funnel and top Wikipedia document languages."""
-    document_languages = _text_document_languages(all_document_paths)
-    wikipedia_language_counts = _wikipedia_language_counts(wikipedia_document_paths)
-    return _text_metrics_from_scanned(document_languages, wikipedia_language_counts, link_paths)
-
-
 def _text_metrics_from_scanned(
     document_languages: dict[str, str],
     wikipedia_language_counts: Counter[str],
@@ -1135,15 +1144,25 @@ def _document_columns(
     word_column: str | None,
     has_document_id: bool,
 ) -> list[str]:
-    if has_document_id and word_column is not None:
-        # Keep the historical failure for a text-bearing document file
-        # without a language column: the old text scan requested it too.
-        columns = ["document_id", "language", word_column]
-    else:
-        columns = [column for column in _document_column_names(word_column) if column in names]
+    columns = _document_metric_columns(
+        names, word_column=word_column, has_document_id=has_document_id
+    )
     if has_document_id:
         columns.extend(column for column in ("fetch_status", "full_text") if column in names)
     return columns
+
+
+def _document_metric_columns(
+    names: set[str],
+    *,
+    word_column: str | None,
+    has_document_id: bool,
+) -> list[str]:
+    if has_document_id and word_column is not None:
+        # Keep the historical failure for a text-bearing document file
+        # without a language column: the old text scan requested it too.
+        return ["document_id", "language", word_column]
+    return [column for column in _document_column_names(word_column) if column in names]
 
 
 def _document_column_names(word_column: str | None) -> tuple[str, ...]:
@@ -1298,16 +1317,20 @@ def _record_non_empty_text_document(
     full_text: Any,
     is_wikipedia: bool,
 ) -> None:
-    if (
-        not identity
-        or fetch_status != _SUCCESSFUL_FETCH_STATUS
-        or not isinstance(full_text, str)
-        or not full_text.strip()
-    ):
+    if not _is_successful_non_empty_text(identity, fetch_status, full_text):
         return
     project = "wikipedia" if is_wikipedia else "wikivoyage"
     if project in _TEXT_DOCUMENT_PROJECTS:
         metrics.non_empty_text_document_keys.add((project, str(identity)))
+
+
+def _is_successful_non_empty_text(identity: Any, fetch_status: Any, full_text: Any) -> bool:
+    return bool(
+        identity
+        and fetch_status == _SUCCESSFUL_FETCH_STATUS
+        and isinstance(full_text, str)
+        and full_text.strip()
+    )
 
 
 def _record_wikipedia_document_identity(
@@ -1507,60 +1530,8 @@ def _word_column(names: set[str]) -> str | None:
     return None
 
 
-def _text_document_languages(paths: Iterable[Path]) -> dict[str, str]:
-    languages: dict[str, str] = {}
-    for path in paths:
-        languages.update(_text_document_file_languages(path))
-    return languages
-
-
-def _text_document_file_languages(path: Path) -> dict[str, str]:
-    languages: dict[str, str] = {}
-    with pq.ParquetFile(path) as parquet_file:
-        names = set(parquet_file.schema_arrow.names)
-        words_column = _word_column(names)
-        if "document_id" not in names or words_column is None:
-            return languages
-        for batch in parquet_file.iter_batches(
-            columns=["document_id", "language", words_column], batch_size=65_536
-        ):
-            languages.update(_text_document_batch_languages(batch))
-    return languages
-
-
-def _text_document_batch_languages(batch: Any) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for identity, language, word_count in zip(
-        batch.column(0).to_pylist(),
-        batch.column(1).to_pylist(),
-        batch.column(2).to_pylist(),
-        strict=True,
-    ):
-        if _has_non_empty_words(identity, word_count):
-            values[str(identity)] = str(language or "")
-    return values
-
-
 def _has_non_empty_words(identity: Any, word_count: Any) -> bool:
     return bool(identity and int(word_count or 0) > 0)
-
-
-def _wikipedia_language_counts(paths: Iterable[Path]) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for path in paths:
-        counts.update(_wikipedia_language_file_counts(path))
-    return counts
-
-
-def _wikipedia_language_file_counts(path: Path) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    with pq.ParquetFile(path) as parquet_file:
-        names = set(parquet_file.schema_arrow.names)
-        if "language" not in names or "document_id" not in names:
-            return counts
-        for batch in parquet_file.iter_batches(columns=["language"], batch_size=65_536):
-            counts.update(_non_empty_strings(batch.column(0).to_pylist()))
-    return counts
 
 
 def _non_empty_strings(values: list[Any]) -> list[str]:

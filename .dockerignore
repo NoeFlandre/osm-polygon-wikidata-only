@@ -1,8 +1,10 @@
 # Source-control and local tooling state.
 .git/
 .venv/
+**/.venv/
 venv/
 .uv-cache/
+.quality-runtime/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -45,5 +47,6 @@ output/
 # Build and distribution artifacts.
 build/
 dist/
+mutants/
 *.egg-info/
 wheels/

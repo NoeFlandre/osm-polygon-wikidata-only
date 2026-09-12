@@ -139,7 +139,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _read_table(path: Path) -> pa.Table:
-    return pq.read_table(path)  # type: ignore[no-untyped-call]
+    return pq.read_table(path)
 
 
 def _read_table_safely(path: Path) -> pa.Table | None:
@@ -353,11 +353,11 @@ def _read_legacy_rejection_tables(
     if not polygons_path.is_file() or not links_path.is_file():
         return None
     try:
-        polygons_table = pq.read_table(  # type: ignore[no-untyped-call]
+        polygons_table = pq.read_table(
             polygons_path,
             columns=["polygon_id", "wikidata"],
         )
-        links_table = pq.read_table(  # type: ignore[no-untyped-call]
+        links_table = pq.read_table(
             links_path,
             columns=["polygon_id", "wikidata", "article_id"],
         )
@@ -823,7 +823,7 @@ def _stage_retained_voyage_table(
     staged_path = staged_dir / target.name
     atomic_write_parquet(
         staged_path,
-        pa.Table.from_pylist(rows, schema=pq.read_schema(target)),  # type: ignore[no-untyped-call]
+        pa.Table.from_pylist(rows, schema=pq.read_schema(target)),
     )
     return staged_path
 
@@ -840,7 +840,7 @@ def _stage_voyage_replacements(
     replacements: list[tuple[Path, Path]] = []
     if (
         len(integrity_plan.retained_documents)
-        != pq.read_metadata(inputs.voyage_documents_path).num_rows  # type: ignore[no-untyped-call]
+        != pq.read_metadata(inputs.voyage_documents_path).num_rows
     ):
         staged = _stage_retained_voyage_table(
             staged_dir,
@@ -850,7 +850,7 @@ def _stage_voyage_replacements(
         replacements.append((inputs.voyage_documents_path, staged))
     if inputs.voyage_sections_path.is_file() and (
         len(integrity_plan.retained_sections)
-        != pq.read_metadata(inputs.voyage_sections_path).num_rows  # type: ignore[no-untyped-call]
+        != pq.read_metadata(inputs.voyage_sections_path).num_rows
     ):
         staged = _stage_retained_voyage_table(
             staged_dir,
