@@ -35,6 +35,8 @@ from typing import Any
 
 import pyarrow as pa
 
+from osm_polygon_wikidata_only.domain.schema import polygon_schema
+
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.polygon_geometry_stats")
 
 MANIFEST_RELATIVE_PATH = "manifests/processed_pbfs.json"
@@ -67,6 +69,16 @@ def validate_polygon_schema(path: Path, schema: pa.Schema) -> None:
     if missing:
         raise PolygonStatsInputError(
             f"{path} is not the polygon table: missing columns {', '.join(missing)}"
+        )
+    expected = polygon_schema()
+    mismatched = tuple(
+        f"{column} (expected {expected.field(column).type}, got {schema.field(column).type})"
+        for column in IDENTITY_COLUMNS
+        if schema.field(column).type != expected.field(column).type
+    )
+    if mismatched:
+        raise PolygonStatsInputError(
+            f"{path} is not the polygon table: non-canonical column types: {', '.join(mismatched)}"
         )
 
 
@@ -180,7 +192,14 @@ def _manifest_entry(manifest: Path, entry: Any) -> tuple[str, int]:
         raise PolygonStatsInputError(
             f"Processed manifest entry lacks polygons_path/polygon_count: {manifest}"
         )
-    return Path(polygons_path).stem, polygon_count
+    relative_path = Path(polygons_path)
+    expected_path = Path(POLYGON_SUBDIR) / relative_path.name
+    if relative_path != expected_path or relative_path.suffix != ".parquet":
+        raise PolygonStatsInputError(
+            f"Processed manifest entry has non-canonical polygons_path "
+            f"{polygons_path!r}: expected polygons/<stem>.parquet: {manifest}"
+        )
+    return relative_path.stem, polygon_count
 
 
 __all__ = [

@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 )
 from osm_polygon_wikidata_only.hf._polygon_geometry import aggregation
 from osm_polygon_wikidata_only.hf._polygon_geometry.decoding import decode_bbox, decode_geometry
+from osm_polygon_wikidata_only.hf._polygon_geometry.validation import validate_polygon_schema
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
     PolygonStatsInputError,
     compute_polygon_geometry_stats,
@@ -441,6 +442,51 @@ def test_a_row_count_that_drifted_from_the_manifest_is_refused(tmp_path: Path) -
     _write_manifest(processed, {"drift-latest": 7})
 
     with pytest.raises(PolygonStatsInputError, match="row counts drifted"):
+        compute_polygon_geometry_stats(processed)
+
+
+def test_nonfinite_area_values_are_refused_instead_of_silently_dropped(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(
+        processed,
+        "nonfinite-latest",
+        [
+            _polygon_row(
+                source_pbf="nonfinite-latest.osm.pbf",
+                area_m2=float("nan"),
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            )
+        ],
+    )
+    _write_manifest(processed, {"nonfinite-latest": 1})
+
+    with pytest.raises(PolygonStatsInputError, match="non-finite area_m2"):
+        compute_polygon_geometry_stats(processed)
+
+
+def test_canonical_polygon_columns_must_have_canonical_types() -> None:
+    schema = polygon_schema()
+    wrong_types = pa.schema(
+        [
+            pa.field(field.name, pa.string()) if field.name == "area_m2" else field
+            for field in schema
+        ]
+    )
+
+    with pytest.raises(PolygonStatsInputError, match="non-canonical column types"):
+        validate_polygon_schema(Path("polygons/wrong.parquet"), wrong_types)
+
+
+def test_manifest_polygon_path_must_be_the_canonical_relative_path(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "path-latest", [])
+    manifest = _write_manifest(processed, {"path-latest": 0})
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["path-latest.osm.pbf"]["polygons_path"] = "other/path-latest.parquet"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PolygonStatsInputError, match="non-canonical polygons_path"):
         compute_polygon_geometry_stats(processed)
 
 

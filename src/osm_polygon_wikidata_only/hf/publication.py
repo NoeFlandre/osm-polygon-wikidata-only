@@ -64,6 +64,11 @@ The static hero image is stored locally at ``assets/dataset_hero.png`` and
 published remotely as ``assets/dataset_hero.png`` whenever a README snapshot
 is published. It is a presentation asset, separate from the generated maps.
 
+Unified sync defers the repository-wide metadata assets until all regional
+commits have drained. This includes ``stats.json`` and the dataset card,
+whose polygon statistics are computed from the complete finalized table once
+per sync run rather than once per region.
+
 Canonical remote layout
 ------------------------
 ::
@@ -511,8 +516,14 @@ def assemble_region_upload(
     core: ProcessResult | CorePublicationArtifacts | None,
     world_land_warning: Callable[[str], None] | None,
     refresh_maps: bool = True,
+    defer_metadata_assets: bool = False,
 ) -> list[PublicationOp]:
-    """Assemble one unified-sync region publication plan."""
+    """Assemble one unified-sync region publication plan.
+
+    ``defer_metadata_assets`` keeps the per-region commit limited to regional
+    data and manifests; the caller must publish repository metadata after the
+    region queue drains.
+    """
     from osm_polygon_wikidata_only.hf._publication.region import (
         assemble_region_upload as _assemble_region_upload,
     )
@@ -525,6 +536,7 @@ def assemble_region_upload(
         core=core,
         world_land_warning=world_land_warning,
         refresh_maps=refresh_maps,
+        defer_metadata_assets=defer_metadata_assets,
         hooks=_publication_hooks(),
     )
 

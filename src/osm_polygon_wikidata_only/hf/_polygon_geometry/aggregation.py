@@ -45,6 +45,7 @@ from .summaries import (
 from .validation import (
     POLYGON_SUBDIR,
     REQUIRED_COLUMNS,
+    PolygonStatsInputError,
     load_manifest_polygon_counts,
     select_manifest_files,
     validate_polygon_schema,
@@ -55,8 +56,8 @@ from .validation import (
 BATCH_ROWS = 4096
 
 # Equatorial radius used by the extraction code's equirectangular
-# projection. Imported as a literal so this module keeps the hf layer's
-# dependency on the domain package at zero.
+# projection. Imported as a literal so this scanner does not depend on the
+# extraction implementation at runtime.
 EARTH_RADIUS_M = 6_378_137.0
 
 
@@ -126,22 +127,39 @@ def _accumulate_file(accumulator: _Accumulator, path: Path) -> int:
         for batch in parquet_file.iter_batches(
             batch_size=BATCH_ROWS, columns=list(REQUIRED_COLUMNS)
         ):
-            _accumulate_batch(accumulator, batch)
+            _accumulate_batch(accumulator, batch, source_name=path.name)
             rows += batch.num_rows
     return rows
 
 
-def _accumulate_batch(accumulator: _Accumulator, batch: pa.RecordBatch) -> None:
+def _accumulate_batch(
+    accumulator: _Accumulator,
+    batch: pa.RecordBatch,
+    *,
+    source_name: str,
+) -> None:
     accumulator.polygon_count += batch.num_rows
-    _accumulate_areas(accumulator, batch)
+    _accumulate_areas(accumulator, batch, source_name=source_name)
     _accumulate_geometry(accumulator, batch.column("geometry").to_pylist())
     _accumulate_bboxes(accumulator, batch.column("bbox").to_pylist())
 
 
-def _accumulate_areas(accumulator: _Accumulator, batch: pa.RecordBatch) -> None:
+def _accumulate_areas(
+    accumulator: _Accumulator,
+    batch: pa.RecordBatch,
+    *,
+    source_name: str,
+) -> None:
     column = batch.column("area_m2")
     accumulator.area_null_count += column.null_count
-    values = np.asarray(column.to_numpy(zero_copy_only=False), dtype=np.float64)
+    values = np.asarray(column.to_pylist(), dtype=np.float64)
+    nulls = np.asarray(column.is_null())
+    nonfinite = ~np.isfinite(values) & ~nulls
+    if np.any(nonfinite):
+        raise PolygonStatsInputError(
+            f"{source_name} contains non-finite area_m2 values; "
+            "repair the polygon artifact before publishing statistics"
+        )
     finite = values[np.isfinite(values)]
     accumulator.areas.append(finite)
     for source, rows, source_values in _areas_by_source(batch.column("source_pbf"), values):
@@ -153,8 +171,8 @@ def _areas_by_source(sources: pa.Array, values: np.ndarray) -> list[tuple[str, i
     """Split one batch by ``source_pbf`` into row counts and finite areas.
 
     The row count is every row of that source, including rows whose
-    ``area_m2`` is null or non-finite; only the numeric summaries are
-    restricted to the finite samples.
+    ``area_m2`` is null; only the numeric summaries are restricted to
+    recorded area samples.
     """
     source_values = np.asarray(sources.to_pylist(), dtype=object)
     grouped: list[tuple[str, int, np.ndarray]] = []

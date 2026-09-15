@@ -557,6 +557,38 @@ def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
     assert not any(path.startswith("assets/") for path in remotes)
 
 
+def test_region_upload_can_defer_all_dataset_metadata_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A multi-region sync must build expensive metadata only once at the end."""
+    core, data_root = _stub_process_result(tmp_path)
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_polygon_stats_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("deferred region upload must not scan polygons"),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("deferred region upload must not render README"),
+    )
+
+    ops = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=core,
+        world_land_warning=None,
+        defer_metadata_assets=True,
+    )
+
+    remotes = [op.path_in_repo for op in ops]
+    assert not any(path == "stats.json" or path == "README.md" for path in remotes)
+    assert not any(path.startswith("assets/") for path in remotes)
+    assert "polygons/monaco-latest.parquet" in remotes
+    assert "wikipedia/documents/monaco-latest.parquet" in remotes
+
+
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

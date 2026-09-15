@@ -106,6 +106,7 @@ class SyncApplication:
         self._recovered_stems: set[str] = set()
         self._recovery_map_refresh_stems: set[str] = set()
         self._recovery_classifications: dict[str, dict[Any, Any]] = {}
+        self._region_publication_submitted = False
 
     def run(self) -> SyncApplicationResult:
         """Run all planned states and finalize successful metadata refreshes."""
@@ -194,18 +195,24 @@ class SyncApplication:
         if submit_upload is None:
             return False
         submit_upload(ops, "Repair remote repository metadata and maps")
+        # This upload already contains the repository-wide metadata refresh;
+        # do not enqueue a second refresh after the region queue drains.
+        self._region_publication_submitted = False
         return True
 
     def _refresh_metadata_marker(self, metadata_repaired: bool) -> bool:
         if not self.context.push_enabled:
             return metadata_repaired
         marker = self.services.load_metadata_refresh_marker(self.context.data_root)
-        if marker is None:
+        if marker is None and not self._region_publication_submitted:
             return metadata_repaired
-        self.services.logger.info(
-            "Refreshing repository metadata after %d migrated region(s)",
-            len(marker["stems"]),
-        )
+        if marker is not None:
+            self.services.logger.info(
+                "Refreshing repository metadata after %d migrated region(s)",
+                len(marker["stems"]),
+            )
+        else:
+            self.services.logger.info("Refreshing repository metadata after unified sync")
         metadata_ops = self.services.assemble_metadata_only_upload(
             data_root=self.context.data_root,
             repo_id=self.context.settings.repo_id,
@@ -217,7 +224,9 @@ class SyncApplication:
             metadata_ops,
             "Repair remote repository metadata and maps",
         )
-        self.services.clear_metadata_refresh_marker(self.context.data_root)
+        if marker is not None:
+            self.services.clear_metadata_refresh_marker(self.context.data_root)
+        self._region_publication_submitted = False
         return True
 
     def _finish(
@@ -435,6 +444,7 @@ class SyncApplication:
     def _submit_upload(self, ops: list[PublicationOp], message: str) -> None:
         if self.context.upload_queue is not None:
             self.context.upload_queue.submit(ops, message)
+            self._region_publication_submitted = True
 
     def _build_region_publication(
         self,
@@ -452,6 +462,7 @@ class SyncApplication:
             core=core,
             world_land_warning=None,
             refresh_maps=self._refresh_maps(state, stem),
+            defer_metadata_assets=True,
         )
 
     def _needs_existing_core(self, stem: str) -> bool:
