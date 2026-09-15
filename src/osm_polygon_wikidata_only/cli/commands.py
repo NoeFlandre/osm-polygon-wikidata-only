@@ -190,13 +190,27 @@ def _record_deferred_metadata(
     final refresh succeeds. The marker survives a crash or a failed
     refresh and is what a later sync run repairs from; without it every
     remote path would look present and nothing would be scheduled.
+
+    A surviving marker is merged rather than replaced: an earlier run may
+    have marked a region whose upload never happened, and dropping it
+    here would let this run's own region license a repository-wide
+    refresh describing the stranded one.
     """
     stem = _result_stem(result)
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not polygons_path.is_file():
         return
     stems[stem] = sha256_file(polygons_path)
-    set_metadata_refresh_marker(data_root, sorted(stems), dict(stems))
+    merged = {**_recorded_marker_hashes(data_root), **stems}
+    set_metadata_refresh_marker(data_root, sorted(merged), merged)
+
+
+def _recorded_marker_hashes(data_root: DataRoot) -> dict[str, str]:
+    """Return the stems an existing refresh marker already names."""
+    marker = load_metadata_refresh_marker(data_root)
+    if marker is None:
+        return {}
+    return {str(stem): str(digest) for stem, digest in marker["fingerprint_hashes"].items()}
 
 
 def _upload_metadata_refresh(

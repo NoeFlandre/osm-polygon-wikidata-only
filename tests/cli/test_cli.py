@@ -720,6 +720,14 @@ def test_process_dir_keeps_the_marker_when_an_upload_fails(
     assert cleared == []
 
 
+def _marker(stems: list[str]) -> dict[str, object]:
+    """Return a metadata-refresh marker payload shaped like the real one."""
+    return {
+        "stems": sorted(stems),
+        "fingerprint_hashes": {stem: "a" * 64 for stem in sorted(stems)},
+    }
+
+
 def _deferring_args(tmp_path: Path) -> argparse.Namespace:
     return argparse.Namespace(
         command="process-dir",
@@ -799,7 +807,7 @@ def test_a_resumed_run_never_refreshes_from_a_marker_alone(
     monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: {"stems": ["region-latest"]}
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
     monkeypatch.setattr(
@@ -849,7 +857,7 @@ def test_a_marker_naming_an_unpublished_region_blocks_the_refresh(
     monkeypatch.setattr(
         commands,
         "load_metadata_refresh_marker",
-        lambda data_root: {"stems": ["published-latest", "stranded-latest"]},
+        lambda data_root: _marker(["published-latest", "stranded-latest"]),
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
     monkeypatch.setattr(
@@ -901,7 +909,7 @@ def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
     monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: {"stems": ["region-latest"]}
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", failing_refresh)
     monkeypatch.setattr(
@@ -1041,7 +1049,7 @@ def test_an_aborted_run_drains_without_publishing_metadata(
     monkeypatch.setattr(commands, "_enqueue_core_upload", failing_enqueue)
     monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: {"stems": ["region-latest"]}
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
     monkeypatch.setattr(
@@ -1056,5 +1064,63 @@ def test_an_aborted_run_drains_without_publishing_metadata(
     # The queue still drains, but the marker survives for the next run and
     # no repository-wide asset describes the region that never uploaded.
     assert closed == [True]
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_recording_a_region_preserves_a_surviving_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Processing a new region must not discard an earlier stranded one."""
+    recorded: list[tuple[list[str], dict[str, str]]] = []
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "fresh-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "fresh-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    def record(data_root: DataRoot, stems: list[str], hashes: dict[str, str]) -> None:
+        recorded.append((stems, hashes))
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["stranded-latest"])
+    )
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", record)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+
+    # The stranded region stays in the marker, and keeps the refresh shut.
+    assert len(recorded) == 1
+    stems, hashes = recorded[0]
+    assert stems == ["fresh-latest", "stranded-latest"]
+    assert set(hashes) == {"fresh-latest", "stranded-latest"}
     assert refreshes == []
     assert cleared == []
