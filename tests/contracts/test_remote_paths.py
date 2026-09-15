@@ -14,6 +14,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
+    REMOTE_POLYGON_STATS_FILE,
     REMOTE_POLYGONS_DIR,
     remote_dataset_card_path,
     remote_parquet_path,
@@ -34,6 +35,11 @@ def test_asset_paths_are_stable() -> None:
     assert LEGACY_REMOTE_COVERAGE_MAP_FILE == "coverage_map.png"
     assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE == ("assets/geographic_wikipedia_text_coverage.png")
     assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE == "assets/geographic_polygon_count.png"
+
+
+def test_remote_polygon_statistics_path_is_stable() -> None:
+    """The machine-readable statistics report sits next to the card."""
+    assert REMOTE_POLYGON_STATS_FILE == "stats.json"
 
 
 def test_remote_dataset_card_path() -> None:

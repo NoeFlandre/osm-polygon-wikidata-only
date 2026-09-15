@@ -291,7 +291,9 @@ def test_push_enabled_runner_submits_one_atomic_region_commit(tmp_path: Path) ->
     ).run()
 
     assert result.return_code == 0
+    assert result.metadata_repaired is True
     assert queue.submissions == [(["region-op"], "commit:alpha")]
+    assert queue.synchronous == [(["metadata-op"], "Repair remote repository metadata and maps")]
     assert events == ["augment:alpha", "load:alpha", "summary"]
 
 

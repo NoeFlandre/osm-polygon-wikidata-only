@@ -64,6 +64,11 @@ The static hero image is stored locally at ``assets/dataset_hero.png`` and
 published remotely as ``assets/dataset_hero.png`` whenever a README snapshot
 is published. It is a presentation asset, separate from the generated maps.
 
+Unified sync defers the repository-wide metadata assets until all regional
+commits have drained. This includes ``stats.json`` and the dataset card,
+whose polygon statistics are computed from the complete finalized table once
+per sync run rather than once per region.
+
 Canonical remote layout
 ------------------------
 ::
@@ -181,6 +186,10 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     load_text_presence as _load_text_presence,
 )
+from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
+    render_polygon_stats_section,
+    write_polygon_stats_report,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
@@ -280,6 +289,17 @@ def snapshot_upload_manifests(
     return snapshot, card_snapshot
 
 
+def write_polygon_stats_snapshot(data_root: DataRoot, destination: Path) -> Path:
+    """Write the machine-readable polygon statistics report to ``destination``.
+
+    The report is computed from the published polygon table only and
+    written atomically, so a crash mid-write never leaves a partial
+    ``stats.json`` behind. The dataset card rendered by
+    :func:`write_readme_snapshot` summarises the very same snapshot.
+    """
+    return write_polygon_stats_report(data_root.processed, destination)
+
+
 def write_readme_snapshot(
     data_root: DataRoot,
     repo_id: str,
@@ -296,9 +316,12 @@ def write_readme_snapshot(
        via :func:`compute_augmentation_stats`. The per-file summary
        cache lives under ``data_root.cache``, so a warm refresh
        performs zero Parquet table reads.
-    3. Computing public continent statistics from polygon centroids and
+    3. Rendering the polygon surface and geometry block from the same
+       snapshot that :func:`write_polygon_stats_snapshot` publishes as
+       ``stats.json``, so the card and the report never disagree.
+    4. Computing public continent statistics from polygon centroids and
        the bundled Natural Earth Admin-0 reference.
-    4. Rendering the public snapshot, Wikipedia and Wikivoyage corpora,
+    5. Rendering the public snapshot, Wikipedia and Wikivoyage corpora,
        Wikidata facts, storage accounting, and continent distribution.
 
     The README must be written AFTER every other snapshot so a
@@ -320,6 +343,7 @@ def write_readme_snapshot(
         core_stats,
         augmentation_stats=augmentation_stats,
     )
+    stats_section += "\n" + render_polygon_stats_section(data_root.processed)
     if any(data_root.processed_polygons.glob("*.parquet")):
         countries_path = ensure_world_countries(data_root.cache)
         stats_section += "\n" + render_continent_stats(
@@ -446,6 +470,7 @@ def _publication_hooks() -> PublicationHooks:
         snapshot_canonical_document=_snapshot_canonical_document,
         metadata_only_upload=assemble_metadata_only_upload,
         write_readme_snapshot=write_readme_snapshot,
+        write_polygon_stats_snapshot=write_polygon_stats_snapshot,
         refresh_coverage_assets=refresh_coverage_assets,
         ensure_world_land=ensure_world_land,
         generate_coverage_map=generate_coverage_map,
@@ -491,8 +516,14 @@ def assemble_region_upload(
     core: ProcessResult | CorePublicationArtifacts | None,
     world_land_warning: Callable[[str], None] | None,
     refresh_maps: bool = True,
+    defer_metadata_assets: bool = False,
 ) -> list[PublicationOp]:
-    """Assemble one unified-sync region publication plan."""
+    """Assemble one unified-sync region publication plan.
+
+    ``defer_metadata_assets`` keeps the per-region commit limited to regional
+    data and manifests; the caller must publish repository metadata after the
+    region queue drains.
+    """
     from osm_polygon_wikidata_only.hf._publication.region import (
         assemble_region_upload as _assemble_region_upload,
     )
@@ -505,6 +536,7 @@ def assemble_region_upload(
         core=core,
         world_land_warning=world_land_warning,
         refresh_maps=refresh_maps,
+        defer_metadata_assets=defer_metadata_assets,
         hooks=_publication_hooks(),
     )
 
@@ -580,5 +612,6 @@ __all__ = [
     "load_existing_core_artifacts",
     "refresh_coverage_assets",
     "snapshot_upload_manifests",
+    "write_polygon_stats_snapshot",
     "write_readme_snapshot",
 ]

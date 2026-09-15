@@ -232,7 +232,7 @@ def test_assemble_augmentation_upload_returns_combined_maps(
     # is the migration ``delete`` of the legacy augmentation path.
     add_ops = [op for op in ops if op.action == "add"]
     delete_ops = [op for op in ops if op.action == "delete"]
-    assert len(add_ops) == 10
+    assert len(add_ops) == 11
     assert len(delete_ops) == 4
     assert add_ops[5].local_path == aug.manifest_path
     assert add_ops[5].path_in_repo == "manifests/augmentation_manifest.json"
@@ -256,9 +256,10 @@ def test_assemble_augmentation_upload_returns_combined_maps(
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
         "assets/dataset_hero.png",
+        "stats.json",
         "README.md",
     ]
-    assert len(ops) == 14
+    assert len(ops) == 15
 
 
 def test_assemble_augmentation_upload_writes_readme_at_end(
@@ -445,6 +446,7 @@ def test_assemble_region_upload_without_core_refreshes_combined_map(
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
         "assets/dataset_hero.png",
+        "stats.json",
         "README.md",
     ]
 
@@ -516,9 +518,10 @@ def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
         "manifests/augmentation_manifest.json",
         "augmentation/manifests/augmentation_manifest.json",
         "assets/dataset_hero.png",
+        "stats.json",
         "README.md",
     ]
-    assert len(ops) == 19
+    assert len(ops) == 20
 
 
 def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
@@ -552,6 +555,38 @@ def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
         "manifests/processed_pbfs.json",
     ]
     assert not any(path.startswith("assets/") for path in remotes)
+
+
+def test_region_upload_can_defer_all_dataset_metadata_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A multi-region sync must build expensive metadata only once at the end."""
+    core, data_root = _stub_process_result(tmp_path)
+    aug = _stub_augmentation_result(data_root.processed)
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_polygon_stats_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("deferred region upload must not scan polygons"),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("deferred region upload must not render README"),
+    )
+
+    ops = assemble_region_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        stem=STEM,
+        augmentation=aug,
+        core=core,
+        world_land_warning=None,
+        defer_metadata_assets=True,
+    )
+
+    remotes = [op.path_in_repo for op in ops]
+    assert not any(path == "stats.json" or path == "README.md" for path in remotes)
+    assert not any(path.startswith("assets/") for path in remotes)
+    assert "polygons/monaco-latest.parquet" in remotes
+    assert "wikipedia/documents/monaco-latest.parquet" in remotes
 
 
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
@@ -645,11 +680,12 @@ def test_assemble_core_upload_returns_twelve_entries(
         "assets/geographic_wikipedia_text_coverage.png",
         "assets/geographic_polygon_count.png",
         "assets/dataset_hero.png",
+        "stats.json",
         "README.md",
         "assets/coverage_map.png",
         "coverage_map.png",
     ]
-    assert len(ops) == 13
+    assert len(ops) == 14
 
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
@@ -994,7 +1030,7 @@ def test_legacy_core_command_submits_exactly_once(
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 13
+    assert len(ops) == 14
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -1055,8 +1091,8 @@ def test_augmentation_command_submits_exactly_once(
     _submit(ops, "aug msg")
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
-    # Sidecars + manifest migration + combined map + README.
-    assert len(uploads[0][0]) == 14
+    # Sidecars + manifest migration + combined map + statistics + README.
+    assert len(uploads[0][0]) == 15
 
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
@@ -1173,9 +1209,9 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     }
     # PROCESS state includes three current maps and deletes the three
     # superseded remote map paths atomically.
-    assert len(by_message["Sync complete region monaco-latest"]) == 19
-    # AUGMENT state (no core): sidecars, manifest migration, combined map, README.
-    assert len(by_message["Sync complete region andorra-latest"]) == 14
+    assert len(by_message["Sync complete region monaco-latest"]) == 20
+    # AUGMENT state (no core): sidecars, manifest migration, combined map, statistics, README.
+    assert len(by_message["Sync complete region andorra-latest"]) == 15
 
 
 # ---------------------------------------------------------------------------
@@ -1460,6 +1496,7 @@ def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
         "assets/geographic_text_presence.png",
         "assets/geographic_text_density.png",
         "assets/dataset_hero.png",
+        "stats.json",
         "README.md",
         REMOTE_AUGMENTATION_MANIFEST_FILE,
     }
@@ -1560,7 +1597,7 @@ def test_publication_plan_is_deterministic_and_unique(
     assert sum(op.path_in_repo == "coverage_map.png" for op in deletions) == 1
     # Three current maps are added while the root coverage map and both
     # superseded H3 maps are deleted in the same atomic publication.
-    assert len(ops) == 19, f"unexpected plan length: {len(ops)} {ops}"
+    assert len(ops) == 20, f"unexpected plan length: {len(ops)} {ops}"
 
 
 # ---------------------------------------------------------------------------

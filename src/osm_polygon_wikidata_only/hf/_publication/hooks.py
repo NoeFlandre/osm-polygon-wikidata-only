@@ -26,6 +26,7 @@ class PublicationHooks:
     snapshot_canonical_document: Callable[..., Path]
     metadata_only_upload: Callable[..., list[PublicationOp]]
     write_readme_snapshot: Callable[[DataRoot, str, Path], None]
+    write_polygon_stats_snapshot: Callable[[DataRoot, Path], Path]
     refresh_coverage_assets: Callable[..., tuple[Path, Path, Path]]
     ensure_world_land: Callable[[Path], Path]
     generate_coverage_map: Callable[..., Any]

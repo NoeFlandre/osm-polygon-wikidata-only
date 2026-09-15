@@ -8,6 +8,7 @@
     "manifests/augmentation_manifest.json",
     "augmentation/manifests/augmentation_manifest.json",
     "assets/dataset_hero.png",
+    "stats.json",
     "README.md"
   ],
   "core": [

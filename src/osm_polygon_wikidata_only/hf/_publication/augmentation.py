@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_LINKS_DIR,
+    REMOTE_POLYGON_STATS_FILE,
 )
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.publication")
@@ -41,7 +42,8 @@ def assemble_augmentation_upload(
     6. canonical augmentation manifest (add)
     7. legacy augmentation manifest (delete)
     8. combined Wikipedia/Wikivoyage coverage map
-    9. README
+    9. polygon statistics report
+    10. README
 
     The combined text-presence map is regenerated because Wikivoyage
     documents change its numerator. The other coverage assets depend
@@ -81,6 +83,7 @@ def assemble_augmentation_upload(
         density_snapshot,
         snapshot=text_snapshot,
     )
+    stats_snapshot = hooks.write_polygon_stats_snapshot(data_root, snapshots / "stats.json")
     hooks.write_readme_snapshot(data_root, repo_id, readme_snapshot)
     return [
         *(
@@ -125,6 +128,7 @@ def assemble_augmentation_upload(
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         hero_op,
+        add_op(stats_snapshot, path_in_repo=REMOTE_POLYGON_STATS_FILE),
         add_op(readme_snapshot, path_in_repo="README.md"),
     ]
 

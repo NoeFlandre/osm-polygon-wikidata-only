@@ -139,6 +139,61 @@ augmentation statistics from finalized tables before publication. The static
 `final-dataset-snapshot` Trackio run records headline dataset metrics and
 exactly three plots; it is a snapshot, not a processing timeline.
 
+## Polygon surface and geometry statistics
+
+Publication also recomputes the polygon table's own surface and geometry
+statistics and publishes them as `stats.json` next to the dataset card, which
+carries a concise summary of the same snapshot. The snapshot is computed from
+the published polygon table only: every valid row of every
+`polygons/<stem>.parquet` file, with no sampling, no truncation, no external
+lookup, and no recomputation from the raw PBFs. `manifests/processed_pbfs.json`
+defines which files the dataset publishes; a listed file that is missing, a row
+count that drifted from the manifest, or a Parquet file that is not the polygon
+table stops publication instead of producing a misleading report. Non-finite
+`area_m2` values and non-canonical polygon column types are rejected as well.
+Only the
+`source_pbf`, `area_m2`, `bbox`, and `geometry` columns are read, and geometry
+is decoded one record batch at a time so memory stays bounded. Files are
+scanned in sorted order and every published float is rounded to six decimals,
+so unchanged input produces a byte-identical `stats.json` and card block.
+
+Unified sync commits regional data first and refreshes `stats.json`, maps, and
+the README once after the regional upload queue drains. This preserves the
+same complete-dataset statistics while avoiding a full rescan after every
+region.
+
+`stats.json` carries a `contract_version`, a `source` block
+(`table`, `column_scope`, `file_count`, `polygon_count`) and four result
+blocks. The exact fields are:
+
+- `area_m2` — `total`, `minimum`, `maximum`, `mean`, `median` and the `p1`,
+  `p5`, `p25`, `p75`, `p95`, `p99` percentiles of the table's recorded
+  `area_m2` values, plus `non_positive_count` (degenerate rows with
+  `area_m2 <= 0`), `below_one_m2_count` (positive rows under one square metre)
+  and `null_count` (rows with no recorded area). Percentiles interpolate
+  linearly between the two closest ranks.
+- `area_histogram` — a fixed list of half-open log-scale buckets, each with a
+  `label`, `lower_m2`, `upper_m2` and `count`. The leading bucket collects
+  degenerate areas and the final bucket is unbounded, so the list is identical
+  in every report.
+- `geometry` — `polygon_count` and `multipolygon_count` by GeoJSON type,
+  `unreadable_count` for rows whose geometry is missing or is not a
+  Polygon/MultiPolygon, `with_holes_count`, `total_rings`, `total_holes`,
+  `total_vertices`, and the `vertices`, `rings` and `components`
+  distributions. A vertex is one coordinate pair, counting each ring's
+  repeated closing coordinate once; `components` is the number of
+  `MultiPolygon` members, which is `1` for every `Polygon` row.
+- `extent` — the `dataset_bbox` envelope, the `width_deg`, `height_deg`,
+  `width_m` and `height_m` distributions of per-row bounding boxes,
+  `wider_than_180_deg_count` (the antimeridian signature),
+  `pole_touching_count`, and `unreadable_count`. Metre spans use the same
+  equirectangular rule as `area_m2`, evaluated at each box's mean latitude.
+- `per_source_pbf` — one entry per source, sorted by `source_pbf`, with
+  `polygon_count`, `total_area_m2`, `median_area_m2` and `maximum_area_m2`.
+
+Each distribution block reports `minimum`, `maximum`, `mean`, `median`, `p95`
+and `p99`.
+
 ## Quality boundaries and deterministic replay
 
 The quality cycle follows the same ownership boundaries as the runtime:

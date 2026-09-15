@@ -83,6 +83,10 @@ Documentation: [architecture](docs/architecture.md) ·
    * `polygon_articles/<stem>.parquet` — unified many-to-many
      polygon↔document links for Wikipedia and Wikivoyage.
    * `manifests/processed_pbfs.json` — aggregate stats per source PBF.
+   * `stats.json` — machine-readable polygon surface and geometry statistics,
+     recomputed from every published polygon row; the dataset card carries a
+     concise summary of the same snapshot. The exact fields are described in
+     [the architecture guide](docs/architecture.md).
 6. Adds text and fact tables without reprocessing completed PBFs:
    * `wikipedia/sections/<stem>.parquet` — section-level Wikipedia text.
    * `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents.
