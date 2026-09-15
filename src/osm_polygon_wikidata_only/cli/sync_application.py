@@ -472,16 +472,29 @@ class SyncApplication:
         them stale until the final refresh succeeds. The marker survives
         a crash or a failed refresh, so the next run repairs them instead
         of finding every path present and scheduling nothing.
+
+        A surviving marker is merged rather than replaced: another run may
+        have marked a region this one never reconciles, and dropping it
+        here would let this run's regions license a repository-wide
+        refresh describing the stranded one.
         """
         polygons_path = self.context.data_root.processed_polygons / f"{stem}.parquet"
         if not polygons_path.is_file():
             return
         self._deferred_metadata_stems[stem] = sha256_file(polygons_path)
+        merged = {**self._recorded_marker_hashes(), **self._deferred_metadata_stems}
         self.services.set_metadata_refresh_marker(
             self.context.data_root,
-            sorted(self._deferred_metadata_stems),
-            dict(self._deferred_metadata_stems),
+            sorted(merged),
+            merged,
         )
+
+    def _recorded_marker_hashes(self) -> dict[str, str]:
+        """Return the stems an existing refresh marker already names."""
+        marker = self.services.load_metadata_refresh_marker(self.context.data_root)
+        if marker is None:
+            return {}
+        return {str(stem): str(digest) for stem, digest in marker["fingerprint_hashes"].items()}
 
     def _build_region_publication(
         self,

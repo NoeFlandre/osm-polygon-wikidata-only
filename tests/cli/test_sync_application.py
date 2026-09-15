@@ -820,3 +820,30 @@ def test_deferred_region_publication_persists_a_refresh_marker(tmp_path: Path) -
     stems, hashes = recorded[0]
     assert stems == ["monaco-latest"]
     assert len(hashes["monaco-latest"]) == 64
+
+
+def test_recording_a_region_preserves_a_surviving_marker(tmp_path: Path) -> None:
+    """A region another run marked must not be dropped by this one."""
+    module = _application_module()
+    context = _context(module, tmp_path, push_enabled=True, queue=_Queue())
+    (context.data_root.processed_polygons / "monaco-latest.parquet").write_bytes(b"polygons")
+    recorded: list[tuple[list[str], dict[str, str]]] = []
+    services = replace(
+        _services(module, []),
+        load_metadata_refresh_marker=lambda _root: {
+            "stems": ["stranded-latest"],
+            "fingerprint_hashes": {"stranded-latest": "b" * 64},
+        },
+        set_metadata_refresh_marker=lambda root, stems, hashes: recorded.append((stems, hashes)),
+        assemble_region_upload=lambda **_kwargs: [],
+        load_existing_core_for_publication=lambda *_args, **_kwargs: object(),
+    )
+    application = module.SyncApplication(context=context, services=services)
+
+    application._build_region_publication(SimpleNamespace(stem="monaco-latest"), object(), object())
+
+    assert len(recorded) == 1
+    stems, hashes = recorded[0]
+    assert stems == ["monaco-latest", "stranded-latest"]
+    assert hashes["stranded-latest"] == "b" * 64
+    assert len(hashes["monaco-latest"]) == 64
