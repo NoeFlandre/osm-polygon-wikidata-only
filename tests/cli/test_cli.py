@@ -551,7 +551,7 @@ def test_process_dir_defers_metadata_assets_until_the_queue_drains(
     monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_enqueue_core_upload", fake_enqueue_core_upload)
-    monkeypatch.setattr(commands, "_enqueue_metadata_refresh", fake_metadata_refresh)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", fake_metadata_refresh)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
 
     assert commands._run_processing_command(args, data_root=root, settings=config) == 0
@@ -597,9 +597,7 @@ def test_process_pbf_publishes_metadata_assets_inline(
         "_enqueue_core_upload",
         lambda *a, **kw: deferrals.append(bool(kw["defer_metadata_assets"])),
     )
-    monkeypatch.setattr(
-        commands, "_enqueue_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
-    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
 
     assert (
@@ -647,7 +645,7 @@ def test_process_dir_persists_and_clears_the_metadata_refresh_marker(
     monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_enqueue_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(
         commands,
@@ -706,7 +704,7 @@ def test_process_dir_keeps_the_marker_when_an_upload_fails(
     monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_enqueue_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(
@@ -719,4 +717,134 @@ def test_process_dir_keeps_the_marker_when_an_upload_fails(
         )
         == 1
     )
+    assert cleared == []
+
+
+def _deferring_args(tmp_path: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="process-dir",
+        input=tmp_path / "pbfs",
+        commit_message=None,
+        push=True,
+    )
+
+
+def test_a_failed_regional_upload_skips_the_metadata_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Metadata must never describe a region whose upload failed."""
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _FailingQueue:
+        def close_and_wait(self) -> list[str]:
+            return ["region upload failed"]
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 1
+    )
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_a_resumed_run_refreshes_from_a_surviving_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that publishes nothing still repairs an earlier deferred refresh."""
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: {"stems": ["region-latest"]}
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+    assert len(refreshes) == 1
+    assert cleared == [root]
+
+
+def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An assembly failure is reported as an upload failure, never a hang."""
+    cleared: list[DataRoot] = []
+    closed: list[bool] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            closed.append(True)
+            return []
+
+    def failing_refresh(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("manifest drift")
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "load_metadata_refresh_marker", lambda data_root: {"stems": []})
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", failing_refresh)
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 1
+    )
+    assert closed == [True]
     assert cleared == []

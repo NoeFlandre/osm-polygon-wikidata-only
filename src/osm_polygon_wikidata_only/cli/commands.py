@@ -52,6 +52,7 @@ from osm_polygon_wikidata_only.io.run_lock import RunLockError, exclusive_run_lo
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
     clear_metadata_refresh_marker,
+    load_metadata_refresh_marker,
     set_metadata_refresh_marker,
 )
 from osm_polygon_wikidata_only.pipeline.processor import (
@@ -102,20 +103,64 @@ def _drain_uploads(
     *,
     data_root: DataRoot,
     repo_id: str,
-    refresh_metadata: bool,
-    deferred_stems: dict[str, str],
+    refresh_requested: bool,
 ) -> list[str]:
-    """Close the queue, refreshing deferred metadata and retiring its marker.
+    """Drain the regional queue, then refresh deferred metadata.
 
-    The marker is cleared only when every upload succeeded, so a failed
-    refresh leaves the intent on disk for the next run to repair.
+    The queue is closed first, so a region whose upload exhausted its
+    retries never gets a manifest, card, map, or statistics report
+    describing it, and an assembly failure in the refresh can no longer
+    leave the queue's worker waiting for a sentinel that never arrives.
+
+    The refresh runs synchronously on the drained queue. Its marker is
+    retired only once it succeeds, so a failure leaves the intent on
+    disk for the next run to repair.
     """
-    if refresh_metadata:
-        _enqueue_metadata_refresh(upload_queue, data_root=data_root, repo_id=repo_id)
     failures = upload_queue.close_and_wait()
-    if deferred_stems and not failures:
-        clear_metadata_refresh_marker(data_root)
-    return failures
+    if failures or not refresh_requested:
+        return failures
+    return _refresh_repository_metadata(upload_queue, data_root=data_root, repo_id=repo_id)
+
+
+def _refresh_repository_metadata(
+    upload_queue: BackgroundUploadQueue,
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+) -> list[str]:
+    """Publish the deferred repository-wide assets and retire their marker."""
+    try:
+        _upload_metadata_refresh(upload_queue, data_root=data_root, repo_id=repo_id)
+    # ``except Exception`` retained: assembling the refresh runs the
+    # fail-closed statistics scan and the map renderers, which raise a
+    # broad, unstable set of types. The documented behavior is to report
+    # the refresh as a failed upload and keep its marker for the next run,
+    # never to escape the caller's ``finally`` block.
+    except Exception as error:
+        LOGGER.error("Repository metadata refresh failed: %s", error)
+        return [f"Refresh repository metadata and maps: {error}"]
+    clear_metadata_refresh_marker(data_root)
+    return []
+
+
+def _metadata_refresh_requested(
+    data_root: DataRoot,
+    *,
+    deferring: bool,
+    published_regions: int,
+) -> bool:
+    """A deferred run refreshes after publishing, or when a marker survives.
+
+    A resumed run can publish nothing -- every PBF is already processed
+    and skipped -- while an earlier run's marker records that the
+    repository-wide assets never made it. Reading the marker is what
+    makes that run repair them instead of leaving them stale.
+    """
+    if not deferring:
+        return False
+    if published_regions:
+        return True
+    return load_metadata_refresh_marker(data_root) is not None
 
 
 def _record_deferred_metadata(
@@ -138,7 +183,7 @@ def _record_deferred_metadata(
     set_metadata_refresh_marker(data_root, sorted(stems), dict(stems))
 
 
-def _enqueue_metadata_refresh(
+def _upload_metadata_refresh(
     upload_queue: BackgroundUploadQueue,
     *,
     data_root: DataRoot,
@@ -153,7 +198,7 @@ def _enqueue_metadata_refresh(
     from osm_polygon_wikidata_only.hf.publication import assemble_metadata_only_upload
 
     LOGGER.info("Refreshing repository metadata after the processed directory")
-    upload_queue.submit(
+    upload_queue.upload_synchronously(
         assemble_metadata_only_upload(
             data_root=data_root,
             repo_id=repo_id,
@@ -500,8 +545,11 @@ def _run_processing_command(
                 upload_queue,
                 data_root=data_root,
                 repo_id=settings.repo_id,
-                refresh_metadata=bool(defer_metadata_assets and published_regions),
-                deferred_stems=deferred_stems,
+                refresh_requested=_metadata_refresh_requested(
+                    data_root,
+                    deferring=defer_metadata_assets,
+                    published_regions=published_regions,
+                ),
             )
     _log_process_results(results)
     if upload_failures:
