@@ -105,6 +105,7 @@ def _drain_uploads(
     repo_id: str,
     deferring: bool,
     published_stems: set[str],
+    dry_run: bool,
 ) -> list[str]:
     """Drain the regional queue, then refresh deferred metadata.
 
@@ -126,7 +127,9 @@ def _drain_uploads(
     if not _metadata_refresh_requested(data_root, published_stems=published_stems):
         _warn_metadata_refresh_pending(data_root)
         return failures
-    return _refresh_repository_metadata(upload_queue, data_root=data_root, repo_id=repo_id)
+    return _refresh_repository_metadata(
+        upload_queue, data_root=data_root, repo_id=repo_id, dry_run=dry_run
+    )
 
 
 def _warn_metadata_refresh_pending(data_root: DataRoot) -> None:
@@ -153,8 +156,15 @@ def _refresh_repository_metadata(
     *,
     data_root: DataRoot,
     repo_id: str,
+    dry_run: bool,
 ) -> list[str]:
-    """Publish the deferred repository-wide assets and retire their marker."""
+    """Publish the deferred repository-wide assets and retire their marker.
+
+    A dry run simulates the upload against the stub hub, so nothing
+    reaches the remote and the marker is left alone: retiring it would
+    tell the next run that the assets are current when they were never
+    published.
+    """
     try:
         _upload_metadata_refresh(upload_queue, data_root=data_root, repo_id=repo_id)
     # ``except Exception`` retained: assembling the refresh runs the
@@ -165,7 +175,8 @@ def _refresh_repository_metadata(
     except Exception as error:
         LOGGER.error("Repository metadata refresh failed: %s", error)
         return [f"Refresh repository metadata and maps: {error}"]
-    clear_metadata_refresh_marker(data_root)
+    if not dry_run:
+        clear_metadata_refresh_marker(data_root)
     return []
 
 
@@ -558,6 +569,8 @@ def _run_processing_command(
     # assets are produced once after the queue drains instead of after
     # each region.
     defer_metadata_assets = args.command == "process-dir"
+    # A simulated push must not touch durable publication state.
+    dry_run = bool(getattr(args, "dry_run", False))
     published_stems: set[str] = set()
     deferred_stems: dict[str, str] = {}
 
@@ -567,7 +580,7 @@ def _run_processing_command(
         # Recorded before the job is submitted: a kill between the two
         # would otherwise leave an uploadable region with no record that
         # the repository-wide assets still owe it a refresh.
-        if defer_metadata_assets:
+        if defer_metadata_assets and not dry_run:
             _record_deferred_metadata(data_root, deferred_stems, result)
         _enqueue_core_upload(
             upload_queue,
@@ -606,6 +619,7 @@ def _run_processing_command(
                 # run to repair.
                 deferring=_refresh_allowed(defer_metadata_assets, processing_completed),
                 published_stems=published_stems,
+                dry_run=dry_run,
             )
     _log_process_results(results)
     if upload_failures:

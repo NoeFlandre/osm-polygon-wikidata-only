@@ -728,12 +728,13 @@ def _marker(stems: list[str]) -> dict[str, object]:
     }
 
 
-def _deferring_args(tmp_path: Path) -> argparse.Namespace:
+def _deferring_args(tmp_path: Path, *, dry_run: bool = False) -> argparse.Namespace:
     return argparse.Namespace(
         command="process-dir",
         input=tmp_path / "pbfs",
         commit_message=None,
         push=True,
+        dry_run=dry_run,
     )
 
 
@@ -1157,3 +1158,60 @@ def test_an_unverifiable_marker_is_reported_to_the_operator(
 
     assert "stranded-latest" in caplog.text
     assert "sync-dir" in caplog.text
+
+
+def test_a_dry_run_never_touches_the_refresh_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A simulated push must not retire durable publication intent."""
+    recorded: list[object] = []
+    cleared: list[DataRoot] = []
+    refreshes: list[object] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "set_metadata_refresh_marker", lambda *a, **kw: recorded.append(kw)
+    )
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path, dry_run=True),
+            data_root=root,
+            settings=Settings(repo_id="example/repo"),
+        )
+        == 0
+    )
+
+    # The refresh is still exercised against the stub hub, but the durable
+    # marker is neither written nor retired by a simulated push.
+    assert len(refreshes) == 1
+    assert recorded == []
+    assert cleared == []
