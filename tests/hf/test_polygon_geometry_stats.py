@@ -630,11 +630,20 @@ def test_an_unclosed_ring_counts_every_vertex(tmp_path: Path) -> None:
     assert sample.vertices == 3
 
 
-def test_an_empty_ring_contributes_no_vertex() -> None:
-    sample = decode_geometry(json.dumps({"type": "Polygon", "coordinates": [[], [[0.0, 0.0]]]}))
-
-    assert sample is not None
-    assert sample.vertices == 1
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        ["bad"],
+        [[], [[0.0, 0.0]]],
+        [[["not", "a", "pair"]]],
+        [[[0.0]]],
+        [[[0.0, None]]],
+        [[42]],
+    ],
+)
+def test_a_malformed_ring_makes_the_row_unreadable(coordinates: object) -> None:
+    """A ring that is not a list of coordinate pairs is never half counted."""
+    assert decode_geometry(json.dumps({"type": "Polygon", "coordinates": coordinates})) is None
 
 
 @pytest.mark.parametrize(

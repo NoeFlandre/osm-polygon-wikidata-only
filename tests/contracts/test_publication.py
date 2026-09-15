@@ -1830,3 +1830,38 @@ def test_upload_files_coverage_map_deletion_is_idempotent_when_remote_missing(
             "path_in_repo": "assets/coverage_map.png",
         }
     ]
+
+
+def test_core_upload_defers_repository_wide_assets_on_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory run publishes region data only; assets come once at the end."""
+    core, data_root = _stub_process_result(tmp_path)
+    _stub_generators(monkeypatch)
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
+        lambda *a, **kw: rendered.append("README.md"),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.write_polygon_stats_snapshot",
+        lambda *a, **kw: rendered.append("stats.json"),
+    )
+
+    ops = assemble_core_upload(
+        data_root=data_root,
+        repo_id=REPO_ID,
+        core=core,
+        world_land_warning=lambda msg: None,
+        defer_metadata_assets=True,
+    )
+
+    assert [op.path_in_repo for op in ops] == [
+        "polygons/monaco-latest.parquet",
+        "wikipedia/documents/monaco-latest.parquet",
+        "articles/monaco-latest.parquet",
+        "polygon_articles/monaco-latest.parquet",
+        "manifests/processed_pbfs.json",
+    ]
+    # Deferred assets are not rendered either: the deferred refresh scans once.
+    assert rendered == []

@@ -70,6 +70,7 @@ def _enqueue_core_upload(
     repo_id: str,
     commit_message: str,
     result: ProcessResult,
+    defer_metadata_assets: bool = False,
 ) -> None:
     """Submit one core publication via :mod:`hf.publication`.
 
@@ -86,8 +87,34 @@ def _enqueue_core_upload(
         repo_id=repo_id,
         core=result,
         world_land_warning=LOGGER.warning,
+        defer_metadata_assets=defer_metadata_assets,
     )
     upload_queue.submit(ops, commit_message)
+
+
+def _enqueue_metadata_refresh(
+    upload_queue: BackgroundUploadQueue,
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+) -> None:
+    """Publish the repository-wide assets once a directory run has drained.
+
+    A directory run defers the maps, the statistics report, the hero, and
+    the README so the full-dataset scan behind them happens once, not
+    once per processed PBF.
+    """
+    from osm_polygon_wikidata_only.hf.publication import assemble_metadata_only_upload
+
+    LOGGER.info("Refreshing repository metadata after the processed directory")
+    upload_queue.submit(
+        assemble_metadata_only_upload(
+            data_root=data_root,
+            repo_id=repo_id,
+            world_land_warning=LOGGER.warning,
+        ),
+        "Refresh repository metadata and maps",
+    )
 
 
 def _processing_inputs(command: str, input_path: Path) -> list[Path]:
@@ -386,8 +413,14 @@ def _run_processing_command(
     wd, wiki, cache = _build_clients(settings, data_root=data_root)
     inputs = _processing_inputs(args.command, args.input)
     upload_queue = _build_upload_queue(args, settings, data_root=data_root)
+    # A directory run publishes one region per PBF; the repository-wide
+    # assets are produced once after the queue drains instead of after
+    # each region.
+    defer_metadata_assets = args.command == "process-dir"
+    published_regions = 0
 
     def enqueue_upload(result: ProcessResult) -> None:
+        nonlocal published_regions
         if upload_queue is None:
             return
         _enqueue_core_upload(
@@ -397,7 +430,9 @@ def _run_processing_command(
             commit_message=args.commit_message
             or f"Update PBF {result.manifest_entry['source_pbf']}",
             result=result,
+            defer_metadata_assets=defer_metadata_assets,
         )
+        published_regions += 1
 
     upload_failures: list[str] = []
     try:
@@ -412,6 +447,12 @@ def _run_processing_command(
         )
     finally:
         if upload_queue is not None:
+            if defer_metadata_assets and published_regions:
+                _enqueue_metadata_refresh(
+                    upload_queue,
+                    data_root=data_root,
+                    repo_id=settings.repo_id,
+                )
             upload_failures = upload_queue.close_and_wait()
     _log_process_results(results)
     if upload_failures:

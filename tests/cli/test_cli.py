@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -123,7 +124,9 @@ def test_processing_command_forwards_completion_to_optional_upload_queue(
         repo_id: str,
         commit_message: str,
         result: ProcessResult,
+        defer_metadata_assets: bool = False,
     ) -> None:
+        del defer_metadata_assets
         enqueue_calls.append((received_queue, data_root, repo_id, commit_message, result))
 
     monkeypatch.setattr(commands, "_build_clients", fake_build_clients)
@@ -489,3 +492,122 @@ def test_commands_main_signature() -> None:
     assert len(sig.parameters) == 1
     assert "argv" in sig.parameters
     assert sig.parameters["argv"].default is None
+
+
+def test_process_dir_defers_metadata_assets_until_the_queue_drains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory run publishes each region, then refreshes metadata once."""
+    submissions: list[tuple[str, object]] = []
+    deferrals: list[bool] = []
+
+    class _StubQueue:
+        def submit(self, ops: object, message: str) -> None:
+            submissions.append((message, ops))
+
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    queue = _StubQueue()
+    root = DataRoot(tmp_path)
+    config = Settings(repo_id="example/repo")
+    args = argparse.Namespace(
+        command="process-dir",
+        input=tmp_path / "pbfs",
+        commit_message=None,
+        push=True,
+    )
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    def fake_enqueue_core_upload(
+        received_queue: object,
+        *,
+        data_root: DataRoot,
+        repo_id: str,
+        commit_message: str,
+        result: object,
+        defer_metadata_assets: bool = False,
+    ) -> None:
+        deferrals.append(defer_metadata_assets)
+        submissions.append(("region", received_queue))
+
+    def fake_metadata_refresh(
+        received_queue: object,
+        *,
+        data_root: DataRoot,
+        repo_id: str,
+    ) -> None:
+        submissions.append(("metadata", received_queue))
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", fake_enqueue_core_upload)
+    monkeypatch.setattr(commands, "_enqueue_metadata_refresh", fake_metadata_refresh)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+
+    assert commands._run_processing_command(args, data_root=root, settings=config) == 0
+
+    assert deferrals == [True]
+    # Exactly one metadata refresh, after the region commit.
+    assert [name for name, _ in submissions] == ["region", "metadata"]
+
+
+def test_process_pbf_publishes_metadata_assets_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-PBF run keeps the historical inline metadata publication."""
+    deferrals: list[bool] = []
+    refreshes: list[object] = []
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    queue = _StubQueue()
+    args = argparse.Namespace(
+        command="process-pbf",
+        input=tmp_path / "region.osm.pbf",
+        commit_message=None,
+        push=True,
+    )
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(
+        commands,
+        "_enqueue_core_upload",
+        lambda *a, **kw: deferrals.append(bool(kw["defer_metadata_assets"])),
+    )
+    monkeypatch.setattr(
+        commands, "_enqueue_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+
+    assert (
+        commands._run_processing_command(
+            args, data_root=DataRoot(tmp_path), settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+
+    assert deferrals == [False]
+    assert refreshes == []

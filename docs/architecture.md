@@ -150,7 +150,8 @@ lookup, and no recomputation from the raw PBFs. `manifests/processed_pbfs.json`
 defines which files the dataset publishes; a listed file that is missing, a row
 count that drifted from the manifest, or a Parquet file that is not the polygon
 table stops publication instead of producing a misleading report. Non-finite
-`area_m2` values and non-canonical polygon column types are rejected as well.
+`area_m2` values, non-canonical polygon column types, and a manifest entry whose
+key, declared `source_pbf`, and polygon path disagree are rejected as well.
 Only the
 `source_pbf`, `area_m2`, `bbox`, and `geometry` columns are read, and geometry
 is decoded one record batch at a time so memory stays bounded. Files are
@@ -158,9 +159,11 @@ scanned in sorted order and every published float is rounded to six decimals,
 so unchanged input produces a byte-identical `stats.json` and card block.
 
 Unified sync commits regional data first and refreshes `stats.json`, maps, and
-the README once after the regional upload queue drains. This preserves the
-same complete-dataset statistics while avoiding a full rescan after every
-region.
+the README once after the regional upload queue drains. A processed-directory
+run does the same: each PBF publishes its own region, and the repository-wide
+assets are produced once at the end. Both preserve the same complete-dataset
+statistics while avoiding a full rescan after every region. A single-PBF run
+still publishes those assets inline.
 
 `stats.json` carries a `contract_version`, a `source` block
 (`table`, `column_scope`, `file_count`, `polygon_count`) and four result
