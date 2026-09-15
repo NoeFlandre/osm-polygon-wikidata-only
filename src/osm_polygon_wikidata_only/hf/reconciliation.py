@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_DATASET_HERO_FILE,
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_MANIFEST_FILE,
+    REMOTE_POLYGON_STATS_FILE,
     canonical_region_paths,
 )
 from osm_polygon_wikidata_only.io.manifest import load_manifest
@@ -249,5 +250,6 @@ def _repository_refresh(inventory: RemoteInventory) -> list[str]:
         REMOTE_COVERAGE_MAP_FILE,
         REMOTE_DATASET_HERO_FILE,
         REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
+        REMOTE_POLYGON_STATS_FILE,
     )
     return [path for path in repo_files if not inventory.contains(path)]

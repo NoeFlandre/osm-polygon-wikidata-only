@@ -173,6 +173,9 @@ def _services(
     def load_marker(*_args: Any, **_kwargs: Any) -> Any:
         return marker
 
+    def set_marker(*_args: Any, **_kwargs: Any) -> None:
+        events.append("set-marker")
+
     def clear_marker(*_args: Any, **_kwargs: Any) -> None:
         events.append("clear-marker")
 
@@ -197,6 +200,7 @@ def _services(
         commit_message=lambda state: f"commit:{state.stem}",
         log_remote_reconciliation_summary=log_summary,
         load_metadata_refresh_marker=load_marker,
+        set_metadata_refresh_marker=set_marker,
         clear_metadata_refresh_marker=clear_marker,
         augmentation_progress=_Progress,
         sync_heartbeat=lambda **_kwargs: _Heartbeat(),
@@ -375,7 +379,8 @@ def test_runner_exception_without_queue_still_propagates(tmp_path: Path) -> None
         application.run()
 
 
-def test_metadata_marker_refreshes_only_after_successful_run(tmp_path: Path) -> None:
+def test_a_reconciliation_repair_publishes_once_after_the_queue_drains(tmp_path: Path) -> None:
+    """The repair rides the post-drain path, once, with the marker retired."""
     module = _application_module()
     queue = _Queue()
     events: list[str] = []
@@ -393,6 +398,29 @@ def test_metadata_marker_refreshes_only_after_successful_run(tmp_path: Path) -> 
             events,
             marker={"stems": ["alpha"]},
         ),
+    )
+
+    result = application.run()
+
+    assert result.return_code == 0
+    assert result.metadata_repaired is True
+    # Nothing rides the regional queue: the repair is published once, after
+    # the drain reported no failures, and the marker it satisfies is retired.
+    assert queue.submissions == []
+    assert queue.synchronous == [(["metadata-op"], "Repair remote repository metadata and maps")]
+    assert "clear-marker" in events
+
+
+def test_metadata_marker_refreshes_after_a_successful_run_without_repair(
+    tmp_path: Path,
+) -> None:
+    """With no queued repair, a surviving marker still drives one refresh."""
+    module = _application_module()
+    queue = _Queue()
+    events: list[str] = []
+    application = module.SyncApplication(
+        context=_context(module, tmp_path, push_enabled=True, queue=queue),
+        services=_services(module, events, marker={"stems": ["alpha"]}),
     )
 
     result = application.run()
@@ -485,7 +513,7 @@ def test_metadata_marker_requires_an_upload_queue(tmp_path: Path) -> None:
         ).run()
 
 
-def test_metadata_repair_without_submit_callback_does_not_report_repair(
+def test_metadata_repair_without_submit_callback_is_not_requested(
     tmp_path: Path,
 ) -> None:
     module = _application_module()
@@ -500,7 +528,9 @@ def test_metadata_repair_without_submit_callback_does_not_report_repair(
         services=_services(module, []),
     )
 
-    assert application._enqueue_metadata_repair(0, None) is False
+    application._request_metadata_repair(0, None)
+
+    assert application._metadata_repair_requested is False
 
 
 def test_augment_handles_missing_documents_and_empty_actionable_plan(tmp_path: Path) -> None:
@@ -794,3 +824,110 @@ def test_publication_core_loader_logs_and_rethrows_failures(tmp_path: Path) -> N
             object(),
             None,
         )
+
+
+def test_deferred_region_publication_persists_a_refresh_marker(tmp_path: Path) -> None:
+    """A regional commit records that repository metadata is now stale."""
+    module = _application_module()
+    context = _context(module, tmp_path, push_enabled=True, queue=_Queue())
+    (context.data_root.processed_polygons / "monaco-latest.parquet").write_bytes(b"polygons")
+    recorded: list[tuple[list[str], dict[str, str]]] = []
+    services = replace(
+        _services(module, []),
+        set_metadata_refresh_marker=lambda root, stems, hashes: recorded.append((stems, hashes)),
+        assemble_region_upload=lambda **_kwargs: [],
+        load_existing_core_for_publication=lambda *_args, **_kwargs: object(),
+    )
+    application = module.SyncApplication(context=context, services=services)
+
+    application._build_region_publication(SimpleNamespace(stem="monaco-latest"), object(), object())
+
+    assert len(recorded) == 1
+    stems, hashes = recorded[0]
+    assert stems == ["monaco-latest"]
+    assert len(hashes["monaco-latest"]) == 64
+
+
+def test_recording_a_region_preserves_a_surviving_marker(tmp_path: Path) -> None:
+    """A region another run marked must not be dropped by this one."""
+    module = _application_module()
+    context = _context(module, tmp_path, push_enabled=True, queue=_Queue())
+    (context.data_root.processed_polygons / "monaco-latest.parquet").write_bytes(b"polygons")
+    recorded: list[tuple[list[str], dict[str, str]]] = []
+    services = replace(
+        _services(module, []),
+        load_metadata_refresh_marker=lambda _root: {
+            "stems": ["stranded-latest"],
+            "fingerprint_hashes": {"stranded-latest": "b" * 64},
+        },
+        set_metadata_refresh_marker=lambda root, stems, hashes: recorded.append((stems, hashes)),
+        assemble_region_upload=lambda **_kwargs: [],
+        load_existing_core_for_publication=lambda *_args, **_kwargs: object(),
+    )
+    application = module.SyncApplication(context=context, services=services)
+
+    application._build_region_publication(SimpleNamespace(stem="monaco-latest"), object(), object())
+
+    assert len(recorded) == 1
+    stems, hashes = recorded[0]
+    assert stems == ["monaco-latest", "stranded-latest"]
+    assert hashes["stranded-latest"] == "b" * 64
+    assert len(hashes["monaco-latest"]) == 64
+
+
+def test_a_dry_run_records_no_refresh_marker(tmp_path: Path) -> None:
+    """A simulated publication must not write durable publication intent."""
+    module = _application_module()
+    context = replace(_context(module, tmp_path, push_enabled=True, queue=_Queue()), dry_run=True)
+    (context.data_root.processed_polygons / "monaco-latest.parquet").write_bytes(b"polygons")
+    recorded: list[object] = []
+    services = replace(
+        _services(module, []),
+        set_metadata_refresh_marker=lambda *args: recorded.append(args),
+        assemble_region_upload=lambda **_kwargs: [],
+        load_existing_core_for_publication=lambda *_args, **_kwargs: object(),
+    )
+    application = module.SyncApplication(context=context, services=services)
+
+    application._build_region_publication(SimpleNamespace(stem="monaco-latest"), object(), object())
+
+    assert recorded == []
+
+
+def test_a_dry_run_keeps_a_surviving_refresh_marker(tmp_path: Path) -> None:
+    """A stub upload must not retire an earlier run's recovery intent."""
+    module = _application_module()
+    context = replace(_context(module, tmp_path, push_enabled=True, queue=_Queue()), dry_run=True)
+    events: list[str] = []
+    application = module.SyncApplication(
+        context=context,
+        services=_services(module, events, marker={"stems": ["stranded-latest"]}),
+    )
+
+    assert application._refresh_metadata_marker(False) is True
+    assert "clear-marker" not in events
+
+
+def test_a_failed_regional_upload_blocks_the_reconciliation_repair(tmp_path: Path) -> None:
+    """Metadata must not describe regional artifacts the remote never received."""
+    module = _application_module()
+    queue = _Queue()
+    queue.close_result = ["region upload failed"]
+    events: list[str] = []
+    application = module.SyncApplication(
+        context=_context(
+            module,
+            tmp_path,
+            push_enabled=True,
+            queue=queue,
+            reconciliation_plan=SimpleNamespace(repository_refresh=True),
+        ),
+        services=_services(module, events, marker={"stems": ["alpha"]}),
+    )
+
+    result = application.run()
+
+    assert result.return_code == 1
+    assert queue.synchronous == []
+    assert queue.submissions == []
+    assert "clear-marker" not in events

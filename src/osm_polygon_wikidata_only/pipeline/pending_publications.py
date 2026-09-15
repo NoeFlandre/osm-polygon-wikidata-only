@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+
+# The durable envelope holds both the pending-publication stems and the
+# metadata-refresh marker, and it is read-modify-written from the main
+# thread and from the upload queue's worker. Every writer takes this lock
+# so one writer's fresh read cannot be overwritten by another's stale one,
+# dropping the field it did not touch. The file write itself is already
+# atomic; the lock protects the read-modify-write around it.
+_ENVELOPE_LOCK = threading.Lock()
 
 CONTRACT_VERSION = "pending-publications-v1"
 FILENAME = "pending_migration_publications.json"
@@ -131,10 +140,11 @@ def save_pending_publications(data_root: DataRoot, stems: set[str]) -> None:
     path = _manifest_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     validated = {_validate_stem(stem) for stem in stems}
-    envelope = _load_envelope(data_root) if path.exists() else {}
-    envelope["contract_version"] = CONTRACT_VERSION
-    envelope["stems"] = sorted(validated)
-    atomic_write_text(path, json.dumps(envelope, indent=2, sort_keys=True) + "\n")
+    with _ENVELOPE_LOCK:
+        envelope = _load_envelope(data_root) if path.exists() else {}
+        envelope["contract_version"] = CONTRACT_VERSION
+        envelope["stems"] = sorted(validated)
+        atomic_write_text(path, json.dumps(envelope, indent=2, sort_keys=True) + "\n")
 
 
 def add_pending_publications(data_root: DataRoot, stems: set[str]) -> None:
@@ -198,12 +208,16 @@ def set_metadata_refresh_marker(
     validated_stems, validated_hashes = _validated_marker_inputs(stems, fingerprint_hashes)
     marker_payload = _envelope_marker_payload(validated_stems, validated_hashes)
 
-    envelope = _load_envelope(data_root)
-    if envelope.get("metadata_refresh") == marker_payload and _manifest_path(data_root).exists():
-        # No-op rewrite: do not touch the file (preserve mtime + hash).
-        return
-    envelope = _with_marker_payload(envelope, marker_payload)
-    _save_envelope(data_root, envelope)
+    with _ENVELOPE_LOCK:
+        envelope = _load_envelope(data_root)
+        if (
+            envelope.get("metadata_refresh") == marker_payload
+            and _manifest_path(data_root).exists()
+        ):
+            # No-op rewrite: do not touch the file (preserve mtime + hash).
+            return
+        envelope = _with_marker_payload(envelope, marker_payload)
+        _save_envelope(data_root, envelope)
 
 
 def _validated_marker_inputs(
@@ -320,8 +334,9 @@ def clear_metadata_refresh_marker(data_root: DataRoot) -> None:
     """
     if not _manifest_path(data_root).exists():
         return
-    envelope = _load_envelope(data_root)
-    if "metadata_refresh" not in envelope:
-        return
-    del envelope["metadata_refresh"]
-    _save_envelope(data_root, envelope)
+    with _ENVELOPE_LOCK:
+        envelope = _load_envelope(data_root)
+        if "metadata_refresh" not in envelope:
+            return
+        del envelope["metadata_refresh"]
+        _save_envelope(data_root, envelope)

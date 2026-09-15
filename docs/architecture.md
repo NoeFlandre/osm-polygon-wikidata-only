@@ -150,7 +150,8 @@ lookup, and no recomputation from the raw PBFs. `manifests/processed_pbfs.json`
 defines which files the dataset publishes; a listed file that is missing, a row
 count that drifted from the manifest, or a Parquet file that is not the polygon
 table stops publication instead of producing a misleading report. Non-finite
-`area_m2` values and non-canonical polygon column types are rejected as well.
+`area_m2` values, non-canonical polygon column types, and a manifest entry whose
+key, declared `source_pbf`, and polygon path disagree are rejected as well.
 Only the
 `source_pbf`, `area_m2`, `bbox`, and `geometry` columns are read, and geometry
 is decoded one record batch at a time so memory stays bounded. Files are
@@ -158,9 +159,28 @@ scanned in sorted order and every published float is rounded to six decimals,
 so unchanged input produces a byte-identical `stats.json` and card block.
 
 Unified sync commits regional data first and refreshes `stats.json`, maps, and
-the README once after the regional upload queue drains. This preserves the
-same complete-dataset statistics while avoiding a full rescan after every
-region.
+the README once after the regional upload queue drains. A processed-directory
+run does the same: each PBF publishes its own region, and the repository-wide
+assets are produced once at the end. Both preserve the same complete-dataset
+statistics while avoiding a full rescan after every region. A single-PBF run
+still publishes those assets inline.
+
+Both the deferred refresh and a reconciliation repair publish through one
+post-drain step: nothing repository-wide rides the regional upload queue, which
+keeps going after a job exhausts its retries, so those assets never describe a
+region whose upload failed.
+
+Deferring is fail-closed. The regions owed a refresh are recorded durably
+before their upload is submitted, and the refresh runs only after the regional
+queue drains without failures, for a run that finished processing, and only
+when every recorded region was published by that run. Anything else -- a failed
+or aborted run, or a rerun that skipped a region an earlier run never managed
+to upload -- leaves the record in place and publishes nothing repository-wide.
+Unified sync repairs from that record, because it reconciles against the remote
+and republishes missing regional artifacts before refreshing. That reconciliation
+is presence-based: it republishes a region whose remote files are absent, not one
+whose remote files are merely older than the local ones, so a region rewritten
+locally but never uploaded is repaired only when its remote objects are missing.
 
 `stats.json` carries a `contract_version`, a `source` block
 (`table`, `column_scope`, `file_count`, `polygon_count`) and four result

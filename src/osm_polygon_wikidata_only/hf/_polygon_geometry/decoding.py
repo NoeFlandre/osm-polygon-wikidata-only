@@ -114,17 +114,60 @@ def _sample_from_parts(is_multipolygon: bool, parts: list[Any]) -> GeometrySampl
     for part in parts:
         if not isinstance(part, list) or not part:
             return None
+        counted = _part_vertices(part)
+        if counted is None:
+            return None
         rings += len(part)
         holes += len(part) - 1
-        vertices += sum(_ring_vertices(ring) for ring in part)
+        vertices += counted
     return GeometrySample(is_multipolygon, len(parts), rings, holes, vertices)
 
 
-def _ring_vertices(ring: Any) -> int:
-    """Return the distinct vertex count of one ring."""
-    if not isinstance(ring, list) or not ring:
-        return 0
+def _part_vertices(part: list[Any]) -> int | None:
+    """Return one component's vertex count, or ``None`` when a ring is malformed."""
+    total = 0
+    for ring in part:
+        counted = _ring_vertices(ring)
+        if counted is None:
+            return None
+        total += counted
+    return total
+
+
+def _ring_vertices(ring: Any) -> int | None:
+    """Return the distinct vertex count of one ring, or ``None`` when malformed.
+
+    A ring must be a non-empty list of coordinate pairs. A scalar, a
+    string, an empty ring, or an entry that is not a pair of finite
+    numbers makes the whole row unreadable rather than a polygon with
+    silently dropped vertices.
+    """
+    if not _is_ring(ring):
+        return None
     return len(ring) - 1 if _is_closed(ring) else len(ring)
+
+
+def _is_ring(ring: Any) -> bool:
+    """Return ``True`` for a non-empty list of GeoJSON positions."""
+    if not isinstance(ring, list) or not ring:
+        return False
+    return all(_is_coordinate(position) for position in ring)
+
+
+def _is_coordinate(position: Any) -> bool:
+    """Return ``True`` for a GeoJSON position.
+
+    A position is a list of at least two ordinates, and every ordinate
+    it carries -- a third altitude entry included -- must be a finite
+    number. A row with a null, textual, or infinite ordinate anywhere in
+    a position is unreadable rather than a polygon whose extra values
+    were quietly ignored.
+    """
+    return (
+        isinstance(position, list)
+        and len(position) >= 2
+        and all(_is_finite_number(value) for value in position)
+    )
 
 
 def _is_closed(ring: list[Any]) -> bool:
@@ -135,14 +178,34 @@ def _bbox_numbers(raw: object) -> tuple[float, float, float, float] | None:
     payload = _decode_json_list(raw)
     if payload is None or len(payload) != 4:
         return None
-    if not all(_is_finite_number(value) for value in payload):
-        return None
-    return (float(payload[0]), float(payload[1]), float(payload[2]), float(payload[3]))
+    numbers: list[float] = []
+    for value in payload:
+        converted = _finite_float(value)
+        if converted is None:
+            return None
+        numbers.append(converted)
+    return (numbers[0], numbers[1], numbers[2], numbers[3])
 
 
 def _is_finite_number(value: object) -> bool:
-    """Return ``True`` for a real JSON number; booleans are not numbers here."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """Return ``True`` for a coordinate this scan can represent."""
+    return _finite_float(value) is not None
+
+
+def _finite_float(value: object) -> float | None:
+    """Return ``value`` as a finite float, or ``None`` when it is not one.
+
+    Booleans are not numbers here, and a JSON integer too large for a
+    float is not a coordinate: converting it raises, and one malformed
+    row must count as unreadable rather than abort the whole scan.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        converted = float(value)
+    except OverflowError:
+        return None
+    return converted if math.isfinite(converted) else None
 
 
 def _decode_json_list(raw: object) -> list[Any] | None:

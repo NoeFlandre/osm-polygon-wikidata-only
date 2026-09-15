@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -329,3 +330,54 @@ def test_marker_rejects_mixed_case_in_hash(tmp_path: Path) -> None:
             stems=["monaco-latest"],
             fingerprint_hashes={"monaco-latest": upper},
         )
+
+
+def test_concurrent_stem_and_marker_writes_keep_both_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A marker write must not revert stems written concurrently.
+
+    Both writers read-modify-write the same envelope. The marker writer is
+    suspended between its load and its write, and the stem writer commits in
+    that window: unless the two are serialized, the marker write resurrects
+    the stems it loaded and the newer stem set is lost.
+    """
+    mod = _marker_helpers()
+    dr = _data_root(tmp_path)
+    digest = _valid_sha("alpha")
+    mod.save_pending_publications(dr, {"region-old"})
+
+    loaded = threading.Event()
+    stems_written = threading.Event()
+    original_load = mod._load_envelope
+
+    def suspending_load(data_root):
+        envelope = original_load(data_root)
+        if threading.current_thread().name == "marker-writer":
+            loaded.set()
+            stems_written.wait(timeout=0.5)
+        return envelope
+
+    monkeypatch.setattr(mod, "_load_envelope", suspending_load)
+    errors: list[BaseException] = []
+
+    def write_marker() -> None:
+        try:
+            mod.set_metadata_refresh_marker(
+                dr, stems=["alpha"], fingerprint_hashes={"alpha": digest}
+            )
+        except BaseException as error:  # reported through the assertions
+            errors.append(error)
+
+    thread = threading.Thread(target=write_marker, name="marker-writer")
+    thread.start()
+    assert loaded.wait(timeout=5)
+    mod.save_pending_publications(dr, {"region-new"})
+    stems_written.set()
+    thread.join(timeout=30)
+
+    assert errors == []
+    stored_marker = mod.load_metadata_refresh_marker(dr)
+    assert stored_marker is not None
+    assert stored_marker["stems"] == ["alpha"]
+    assert mod.load_pending_publications(dr) == {"region-new"}

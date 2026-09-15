@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf._publication.artifacts import (
@@ -31,6 +32,7 @@ def assemble_core_upload(
     repo_id: str,
     core: ProcessResult,
     world_land_warning: Callable[[str], None],
+    defer_metadata_assets: bool = False,
     hooks: PublicationHooks,
 ) -> list[PublicationOp]:
     """Assemble the legacy core publication op list.
@@ -50,6 +52,12 @@ def assemble_core_upload(
     10. canonical coverage map (add)
     11. legacy coverage map (delete)
 
+    When ``defer_metadata_assets`` is true the commit carries the
+    region's data and the processed manifest only: the maps, the
+    statistics report, the hero, and the README are produced once after
+    the processing queue drains. That keeps a full-dataset scan out of
+    the per-PBF publication loop of a directory run.
+
     The function is pure: no HF upload state is owned here. The
     caller submits the returned list. Required artifacts are
     validated before any snapshot is written, and any snapshot
@@ -58,18 +66,16 @@ def assemble_core_upload(
     manifests directory at all.
     """
     _validate_core_artifacts(core)
-    hero_op = hooks.dataset_hero_op()
     snapshot, card_snapshot = hooks.snapshot_upload_manifests(data_root=data_root, core=core)
-    map_snapshot, text_presence_snapshot, density_snapshot = hooks.refresh_coverage_assets(
+    metadata_ops = _metadata_asset_operations(
         data_root=data_root,
-        snapshot_stem=core.polygons_path.stem,
-        snapshots_dir=data_root.cache / "upload_manifest_snapshots",
+        repo_id=repo_id,
+        core=core,
+        card_snapshot=card_snapshot,
         world_land_warning=world_land_warning,
+        deferred=defer_metadata_assets,
+        hooks=hooks,
     )
-    stats_snapshot = hooks.write_polygon_stats_snapshot(
-        data_root, data_root.cache / "upload_manifest_snapshots" / "stats.json"
-    )
-    hooks.write_readme_snapshot(data_root, repo_id, card_snapshot)
     canonical_document = hooks.snapshot_canonical_document(
         core,
         data_root.cache
@@ -87,6 +93,39 @@ def assemble_core_upload(
             path_in_repo=f"{REMOTE_LINKS_DIR}/{core.polygon_articles_path.name}",
         ),
         add_op(snapshot, path_in_repo=REMOTE_MANIFEST_FILE),
+        *metadata_ops,
+    ]
+
+
+def _metadata_asset_operations(
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+    core: ProcessResult,
+    card_snapshot: Path,
+    world_land_warning: Callable[[str], None],
+    deferred: bool,
+    hooks: PublicationHooks,
+) -> list[PublicationOp]:
+    """Render the repository-wide assets that close a core publication.
+
+    Returns an empty list when they are deferred, in which case nothing
+    is rendered either: the deferred refresh performs the one scan.
+    """
+    if deferred:
+        return []
+    hero_op = hooks.dataset_hero_op()
+    map_snapshot, text_presence_snapshot, density_snapshot = hooks.refresh_coverage_assets(
+        data_root=data_root,
+        snapshot_stem=core.polygons_path.stem,
+        snapshots_dir=data_root.cache / "upload_manifest_snapshots",
+        world_land_warning=world_land_warning,
+    )
+    stats_snapshot = hooks.write_polygon_stats_snapshot(
+        data_root, data_root.cache / "upload_manifest_snapshots" / "stats.json"
+    )
+    hooks.write_readme_snapshot(data_root, repo_id, card_snapshot)
+    return [
         add_op(text_presence_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE),
         add_op(density_snapshot, path_in_repo=REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),

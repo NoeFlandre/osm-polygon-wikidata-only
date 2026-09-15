@@ -492,6 +492,7 @@ def assemble_core_upload(
     repo_id: str,
     core: ProcessResult,
     world_land_warning: Callable[[str], None],
+    defer_metadata_assets: bool = False,
 ) -> list[PublicationOp]:
     """Assemble the legacy core publication plan."""
     from osm_polygon_wikidata_only.hf._publication.core import (
@@ -503,6 +504,7 @@ def assemble_core_upload(
         repo_id=repo_id,
         core=core,
         world_land_warning=world_land_warning,
+        defer_metadata_assets=defer_metadata_assets,
         hooks=_publication_hooks(),
     )
 

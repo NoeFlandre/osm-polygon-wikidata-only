@@ -630,11 +630,20 @@ def test_an_unclosed_ring_counts_every_vertex(tmp_path: Path) -> None:
     assert sample.vertices == 3
 
 
-def test_an_empty_ring_contributes_no_vertex() -> None:
-    sample = decode_geometry(json.dumps({"type": "Polygon", "coordinates": [[], [[0.0, 0.0]]]}))
-
-    assert sample is not None
-    assert sample.vertices == 1
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        ["bad"],
+        [[], [[0.0, 0.0]]],
+        [[["not", "a", "pair"]]],
+        [[[0.0]]],
+        [[[0.0, None]]],
+        [[42]],
+    ],
+)
+def test_a_malformed_ring_makes_the_row_unreadable(coordinates: object) -> None:
+    """A ring that is not a list of coordinate pairs is never half counted."""
+    assert decode_geometry(json.dumps({"type": "Polygon", "coordinates": coordinates})) is None
 
 
 @pytest.mark.parametrize(
@@ -867,3 +876,70 @@ def test_two_manifest_sources_sharing_one_polygon_file_are_refused(tmp_path: Pat
 
     with pytest.raises(PolygonStatsInputError, match="several sources to one polygon file"):
         compute_polygon_geometry_stats(processed)
+
+
+@pytest.mark.parametrize("huge", [10**1000, -(10**1000)])
+def test_an_unrepresentable_coordinate_is_unreadable_not_fatal(huge: int) -> None:
+    """A JSON integer too large for a float must not abort the scan."""
+    geometry = {"type": "Polygon", "coordinates": [[[huge, 0], [0, 1], [1, 1], [huge, 0]]]}
+
+    assert decode_geometry(json.dumps(geometry)) is None
+    assert decode_bbox(json.dumps([huge, 0, 1, 1])) is None
+
+
+def test_an_unrepresentable_coordinate_counts_as_unreadable(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    huge = 10**1000
+    _write_polygons(
+        processed,
+        "huge-latest",
+        [
+            _polygon_row(
+                source_pbf="huge-latest.osm.pbf",
+                area_m2=1.0,
+                bbox=json.dumps([huge, 0, 1, 1]),
+                geometry=json.dumps(
+                    {"type": "Polygon", "coordinates": [[[huge, 0], [0, 1], [1, 1], [huge, 0]]]}
+                ),
+            )
+        ],
+    )
+    _write_manifest(processed, {"huge-latest": 1})
+
+    stats = compute_polygon_geometry_stats(processed)
+
+    assert stats.polygon_count == 1
+    assert stats.shape.unreadable_count == 1
+    assert stats.extent.unreadable_count == 1
+
+
+@pytest.mark.parametrize(
+    "position",
+    [
+        [0.0, 0.0, None],
+        [0.0, 0.0, "bad"],
+        [0.0, 0.0, float("inf")],
+        [0.0, 0.0, [1.0]],
+    ],
+)
+def test_a_malformed_extra_ordinate_makes_the_row_unreadable(position: object) -> None:
+    """Every ordinate of a position must be a finite number, altitude included."""
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [[position, [0.0, 1.0], [1.0, 1.0], position]],
+    }
+
+    assert decode_geometry(json.dumps(geometry)) is None
+
+
+def test_a_valid_altitude_ordinate_stays_readable() -> None:
+    """A well-formed three-ordinate position is still a polygon."""
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [[[0.0, 0.0, 12.5], [0.0, 1.0, 12.5], [1.0, 1.0, 12.5], [0.0, 0.0, 12.5]]],
+    }
+
+    sample = decode_geometry(json.dumps(geometry))
+
+    assert sample is not None
+    assert sample.vertices == 3

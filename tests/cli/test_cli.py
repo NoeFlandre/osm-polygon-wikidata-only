@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -123,7 +124,9 @@ def test_processing_command_forwards_completion_to_optional_upload_queue(
         repo_id: str,
         commit_message: str,
         result: ProcessResult,
+        defer_metadata_assets: bool = False,
     ) -> None:
+        del defer_metadata_assets
         enqueue_calls.append((received_queue, data_root, repo_id, commit_message, result))
 
     monkeypatch.setattr(commands, "_build_clients", fake_build_clients)
@@ -489,3 +492,726 @@ def test_commands_main_signature() -> None:
     assert len(sig.parameters) == 1
     assert "argv" in sig.parameters
     assert sig.parameters["argv"].default is None
+
+
+def test_process_dir_defers_metadata_assets_until_the_queue_drains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory run publishes each region, then refreshes metadata once."""
+    submissions: list[tuple[str, object]] = []
+    deferrals: list[bool] = []
+
+    class _StubQueue:
+        def submit(self, ops: object, message: str) -> None:
+            submissions.append((message, ops))
+
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    queue = _StubQueue()
+    root = DataRoot(tmp_path)
+    config = Settings(repo_id="example/repo")
+    args = argparse.Namespace(
+        command="process-dir",
+        input=tmp_path / "pbfs",
+        commit_message=None,
+        push=True,
+    )
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    def fake_enqueue_core_upload(
+        received_queue: object,
+        *,
+        data_root: DataRoot,
+        repo_id: str,
+        commit_message: str,
+        result: object,
+        defer_metadata_assets: bool = False,
+    ) -> None:
+        deferrals.append(defer_metadata_assets)
+        submissions.append(("region", received_queue))
+
+    def fake_metadata_refresh(
+        received_queue: object,
+        *,
+        data_root: DataRoot,
+        repo_id: str,
+    ) -> None:
+        submissions.append(("metadata", received_queue))
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", fake_enqueue_core_upload)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", fake_metadata_refresh)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+
+    assert commands._run_processing_command(args, data_root=root, settings=config) == 0
+
+    assert deferrals == [True]
+    # Exactly one metadata refresh, after the region commit.
+    assert [name for name, _ in submissions] == ["region", "metadata"]
+
+
+def test_process_pbf_publishes_metadata_assets_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-PBF run keeps the historical inline metadata publication."""
+    deferrals: list[bool] = []
+    refreshes: list[object] = []
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    queue = _StubQueue()
+    args = argparse.Namespace(
+        command="process-pbf",
+        input=tmp_path / "region.osm.pbf",
+        commit_message=None,
+        push=True,
+    )
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(
+        commands,
+        "_enqueue_core_upload",
+        lambda *a, **kw: deferrals.append(bool(kw["defer_metadata_assets"])),
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+
+    assert (
+        commands._run_processing_command(
+            args, data_root=DataRoot(tmp_path), settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+
+    assert deferrals == [False]
+    assert refreshes == []
+
+
+def test_process_dir_persists_and_clears_the_metadata_refresh_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deferred refresh leaves a durable marker until it succeeds."""
+    markers: list[tuple[list[str], dict[str, str]]] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    args = argparse.Namespace(
+        command="process-dir",
+        input=tmp_path / "pbfs",
+        commit_message=None,
+        push=True,
+    )
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(
+        commands,
+        "set_metadata_refresh_marker",
+        lambda data_root, stems, hashes: markers.append((stems, hashes)),
+    )
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            args, data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+
+    assert len(markers) == 1
+    stems, hashes = markers[0]
+    assert stems == ["region-latest"]
+    assert set(hashes) == {"region-latest"}
+    assert len(hashes["region-latest"]) == 64
+    assert cleared == [root]
+
+
+def test_process_dir_keeps_the_marker_when_an_upload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed upload must leave the refresh intent on disk for the next run."""
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _FailingQueue:
+        def close_and_wait(self) -> list[str]:
+            return ["upload failed"]
+
+    args = argparse.Namespace(
+        command="process-dir",
+        input=tmp_path / "pbfs",
+        commit_message=None,
+        push=True,
+    )
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            args, data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 1
+    )
+    assert cleared == []
+
+
+def _marker(stems: list[str]) -> dict[str, object]:
+    """Return a metadata-refresh marker payload shaped like the real one."""
+    return {
+        "stems": sorted(stems),
+        "fingerprint_hashes": {stem: "a" * 64 for stem in sorted(stems)},
+    }
+
+
+def _deferring_args(tmp_path: Path, *, dry_run: bool = False) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="process-dir",
+        input=tmp_path / "pbfs",
+        commit_message=None,
+        push=True,
+        dry_run=dry_run,
+    )
+
+
+def test_a_failed_regional_upload_skips_the_metadata_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Metadata must never describe a region whose upload failed."""
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _FailingQueue:
+        def close_and_wait(self) -> list[str]:
+            return ["region upload failed"]
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 1
+    )
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_a_resumed_run_never_refreshes_from_a_marker_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A marked region this run did not publish may not be described remotely.
+
+    The marker can name a region whose upload never reached the Hub, so a
+    rerun that skips it must leave the marker for the sync command, which
+    reconciles against the remote before refreshing.
+    """
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_a_marker_naming_an_unpublished_region_blocks_the_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Publishing one region does not license metadata for another."""
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "published-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "published-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["published-latest", "stranded-latest"]),
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An assembly failure is reported as an upload failure, never a hang."""
+    cleared: list[DataRoot] = []
+    closed: list[bool] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            closed.append(True)
+            return []
+
+    def failing_refresh(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("manifest drift")
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", failing_refresh)
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 1
+    )
+    assert closed == [True]
+    assert cleared == []
+
+
+def test_the_refresh_marker_is_written_before_the_regional_job_is_submitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kill between the two must not leave an uploadable region unrecorded."""
+    order: list[str] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: order.append("submit"))
+    monkeypatch.setattr(
+        commands, "set_metadata_refresh_marker", lambda *a, **kw: order.append("marker")
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", lambda data_root: None)
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+    assert order == ["marker", "submit"]
+
+
+def test_a_malformed_marker_cannot_leave_the_upload_queue_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The queue closes before the marker is read, so a bad marker never hangs."""
+    closed: list[bool] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            closed.append(True)
+            return []
+
+    def malformed_marker(_data_root: DataRoot) -> object:
+        raise ValueError("malformed metadata refresh marker")
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "load_metadata_refresh_marker", malformed_marker)
+
+    with pytest.raises(ValueError, match="malformed metadata refresh marker"):
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+
+    # The validation error still surfaces, but only after the worker was
+    # told to stop, so the CLI can exit.
+    assert closed == [True]
+
+
+def test_an_aborted_run_drains_without_publishing_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A region that failed to submit must not get repository-wide assets."""
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    closed: list[bool] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            closed.append(True)
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    def failing_enqueue(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("canonical document snapshot failed")
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", failing_enqueue)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    with pytest.raises(RuntimeError, match="canonical document snapshot failed"):
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+
+    # The queue still drains, but the marker survives for the next run and
+    # no repository-wide asset describes the region that never uploaded.
+    assert closed == [True]
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_recording_a_region_preserves_a_surviving_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Processing a new region must not discard an earlier stranded one."""
+    recorded: list[tuple[list[str], dict[str, str]]] = []
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "fresh-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "fresh-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    def record(data_root: DataRoot, stems: list[str], hashes: dict[str, str]) -> None:
+        recorded.append((stems, hashes))
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["stranded-latest"])
+    )
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", record)
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+
+    # The stranded region stays in the marker, and keeps the refresh shut.
+    assert len(recorded) == 1
+    stems, hashes = recorded[0]
+    assert stems == ["fresh-latest", "stranded-latest"]
+    assert set(hashes) == {"fresh-latest", "stranded-latest"}
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_an_unverifiable_marker_is_reported_to_the_operator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Staleness this command cannot repair must not be silent."""
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["stranded-latest"])
+    )
+
+    with caplog.at_level("WARNING"):
+        assert (
+            commands._run_processing_command(
+                _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+            )
+            == 0
+        )
+
+    assert "stranded-latest" in caplog.text
+    assert "sync-dir" in caplog.text
+
+
+def test_a_dry_run_never_touches_the_refresh_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A simulated push must not retire durable publication intent."""
+    recorded: list[object] = []
+    cleared: list[DataRoot] = []
+    refreshes: list[object] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "set_metadata_refresh_marker", lambda *a, **kw: recorded.append(kw)
+    )
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path, dry_run=True),
+            data_root=root,
+            settings=Settings(repo_id="example/repo"),
+        )
+        == 0
+    )
+
+    # The refresh is still exercised against the stub hub, but the durable
+    # marker is neither written nor retired by a simulated push.
+    assert len(refreshes) == 1
+    assert recorded == []
+    assert cleared == []
