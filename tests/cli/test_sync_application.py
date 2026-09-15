@@ -173,6 +173,9 @@ def _services(
     def load_marker(*_args: Any, **_kwargs: Any) -> Any:
         return marker
 
+    def set_marker(*_args: Any, **_kwargs: Any) -> None:
+        events.append("set-marker")
+
     def clear_marker(*_args: Any, **_kwargs: Any) -> None:
         events.append("clear-marker")
 
@@ -197,6 +200,7 @@ def _services(
         commit_message=lambda state: f"commit:{state.stem}",
         log_remote_reconciliation_summary=log_summary,
         load_metadata_refresh_marker=load_marker,
+        set_metadata_refresh_marker=set_marker,
         clear_metadata_refresh_marker=clear_marker,
         augmentation_progress=_Progress,
         sync_heartbeat=lambda **_kwargs: _Heartbeat(),
@@ -794,3 +798,25 @@ def test_publication_core_loader_logs_and_rethrows_failures(tmp_path: Path) -> N
             object(),
             None,
         )
+
+
+def test_deferred_region_publication_persists_a_refresh_marker(tmp_path: Path) -> None:
+    """A regional commit records that repository metadata is now stale."""
+    module = _application_module()
+    context = _context(module, tmp_path, push_enabled=True, queue=_Queue())
+    (context.data_root.processed_polygons / "monaco-latest.parquet").write_bytes(b"polygons")
+    recorded: list[tuple[list[str], dict[str, str]]] = []
+    services = replace(
+        _services(module, []),
+        set_metadata_refresh_marker=lambda root, stems, hashes: recorded.append((stems, hashes)),
+        assemble_region_upload=lambda **_kwargs: [],
+        load_existing_core_for_publication=lambda *_args, **_kwargs: object(),
+    )
+    application = module.SyncApplication(context=context, services=services)
+
+    application._build_region_publication(SimpleNamespace(stem="monaco-latest"), object(), object())
+
+    assert len(recorded) == 1
+    stems, hashes = recorded[0]
+    assert stems == ["monaco-latest"]
+    assert len(hashes["monaco-latest"]) == 64

@@ -24,6 +24,7 @@ from typing import Any
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
@@ -58,6 +59,7 @@ class SyncApplicationServices:
     commit_message: Callable[[RegionSyncState], str]
     log_remote_reconciliation_summary: Callable[..., None]
     load_metadata_refresh_marker: Callable[..., Any]
+    set_metadata_refresh_marker: Callable[..., Any]
     clear_metadata_refresh_marker: Callable[..., Any]
     augmentation_progress: Callable[[], Any]
     sync_heartbeat: Callable[..., Any]
@@ -107,6 +109,7 @@ class SyncApplication:
         self._recovery_map_refresh_stems: set[str] = set()
         self._recovery_classifications: dict[str, dict[Any, Any]] = {}
         self._region_publication_submitted = False
+        self._deferred_metadata_stems: dict[str, str] = {}
 
     def run(self) -> SyncApplicationResult:
         """Run all planned states and finalize successful metadata refreshes."""
@@ -462,6 +465,24 @@ class SyncApplication:
             self.context.upload_queue.submit(ops, message)
             self._region_publication_submitted = True
 
+    def _record_deferred_metadata(self, stem: str) -> None:
+        """Persist the intent to refresh metadata once the queue drains.
+
+        A regional commit that defers the repository-wide assets leaves
+        them stale until the final refresh succeeds. The marker survives
+        a crash or a failed refresh, so the next run repairs them instead
+        of finding every path present and scheduling nothing.
+        """
+        polygons_path = self.context.data_root.processed_polygons / f"{stem}.parquet"
+        if not polygons_path.is_file():
+            return
+        self._deferred_metadata_stems[stem] = sha256_file(polygons_path)
+        self.services.set_metadata_refresh_marker(
+            self.context.data_root,
+            sorted(self._deferred_metadata_stems),
+            dict(self._deferred_metadata_stems),
+        )
+
     def _build_region_publication(
         self,
         state: object,
@@ -470,6 +491,7 @@ class SyncApplication:
     ) -> list[PublicationOp]:
         stem = getattr(state, "stem", "")
         core = self._ensure_publication_core(stem, core)
+        self._record_deferred_metadata(stem)
         return self.services.assemble_region_upload(
             data_root=self.context.data_root,
             repo_id=self.context.settings.repo_id,

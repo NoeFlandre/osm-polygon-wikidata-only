@@ -47,8 +47,13 @@ from osm_polygon_wikidata_only.hf.uploader import (
     verify_repo_authorization,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.run_lock import RunLockError, exclusive_run_lock
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
+from osm_polygon_wikidata_only.pipeline.pending_publications import (
+    clear_metadata_refresh_marker,
+    set_metadata_refresh_marker,
+)
 from osm_polygon_wikidata_only.pipeline.processor import (
     ProcessResult,
 )
@@ -90,6 +95,47 @@ def _enqueue_core_upload(
         defer_metadata_assets=defer_metadata_assets,
     )
     upload_queue.submit(ops, commit_message)
+
+
+def _drain_uploads(
+    upload_queue: BackgroundUploadQueue,
+    *,
+    data_root: DataRoot,
+    repo_id: str,
+    refresh_metadata: bool,
+    deferred_stems: dict[str, str],
+) -> list[str]:
+    """Close the queue, refreshing deferred metadata and retiring its marker.
+
+    The marker is cleared only when every upload succeeded, so a failed
+    refresh leaves the intent on disk for the next run to repair.
+    """
+    if refresh_metadata:
+        _enqueue_metadata_refresh(upload_queue, data_root=data_root, repo_id=repo_id)
+    failures = upload_queue.close_and_wait()
+    if deferred_stems and not failures:
+        clear_metadata_refresh_marker(data_root)
+    return failures
+
+
+def _record_deferred_metadata(
+    data_root: DataRoot,
+    stems: dict[str, str],
+    result: ProcessResult,
+) -> None:
+    """Persist the intent to refresh the repository-wide assets.
+
+    A directory run defers those assets, so they stay stale until the
+    final refresh succeeds. The marker survives a crash or a failed
+    refresh and is what a later sync run repairs from; without it every
+    remote path would look present and nothing would be scheduled.
+    """
+    stem = Path(str(result.manifest_entry["source_pbf"])).stem.removesuffix(".osm")
+    polygons_path = data_root.processed_polygons / f"{stem}.parquet"
+    if not polygons_path.is_file():
+        return
+    stems[stem] = sha256_file(polygons_path)
+    set_metadata_refresh_marker(data_root, sorted(stems), dict(stems))
 
 
 def _enqueue_metadata_refresh(
@@ -418,6 +464,7 @@ def _run_processing_command(
     # each region.
     defer_metadata_assets = args.command == "process-dir"
     published_regions = 0
+    deferred_stems: dict[str, str] = {}
 
     def enqueue_upload(result: ProcessResult) -> None:
         nonlocal published_regions
@@ -433,6 +480,8 @@ def _run_processing_command(
             defer_metadata_assets=defer_metadata_assets,
         )
         published_regions += 1
+        if defer_metadata_assets:
+            _record_deferred_metadata(data_root, deferred_stems, result)
 
     upload_failures: list[str] = []
     try:
@@ -447,13 +496,13 @@ def _run_processing_command(
         )
     finally:
         if upload_queue is not None:
-            if defer_metadata_assets and published_regions:
-                _enqueue_metadata_refresh(
-                    upload_queue,
-                    data_root=data_root,
-                    repo_id=settings.repo_id,
-                )
-            upload_failures = upload_queue.close_and_wait()
+            upload_failures = _drain_uploads(
+                upload_queue,
+                data_root=data_root,
+                repo_id=settings.repo_id,
+                refresh_metadata=bool(defer_metadata_assets and published_regions),
+                deferred_stems=deferred_stems,
+            )
     _log_process_results(results)
     if upload_failures:
         LOGGER.error("%d background upload(s) failed", len(upload_failures))

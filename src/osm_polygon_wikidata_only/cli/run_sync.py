@@ -76,6 +76,7 @@ from osm_polygon_wikidata_only.pipeline.pending_publications import (
     load_metadata_refresh_marker,
     load_pending_publications,
     remove_pending_publications,
+    set_metadata_refresh_marker,
 )
 from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf
 from osm_polygon_wikidata_only.pipeline.sync_planner import (
@@ -549,6 +550,7 @@ def _run_sync_application(
             commit_message=_commit_message(getattr(args, "commit_message", None)),
             log_remote_reconciliation_summary=_log_remote_reconciliation_summary,
             load_metadata_refresh_marker=load_metadata_refresh_marker,
+            set_metadata_refresh_marker=set_metadata_refresh_marker,
             clear_metadata_refresh_marker=clear_metadata_refresh_marker,
             augmentation_progress=AugmentationProgress,
             sync_heartbeat=SyncHeartbeat,
