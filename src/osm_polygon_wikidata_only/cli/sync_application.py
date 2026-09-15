@@ -109,6 +109,7 @@ class SyncApplication:
         self._recovery_map_refresh_stems: set[str] = set()
         self._recovery_classifications: dict[str, dict[Any, Any]] = {}
         self._region_publication_submitted = False
+        self._metadata_repair_submitted = False
         self._deferred_metadata_stems: dict[str, str] = {}
 
     def run(self) -> SyncApplicationResult:
@@ -201,12 +202,23 @@ class SyncApplication:
         # This upload already contains the repository-wide metadata refresh;
         # do not enqueue a second refresh after the region queue drains.
         self._region_publication_submitted = False
+        self._metadata_repair_submitted = True
         return True
 
     def _refresh_metadata_marker(self, metadata_repaired: bool) -> bool:
+        """Publish the repository-wide assets once, when they are still owed.
+
+        A queued metadata repair already carries them, and this runs only
+        after the upload queue drained without failures, so that repair
+        succeeded: its marker is retired without scanning and uploading
+        the same assets a second time.
+        """
         if not self.context.push_enabled:
             return metadata_repaired
         marker = self.services.load_metadata_refresh_marker(self.context.data_root)
+        if self._metadata_repair_submitted:
+            self._clear_metadata_refresh_state(marker)
+            return metadata_repaired
         if not self._metadata_refresh_required(marker):
             return metadata_repaired
         self._log_metadata_refresh(marker)
