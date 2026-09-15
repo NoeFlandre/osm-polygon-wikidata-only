@@ -165,6 +165,15 @@ assets are produced once at the end. Both preserve the same complete-dataset
 statistics while avoiding a full rescan after every region. A single-PBF run
 still publishes those assets inline.
 
+Deferring is fail-closed. The regions owed a refresh are recorded durably
+before their upload is submitted, and the refresh runs only after the regional
+queue drains without failures, for a run that finished processing, and only
+when every recorded region was published by that run. Anything else -- a failed
+or aborted run, or a rerun that skipped a region an earlier run never managed
+to upload -- leaves the record in place and publishes nothing repository-wide.
+Unified sync repairs from that record, because it reconciles against the remote
+and republishes missing regional artifacts before refreshing.
+
 `stats.json` carries a `contract_version`, a `source` block
 (`table`, `column_scope`, `file_count`, `polygon_count`) and four result
 blocks. The exact fields are:

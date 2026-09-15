@@ -774,10 +774,15 @@ def test_a_failed_regional_upload_skips_the_metadata_refresh(
     assert cleared == []
 
 
-def test_a_resumed_run_refreshes_from_a_surviving_marker(
+def test_a_resumed_run_never_refreshes_from_a_marker_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run that publishes nothing still repairs an earlier deferred refresh."""
+    """A marked region this run did not publish may not be described remotely.
+
+    The marker can name a region whose upload never reached the Hub, so a
+    rerun that skips it must leave the marker for the sync command, which
+    reconciles against the remote before refreshing.
+    """
     refreshes: list[object] = []
     cleared: list[DataRoot] = []
     root = DataRoot(tmp_path)
@@ -807,8 +812,58 @@ def test_a_resumed_run_refreshes_from_a_surviving_marker(
         )
         == 0
     )
-    assert len(refreshes) == 1
-    assert cleared == [root]
+    assert refreshes == []
+    assert cleared == []
+
+
+def test_a_marker_naming_an_unpublished_region_blocks_the_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Publishing one region does not license metadata for another."""
+    refreshes: list[object] = []
+    cleared: list[DataRoot] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "published-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "published-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands,
+        "load_metadata_refresh_marker",
+        lambda data_root: {"stems": ["published-latest", "stranded-latest"]},
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
+    )
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+    assert refreshes == []
+    assert cleared == []
 
 
 def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
@@ -819,6 +874,7 @@ def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
     closed: list[bool] = []
     root = DataRoot(tmp_path)
     root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
 
     class _StubQueue:
         def close_and_wait(self) -> list[str]:
@@ -828,13 +884,25 @@ def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
     def failing_refresh(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("manifest drift")
 
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
     monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
-    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "load_metadata_refresh_marker", lambda data_root: {"stems": []})
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: {"stems": ["region-latest"]}
+    )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", failing_refresh)
     monkeypatch.setattr(
         commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
@@ -909,12 +977,22 @@ def test_a_malformed_marker_cannot_leave_the_upload_queue_open(
     def malformed_marker(_data_root: DataRoot) -> object:
         raise ValueError("malformed metadata refresh marker")
 
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
     monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
-    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "load_metadata_refresh_marker", malformed_marker)
 
     with pytest.raises(ValueError, match="malformed metadata refresh marker"):

@@ -104,7 +104,7 @@ def _drain_uploads(
     data_root: DataRoot,
     repo_id: str,
     deferring: bool,
-    published_regions: int,
+    published_stems: set[str],
 ) -> list[str]:
     """Drain the regional queue, then refresh deferred metadata.
 
@@ -123,7 +123,7 @@ def _drain_uploads(
     failures = upload_queue.close_and_wait()
     if failures or not deferring:
         return failures
-    if not _metadata_refresh_requested(data_root, published_regions=published_regions):
+    if not _metadata_refresh_requested(data_root, published_stems=published_stems):
         return failures
     return _refresh_repository_metadata(upload_queue, data_root=data_root, repo_id=repo_id)
 
@@ -154,17 +154,29 @@ def _refresh_allowed(deferring: bool, processing_completed: bool) -> bool:
     return deferring and processing_completed
 
 
-def _metadata_refresh_requested(data_root: DataRoot, *, published_regions: int) -> bool:
-    """A deferred run refreshes after publishing, or when a marker survives.
+def _metadata_refresh_requested(data_root: DataRoot, *, published_stems: set[str]) -> bool:
+    """Refresh only when every marked region was published by this run.
 
-    A resumed run can publish nothing -- every PBF is already processed
-    and skipped -- while an earlier run's marker records that the
-    repository-wide assets never made it. Reading the marker is what
-    makes that run repair them instead of leaving them stale.
+    The marker names the regions whose repository-wide assets are still
+    owed. A run that published none of them -- a resumed run that skipped
+    every locally processed PBF, or one whose marked region died before
+    its upload was submitted -- must not publish a manifest, statistics
+    report, or map describing a region the remote never received. The
+    marker survives such a run, and the sync command, which reconciles
+    against the remote and republishes missing regional artifacts before
+    refreshing, is what repairs it.
     """
-    if published_regions:
+    if not published_stems:
+        return False
+    marker = load_metadata_refresh_marker(data_root)
+    if marker is None:
         return True
-    return load_metadata_refresh_marker(data_root) is not None
+    return set(marker["stems"]) <= published_stems
+
+
+def _result_stem(result: ProcessResult) -> str:
+    """Return the region stem of one processed PBF."""
+    return Path(str(result.manifest_entry["source_pbf"])).stem.removesuffix(".osm")
 
 
 def _record_deferred_metadata(
@@ -179,7 +191,7 @@ def _record_deferred_metadata(
     refresh and is what a later sync run repairs from; without it every
     remote path would look present and nothing would be scheduled.
     """
-    stem = Path(str(result.manifest_entry["source_pbf"])).stem.removesuffix(".osm")
+    stem = _result_stem(result)
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     if not polygons_path.is_file():
         return
@@ -512,11 +524,10 @@ def _run_processing_command(
     # assets are produced once after the queue drains instead of after
     # each region.
     defer_metadata_assets = args.command == "process-dir"
-    published_regions = 0
+    published_stems: set[str] = set()
     deferred_stems: dict[str, str] = {}
 
     def enqueue_upload(result: ProcessResult) -> None:
-        nonlocal published_regions
         if upload_queue is None:
             return
         # Recorded before the job is submitted: a kill between the two
@@ -533,7 +544,7 @@ def _run_processing_command(
             result=result,
             defer_metadata_assets=defer_metadata_assets,
         )
-        published_regions += 1
+        published_stems.add(_result_stem(result))
 
     upload_failures: list[str] = []
     processing_completed = False
@@ -560,7 +571,7 @@ def _run_processing_command(
                 # remote does not have. The marker survives for the next
                 # run to repair.
                 deferring=_refresh_allowed(defer_metadata_assets, processing_completed),
-                published_regions=published_regions,
+                published_stems=published_stems,
             )
     _log_process_results(results)
     if upload_failures:
