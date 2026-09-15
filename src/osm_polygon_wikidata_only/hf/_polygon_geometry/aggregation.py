@@ -19,7 +19,7 @@ produces a byte-identical report.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,6 +66,7 @@ class _Accumulator:
 
     areas: list[np.ndarray] = field(default_factory=list)
     source_areas: dict[str, list[np.ndarray]] = field(default_factory=lambda: defaultdict(list))
+    source_rows: Counter[str] = field(default_factory=Counter)
     vertices: list[np.ndarray] = field(default_factory=list)
     rings: list[np.ndarray] = field(default_factory=list)
     components: list[np.ndarray] = field(default_factory=list)
@@ -143,17 +144,23 @@ def _accumulate_areas(accumulator: _Accumulator, batch: pa.RecordBatch) -> None:
     values = np.asarray(column.to_numpy(zero_copy_only=False), dtype=np.float64)
     finite = values[np.isfinite(values)]
     accumulator.areas.append(finite)
-    for source, source_values in _areas_by_source(batch.column("source_pbf"), values):
+    for source, rows, source_values in _areas_by_source(batch.column("source_pbf"), values):
+        accumulator.source_rows[source] += rows
         accumulator.source_areas[source].append(source_values)
 
 
-def _areas_by_source(sources: pa.Array, values: np.ndarray) -> list[tuple[str, np.ndarray]]:
-    """Split one batch's areas by ``source_pbf`` without a per-row loop."""
+def _areas_by_source(sources: pa.Array, values: np.ndarray) -> list[tuple[str, int, np.ndarray]]:
+    """Split one batch by ``source_pbf`` into row counts and finite areas.
+
+    The row count is every row of that source, including rows whose
+    ``area_m2`` is null or non-finite; only the numeric summaries are
+    restricted to the finite samples.
+    """
     source_values = np.asarray(sources.to_pylist(), dtype=object)
-    grouped: list[tuple[str, np.ndarray]] = []
+    grouped: list[tuple[str, int, np.ndarray]] = []
     for source in sorted({str(value) for value in source_values if value is not None}):
         selected = values[source_values == source]
-        grouped.append((source, selected[np.isfinite(selected)]))
+        grouped.append((source, int(selected.size), selected[np.isfinite(selected)]))
     return grouped
 
 
@@ -305,7 +312,11 @@ def _extent_bounds(accumulator: _Accumulator) -> tuple[float, float, float, floa
 
 def _build_per_source(accumulator: _Accumulator) -> tuple[SourceAreaSummary, ...]:
     return tuple(
-        build_source_summary(source, _concatenate(accumulator.source_areas[source], np.float64))
+        build_source_summary(
+            source,
+            polygon_count=accumulator.source_rows[source],
+            areas=_concatenate(accumulator.source_areas[source], np.float64),
+        )
         for source in sorted(accumulator.source_areas)
     )
 

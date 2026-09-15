@@ -28,25 +28,44 @@ from ._polygon_geometry.aggregation import compute_polygon_geometry_stats
 from ._polygon_geometry.codec import stats_payload
 from ._polygon_geometry.models import PolygonGeometryStats
 from ._polygon_geometry.rendering import render_polygon_geometry_stats
-from ._polygon_geometry.validation import PolygonStatsInputError
+from ._polygon_geometry.validation import MANIFEST_RELATIVE_PATH, PolygonStatsInputError
 
-# One-entry memo of the last scan, keyed by the polygon files' identity
-# (name, size, mtime). A publication renders the card and writes the
-# report from one scan, and a second publication over an unchanged
-# polygon directory does no Parquet reads at all. Any change to any
-# polygon file changes the key and forces a fresh scan.
+# One-entry memo of the last scan, keyed by the identity (name, size,
+# mtime) of the polygon files AND of the processed manifest that decides
+# which of them the dataset publishes. A publication renders the card and
+# writes the report from one scan, and a second publication over an
+# unchanged input does no Parquet reads at all. Any change to any polygon
+# file or to the manifest changes the key, so a fresh scan re-runs file
+# selection and the row-count validation.
 _MEMO: dict[str, tuple[tuple[tuple[str, int, int], ...], PolygonGeometryStats]] = {}
 
 
 def polygon_directory_fingerprint(processed_dir: Path) -> tuple[tuple[str, int, int], ...]:
-    """Return the identity of the polygon files under ``processed_dir``."""
-    polygons_dir = processed_dir / "polygons"
+    """Return the identity of every input the snapshot depends on.
+
+    That is the polygon files plus the processed manifest: the manifest
+    decides which files the dataset publishes and what row count each
+    one must have, so a manifest edit must invalidate the memo even when
+    no Parquet file changed.
+    """
+    return (
+        _file_identity(processed_dir / MANIFEST_RELATIVE_PATH),
+        *_polygon_file_identities(processed_dir / "polygons"),
+    )
+
+
+def _polygon_file_identities(polygons_dir: Path) -> tuple[tuple[str, int, int], ...]:
     if not polygons_dir.is_dir():
         return ()
-    return tuple(
-        (path.name, path.stat().st_size, path.stat().st_mtime_ns)
-        for path in sorted(polygons_dir.glob("*.parquet"))
-    )
+    return tuple(_file_identity(path) for path in sorted(polygons_dir.glob("*.parquet")))
+
+
+def _file_identity(path: Path) -> tuple[str, int, int]:
+    """Return ``(name, size, mtime)``; a missing file has size and mtime ``-1``."""
+    if not path.is_file():
+        return (path.name, -1, -1)
+    stat = path.stat()
+    return (path.name, stat.st_size, stat.st_mtime_ns)
 
 
 def load_polygon_geometry_stats(processed_dir: Path) -> PolygonGeometryStats:

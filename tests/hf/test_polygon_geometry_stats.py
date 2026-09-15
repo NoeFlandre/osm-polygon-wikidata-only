@@ -609,8 +609,12 @@ def test_undecodable_bbox_values_return_none(raw: object) -> None:
     assert decode_bbox(raw) is None
 
 
-def test_the_memo_fingerprint_is_empty_without_a_polygon_directory(tmp_path: Path) -> None:
-    assert polygon_directory_fingerprint(tmp_path / "processed") == ()
+def test_the_memo_fingerprint_marks_missing_inputs_without_a_polygon_directory(
+    tmp_path: Path,
+) -> None:
+    assert polygon_directory_fingerprint(tmp_path / "processed") == (
+        ("processed_pbfs.json", -1, -1),
+    )
     assert load_polygon_geometry_stats(tmp_path / "processed").polygon_count == 0
 
 
@@ -634,3 +638,116 @@ def test_a_manifest_entry_that_is_not_an_object_is_refused(tmp_path: Path) -> No
 
     with pytest.raises(PolygonStatsInputError, match="non-object entry"):
         compute_polygon_geometry_stats(processed)
+
+
+# --- review regressions -------------------------------------------------
+
+
+def test_per_source_counts_every_row_including_missing_areas(tmp_path: Path) -> None:
+    """A row with no recorded area still counts toward its source."""
+    processed = tmp_path / "processed"
+    _write_polygons(
+        processed,
+        "nulls-latest",
+        [
+            _polygon_row(
+                source_pbf="nulls-latest.osm.pbf",
+                area_m2=None,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            ),
+            _polygon_row(
+                source_pbf="nulls-latest.osm.pbf",
+                area_m2=None,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            ),
+            _polygon_row(
+                source_pbf="mixed-latest.osm.pbf",
+                area_m2=None,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            ),
+            _polygon_row(
+                source_pbf="mixed-latest.osm.pbf",
+                area_m2=8.0,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            ),
+        ],
+    )
+    _write_manifest(processed, {"nulls-latest": 4})
+
+    stats = compute_polygon_geometry_stats(processed)
+
+    assert stats.polygon_count == 4
+    assert stats.area.null_count == 3
+    by_source = {source.source_pbf: source for source in stats.per_source}
+    # Every area is missing: the real row count is still reported.
+    assert by_source["nulls-latest.osm.pbf"].polygon_count == 2
+    assert by_source["nulls-latest.osm.pbf"].total_area_m2 == 0.0
+    assert by_source["nulls-latest.osm.pbf"].maximum_area_m2 == 0.0
+    # One of the two rows carries an area; both rows are counted.
+    assert by_source["mixed-latest.osm.pbf"].polygon_count == 2
+    assert by_source["mixed-latest.osm.pbf"].total_area_m2 == 8.0
+
+
+def test_a_manifest_edit_invalidates_the_memo(tmp_path: Path) -> None:
+    """The manifest decides what is scanned, so it is part of the key."""
+    processed = tmp_path / "processed"
+    _write_polygons(
+        processed,
+        "first-latest",
+        [
+            _polygon_row(
+                source_pbf="first-latest.osm.pbf",
+                area_m2=10.0,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            )
+        ],
+    )
+    _write_polygons(
+        processed,
+        "second-latest",
+        [
+            _polygon_row(
+                source_pbf="second-latest.osm.pbf",
+                area_m2=90.0,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            )
+        ],
+    )
+    _write_manifest(processed, {"first-latest": 1})
+    assert load_polygon_geometry_stats(processed).area.total_m2 == 10.0
+
+    _write_manifest(processed, {"first-latest": 1, "second-latest": 1})
+    refreshed = load_polygon_geometry_stats(processed)
+
+    assert refreshed.polygon_count == 2
+    assert refreshed.area.total_m2 == 100.0
+
+
+def test_a_manifest_that_goes_stale_is_refused_after_a_cached_scan(tmp_path: Path) -> None:
+    """A memo hit never hides a drift the manifest introduced."""
+    processed = tmp_path / "processed"
+    _write_polygons(
+        processed,
+        "drifting-latest",
+        [
+            _polygon_row(
+                source_pbf="drifting-latest.osm.pbf",
+                area_m2=10.0,
+                bbox=json.dumps([0.0, 0.0, 1.0, 1.0]),
+                geometry=json.dumps(SQUARE),
+            )
+        ],
+    )
+    _write_manifest(processed, {"drifting-latest": 1})
+    assert load_polygon_geometry_stats(processed).polygon_count == 1
+
+    _write_manifest(processed, {"drifting-latest": 99})
+
+    with pytest.raises(PolygonStatsInputError, match="row counts drifted"):
+        load_polygon_geometry_stats(processed)

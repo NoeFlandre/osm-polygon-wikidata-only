@@ -127,13 +127,21 @@ def _edge(exponent: int) -> float:
     return float(10**exponent)
 
 
-def build_source_summary(source_pbf: str, areas: np.ndarray) -> SourceAreaSummary:
-    """Return one ``source_pbf`` breakdown row."""
+def build_source_summary(
+    source_pbf: str, *, polygon_count: int, areas: np.ndarray
+) -> SourceAreaSummary:
+    """Return one ``source_pbf`` breakdown row.
+
+    ``polygon_count`` is every published row of that source. ``areas``
+    holds only its finite ``area_m2`` samples, so a source whose areas
+    are all missing still reports its real row count with zeroed area
+    aggregates.
+    """
     if areas.size == 0:
-        return SourceAreaSummary(source_pbf, 0, 0.0, 0.0, 0.0)
+        return SourceAreaSummary(source_pbf, polygon_count, 0.0, 0.0, 0.0)
     return SourceAreaSummary(
         source_pbf=source_pbf,
-        polygon_count=int(areas.size),
+        polygon_count=polygon_count,
         total_area_m2=rounded(areas.sum()),
         median_area_m2=rounded(np.percentile(areas, 50.0, method="linear")),
         maximum_area_m2=rounded(areas.max()),
