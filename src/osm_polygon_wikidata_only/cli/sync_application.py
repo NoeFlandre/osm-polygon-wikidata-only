@@ -233,8 +233,13 @@ class SyncApplication:
         )
 
     def _clear_metadata_refresh_state(self, marker: dict[str, Any] | None) -> None:
-        """Retire the marker, if any, and the deferred-publication flag."""
-        if marker is not None:
+        """Retire the marker, if any, and the deferred-publication flag.
+
+        A dry run uploads through the stub hub, so the remote is
+        unchanged and the marker stays: retiring it would erase the only
+        record that an earlier interrupted run still owes a refresh.
+        """
+        if marker is not None and not self.context.dry_run:
             self.services.clear_metadata_refresh_marker(self.context.data_root)
         self._region_publication_submitted = False
 
@@ -477,7 +482,12 @@ class SyncApplication:
         have marked a region this one never reconciles, and dropping it
         here would let this run's regions license a repository-wide
         refresh describing the stranded one.
+
+        A dry run publishes nothing, so it records nothing: durable
+        publication intent must describe real uploads only.
         """
+        if self.context.dry_run:
+            return
         polygons_path = self.context.data_root.processed_polygons / f"{stem}.parquet"
         if not polygons_path.is_file():
             return

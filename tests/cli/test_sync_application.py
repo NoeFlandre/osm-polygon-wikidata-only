@@ -847,3 +847,36 @@ def test_recording_a_region_preserves_a_surviving_marker(tmp_path: Path) -> None
     assert stems == ["monaco-latest", "stranded-latest"]
     assert hashes["stranded-latest"] == "b" * 64
     assert len(hashes["monaco-latest"]) == 64
+
+
+def test_a_dry_run_records_no_refresh_marker(tmp_path: Path) -> None:
+    """A simulated publication must not write durable publication intent."""
+    module = _application_module()
+    context = replace(_context(module, tmp_path, push_enabled=True, queue=_Queue()), dry_run=True)
+    (context.data_root.processed_polygons / "monaco-latest.parquet").write_bytes(b"polygons")
+    recorded: list[object] = []
+    services = replace(
+        _services(module, []),
+        set_metadata_refresh_marker=lambda *args: recorded.append(args),
+        assemble_region_upload=lambda **_kwargs: [],
+        load_existing_core_for_publication=lambda *_args, **_kwargs: object(),
+    )
+    application = module.SyncApplication(context=context, services=services)
+
+    application._build_region_publication(SimpleNamespace(stem="monaco-latest"), object(), object())
+
+    assert recorded == []
+
+
+def test_a_dry_run_keeps_a_surviving_refresh_marker(tmp_path: Path) -> None:
+    """A stub upload must not retire an earlier run's recovery intent."""
+    module = _application_module()
+    context = replace(_context(module, tmp_path, push_enabled=True, queue=_Queue()), dry_run=True)
+    events: list[str] = []
+    application = module.SyncApplication(
+        context=context,
+        services=_services(module, events, marker={"stems": ["stranded-latest"]}),
+    )
+
+    assert application._refresh_metadata_marker(False) is True
+    assert "clear-marker" not in events
