@@ -74,8 +74,10 @@ def assemble_region_upload(
     if core is not None:
         _validate_core_artifacts(core)
     _validate_augmentation_artifacts(augmentation)
-    publish_metadata_assets = refresh_maps and not defer_metadata_assets
-    hero_op = hooks.dataset_hero_op() if publish_metadata_assets else None
+    publish_metadata_assets = _publishes_metadata_assets(refresh_maps, defer_metadata_assets)
+    # Resolved before any snapshot is written so a missing hero asset fails
+    # the assembly instead of leaving a half-written snapshot behind.
+    hero_ops = _hero_operations(publish_metadata_assets, hooks)
     snapshots = data_root.cache / "sync_upload_snapshots" / stem
     snapshots.mkdir(parents=True, exist_ok=True)
     augmentation_manifest_snapshot = _snapshot_augmentation_manifest(snapshots, augmentation)
@@ -99,15 +101,50 @@ def assemble_region_upload(
             hooks=hooks,
         )
     )
-    if publish_metadata_assets:
-        assert hero_op is not None
-        readme_snapshot = snapshots / "README.md"
-        stats_snapshot = hooks.write_polygon_stats_snapshot(data_root, snapshots / "stats.json")
-        hooks.write_readme_snapshot(data_root, repo_id, readme_snapshot)
-        ops.append(hero_op)
-        ops.append(add_op(stats_snapshot, path_in_repo=REMOTE_POLYGON_STATS_FILE))
-        ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
+    ops.extend(
+        _metadata_asset_operations(
+            data_root,
+            repo_id,
+            snapshots,
+            hero_ops=hero_ops,
+            hooks=hooks,
+        )
+    )
     return ops
+
+
+def _publishes_metadata_assets(refresh_maps: bool, defer_metadata_assets: bool) -> bool:
+    """Repository-wide assets ride this commit only when nothing defers them."""
+    return refresh_maps and not defer_metadata_assets
+
+
+def _hero_operations(publish: bool, hooks: PublicationHooks) -> list[PublicationOp]:
+    return [hooks.dataset_hero_op()] if publish else []
+
+
+def _metadata_asset_operations(
+    data_root: DataRoot,
+    repo_id: str,
+    snapshots: Path,
+    *,
+    hero_ops: list[PublicationOp],
+    hooks: PublicationHooks,
+) -> list[PublicationOp]:
+    """Render and order the repository-wide assets that close a publication.
+
+    An empty ``hero_ops`` means this commit defers those assets, so no
+    snapshot is rendered and no operation is produced.
+    """
+    if not hero_ops:
+        return []
+    readme_snapshot = snapshots / "README.md"
+    stats_snapshot = hooks.write_polygon_stats_snapshot(data_root, snapshots / "stats.json")
+    hooks.write_readme_snapshot(data_root, repo_id, readme_snapshot)
+    return [
+        *hero_ops,
+        add_op(stats_snapshot, path_in_repo=REMOTE_POLYGON_STATS_FILE),
+        add_op(readme_snapshot, path_in_repo="README.md"),
+    ]
 
 
 def _snapshot_augmentation_manifest(snapshots: Path, augmentation: AugmentationResult) -> Path:

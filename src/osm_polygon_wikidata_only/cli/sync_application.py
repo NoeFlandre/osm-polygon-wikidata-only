@@ -204,15 +204,19 @@ class SyncApplication:
         if not self.context.push_enabled:
             return metadata_repaired
         marker = self.services.load_metadata_refresh_marker(self.context.data_root)
-        if marker is None and not self._region_publication_submitted:
+        if not self._metadata_refresh_required(marker):
             return metadata_repaired
-        if marker is not None:
-            self.services.logger.info(
-                "Refreshing repository metadata after %d migrated region(s)",
-                len(marker["stems"]),
-            )
-        else:
-            self.services.logger.info("Refreshing repository metadata after unified sync")
+        self._log_metadata_refresh(marker)
+        self._upload_metadata_refresh()
+        self._clear_metadata_refresh_state(marker)
+        return True
+
+    def _metadata_refresh_required(self, marker: dict[str, Any] | None) -> bool:
+        """A migrated region or a deferred regional publication needs the refresh."""
+        return marker is not None or self._region_publication_submitted
+
+    def _upload_metadata_refresh(self) -> None:
+        """Publish the repository-wide metadata assets synchronously."""
         metadata_ops = self.services.assemble_metadata_only_upload(
             data_root=self.context.data_root,
             repo_id=self.context.settings.repo_id,
@@ -224,10 +228,22 @@ class SyncApplication:
             metadata_ops,
             "Repair remote repository metadata and maps",
         )
+
+    def _clear_metadata_refresh_state(self, marker: dict[str, Any] | None) -> None:
+        """Retire the marker, if any, and the deferred-publication flag."""
         if marker is not None:
             self.services.clear_metadata_refresh_marker(self.context.data_root)
         self._region_publication_submitted = False
-        return True
+
+    def _log_metadata_refresh(self, marker: dict[str, Any] | None) -> None:
+        """Record why the repository-wide metadata refresh is running."""
+        if marker is None:
+            self.services.logger.info("Refreshing repository metadata after unified sync")
+            return
+        self.services.logger.info(
+            "Refreshing repository metadata after %d migrated region(s)",
+            len(marker["stems"]),
+        )
 
     def _finish(
         self,

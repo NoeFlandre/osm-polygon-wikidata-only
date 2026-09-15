@@ -65,11 +65,19 @@ class PolygonStatsInputError(ValueError):
 
 def validate_polygon_schema(path: Path, schema: pa.Schema) -> None:
     """Refuse a Parquet file that is not the canonical polygon table."""
+    _refuse_missing_columns(path, schema)
+    _refuse_non_canonical_types(path, schema)
+
+
+def _refuse_missing_columns(path: Path, schema: pa.Schema) -> None:
     missing = tuple(column for column in IDENTITY_COLUMNS if column not in schema.names)
     if missing:
         raise PolygonStatsInputError(
             f"{path} is not the polygon table: missing columns {', '.join(missing)}"
         )
+
+
+def _refuse_non_canonical_types(path: Path, schema: pa.Schema) -> None:
     expected = polygon_schema()
     mismatched = tuple(
         f"{column} (expected {expected.field(column).type}, got {schema.field(column).type})"
@@ -192,6 +200,11 @@ def _manifest_entry(manifest: Path, entry: Any) -> tuple[str, int]:
         raise PolygonStatsInputError(
             f"Processed manifest entry lacks polygons_path/polygon_count: {manifest}"
         )
+    return _canonical_polygons_stem(manifest, polygons_path), polygon_count
+
+
+def _canonical_polygons_stem(manifest: Path, polygons_path: str) -> str:
+    """Return the stem of a ``polygons/<stem>.parquet`` manifest path."""
     relative_path = Path(polygons_path)
     expected_path = Path(POLYGON_SUBDIR) / relative_path.name
     if relative_path != expected_path or relative_path.suffix != ".parquet":
@@ -199,7 +212,7 @@ def _manifest_entry(manifest: Path, entry: Any) -> tuple[str, int]:
             f"Processed manifest entry has non-canonical polygons_path "
             f"{polygons_path!r}: expected polygons/<stem>.parquet: {manifest}"
         )
-    return relative_path.stem, polygon_count
+    return relative_path.stem
 
 
 __all__ = [
