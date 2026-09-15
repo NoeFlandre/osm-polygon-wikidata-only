@@ -876,3 +876,38 @@ def test_two_manifest_sources_sharing_one_polygon_file_are_refused(tmp_path: Pat
 
     with pytest.raises(PolygonStatsInputError, match="several sources to one polygon file"):
         compute_polygon_geometry_stats(processed)
+
+
+@pytest.mark.parametrize("huge", [10**1000, -(10**1000)])
+def test_an_unrepresentable_coordinate_is_unreadable_not_fatal(huge: int) -> None:
+    """A JSON integer too large for a float must not abort the scan."""
+    geometry = {"type": "Polygon", "coordinates": [[[huge, 0], [0, 1], [1, 1], [huge, 0]]]}
+
+    assert decode_geometry(json.dumps(geometry)) is None
+    assert decode_bbox(json.dumps([huge, 0, 1, 1])) is None
+
+
+def test_an_unrepresentable_coordinate_counts_as_unreadable(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    huge = 10**1000
+    _write_polygons(
+        processed,
+        "huge-latest",
+        [
+            _polygon_row(
+                source_pbf="huge-latest.osm.pbf",
+                area_m2=1.0,
+                bbox=json.dumps([huge, 0, 1, 1]),
+                geometry=json.dumps(
+                    {"type": "Polygon", "coordinates": [[[huge, 0], [0, 1], [1, 1], [huge, 0]]]}
+                ),
+            )
+        ],
+    )
+    _write_manifest(processed, {"huge-latest": 1})
+
+    stats = compute_polygon_geometry_stats(processed)
+
+    assert stats.polygon_count == 1
+    assert stats.shape.unreadable_count == 1
+    assert stats.extent.unreadable_count == 1

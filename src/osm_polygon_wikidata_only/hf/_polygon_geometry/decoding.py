@@ -171,14 +171,34 @@ def _bbox_numbers(raw: object) -> tuple[float, float, float, float] | None:
     payload = _decode_json_list(raw)
     if payload is None or len(payload) != 4:
         return None
-    if not all(_is_finite_number(value) for value in payload):
-        return None
-    return (float(payload[0]), float(payload[1]), float(payload[2]), float(payload[3]))
+    numbers: list[float] = []
+    for value in payload:
+        converted = _finite_float(value)
+        if converted is None:
+            return None
+        numbers.append(converted)
+    return (numbers[0], numbers[1], numbers[2], numbers[3])
 
 
 def _is_finite_number(value: object) -> bool:
-    """Return ``True`` for a real JSON number; booleans are not numbers here."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """Return ``True`` for a coordinate this scan can represent."""
+    return _finite_float(value) is not None
+
+
+def _finite_float(value: object) -> float | None:
+    """Return ``value`` as a finite float, or ``None`` when it is not one.
+
+    Booleans are not numbers here, and a JSON integer too large for a
+    float is not a coordinate: converting it raises, and one malformed
+    row must count as unreadable rather than abort the whole scan.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        converted = float(value)
+    except OverflowError:
+        return None
+    return converted if math.isfinite(converted) else None
 
 
 def _decode_json_list(raw: object) -> list[Any] | None:
