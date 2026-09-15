@@ -149,6 +149,11 @@ def _refresh_repository_metadata(
     return []
 
 
+def _refresh_allowed(deferring: bool, processing_completed: bool) -> bool:
+    """Only a run that finished processing may publish deferred assets."""
+    return deferring and processing_completed
+
+
 def _metadata_refresh_requested(data_root: DataRoot, *, published_regions: int) -> bool:
     """A deferred run refreshes after publishing, or when a marker survives.
 
@@ -531,6 +536,7 @@ def _run_processing_command(
         published_regions += 1
 
     upload_failures: list[str] = []
+    processing_completed = False
     try:
         results = orchestrate(
             inputs,
@@ -541,13 +547,19 @@ def _run_processing_command(
             cache=cache,
             on_complete=enqueue_upload,
         )
+        processing_completed = True
     finally:
         if upload_queue is not None:
             upload_failures = _drain_uploads(
                 upload_queue,
                 data_root=data_root,
                 repo_id=settings.repo_id,
-                deferring=defer_metadata_assets,
+                # An aborted run still drains the queue, but never
+                # publishes repository-wide assets: a region whose
+                # assembly or submission raised has local artifacts the
+                # remote does not have. The marker survives for the next
+                # run to repair.
+                deferring=_refresh_allowed(defer_metadata_assets, processing_completed),
                 published_regions=published_regions,
             )
     _log_process_results(results)
