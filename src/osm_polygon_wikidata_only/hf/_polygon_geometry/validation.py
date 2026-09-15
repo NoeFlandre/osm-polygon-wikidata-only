@@ -188,10 +188,23 @@ def _decode_manifest(manifest: Path) -> dict[str, int]:
 
 
 def _manifest_entries(manifest: Path, payload: dict[str, Any]) -> list[tuple[str, int]]:
-    return [_manifest_entry(manifest, entry) for entry in payload.values()]
+    entries = [_manifest_entry(manifest, key, entry) for key, entry in payload.items()]
+    _refuse_duplicate_stems(manifest, entries)
+    return entries
 
 
-def _manifest_entry(manifest: Path, entry: Any) -> tuple[str, int]:
+def _refuse_duplicate_stems(manifest: Path, entries: list[tuple[str, int]]) -> None:
+    """Two source keys must never collapse onto one polygon file."""
+    seen: set[str] = set()
+    duplicates = sorted({stem for stem, _ in entries if stem in seen or seen.add(stem)})
+    if duplicates:
+        raise PolygonStatsInputError(
+            f"Processed manifest maps several sources to one polygon file "
+            f"({', '.join(duplicates)}): {manifest}"
+        )
+
+
+def _manifest_entry(manifest: Path, key: str, entry: Any) -> tuple[str, int]:
     if not isinstance(entry, dict):
         raise PolygonStatsInputError(f"Processed manifest holds a non-object entry: {manifest}")
     polygons_path = entry.get("polygons_path")
@@ -200,7 +213,27 @@ def _manifest_entry(manifest: Path, entry: Any) -> tuple[str, int]:
         raise PolygonStatsInputError(
             f"Processed manifest entry lacks polygons_path/polygon_count: {manifest}"
         )
-    return _canonical_polygons_stem(manifest, polygons_path), polygon_count
+    stem = _canonical_polygons_stem(manifest, polygons_path)
+    _refuse_key_mismatch(manifest, key, entry, stem)
+    return stem, polygon_count
+
+
+def _refuse_key_mismatch(manifest: Path, key: str, entry: dict[str, Any], stem: str) -> None:
+    """The manifest key names the source its entry and polygon file describe."""
+    declared = entry.get("source_pbf")
+    if isinstance(declared, str) and declared != key:
+        raise PolygonStatsInputError(
+            f"Processed manifest entry {key!r} declares source_pbf {declared!r}: {manifest}"
+        )
+    if _source_stem(key) != stem:
+        raise PolygonStatsInputError(
+            f"Processed manifest entry {key!r} points at polygons/{stem}.parquet: {manifest}"
+        )
+
+
+def _source_stem(source_pbf: str) -> str:
+    """Return the region stem of a source PBF filename."""
+    return source_pbf.removesuffix(".pbf").removesuffix(".osm")
 
 
 def _canonical_polygons_stem(manifest: Path, polygons_path: str) -> str:

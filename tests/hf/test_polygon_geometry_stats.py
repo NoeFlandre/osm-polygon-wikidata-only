@@ -797,3 +797,73 @@ def test_a_manifest_that_goes_stale_is_refused_after_a_cached_scan(tmp_path: Pat
 
     with pytest.raises(PolygonStatsInputError, match="row counts drifted"):
         load_polygon_geometry_stats(processed)
+
+
+def test_a_manifest_key_that_disagrees_with_its_entry_is_refused(tmp_path: Path) -> None:
+    """The manifest key names the source its entry describes."""
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "beta-latest", [])
+    manifest = processed / "manifests" / "processed_pbfs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "alpha-latest.osm.pbf": {
+                    "polygons_path": "polygons/beta-latest.parquet",
+                    "polygon_count": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PolygonStatsInputError, match=r"points at polygons/beta-latest\.parquet"):
+        compute_polygon_geometry_stats(processed)
+
+
+def test_a_manifest_entry_declaring_another_source_is_refused(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "alpha-latest", [])
+    manifest = processed / "manifests" / "processed_pbfs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "alpha-latest.osm.pbf": {
+                    "source_pbf": "beta-latest.osm.pbf",
+                    "polygons_path": "polygons/alpha-latest.parquet",
+                    "polygon_count": 0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PolygonStatsInputError, match="declares source_pbf"):
+        compute_polygon_geometry_stats(processed)
+
+
+def test_two_manifest_sources_sharing_one_polygon_file_are_refused(tmp_path: Path) -> None:
+    """Colliding entries must not silently collapse onto one file."""
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "alpha-latest", [])
+    manifest = processed / "manifests" / "processed_pbfs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "alpha-latest.osm.pbf": {
+                    "polygons_path": "polygons/alpha-latest.parquet",
+                    "polygon_count": 0,
+                },
+                "alpha-latest.pbf": {
+                    "polygons_path": "polygons/alpha-latest.parquet",
+                    "polygon_count": 7,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PolygonStatsInputError, match="several sources to one polygon file"):
+        compute_polygon_geometry_stats(processed)
