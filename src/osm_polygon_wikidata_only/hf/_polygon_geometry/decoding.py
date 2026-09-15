@@ -155,11 +155,18 @@ def _is_ring(ring: Any) -> bool:
 
 
 def _is_coordinate(position: Any) -> bool:
-    """Return ``True`` for a GeoJSON position: at least a finite lon/lat pair."""
+    """Return ``True`` for a GeoJSON position.
+
+    A position is a list of at least two ordinates, and every ordinate
+    it carries -- a third altitude entry included -- must be a finite
+    number. A row with a null, textual, or infinite ordinate anywhere in
+    a position is unreadable rather than a polygon whose extra values
+    were quietly ignored.
+    """
     return (
         isinstance(position, list)
         and len(position) >= 2
-        and all(_is_finite_number(value) for value in position[:2])
+        and all(_is_finite_number(value) for value in position)
     )
 
 

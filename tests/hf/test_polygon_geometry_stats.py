@@ -911,3 +911,35 @@ def test_an_unrepresentable_coordinate_counts_as_unreadable(tmp_path: Path) -> N
     assert stats.polygon_count == 1
     assert stats.shape.unreadable_count == 1
     assert stats.extent.unreadable_count == 1
+
+
+@pytest.mark.parametrize(
+    "position",
+    [
+        [0.0, 0.0, None],
+        [0.0, 0.0, "bad"],
+        [0.0, 0.0, float("inf")],
+        [0.0, 0.0, [1.0]],
+    ],
+)
+def test_a_malformed_extra_ordinate_makes_the_row_unreadable(position: object) -> None:
+    """Every ordinate of a position must be a finite number, altitude included."""
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [[position, [0.0, 1.0], [1.0, 1.0], position]],
+    }
+
+    assert decode_geometry(json.dumps(geometry)) is None
+
+
+def test_a_valid_altitude_ordinate_stays_readable() -> None:
+    """A well-formed three-ordinate position is still a polygon."""
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [[[0.0, 0.0, 12.5], [0.0, 1.0, 12.5], [1.0, 1.0, 12.5], [0.0, 0.0, 12.5]]],
+    }
+
+    sample = decode_geometry(json.dumps(geometry))
+
+    assert sample is not None
+    assert sample.vertices == 3
