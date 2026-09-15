@@ -848,3 +848,80 @@ def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
     )
     assert closed == [True]
     assert cleared == []
+
+
+def test_the_refresh_marker_is_written_before_the_regional_job_is_submitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kill between the two must not leave an uploadable region unrecorded."""
+    order: list[str] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
+
+    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
+        on_complete = kwargs["on_complete"]
+        assert callable(on_complete)
+        on_complete(result)
+        return [result]
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: order.append("submit"))
+    monkeypatch.setattr(
+        commands, "set_metadata_refresh_marker", lambda *a, **kw: order.append("marker")
+    )
+    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", lambda data_root: None)
+
+    assert (
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+        == 0
+    )
+    assert order == ["marker", "submit"]
+
+
+def test_a_malformed_marker_cannot_leave_the_upload_queue_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The queue closes before the marker is read, so a bad marker never hangs."""
+    closed: list[bool] = []
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            closed.append(True)
+            return []
+
+    def malformed_marker(_data_root: DataRoot) -> object:
+        raise ValueError("malformed metadata refresh marker")
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(commands, "load_metadata_refresh_marker", malformed_marker)
+
+    with pytest.raises(ValueError, match="malformed metadata refresh marker"):
+        commands._run_processing_command(
+            _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+        )
+
+    # The validation error still surfaces, but only after the worker was
+    # told to stop, so the CLI can exit.
+    assert closed == [True]

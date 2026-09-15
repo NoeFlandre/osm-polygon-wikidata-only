@@ -103,21 +103,27 @@ def _drain_uploads(
     *,
     data_root: DataRoot,
     repo_id: str,
-    refresh_requested: bool,
+    deferring: bool,
+    published_regions: int,
 ) -> list[str]:
     """Drain the regional queue, then refresh deferred metadata.
 
-    The queue is closed first, so a region whose upload exhausted its
-    retries never gets a manifest, card, map, or statistics report
-    describing it, and an assembly failure in the refresh can no longer
-    leave the queue's worker waiting for a sentinel that never arrives.
+    The queue is closed before anything else, so a region whose upload
+    exhausted its retries never gets a manifest, card, map, or statistics
+    report describing it, and nothing after the drain -- an assembly
+    failure, or a malformed refresh marker -- can leave the queue's
+    non-daemon worker waiting for a sentinel that never arrives. Reading
+    the marker therefore happens here rather than in the caller's
+    argument list, while its validation error still propagates.
 
     The refresh runs synchronously on the drained queue. Its marker is
     retired only once it succeeds, so a failure leaves the intent on
     disk for the next run to repair.
     """
     failures = upload_queue.close_and_wait()
-    if failures or not refresh_requested:
+    if failures or not deferring:
+        return failures
+    if not _metadata_refresh_requested(data_root, published_regions=published_regions):
         return failures
     return _refresh_repository_metadata(upload_queue, data_root=data_root, repo_id=repo_id)
 
@@ -143,12 +149,7 @@ def _refresh_repository_metadata(
     return []
 
 
-def _metadata_refresh_requested(
-    data_root: DataRoot,
-    *,
-    deferring: bool,
-    published_regions: int,
-) -> bool:
+def _metadata_refresh_requested(data_root: DataRoot, *, published_regions: int) -> bool:
     """A deferred run refreshes after publishing, or when a marker survives.
 
     A resumed run can publish nothing -- every PBF is already processed
@@ -156,8 +157,6 @@ def _metadata_refresh_requested(
     repository-wide assets never made it. Reading the marker is what
     makes that run repair them instead of leaving them stale.
     """
-    if not deferring:
-        return False
     if published_regions:
         return True
     return load_metadata_refresh_marker(data_root) is not None
@@ -515,6 +514,11 @@ def _run_processing_command(
         nonlocal published_regions
         if upload_queue is None:
             return
+        # Recorded before the job is submitted: a kill between the two
+        # would otherwise leave an uploadable region with no record that
+        # the repository-wide assets still owe it a refresh.
+        if defer_metadata_assets:
+            _record_deferred_metadata(data_root, deferred_stems, result)
         _enqueue_core_upload(
             upload_queue,
             data_root=data_root,
@@ -525,8 +529,6 @@ def _run_processing_command(
             defer_metadata_assets=defer_metadata_assets,
         )
         published_regions += 1
-        if defer_metadata_assets:
-            _record_deferred_metadata(data_root, deferred_stems, result)
 
     upload_failures: list[str] = []
     try:
@@ -545,11 +547,8 @@ def _run_processing_command(
                 upload_queue,
                 data_root=data_root,
                 repo_id=settings.repo_id,
-                refresh_requested=_metadata_refresh_requested(
-                    data_root,
-                    deferring=defer_metadata_assets,
-                    published_regions=published_regions,
-                ),
+                deferring=defer_metadata_assets,
+                published_regions=published_regions,
             )
     _log_process_results(results)
     if upload_failures:
