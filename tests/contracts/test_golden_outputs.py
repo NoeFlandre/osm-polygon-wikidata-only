@@ -132,9 +132,9 @@ def _split_publication(ops: list) -> dict[str, list[str]]:
     fixed by the documented ``core``/``augmentation`` keys.
     """
     remote = [op.path_in_repo for op in ops]
-    # The canonical augmentation block has nine operations, including
-    # the paired legacy-article retirement.
-    cut = len(remote) - 9 if len(remote) >= 16 else 7
+    # The canonical augmentation block has ten operations, including
+    # the paired legacy-article retirement and the statistics report.
+    cut = len(remote) - 10 if len(remote) >= 16 else 7
     return {"core": remote[:cut], "augmentation": remote[cut:]}
 
 

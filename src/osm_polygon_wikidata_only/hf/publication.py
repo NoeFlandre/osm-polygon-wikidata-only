@@ -181,6 +181,10 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     load_text_presence as _load_text_presence,
 )
+from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
+    render_polygon_stats_section,
+    write_polygon_stats_report,
+)
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
     LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
@@ -280,6 +284,17 @@ def snapshot_upload_manifests(
     return snapshot, card_snapshot
 
 
+def write_polygon_stats_snapshot(data_root: DataRoot, destination: Path) -> Path:
+    """Write the machine-readable polygon statistics report to ``destination``.
+
+    The report is computed from the published polygon table only and
+    written atomically, so a crash mid-write never leaves a partial
+    ``stats.json`` behind. The dataset card rendered by
+    :func:`write_readme_snapshot` summarises the very same snapshot.
+    """
+    return write_polygon_stats_report(data_root.processed, destination)
+
+
 def write_readme_snapshot(
     data_root: DataRoot,
     repo_id: str,
@@ -296,9 +311,12 @@ def write_readme_snapshot(
        via :func:`compute_augmentation_stats`. The per-file summary
        cache lives under ``data_root.cache``, so a warm refresh
        performs zero Parquet table reads.
-    3. Computing public continent statistics from polygon centroids and
+    3. Rendering the polygon surface and geometry block from the same
+       snapshot that :func:`write_polygon_stats_snapshot` publishes as
+       ``stats.json``, so the card and the report never disagree.
+    4. Computing public continent statistics from polygon centroids and
        the bundled Natural Earth Admin-0 reference.
-    4. Rendering the public snapshot, Wikipedia and Wikivoyage corpora,
+    5. Rendering the public snapshot, Wikipedia and Wikivoyage corpora,
        Wikidata facts, storage accounting, and continent distribution.
 
     The README must be written AFTER every other snapshot so a
@@ -320,6 +338,7 @@ def write_readme_snapshot(
         core_stats,
         augmentation_stats=augmentation_stats,
     )
+    stats_section += "\n" + render_polygon_stats_section(data_root.processed)
     if any(data_root.processed_polygons.glob("*.parquet")):
         countries_path = ensure_world_countries(data_root.cache)
         stats_section += "\n" + render_continent_stats(
@@ -446,6 +465,7 @@ def _publication_hooks() -> PublicationHooks:
         snapshot_canonical_document=_snapshot_canonical_document,
         metadata_only_upload=assemble_metadata_only_upload,
         write_readme_snapshot=write_readme_snapshot,
+        write_polygon_stats_snapshot=write_polygon_stats_snapshot,
         refresh_coverage_assets=refresh_coverage_assets,
         ensure_world_land=ensure_world_land,
         generate_coverage_map=generate_coverage_map,
@@ -580,5 +600,6 @@ __all__ = [
     "load_existing_core_artifacts",
     "refresh_coverage_assets",
     "snapshot_upload_manifests",
+    "write_polygon_stats_snapshot",
     "write_readme_snapshot",
 ]

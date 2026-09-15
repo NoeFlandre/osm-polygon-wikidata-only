@@ -46,6 +46,11 @@ REMOTE_CONTAINMENT_RETIREMENT_FILE = "manifests/containment_retirements.json"
 # is :data:`REMOTE_AUGMENTATION_MANIFEST_FILE`.
 LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE = "augmentation/manifests/augmentation_manifest.json"
 
+# The machine-readable statistics report published next to the card.
+# It carries the polygon table's surface and geometry statistics; the
+# dataset card renders a concise summary of the same snapshot.
+REMOTE_POLYGON_STATS_FILE = "stats.json"
+
 # The coverage map PNG embedded in the dataset README.
 REMOTE_COVERAGE_MAP_FILE = "assets/coverage_map.png"
 LEGACY_REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
@@ -138,6 +143,7 @@ __all__ = [
     "REMOTE_MANIFESTS_DIR",
     "REMOTE_MANIFEST_FILE",
     "REMOTE_POLYGONS_DIR",
+    "REMOTE_POLYGON_STATS_FILE",
     "REMOTE_WIKIPEDIA_DOCUMENTS_DIR",
     "canonical_region_paths",
     "local_to_remote",

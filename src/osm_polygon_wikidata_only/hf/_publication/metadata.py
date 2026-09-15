@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_MANIFEST_FILE,
+    REMOTE_POLYGON_STATS_FILE,
     canonical_region_paths,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
@@ -58,6 +59,7 @@ def assemble_metadata_only_upload(
         snapshots_dir=snapshots,
         world_land_warning=world_land_warning,
     )
+    stats_snapshot = hooks.write_polygon_stats_snapshot(data_root, snapshots / "stats.json")
     hooks.write_readme_snapshot(data_root, repo_id, readme_snapshot)
     hero_op = hooks.dataset_hero_op()
 
@@ -74,6 +76,7 @@ def assemble_metadata_only_upload(
     if has_aug_manifest:
         ops.extend(hooks.augmentation_migration_ops(augmentation_manifest_snapshot))
 
+    ops.append(add_op(stats_snapshot, path_in_repo=REMOTE_POLYGON_STATS_FILE))
     ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
     return ops
 

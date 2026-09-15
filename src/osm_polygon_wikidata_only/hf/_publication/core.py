@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
+    REMOTE_POLYGON_STATS_FILE,
     REMOTE_POLYGONS_DIR,
 )
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
@@ -44,7 +45,8 @@ def assemble_core_upload(
     6. combined text H3 density
     7. legacy Wikipedia H3 coverage (delete)
     8. legacy all-polygon H3 density (delete)
-    9. README
+    9. polygon statistics report
+    10. README
     10. canonical coverage map (add)
     11. legacy coverage map (delete)
 
@@ -63,6 +65,9 @@ def assemble_core_upload(
         snapshot_stem=core.polygons_path.stem,
         snapshots_dir=data_root.cache / "upload_manifest_snapshots",
         world_land_warning=world_land_warning,
+    )
+    stats_snapshot = hooks.write_polygon_stats_snapshot(
+        data_root, data_root.cache / "upload_manifest_snapshots" / "stats.json"
     )
     hooks.write_readme_snapshot(data_root, repo_id, card_snapshot)
     canonical_document = hooks.snapshot_canonical_document(
@@ -87,6 +92,7 @@ def assemble_core_upload(
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE),
         delete_op(LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE),
         hero_op,
+        add_op(stats_snapshot, path_in_repo=REMOTE_POLYGON_STATS_FILE),
         add_op(card_snapshot, path_in_repo="README.md"),
         add_op(map_snapshot, path_in_repo=REMOTE_COVERAGE_MAP_FILE),
         delete_op(LEGACY_REMOTE_COVERAGE_MAP_FILE),

@@ -26,6 +26,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
+    REMOTE_POLYGON_STATS_FILE,
     REMOTE_POLYGONS_DIR,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
@@ -97,8 +98,10 @@ def assemble_region_upload(
     if refresh_maps:
         assert hero_op is not None
         readme_snapshot = snapshots / "README.md"
+        stats_snapshot = hooks.write_polygon_stats_snapshot(data_root, snapshots / "stats.json")
         hooks.write_readme_snapshot(data_root, repo_id, readme_snapshot)
         ops.append(hero_op)
+        ops.append(add_op(stats_snapshot, path_in_repo=REMOTE_POLYGON_STATS_FILE))
         ops.append(add_op(readme_snapshot, path_in_repo="README.md"))
     return ops
 
