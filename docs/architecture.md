@@ -172,7 +172,10 @@ when every recorded region was published by that run. Anything else -- a failed
 or aborted run, or a rerun that skipped a region an earlier run never managed
 to upload -- leaves the record in place and publishes nothing repository-wide.
 Unified sync repairs from that record, because it reconciles against the remote
-and republishes missing regional artifacts before refreshing.
+and republishes missing regional artifacts before refreshing. That reconciliation
+is presence-based: it republishes a region whose remote files are absent, not one
+whose remote files are merely older than the local ones, so a region rewritten
+locally but never uploaded is repaired only when its remote objects are missing.
 
 `stats.json` carries a `contract_version`, a `source` block
 (`table`, `column_scope`, `file_count`, `polygon_count`) and four result
