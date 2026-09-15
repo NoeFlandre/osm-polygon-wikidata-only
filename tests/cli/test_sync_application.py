@@ -379,8 +379,8 @@ def test_runner_exception_without_queue_still_propagates(tmp_path: Path) -> None
         application.run()
 
 
-def test_a_queued_metadata_repair_is_not_published_twice(tmp_path: Path) -> None:
-    """The queued repair carries the refresh; the marker is retired, not re-run."""
+def test_a_reconciliation_repair_publishes_once_after_the_queue_drains(tmp_path: Path) -> None:
+    """The repair rides the post-drain path, once, with the marker retired."""
     module = _application_module()
     queue = _Queue()
     events: list[str] = []
@@ -404,10 +404,10 @@ def test_a_queued_metadata_repair_is_not_published_twice(tmp_path: Path) -> None
 
     assert result.return_code == 0
     assert result.metadata_repaired is True
-    # The repair is queued once, and the marker it satisfies is retired
-    # without a second full-dataset scan and upload.
-    assert queue.submissions == [(["metadata-op"], "Repair remote repository metadata and maps")]
-    assert queue.synchronous == []
+    # Nothing rides the regional queue: the repair is published once, after
+    # the drain reported no failures, and the marker it satisfies is retired.
+    assert queue.submissions == []
+    assert queue.synchronous == [(["metadata-op"], "Repair remote repository metadata and maps")]
     assert "clear-marker" in events
 
 
@@ -513,7 +513,7 @@ def test_metadata_marker_requires_an_upload_queue(tmp_path: Path) -> None:
         ).run()
 
 
-def test_metadata_repair_without_submit_callback_does_not_report_repair(
+def test_metadata_repair_without_submit_callback_is_not_requested(
     tmp_path: Path,
 ) -> None:
     module = _application_module()
@@ -528,7 +528,9 @@ def test_metadata_repair_without_submit_callback_does_not_report_repair(
         services=_services(module, []),
     )
 
-    assert application._enqueue_metadata_repair(0, None) is False
+    application._request_metadata_repair(0, None)
+
+    assert application._metadata_repair_requested is False
 
 
 def test_augment_handles_missing_documents_and_empty_actionable_plan(tmp_path: Path) -> None:
@@ -903,4 +905,29 @@ def test_a_dry_run_keeps_a_surviving_refresh_marker(tmp_path: Path) -> None:
     )
 
     assert application._refresh_metadata_marker(False) is True
+    assert "clear-marker" not in events
+
+
+def test_a_failed_regional_upload_blocks_the_reconciliation_repair(tmp_path: Path) -> None:
+    """Metadata must not describe regional artifacts the remote never received."""
+    module = _application_module()
+    queue = _Queue()
+    queue.close_result = ["region upload failed"]
+    events: list[str] = []
+    application = module.SyncApplication(
+        context=_context(
+            module,
+            tmp_path,
+            push_enabled=True,
+            queue=queue,
+            reconciliation_plan=SimpleNamespace(repository_refresh=True),
+        ),
+        services=_services(module, events, marker={"stems": ["alpha"]}),
+    )
+
+    result = application.run()
+
+    assert result.return_code == 1
+    assert queue.synchronous == []
+    assert queue.submissions == []
     assert "clear-marker" not in events

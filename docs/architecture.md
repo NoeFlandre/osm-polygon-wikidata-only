@@ -165,6 +165,11 @@ assets are produced once at the end. Both preserve the same complete-dataset
 statistics while avoiding a full rescan after every region. A single-PBF run
 still publishes those assets inline.
 
+Both the deferred refresh and a reconciliation repair publish through one
+post-drain step: nothing repository-wide rides the regional upload queue, which
+keeps going after a job exhausts its retries, so those assets never describe a
+region whose upload failed.
+
 Deferring is fail-closed. The regions owed a refresh are recorded durably
 before their upload is submitted, and the refresh runs only after the regional
 queue drains without failures, for a run that finished processing, and only

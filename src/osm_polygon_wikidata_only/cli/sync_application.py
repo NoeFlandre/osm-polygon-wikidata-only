@@ -109,7 +109,7 @@ class SyncApplication:
         self._recovery_map_refresh_stems: set[str] = set()
         self._recovery_classifications: dict[str, dict[Any, Any]] = {}
         self._region_publication_submitted = False
-        self._metadata_repair_submitted = False
+        self._metadata_repair_requested = False
         self._deferred_metadata_stems: dict[str, str] = {}
 
     def run(self) -> SyncApplicationResult:
@@ -140,8 +140,8 @@ class SyncApplication:
         self.context.core_will_be_repaired = self.context.core_will_be_repaired or bool(
             self._recovered_stems
         )
-        metadata_repaired = self._enqueue_metadata_repair(rc, callbacks["submit_upload"])
-        return rc, metadata_repaired
+        self._request_metadata_repair(rc, callbacks["submit_upload"])
+        return rc, False
 
     def _runner_callbacks(self) -> dict[str, Any]:
         if not self.context.push_enabled:
@@ -183,43 +183,40 @@ class SyncApplication:
     def _no_repair_outputs(self) -> bool:
         return not self.context.core_will_be_repaired and not self.context.containment_enqueued
 
-    def _enqueue_metadata_repair(
+    def _request_metadata_repair(
         self,
         rc: int,
         submit_upload: Callable[[list[PublicationOp], str], None] | None,
-    ) -> bool:
-        if not self._metadata_repair_needed(rc):
-            return False
-        self.services.logger.info("Enqueuing metadata-only repair (no region core repair planned)")
-        ops = self.services.assemble_metadata_only_upload(
-            data_root=self.context.data_root,
-            repo_id=self.context.settings.repo_id,
-            world_land_warning=None,
+    ) -> None:
+        """Record that this sync owes a repository-wide metadata repair.
+
+        The repair is not queued behind the regional jobs: the queue keeps
+        going after a job exhausts its retries, so a repair riding it could
+        publish a manifest, statistics report, map, and card describing
+        regional artifacts that never reached the remote. It is published
+        once the queue has drained without failures, through the same
+        post-drain path the deferred refresh uses.
+        """
+        if submit_upload is None or not self._metadata_repair_needed(rc):
+            return
+        self.services.logger.info(
+            "Metadata-only repair requested (no region core repair planned); "
+            "publishing it after the region queue drains"
         )
-        if submit_upload is None:
-            return False
-        submit_upload(ops, "Repair remote repository metadata and maps")
-        # This upload already contains the repository-wide metadata refresh;
-        # do not enqueue a second refresh after the region queue drains.
-        self._region_publication_submitted = False
-        self._metadata_repair_submitted = True
-        return True
+        self._metadata_repair_requested = True
 
     def _refresh_metadata_marker(self, metadata_repaired: bool) -> bool:
         """Publish the repository-wide assets once, when they are still owed.
 
-        A queued metadata repair already carries them, and this runs only
-        after the upload queue drained without failures, so that repair
-        succeeded: its marker is retired without scanning and uploading
-        the same assets a second time.
+        This runs only after the upload queue drained without failures, so
+        the regional artifacts the assets describe are on the remote. A
+        reconciliation repair and a deferred refresh both resolve here, in
+        one scan and one upload rather than two.
         """
         if not self.context.push_enabled:
             return metadata_repaired
         marker = self.services.load_metadata_refresh_marker(self.context.data_root)
-        if self._metadata_repair_submitted:
-            self._clear_metadata_refresh_state(marker)
-            return metadata_repaired
-        if not self._metadata_refresh_required(marker):
+        if not self._metadata_repair_requested and not self._metadata_refresh_required(marker):
             return metadata_repaired
         self._log_metadata_refresh(marker)
         self._upload_metadata_refresh()
