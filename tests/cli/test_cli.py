@@ -1124,3 +1124,36 @@ def test_recording_a_region_preserves_a_surviving_marker(
     assert set(hashes) == {"fresh-latest", "stranded-latest"}
     assert refreshes == []
     assert cleared == []
+
+
+def test_an_unverifiable_marker_is_reported_to_the_operator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Staleness this command cannot repair must not be silent."""
+    root = DataRoot(tmp_path)
+    root.ensure()
+
+    class _StubQueue:
+        def close_and_wait(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(
+        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
+    )
+    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
+    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
+    monkeypatch.setattr(
+        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["stranded-latest"])
+    )
+
+    with caplog.at_level("WARNING"):
+        assert (
+            commands._run_processing_command(
+                _deferring_args(tmp_path), data_root=root, settings=Settings(repo_id="example/repo")
+            )
+            == 0
+        )
+
+    assert "stranded-latest" in caplog.text
+    assert "sync-dir" in caplog.text

@@ -124,8 +124,28 @@ def _drain_uploads(
     if failures or not deferring:
         return failures
     if not _metadata_refresh_requested(data_root, published_stems=published_stems):
+        _warn_metadata_refresh_pending(data_root)
         return failures
     return _refresh_repository_metadata(upload_queue, data_root=data_root, repo_id=repo_id)
+
+
+def _warn_metadata_refresh_pending(data_root: DataRoot) -> None:
+    """Say which regions still owe a refresh this run could not publish.
+
+    This command cannot verify that a region it did not publish itself --
+    one an earlier run stranded, or one the upload queue resumed from its
+    durable state -- actually reached the remote, so it leaves the
+    repository-wide assets alone. The operator needs to know that, and
+    which command repairs it.
+    """
+    marker = load_metadata_refresh_marker(data_root)
+    if marker is None:
+        return
+    LOGGER.warning(
+        "Repository metadata still owes %s; run sync-dir to reconcile those regions "
+        "and refresh the statistics, maps, and README",
+        ", ".join(marker["stems"]),
+    )
 
 
 def _refresh_repository_metadata(
