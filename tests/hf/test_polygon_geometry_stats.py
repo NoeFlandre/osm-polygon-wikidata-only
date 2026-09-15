@@ -23,10 +23,12 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_schema,
 )
 from osm_polygon_wikidata_only.hf._polygon_geometry import aggregation
+from osm_polygon_wikidata_only.hf._polygon_geometry.decoding import decode_bbox, decode_geometry
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
     PolygonStatsInputError,
     compute_polygon_geometry_stats,
     load_polygon_geometry_stats,
+    polygon_directory_fingerprint,
     render_polygon_geometry_stats,
     stats_payload,
     write_polygon_stats_report,
@@ -550,3 +552,85 @@ def test_payload_and_card_expose_the_documented_fields(tmp_path: Path) -> None:
     assert block.startswith("## Polygon surface and geometry\n")
     assert "4,242.00 m2" in block
     assert "stats.json" in block
+
+
+# --- decoder edge cases -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "",
+        "not json",
+        json.dumps([1, 2, 3]),
+        json.dumps({"type": "Polygon"}),
+        json.dumps({"type": "Polygon", "coordinates": []}),
+        json.dumps({"type": "LineString", "coordinates": [[0.0, 0.0]]}),
+        json.dumps({"type": "MultiPolygon", "coordinates": ["not-a-part"]}),
+        json.dumps({"type": "MultiPolygon", "coordinates": [[]]}),
+    ],
+)
+def test_undecodable_geometry_values_return_none(raw: object) -> None:
+    assert decode_geometry(raw) is None
+
+
+def test_an_unclosed_ring_counts_every_vertex(tmp_path: Path) -> None:
+    sample = decode_geometry(
+        json.dumps({"type": "Polygon", "coordinates": [[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]})
+    )
+
+    assert sample is not None
+    assert sample.vertices == 3
+
+
+def test_an_empty_ring_contributes_no_vertex() -> None:
+    sample = decode_geometry(json.dumps({"type": "Polygon", "coordinates": [[], [[0.0, 0.0]]]}))
+
+    assert sample is not None
+    assert sample.vertices == 1
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "",
+        "not json",
+        json.dumps({"min_lon": 0.0}),
+        json.dumps([0.0, 0.0, 1.0]),
+        json.dumps([0.0, 0.0, 1.0, "north"]),
+        json.dumps([0.0, 0.0, 1.0, True]),
+        json.dumps([1.0, 0.0, 0.0, 1.0]),
+        json.dumps([0.0, 1.0, 1.0, 0.0]),
+    ],
+)
+def test_undecodable_bbox_values_return_none(raw: object) -> None:
+    assert decode_bbox(raw) is None
+
+
+def test_the_memo_fingerprint_is_empty_without_a_polygon_directory(tmp_path: Path) -> None:
+    assert polygon_directory_fingerprint(tmp_path / "processed") == ()
+    assert load_polygon_geometry_stats(tmp_path / "processed").polygon_count == 0
+
+
+def test_a_manifest_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "any-latest", [])
+    manifest = processed / "manifests" / "processed_pbfs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(["any-latest"]), encoding="utf-8")
+
+    with pytest.raises(PolygonStatsInputError, match="is not a JSON object"):
+        compute_polygon_geometry_stats(processed)
+
+
+def test_a_manifest_entry_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "any-latest", [])
+    manifest = processed / "manifests" / "processed_pbfs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps({"any-latest.osm.pbf": "not-an-object"}), encoding="utf-8")
+
+    with pytest.raises(PolygonStatsInputError, match="non-object entry"):
+        compute_polygon_geometry_stats(processed)

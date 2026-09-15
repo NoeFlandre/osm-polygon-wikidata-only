@@ -91,11 +91,20 @@ def _polygon_parts(payload: dict[str, Any]) -> list[Any] | None:
     coordinates = payload.get("coordinates")
     if not isinstance(coordinates, list) or not coordinates:
         return None
-    if payload.get("type") == "Polygon":
+    return _parts_for_type(str(payload.get("type")), coordinates)
+
+
+def _parts_for_type(geometry_type: str, coordinates: list[Any]) -> list[Any] | None:
+    """Group one geometry's coordinates per component by GeoJSON type."""
+    if geometry_type == "Polygon":
         return [coordinates]
-    if payload.get("type") != "MultiPolygon":
+    if geometry_type != "MultiPolygon":
         return None
-    return coordinates if all(isinstance(part, list) for part in coordinates) else None
+    return coordinates if _all_lists(coordinates) else None
+
+
+def _all_lists(values: list[Any]) -> bool:
+    return all(isinstance(value, list) for value in values)
 
 
 def _sample_from_parts(is_multipolygon: bool, parts: list[Any]) -> GeometrySample | None:

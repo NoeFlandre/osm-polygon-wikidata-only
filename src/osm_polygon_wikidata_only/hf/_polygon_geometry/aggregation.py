@@ -27,7 +27,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .decoding import BboxSample, decode_bbox, decode_geometry
+from .decoding import BboxSample, GeometrySample, decode_bbox, decode_geometry
 from .models import (
     STATS_CONTRACT_VERSION,
     ExtentSummary,
@@ -158,37 +158,60 @@ def _areas_by_source(sources: pa.Array, values: np.ndarray) -> list[tuple[str, n
 
 
 def _accumulate_geometry(accumulator: _Accumulator, raw_values: list[object]) -> None:
-    samples = [decode_geometry(raw) for raw in raw_values]
-    readable = [sample for sample in samples if sample is not None]
-    accumulator.geometry_unreadable_count += len(samples) - len(readable)
-    accumulator.multipolygon_type_count += sum(1 for s in readable if s.is_multipolygon)
-    accumulator.polygon_type_count += sum(1 for s in readable if not s.is_multipolygon)
-    accumulator.with_holes_count += sum(1 for s in readable if s.holes)
-    accumulator.total_holes += sum(s.holes for s in readable)
-    accumulator.vertices.append(_int_array([s.vertices for s in readable]))
-    accumulator.rings.append(_int_array([s.rings for s in readable]))
-    accumulator.components.append(_int_array([s.components for s in readable]))
+    """Fold one batch of decoded geometries into the accumulator."""
+    vertices: list[int] = []
+    rings: list[int] = []
+    components: list[int] = []
+    for raw in raw_values:
+        sample = decode_geometry(raw)
+        if sample is None:
+            accumulator.geometry_unreadable_count += 1
+            continue
+        _count_geometry_sample(accumulator, sample)
+        vertices.append(sample.vertices)
+        rings.append(sample.rings)
+        components.append(sample.components)
+    accumulator.vertices.append(_int_array(vertices))
+    accumulator.rings.append(_int_array(rings))
+    accumulator.components.append(_int_array(components))
+
+
+def _count_geometry_sample(accumulator: _Accumulator, sample: GeometrySample) -> None:
+    accumulator.multipolygon_type_count += int(sample.is_multipolygon)
+    accumulator.polygon_type_count += int(not sample.is_multipolygon)
+    accumulator.with_holes_count += int(sample.holes > 0)
+    accumulator.total_holes += sample.holes
 
 
 def _accumulate_bboxes(accumulator: _Accumulator, raw_values: list[object]) -> None:
-    samples = [decode_bbox(raw) for raw in raw_values]
-    readable = [sample for sample in samples if sample is not None]
-    accumulator.bbox_unreadable_count += len(samples) - len(readable)
-    accumulator.wider_than_180_count += sum(1 for s in readable if s.width_deg > 180.0)
-    accumulator.pole_touching_count += sum(1 for s in readable if _touches_pole(s))
-    _accumulate_extent(accumulator, readable)
-    accumulator.width_deg.append(_float_array([s.width_deg for s in readable]))
-    accumulator.height_deg.append(_float_array([s.height_deg for s in readable]))
-    accumulator.width_m.append(_float_array([_width_m(s) for s in readable]))
-    accumulator.height_m.append(_float_array([_height_m(s) for s in readable]))
+    """Fold one batch of decoded bounding boxes into the accumulator."""
+    width_deg: list[float] = []
+    height_deg: list[float] = []
+    width_m: list[float] = []
+    height_m: list[float] = []
+    for raw in raw_values:
+        sample = decode_bbox(raw)
+        if sample is None:
+            accumulator.bbox_unreadable_count += 1
+            continue
+        _count_bbox_sample(accumulator, sample)
+        width_deg.append(sample.width_deg)
+        height_deg.append(sample.height_deg)
+        width_m.append(_width_m(sample))
+        height_m.append(_height_m(sample))
+    accumulator.width_deg.append(_float_array(width_deg))
+    accumulator.height_deg.append(_float_array(height_deg))
+    accumulator.width_m.append(_float_array(width_m))
+    accumulator.height_m.append(_float_array(height_m))
 
 
-def _accumulate_extent(accumulator: _Accumulator, readable: list[BboxSample]) -> None:
-    for sample in readable:
-        accumulator.min_lon = min(accumulator.min_lon, sample.min_lon)
-        accumulator.min_lat = min(accumulator.min_lat, sample.min_lat)
-        accumulator.max_lon = max(accumulator.max_lon, sample.max_lon)
-        accumulator.max_lat = max(accumulator.max_lat, sample.max_lat)
+def _count_bbox_sample(accumulator: _Accumulator, sample: BboxSample) -> None:
+    accumulator.wider_than_180_count += int(sample.width_deg > 180.0)
+    accumulator.pole_touching_count += int(_touches_pole(sample))
+    accumulator.min_lon = min(accumulator.min_lon, sample.min_lon)
+    accumulator.min_lat = min(accumulator.min_lat, sample.min_lat)
+    accumulator.max_lon = max(accumulator.max_lon, sample.max_lon)
+    accumulator.max_lat = max(accumulator.max_lat, sample.max_lat)
 
 
 def _touches_pole(sample: BboxSample) -> bool:

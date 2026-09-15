@@ -112,7 +112,7 @@ def validate_row_counts(
     """Refuse a scanned file whose row count drifted from the manifest."""
     if manifest_counts is None:
         return
-    drifted = sorted(stem for stem, rows in scanned_counts.items() if manifest_counts[stem] != rows)
+    drifted = _drifted_stems(manifest_counts, scanned_counts)
     if not drifted:
         return
     detail = ", ".join(
@@ -120,6 +120,13 @@ def validate_row_counts(
         for stem in drifted
     )
     raise PolygonStatsInputError(f"{polygons_dir} row counts drifted from the manifest: {detail}")
+
+
+def _drifted_stems(
+    manifest_counts: Mapping[str, int], scanned_counts: Mapping[str, int]
+) -> list[str]:
+    """Return the stems whose scanned row count differs from the manifest."""
+    return sorted(stem for stem, rows in scanned_counts.items() if manifest_counts[stem] != rows)
 
 
 def _refuse_missing(
