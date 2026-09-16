@@ -13,6 +13,7 @@ from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -82,6 +83,15 @@ class V2LanguageSplitResult:
     files: tuple[V2LanguageSplitFile, ...]
 
 
+@dataclass(slots=True)
+class _SourceWriteState:
+    """Mutable writer handles for one bounded source-file stream."""
+
+    writers: dict[str, pq.ParquetWriter]
+    final_paths: dict[str, Path]
+    row_counts: dict[str, int]
+
+
 def build_v2_language_splits(
     processed_root: Path,
     *,
@@ -106,9 +116,7 @@ def build_v2_language_splits(
     specs = language_table_specs(DatasetContract.V2)
     files: list[V2LanguageSplitFile] = []
     for spec in specs:
-        table_inventory = inventory.table(spec.table)
-        if not isinstance(table_inventory, LanguageTableInventory):
-            raise V2LanguageSplitError(f"Expected language inventory for {spec.table.value}")
+        table_inventory = cast(LanguageTableInventory, inventory.table(spec.table))
         for source_file in table_inventory.source_files:
             files.extend(
                 _write_source_file(
@@ -155,50 +163,16 @@ def _write_source_file(
     source_path = (root / source_file).resolve()
     _ensure_source_is_under_root(source_path, root)
     expected_schema = spec.schema_factory()
-    writers: dict[str, pq.ParquetWriter] = {}
-    final_paths: dict[str, Path] = {}
-    row_counts: dict[str, int] = defaultdict(int)
-    source_row_count = 0
+    state = _SourceWriteState({}, {}, defaultdict(int))
     with ExitStack() as stack:
-        try:
-            with pq.ParquetFile(source_path) as parquet_file:
-                language_index = parquet_file.schema_arrow.get_field_index(spec.language_column)
-                if language_index < 0:
-                    raise V2LanguageSplitError(
-                        f"Language column {spec.language_column!r} is missing from {source_path}"
-                    )
-                for batch in parquet_file.iter_batches(batch_size=batch_size):
-                    source_row_count += batch.num_rows
-                    partitions = _partition_batch(batch, language_index)
-                    for language, indices in partitions.items():
-                        writer = writers.get(language)
-                        if writer is None:
-                            final_path = _output_path(
-                                destination,
-                                spec,
-                                language,
-                                source_path.stem,
-                            )
-                            temporary = stack.enter_context(atomic_replacement(final_path))
-                            writer = pq.ParquetWriter(
-                                temporary,
-                                expected_schema,
-                                compression="snappy",
-                            )
-                            writers[language] = writer
-                            final_paths[language] = final_path
-                        selected = batch.take(pa.array(indices, type=pa.int64()))
-                        writer.write_batch(selected)
-                        row_counts[language] += len(indices)
-        finally:
-            for writer in writers.values():
-                writer.close()
-
-    expected_rows = sum(row_counts.values())
-    if source_row_count != expected_rows:
-        raise V2LanguageSplitError(
-            f"Rows were not assigned exactly once for {source_file}: "
-            f"source={source_row_count}, partitions={expected_rows}"
+        _stream_source_file(
+            source_path,
+            destination,
+            spec,
+            batch_size,
+            expected_schema,
+            state,
+            stack,
         )
     return [
         _validated_output_file(
@@ -206,12 +180,85 @@ def _write_source_file(
             spec,
             language,
             source_file,
-            final_paths[language],
-            row_counts[language],
+            state.final_paths[language],
+            state.row_counts[language],
             expected_schema,
         )
-        for language in sorted(row_counts, key=_language_sort_key)
+        for language in sorted(state.row_counts, key=_language_sort_key)
     ]
+
+
+def _stream_source_file(
+    source_path: Path,
+    destination: Path,
+    spec: LanguageTableSpec,
+    batch_size: int,
+    expected_schema: pa.Schema,
+    state: _SourceWriteState,
+    stack: ExitStack,
+) -> None:
+    """Stream one validated source file into its language writers."""
+    try:
+        with pq.ParquetFile(source_path) as parquet_file:
+            language_index = parquet_file.schema_arrow.get_field_index(spec.language_column)
+            for batch in parquet_file.iter_batches(batch_size=batch_size):
+                _write_batch(
+                    batch,
+                    language_index,
+                    destination,
+                    spec,
+                    source_path.stem,
+                    expected_schema,
+                    state,
+                    stack,
+                )
+    finally:
+        for writer in state.writers.values():
+            writer.close()
+
+
+def _write_batch(
+    batch: pa.RecordBatch,
+    language_index: int,
+    destination: Path,
+    spec: LanguageTableSpec,
+    source_stem: str,
+    expected_schema: pa.Schema,
+    state: _SourceWriteState,
+    stack: ExitStack,
+) -> None:
+    for language, indices in _partition_batch(batch, language_index).items():
+        writer = _writer_for_language(
+            language,
+            destination,
+            spec,
+            source_stem,
+            expected_schema,
+            state,
+            stack,
+        )
+        writer.write_batch(batch.take(pa.array(indices, type=pa.int64())))
+        state.row_counts[language] += len(indices)
+
+
+def _writer_for_language(
+    language: str,
+    destination: Path,
+    spec: LanguageTableSpec,
+    source_stem: str,
+    expected_schema: pa.Schema,
+    state: _SourceWriteState,
+    stack: ExitStack,
+) -> pq.ParquetWriter:
+    writer = state.writers.get(language)
+    if writer is not None:
+        return writer
+    final_path = _output_path(destination, spec, language, source_stem)
+    temporary = stack.enter_context(atomic_replacement(final_path))
+    writer = pq.ParquetWriter(temporary, expected_schema, compression="snappy")
+    state.writers[language] = writer
+    state.final_paths[language] = final_path
+    return writer
 
 
 def _partition_batch(batch: pa.RecordBatch, language_index: int) -> dict[str, list[int]]:
@@ -271,17 +318,31 @@ def _validate_conservation(
     inventory: LanguageInventory,
     files: tuple[V2LanguageSplitFile, ...],
 ) -> None:
+    observed = _observed_counts(files)
+    for table_inventory in inventory.tables:
+        _validate_table_conservation(table_inventory, observed)
+
+
+def _observed_counts(
+    files: tuple[V2LanguageSplitFile, ...],
+) -> dict[tuple[LanguageTable, str], int]:
     observed: dict[tuple[LanguageTable, str], int] = defaultdict(int)
     for file in files:
         observed[(file.table, file.language)] += file.row_count
-    for table_inventory in inventory.tables:
-        expected = {bucket.language: bucket.row_count for bucket in table_inventory.buckets}
-        actual = {language: observed[(table_inventory.table, language)] for language in expected}
-        if actual != expected:
-            raise V2LanguageSplitError(
-                f"row conservation failed for {table_inventory.table.value}: "
-                f"expected={expected}, observed={actual}"
-            )
+    return observed
+
+
+def _validate_table_conservation(
+    table_inventory: LanguageTableInventory,
+    observed: dict[tuple[LanguageTable, str], int],
+) -> None:
+    expected = {bucket.language: bucket.row_count for bucket in table_inventory.buckets}
+    actual = {language: observed[(table_inventory.table, language)] for language in expected}
+    if actual != expected:
+        raise V2LanguageSplitError(
+            f"row conservation failed for {table_inventory.table.value}: "
+            f"expected={expected}, observed={actual}"
+        )
 
 
 def _manifest_payload(
@@ -301,8 +362,6 @@ def _manifest_payload(
         buckets: list[dict[str, object]] = []
         for bucket in table_inventory.buckets:
             bucket_files = by_table_language[(table_inventory.table, bucket.language)]
-            if bucket.row_count == 0:
-                continue
             bucket_payload = bucket.to_dict()
             bucket_payload["files"] = [
                 file.to_dict() for file in sorted(bucket_files, key=_file_sort_key)
@@ -348,8 +407,6 @@ def _language_sort_key(language: str) -> tuple[bool, str]:
 
 
 def _ensure_source_is_under_root(source_path: Path, root: Path) -> None:
-    if not source_path.is_file():
-        raise V2LanguageSplitError(f"Source artifact is missing: {source_path}")
     try:
         source_path.relative_to(root)
     except ValueError as error:

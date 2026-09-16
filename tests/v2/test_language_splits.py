@@ -18,6 +18,8 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 )
 from osm_polygon_wikidata_only.v2.language_splits import (
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+    V2LanguageSplitError,
+    _validate_conservation,
     build_v2_language_splits,
     main,
 )
@@ -360,6 +362,32 @@ def test_v2_split_rejects_a_v1_processed_root_without_writing_output(tmp_path: P
         build_v2_language_splits(root)
 
     assert not (root / "language_splits").exists()
+
+
+def test_v2_split_rejects_a_nonpositive_batch_size_without_writing_output(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match="batch_size must be positive"):
+        build_v2_language_splits(root, batch_size=0)
+
+    assert not (root / "language_splits").exists()
+
+
+def test_v2_split_rejects_output_outside_processed_root(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match="output must be under"):
+        build_v2_language_splits(root, output_root=tmp_path / "outside")
+
+    assert not (root / "language_splits").exists()
+
+
+def test_v2_split_conservation_guard_rejects_missing_output(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+    inventory = build_language_inventory(root, DatasetContract.V2)
+
+    with pytest.raises(V2LanguageSplitError, match="row conservation failed"):
+        _validate_conservation(inventory, ())
 
 
 def test_v2_split_can_be_loaded_with_standard_datasets(tmp_path: Path) -> None:
