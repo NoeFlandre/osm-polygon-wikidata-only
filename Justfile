@@ -151,6 +151,21 @@ typecheck: quality-runtime
 ty: quality-runtime
     uv run ty check src scripts
 
+# Recompute and validate both dataset cards and reports without uploading.
+release-stats-dry-run data_root: quality-runtime
+    uv run osm-polygon-wikidata-only release-stats \
+        --data-root "{{ data_root }}" \
+        --confirm-repo NoeFlandre/osm-polygon-wikidata-only \
+        --confirm-repo NoeFlandre/osm-polygon-wikidata-and-wikipedia
+
+# Recompute, publish, and verify both dataset cards and reports.
+release-stats data_root: quality-runtime
+    uv run osm-polygon-wikidata-only release-stats \
+        --data-root "{{ data_root }}" \
+        --confirm-repo NoeFlandre/osm-polygon-wikidata-only \
+        --confirm-repo NoeFlandre/osm-polygon-wikidata-and-wikipedia \
+        --apply
+
 build: quality-runtime
     uv build
 

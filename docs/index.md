@@ -49,6 +49,35 @@ documents authentication, optional Wikimedia credentials, and the V2 command.
 The same command can be interrupted and run again; completed regions are
 skipped and resumable state is kept under the selected data root.
 
+## Releasing the card and statistics report
+
+`release-stats` publishes only the dataset card and the machine-readable
+`stats.json` report. It recomputes both from every published polygon row of the
+selected contract and uploads nothing else; Parquet tables, manifests, and maps
+are untouched. Each released dataset needs its own exact `--confirm-repo`:
+
+```bash
+# Dry run for both published datasets. No network writes.
+uv run osm-polygon-wikidata-only release-stats \
+  --data-root "$OSM_POLYGON_DATA_ROOT" \
+  --confirm-repo NoeFlandre/osm-polygon-wikidata-only \
+  --confirm-repo NoeFlandre/osm-polygon-wikidata-and-wikipedia
+
+# Publish and verify both remote revisions.
+uv run osm-polygon-wikidata-only release-stats \
+  --data-root "$OSM_POLYGON_DATA_ROOT" \
+  --confirm-repo NoeFlandre/osm-polygon-wikidata-only \
+  --confirm-repo NoeFlandre/osm-polygon-wikidata-and-wikipedia \
+  --apply
+```
+
+Use `--dataset-version v1` or `--dataset-version v2` to release one contract
+alone, with that dataset's confirmation only. Each run prints one JSON report
+per dataset recording the target repository, the verified remote revision,
+every published file with its SHA-256 and size, and the polygon file and row
+counts the statistics were computed from. Staged files are rewritten only when
+their bytes change, so a second run over unchanged artifacts is a no-op.
+
 ## V1 contract tables
 
 The default V1 contract publishes these logical tables for each region:

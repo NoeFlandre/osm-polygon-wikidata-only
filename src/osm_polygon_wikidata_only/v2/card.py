@@ -14,6 +14,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
+from osm_polygon_wikidata_only.hf.polygon_geometry_stats import render_polygon_stats_section
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.comparison import (
@@ -490,6 +491,7 @@ def render_v2_card(
                 f"- **Total Parquet storage:** {snapshot.total_parquet_storage_bytes / 1_000_000_000:.1f} GB",
                 "",
                 comparison,
+                render_polygon_stats_section(processed_v2),
                 "## Coverage maps",
                 "",
                 "### All V2 dataset polygons",
@@ -529,6 +531,7 @@ def render_v2_card(
                 "- `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet` — optional sentence rows with explicit split/unsplit provenance.",
                 "- `polygon_document_links/<stem>.parquet` — unified Wikipedia and Wikivoyage polygon links.",
                 "- `wikidata/facts/<stem>.parquet` — structured Wikidata facts.",
+                "- `stats.json` — the complete machine-readable polygon surface and geometry report.",
                 "",
                 "## Reproducibility",
                 "",

@@ -67,6 +67,7 @@ def help_outputs() -> dict[str, str]:
         "split-v2-sentences": _capture_help(parser, ["split-v2-sentences"]),
         "augment-region": _capture_help(parser, ["augment-region"]),
         "augment-dir": _capture_help(parser, ["augment-dir"]),
+        "release-stats": _capture_help(parser, ["release-stats"]),
     }
 
 
@@ -74,6 +75,12 @@ def test_root_help_frozen(help_outputs: dict[str, str]) -> None:
     golden_path = GOLDEN / "cli_help_root.txt"
     assert golden_path.exists(), f"missing golden help file: {golden_path}"
     assert help_outputs["root"] == golden_path.read_text(encoding="utf-8")
+
+
+def test_release_stats_help_frozen(help_outputs: dict[str, str]) -> None:
+    golden_path = GOLDEN / "cli_help_release-stats.txt"
+    assert golden_path.exists(), f"missing golden help file: {golden_path}"
+    assert help_outputs["release-stats"] == golden_path.read_text(encoding="utf-8")
 
 
 def test_process_pbf_help_frozen(help_outputs: dict[str, str]) -> None:

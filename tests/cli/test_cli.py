@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ def test_parser_has_documented_subcommands() -> None:
         "augment-region",
         "process-pbf",
         "process-dir",
+        "release-stats",
         "sync-dir",
         "split-v2-sentences",
     }
@@ -1215,3 +1217,66 @@ def test_a_dry_run_never_touches_the_refresh_marker(
     assert len(refreshes) == 1
     assert recorded == []
     assert cleared == []
+
+
+def test_release_stats_requires_one_confirmation_per_released_dataset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from osm_polygon_wikidata_only.v2.storage import write_v2_region
+
+    write_v2_region(
+        tmp_path / "processed_v2",
+        "region-latest",
+        polygons=[{"polygon_id": "p1", "has_wikidata": False}],
+        documents=[],
+        links=[],
+    )
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "release-stats",
+                "--data-root",
+                str(tmp_path),
+                "--dataset-version",
+                "v2",
+                "--confirm-repo",
+                "NoeFlandre/osm-polygon-wikidata-only",
+            ]
+        )
+
+    assert "one --confirm-repo per released dataset" in capsys.readouterr().err
+
+
+def test_release_stats_dry_run_reports_the_v2_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from osm_polygon_wikidata_only.v2.storage import write_v2_region
+
+    write_v2_region(
+        tmp_path / "processed_v2",
+        "region-latest",
+        polygons=[{"polygon_id": "p1", "has_wikidata": False}],
+        documents=[],
+        links=[],
+    )
+
+    assert (
+        main(
+            [
+                "release-stats",
+                "--data-root",
+                str(tmp_path),
+                "--dataset-version",
+                "v2",
+                "--confirm-repo",
+                "NoeFlandre/osm-polygon-wikidata-and-wikipedia",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["repo_id"] == "NoeFlandre/osm-polygon-wikidata-and-wikipedia"
+    assert payload["published"] is False
+    assert [item["path_in_repo"] for item in payload["files"]] == ["README.md", "stats.json"]

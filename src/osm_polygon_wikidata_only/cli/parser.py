@@ -104,7 +104,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_augment.add_argument("stem", help="Completed region stem, e.g. andorra-latest")
     sub.add_parser("augment-dir", parents=[common], help="Augment every completed core region")
+    _add_release_stats_parser(sub)
     return parser
+
+
+def _add_release_stats_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the card/statistics release command."""
+    release = sub.add_parser(
+        "release-stats",
+        help="Publish only the dataset card and the polygon statistics report",
+    )
+    release.add_argument("--data-root", type=Path, default=None, help="Data root directory")
+    release.add_argument(
+        "--dataset-version",
+        choices=("v1", "v2", "both"),
+        default="both",
+        help="Which published contract to release (default: both)",
+    )
+    release.add_argument(
+        "--confirm-repo",
+        action="append",
+        default=None,
+        metavar="REPO_ID",
+        help="Exact target repo id; repeat once per released dataset",
+    )
+    release.add_argument(
+        "--apply", action="store_true", help="Publish and verify (default: dry run)"
+    )
+    release.add_argument("--hf-token", default=None)
+    release.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
+    release.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
+    release.set_defaults(push=False)
 
 
 def parse_languages(value: str) -> tuple[str, ...]:
