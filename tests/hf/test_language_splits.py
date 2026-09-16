@@ -257,7 +257,9 @@ def test_manifest_entry_rejects_non_string_keys_and_non_object_values(
 
 
 @pytest.mark.parametrize("entry", [{}, {"polygons_path": None}, {"polygons_path": 1}])
-def test_manifest_field_path_requires_a_string_path(entry: dict[str, object], tmp_path: Path) -> None:
+def test_manifest_field_path_requires_a_string_path(
+    entry: dict[str, object], tmp_path: Path
+) -> None:
     with pytest.raises(LanguageInventoryError, match="missing string field"):
         _manifest_field_path(
             tmp_path / "processed",
