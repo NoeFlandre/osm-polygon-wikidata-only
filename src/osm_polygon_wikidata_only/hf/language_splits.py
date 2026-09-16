@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
@@ -52,6 +52,16 @@ _LEGACY_ALIASES: dict[str, str] = {"be_x_old": "be-tarask"}
 # through the explicit unknown partition.
 _LEGACY_UNUSABLE_VALUES = frozenset({"abstract", "simple"})
 _BATCH_SIZE = 65_536
+_V1_MANIFEST_FIELDS = (
+    ("polygons_path", "polygons"),
+    ("polygon_articles_path", "polygon_articles"),
+)
+_V2_MANIFEST_FIELDS = (
+    ("polygons_path", "polygons"),
+    ("documents_path", "wikipedia/documents"),
+    ("sections_path", "wikipedia/sections"),
+    ("links_path", "polygon_document_links"),
+)
 
 
 class DatasetContract(StrEnum):
@@ -226,14 +236,12 @@ class LanguageInventory:
     ) -> LanguageTableInventory | ValidatedArtifact:
         """Return a language table, or a neutral artifact when requested."""
         table_name = table.value if isinstance(table, LanguageTable) else table
-        for inventory in self.tables:
-            if inventory.table.value == table_name:
-                return inventory
-        if allow_non_language:
-            for artifact in self.validated_artifacts:
-                if artifact.table == table_name:
-                    return artifact
-        raise KeyError(f"No inventory for table {table_name!r}")
+        match = _find_named_inventory(self.tables, table_name)
+        if match is None and allow_non_language:
+            match = _find_named_inventory(self.validated_artifacts, table_name)
+        if match is None:
+            raise KeyError(f"No inventory for table {table_name!r}")
+        return match
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the inventory as a deterministic JSON-compatible object."""
@@ -252,6 +260,40 @@ class LanguageInventory:
 
 class LanguageInventoryError(ValueError):
     """Raised when source artifacts cannot be validated for inventory."""
+
+
+def _find_named_inventory(
+    records: Sequence[LanguageTableInventory | ValidatedArtifact],
+    table_name: str,
+) -> LanguageTableInventory | ValidatedArtifact | None:
+    """Return the first inventory record with the requested logical name."""
+    for record in records:
+        record_name = (
+            record.table.value if isinstance(record.table, LanguageTable) else record.table
+        )
+        if record_name == table_name:
+            return record
+    return None
+
+
+def _manifest_fields_for(dataset: DatasetContract) -> tuple[tuple[str, str], ...]:
+    """Return the manifest paths required by one dataset contract."""
+    return _V1_MANIFEST_FIELDS if dataset is DatasetContract.V1 else _V2_MANIFEST_FIELDS
+
+
+def _read_manifest_payload(manifest: Path) -> dict[str, object]:
+    """Read and validate the JSON object stored in a processed manifest."""
+    if not manifest.is_file():
+        raise LanguageInventoryError(f"Processed manifest is missing: {manifest}")
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise LanguageInventoryError(
+            f"Could not read processed manifest {manifest}: {error}"
+        ) from error
+    if not isinstance(payload, dict):
+        raise LanguageInventoryError(f"Processed manifest must be a JSON object: {manifest}")
+    return cast(dict[str, object], payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,8 +319,12 @@ def normalize_language(value: object) -> LanguageResolution:
     stripped = value.strip()
     if not stripped:
         return _unknown(LanguageDisposition.BLANK)
+    return _normalize_language_text(stripped)
 
-    lowered = stripped.lower()
+
+def _normalize_language_text(value: str) -> LanguageResolution:
+    """Classify one non-blank language string after outer validation."""
+    lowered = value.lower()
     legacy = _LEGACY_ALIASES.get(lowered)
     if legacy is not None:
         return LanguageResolution(legacy, legacy, LanguageDisposition.LEGACY_ALIAS)
@@ -327,49 +373,11 @@ def build_language_inventory(
     ).resolve()
     referenced = _load_and_validate_manifest(root, manifest, contract)
 
-    tables: list[LanguageTableInventory] = []
-    artifacts: list[ValidatedArtifact] = []
-    source_paths: list[Path] = []
-    for spec in _artifact_specs_for(contract):
-        paths = _artifact_paths(root, spec)
-        if not paths:
-            if spec.required:
-                raise LanguageInventoryError(
-                    f"Required {spec.table} artifacts are missing under {root / spec.relative_dir}"
-                )
-            continue
-        if spec.required:
-            _require_manifest_references(paths, referenced, spec.table)
-
-        table_files = tuple(_relative_path(path, root) for path in paths)
-        row_count = 0
-        buckets: dict[str, _BucketCounter] = {}
-        for path in paths:
-            file_rows = _validate_schema_and_count(path, spec.schema_factory())
-            row_count += file_rows
-            source_paths.append(path)
-            if spec.language_spec is not None:
-                _scan_language_file(path, spec.language_spec, buckets, file_rows)
-        artifacts.append(
-            ValidatedArtifact(
-                table=spec.table,
-                source_files=table_files,
-                row_count=row_count,
-            )
-        )
-        if spec.language_spec is not None:
-            language_spec = spec.language_spec
-            tables.append(
-                LanguageTableInventory(
-                    table=language_spec.table,
-                    configuration=language_spec.configuration,
-                    language_column=language_spec.language_column,
-                    identity_columns=language_spec.identity_columns,
-                    source_files=table_files,
-                    row_count=row_count,
-                    buckets=_freeze_buckets(buckets),
-                )
-            )
+    tables, artifacts, source_paths = _collect_inventories(
+        root,
+        _artifact_specs_for(contract),
+        referenced,
+    )
 
     if not tables:
         raise LanguageInventoryError(f"No language-bearing artifacts found under {root}")
@@ -398,18 +406,106 @@ class _BucketCounter:
 
     def observe(self, resolution: LanguageResolution) -> None:
         self.row_count += 1
-        if resolution.disposition is LanguageDisposition.CANONICAL:
-            self.canonical_rows += 1
-        elif resolution.disposition is LanguageDisposition.LEGACY_ALIAS:
-            self.legacy_alias_rows += 1
-        elif resolution.disposition is LanguageDisposition.MISSING:
-            self.missing_rows += 1
-        elif resolution.disposition is LanguageDisposition.BLANK:
-            self.blank_rows += 1
-        elif resolution.disposition is LanguageDisposition.MALFORMED:
-            self.malformed_rows += 1
-        elif resolution.disposition is LanguageDisposition.LEGACY_UNUSABLE:
-            self.legacy_unusable_rows += 1
+        _increment_disposition(self, resolution.disposition)
+
+
+_DISPOSITION_COUNTER_FIELDS: dict[LanguageDisposition, str] = {
+    LanguageDisposition.CANONICAL: "canonical_rows",
+    LanguageDisposition.LEGACY_ALIAS: "legacy_alias_rows",
+    LanguageDisposition.MISSING: "missing_rows",
+    LanguageDisposition.BLANK: "blank_rows",
+    LanguageDisposition.MALFORMED: "malformed_rows",
+    LanguageDisposition.LEGACY_UNUSABLE: "legacy_unusable_rows",
+}
+
+
+def _increment_disposition(
+    counter: _BucketCounter,
+    disposition: LanguageDisposition,
+) -> None:
+    """Increment the reason-specific field for one observed resolution."""
+    field = _DISPOSITION_COUNTER_FIELDS[disposition]
+    setattr(counter, field, getattr(counter, field) + 1)
+
+
+def _collect_inventories(
+    root: Path,
+    specs: Sequence[_ArtifactSpec],
+    referenced: set[Path],
+) -> tuple[list[LanguageTableInventory], list[ValidatedArtifact], list[Path]]:
+    tables: list[LanguageTableInventory] = []
+    artifacts: list[ValidatedArtifact] = []
+    source_paths: list[Path] = []
+    for spec in specs:
+        inventory = _inventory_for_spec(root, spec, referenced)
+        if inventory is None:
+            continue
+        artifact, table, paths = inventory
+        artifacts.append(artifact)
+        source_paths.extend(paths)
+        if table is not None:
+            tables.append(table)
+    return tables, artifacts, source_paths
+
+
+def _inventory_for_spec(
+    root: Path,
+    spec: _ArtifactSpec,
+    referenced: set[Path],
+) -> tuple[ValidatedArtifact, LanguageTableInventory | None, tuple[Path, ...]] | None:
+    paths = _artifact_paths(root, spec)
+    if not paths:
+        if spec.required:
+            raise LanguageInventoryError(
+                f"Required {spec.table} artifacts are missing under {root / spec.relative_dir}"
+            )
+        return None
+    if spec.required:
+        _require_manifest_references(paths, referenced, spec.table)
+
+    table_files = tuple(_relative_path(path, root) for path in paths)
+    row_count, buckets = _read_artifact_rows(paths, spec)
+    artifact = ValidatedArtifact(
+        table=spec.table,
+        source_files=table_files,
+        row_count=row_count,
+    )
+    table = _build_language_table_inventory(spec, table_files, row_count, buckets)
+    return artifact, table, paths
+
+
+def _read_artifact_rows(
+    paths: tuple[Path, ...],
+    spec: _ArtifactSpec,
+) -> tuple[int, dict[str, _BucketCounter]]:
+    row_count = 0
+    buckets: dict[str, _BucketCounter] = {}
+    for path in paths:
+        file_rows = _validate_schema_and_count(path, spec.schema_factory())
+        row_count += file_rows
+        if spec.language_spec is not None:
+            _scan_language_file(path, spec.language_spec, buckets, file_rows)
+    return row_count, buckets
+
+
+def _build_language_table_inventory(
+    spec: _ArtifactSpec,
+    table_files: tuple[str, ...],
+    row_count: int,
+    buckets: dict[str, _BucketCounter],
+) -> LanguageTableInventory | None:
+    language_spec = spec.language_spec
+    if language_spec is None:
+        return None
+    return LanguageTableInventory(
+        table=language_spec.table,
+        configuration=language_spec.configuration,
+        language_column=language_spec.language_column,
+        identity_columns=language_spec.identity_columns,
+        source_files=table_files,
+        row_count=row_count,
+        buckets=_freeze_buckets(buckets),
+    )
 
 
 def _unknown(disposition: LanguageDisposition) -> LanguageResolution:
@@ -606,42 +702,25 @@ def _load_and_validate_manifest(
     manifest: Path,
     dataset: DatasetContract,
 ) -> set[Path]:
-    if not manifest.is_file():
-        raise LanguageInventoryError(f"Processed manifest is missing: {manifest}")
-    try:
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise LanguageInventoryError(
-            f"Could not read processed manifest {manifest}: {error}"
-        ) from error
-    if not isinstance(payload, dict):
-        raise LanguageInventoryError(f"Processed manifest must be a JSON object: {manifest}")
-
+    payload = _read_manifest_payload(manifest)
     entries = _manifest_entries(payload, dataset, manifest)
-    fields = (
-        (("polygons_path", "polygons"), ("polygon_articles_path", "polygon_articles"))
-        if dataset is DatasetContract.V1
-        else (
-            ("polygons_path", "polygons"),
-            ("documents_path", "wikipedia/documents"),
-            ("sections_path", "wikipedia/sections"),
-            ("links_path", "polygon_document_links"),
-        )
-    )
-    referenced: set[Path] = set()
-    for key, raw_entry in sorted(entries.items()):
-        if not isinstance(key, str) or not isinstance(raw_entry, dict):
-            raise LanguageInventoryError(f"Malformed manifest entry {key!r} in {manifest}")
-        entry = cast(dict[str, object], raw_entry)
-        for field, directory in fields:
-            raw_path = entry.get(field)
-            if not isinstance(raw_path, str):
-                raise LanguageInventoryError(
-                    f"Manifest entry {key!r} is missing string field {field!r}"
-                )
-            referenced.add(_manifest_path(root, raw_path, directory, key, field))
     if not entries:
         raise LanguageInventoryError(f"Processed manifest has no entries: {manifest}")
+    return _manifest_references(root, entries, _manifest_fields_for(dataset), manifest)
+
+
+def _manifest_references(
+    root: Path,
+    entries: dict[object, object],
+    fields: tuple[tuple[str, str], ...],
+    manifest: Path,
+) -> set[Path]:
+    referenced: set[Path] = set()
+    for key, raw_entry in sorted(entries.items()):
+        entry = _manifest_entry(key, raw_entry, manifest)
+        manifest_key = cast(str, key)
+        for field, directory in fields:
+            referenced.add(_manifest_field_path(root, entry, manifest_key, field, directory))
     return referenced
 
 
@@ -662,25 +741,58 @@ def _manifest_entries(
     return cast(dict[object, object], entries)
 
 
-def _manifest_path(
-    root: Path,
-    raw_path: str,
-    expected_directory: str,
+def _manifest_entry(
     key: object,
+    raw_entry: object,
+    manifest: Path,
+) -> dict[str, object]:
+    """Validate one manifest key/value pair and return its object value."""
+    if not isinstance(key, str) or not isinstance(raw_entry, dict):
+        raise LanguageInventoryError(f"Malformed manifest entry {key!r} in {manifest}")
+    return cast(dict[str, object], raw_entry)
+
+
+def _manifest_field_path(
+    root: Path,
+    entry: dict[str, object],
+    key: str,
     field: str,
+    directory: str,
 ) -> Path:
+    """Validate and resolve one required artifact field from a manifest entry."""
+    raw_path = entry.get(field)
+    if not isinstance(raw_path, str):
+        raise LanguageInventoryError(f"Manifest entry {key!r} is missing string field {field!r}")
+    return _manifest_path(root, raw_path, directory, key, field)
+
+
+def _safe_manifest_relative_path(raw_path: str, key: object, field: str) -> Path:
+    """Validate the lexical shape of a manifest-relative Parquet path."""
     relative = Path(raw_path)
-    if (
-        relative.is_absolute()
-        or not raw_path
-        or any(part in {"", ".", ".."} for part in relative.parts)
-        or relative.suffix != ".parquet"
-    ):
+    if not _manifest_path_shape_is_safe(relative, raw_path):
         raise LanguageInventoryError(
             f"Manifest entry {key!r} field {field!r} has unsafe path {raw_path!r}"
         )
-    candidate = (root / relative).resolve()
-    expected = (root / expected_directory).resolve()
+    return relative
+
+
+def _manifest_path_shape_is_safe(relative: Path, raw_path: str) -> bool:
+    if relative.is_absolute():
+        return False
+    if not raw_path:
+        return False
+    if relative.suffix != ".parquet":
+        return False
+    return all(part not in {"", ".", ".."} for part in relative.parts)
+
+
+def _validate_manifest_location(
+    candidate: Path,
+    root: Path,
+    expected: Path,
+    key: object,
+    field: str,
+) -> None:
     try:
         candidate.relative_to(root)
     except ValueError as error:
@@ -689,8 +801,22 @@ def _manifest_path(
         ) from error
     if candidate.parent != expected:
         raise LanguageInventoryError(
-            f"Manifest entry {key!r} field {field!r} must be under {expected_directory!r}"
+            f"Manifest entry {key!r} field {field!r} must be under "
+            f"{expected.relative_to(root).as_posix()!r}"
         )
+
+
+def _manifest_path(
+    root: Path,
+    raw_path: str,
+    expected_directory: str,
+    key: object,
+    field: str,
+) -> Path:
+    relative = _safe_manifest_relative_path(raw_path, key, field)
+    candidate = (root / relative).resolve()
+    expected = (root / expected_directory).resolve()
+    _validate_manifest_location(candidate, root, expected, key, field)
     if not candidate.is_file():
         raise LanguageInventoryError(
             f"Manifest entry {key!r} field {field!r} points to missing artifact {raw_path!r}"
