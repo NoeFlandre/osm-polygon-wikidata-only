@@ -341,10 +341,33 @@ def _authenticate_for_push(
     settings: Settings,
 ) -> None:
     """Validate Hugging Face credentials when a real push was requested."""
-    if not args.push or args.dry_run:
+    release_apply = _release_apply_requested(args)
+    if not _push_authentication_required(args, release_apply) or args.dry_run:
+        return
+    if release_apply:
+        _authenticate_release_targets(parser, args, settings)
         return
     _require_push_token(parser, settings)
     _verify_push_access(parser, settings)
+
+
+def _release_apply_requested(args: argparse.Namespace) -> bool:
+    return getattr(args, "command", None) == "release-stats" and getattr(args, "apply", False)
+
+
+def _push_authentication_required(args: argparse.Namespace, release_apply: bool) -> bool:
+    return bool(args.push or release_apply)
+
+
+def _authenticate_release_targets(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    settings: Settings,
+) -> None:
+    for target in _selected_release_targets(args.dataset_version):
+        target_settings = replace(settings, repo_id=_RELEASE_TARGETS[target])
+        _require_push_token(parser, target_settings)
+        _verify_push_access(parser, target_settings)
 
 
 def _run_v2_sync(
@@ -679,6 +702,10 @@ def _run_release_stats(
                 confirm_repo=confirmations[target],
                 apply=args.apply,
                 hub=hub,
+                token=getattr(args, "hf_token", None),
+                source_revision=getattr(args, "source_revision", None),
+                data_revision=getattr(args, "data_revision", None),
+                generated_on=getattr(args, "generated_on", None),
             )
         except StatsReleaseError as error:
             parser.error(str(error))

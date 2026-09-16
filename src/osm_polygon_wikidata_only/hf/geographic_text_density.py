@@ -62,8 +62,9 @@ def generate_geographic_text_density(
     total = sum(cell.polygon_count for cell in cells)
     caption = (
         "Geographic Wikipedia + Wikivoyage Text Density. Colour encodes the raw "
-        "number of unique dataset polygons with non-empty text per H3 cell on a "
-        f"logarithmic scale. {total:,} polygons across {len(cells):,} H3 cells."
+        "number of unique `(osm_type, osm_id)` polygon identities with successfully "
+        "extracted (`fetch_status=ok`) non-empty text per H3 cell on a logarithmic "
+        f"scale. {total:,} unique polygon identities across {len(cells):,} H3 cells."
     )
     return render_count_map(
         cells,

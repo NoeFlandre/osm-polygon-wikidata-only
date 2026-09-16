@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -10,12 +11,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.hf import geographic_text_presence as text_presence_module
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import split_antimeridian
 from osm_polygon_wikidata_only.hf._links.reader import is_canonical_link_schema
 from osm_polygon_wikidata_only.hf.continent_stats import (
     assign_continents,
+    compute_continent_stats,
     render_continent_stats,
 )
 from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
@@ -200,11 +203,97 @@ def test_continent_assignment_and_public_rendering() -> None:
     assert "`Polygons with Wikipedia text`" in rendered
     assert "`Polygons with Wikipedia or Wikivoyage text`" in rendered
     assert "`Text coverage`" in rendered
-    assert "combined text-covered polygons / all dataset polygons" in rendered
+    assert "combined text-covered identities / all unique polygon identities" in rendered
     assert "one continent" in rendered
     assert "more than one continent" in rendered
     assert "`Unassigned`" in rendered
     assert "finalized Parquet tables" in rendered
+
+
+def test_continent_document_counts_resolve_duplicate_polygon_aliases(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    _write(
+        processed / "polygons" / "a-region.parquet",
+        [
+            {
+                "polygon_id": "north:way:7",
+                "osm_type": "way",
+                "osm_id": 7,
+                "wikidata": "Q7",
+                "lon": 2.0,
+                "lat": 48.0,
+            }
+        ],
+    )
+    _write(
+        processed / "polygons" / "b-region.parquet",
+        [
+            {
+                "polygon_id": "south:way:7",
+                "osm_type": "way",
+                "osm_id": 7,
+                "wikidata": "Q7",
+                "lon": 3.0,
+                "lat": 49.0,
+            }
+        ],
+    )
+    wikipedia_dir = processed / "wikipedia" / "documents"
+    wikipedia_dir.mkdir(parents=True, exist_ok=True)
+    document = {field.name: None for field in wikipedia_document_schema()}
+    document.update(
+        {
+            "document_id": "Q7:wikipedia:en:7:1",
+            "article_id": "Q7:en:7:1",
+            "wikidata": "Q7",
+            "project": "wikipedia",
+            "language": "en",
+            "full_text": "body",
+            "fetch_status": "ok",
+        }
+    )
+    pq.write_table(
+        pa.Table.from_pylist([document], schema=wikipedia_document_schema()),
+        wikipedia_dir / "a-region.parquet",
+    )
+    links_dir = processed / "polygon_articles"
+    links_dir.mkdir(parents=True, exist_ok=True)
+    link = {field.name: None for field in polygon_document_link_schema()}
+    link.update(
+        {
+            "polygon_id": "south:way:7",
+            "document_id": "Q7:wikipedia:en:7:1",
+            "project": "wikipedia",
+            "wikidata": "Q7",
+            "language": "en",
+        }
+    )
+    pq.write_table(
+        pa.Table.from_pylist([link], schema=polygon_document_link_schema()),
+        links_dir / "a-region.parquet",
+    )
+    country_path = tmp_path / "countries.geojson"
+    country_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "properties": {"CONTINENT": "Europe"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-10, 35], [30, 35], [30, 70], [-10, 70], [-10, 35]]],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert compute_continent_stats(processed, country_path) == [("Europe", 1, 1, 0, 1, 1)]
 
 
 def test_dataset_card_uses_public_language_and_combined_map_first() -> None:
@@ -228,8 +317,8 @@ def test_dataset_card_uses_public_language_and_combined_map_first() -> None:
     assert "assets/geographic_wikipedia_text_coverage.png" not in card
     assert "assets/geographic_polygon_count.png" not in card
     assert card.count("![") == 4
-    assert "Each point represents one dataset polygon carrying an OSM" in card
-    assert "raw number of polygons with non-empty Wikipedia or Wikivoyage text" in card
+    assert "Each point represents one globally unique `(osm_type, osm_id)` identity" in card
+    assert "raw number of unique `(osm_type, osm_id)` polygon identities" in card
 
 
 def test_combined_text_density_counts_overlap_once(tmp_path: Path) -> None:
@@ -284,3 +373,107 @@ def test_combined_text_presence_deduplicates_polygon_ids_across_files(tmp_path: 
     assert len(snapshot.covered_points) == 1
     assert sum(cell.polygon_count for cell in cells) == 1
     assert [cell.h3_cell for cell in cells] == sorted(cell.h3_cell for cell in cells)
+
+
+def test_text_reporting_deduplicates_overlapping_regions_by_typed_identity(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    _write(
+        processed / "polygons" / "a-region.parquet",
+        [
+            {
+                "polygon_id": "north:way:7",
+                "osm_type": "way",
+                "osm_id": 7,
+                "wikidata": "Q7",
+                "lon": 2.0,
+                "lat": 48.0,
+            },
+            {
+                "polygon_id": "relation:9",
+                "osm_type": "relation",
+                "osm_id": 9,
+                "wikidata": "Q9",
+                "lon": 4.0,
+                "lat": 50.0,
+            },
+        ],
+    )
+    _write(
+        processed / "polygons" / "b-region.parquet",
+        [
+            {
+                "polygon_id": "south:way:7",
+                "osm_type": "way",
+                "osm_id": 7,
+                "wikidata": "Q7",
+                "lon": 3.0,
+                "lat": 49.0,
+            }
+        ],
+    )
+    _write(
+        processed / "wikipedia" / "documents" / "a-region.parquet",
+        [
+            {
+                "document_id": "wiki-7",
+                "full_text": "successful Wikipedia body",
+                "fetch_status": "ok",
+            },
+            {
+                "document_id": "wiki-9-failed",
+                "full_text": "looks non-empty but failed",
+                "fetch_status": "http_error",
+            },
+        ],
+    )
+    _write(
+        processed / "wikivoyage" / "documents" / "a-region.parquet",
+        [
+            {
+                "document_id": "voy-9",
+                "wikidata": "Q9",
+                "full_text": "successful Wikivoyage body",
+                "fetch_status": "ok",
+            }
+        ],
+    )
+    links_dir = processed / "polygon_articles"
+    links_dir.mkdir(parents=True, exist_ok=True)
+    link_rows = []
+    for polygon_id, project, document_id, osm_type, osm_id in (
+        ("north:way:7", "wikipedia", "wiki-7", "way", 7),
+        ("relation:9", "wikipedia", "wiki-9-failed", "relation", 9),
+        ("relation:9", "wikivoyage", "voy-9", "relation", 9),
+        ("south:way:7", "wikipedia", "wiki-7", "way", 7),
+    ):
+        row = {field.name: None for field in polygon_document_link_schema()}
+        row.update(
+            {
+                "polygon_id": polygon_id,
+                "project": project,
+                "document_id": document_id,
+                "wikidata": f"Q{osm_id}",
+                "language": "en",
+                "osm_type": osm_type,
+                "osm_id": osm_id,
+            }
+        )
+        link_rows.append(row)
+    pq.write_table(
+        pa.Table.from_pylist(link_rows, schema=polygon_document_link_schema()),
+        links_dir / "a-region.parquet",
+    )
+
+    snapshot = load_text_presence(processed)
+    cells = aggregate_geographic_text_density(processed, snapshot=snapshot)
+
+    assert snapshot.polygon_count == 2
+    assert snapshot.wikipedia_polygon_identities == frozenset({("way", 7)})
+    assert snapshot.combined_polygon_identities == frozenset({("way", 7), ("relation", 9)})
+    assert [(point.identity, point.polygon_id) for point in snapshot.covered_points] == [
+        (("relation", 9), "relation:9"),
+        (("way", 7), "north:way:7"),
+    ]
+    assert sum(cell.polygon_count for cell in cells) == 2

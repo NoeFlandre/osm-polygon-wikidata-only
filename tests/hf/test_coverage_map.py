@@ -179,6 +179,39 @@ def test_load_centroids_filters_to_requested_polygon_ids(tmp_path: Path) -> None
     assert lats == [1.0]
 
 
+def test_load_centroids_deduplicates_overlapping_typed_identities(tmp_path: Path) -> None:
+    polygons = tmp_path / "polygons"
+    polygons.mkdir()
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["north:way:7", "relation:9"],
+                "osm_type": ["way", "relation"],
+                "osm_id": [7, 9],
+                "lon": [2.0, 4.0],
+                "lat": [48.0, 50.0],
+            }
+        ),
+        polygons / "a-region.parquet",
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["south:way:7"],
+                "osm_type": ["way"],
+                "osm_id": [7],
+                "lon": [3.0],
+                "lat": [49.0],
+            }
+        ),
+        polygons / "b-region.parquet",
+    )
+
+    lons, lats = load_centroids_from_parquet(polygons)
+
+    assert list(zip(lons, lats, strict=True)) == [(4.0, 50.0), (2.0, 48.0)]
+
+
 # --- generate_coverage_map ----------------------------------------------
 
 

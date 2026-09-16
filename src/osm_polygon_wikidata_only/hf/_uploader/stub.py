@@ -8,7 +8,8 @@ Never touches the network.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -25,13 +26,20 @@ class StubHfHub:
     network.
     """
 
-    def __init__(self, *, remote_files: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        remote_files: set[str] | None = None,
+        remote_content: Mapping[str, bytes] | None = None,
+    ) -> None:
         self.uploads: list[dict[str, Any]] = []
         self.commits: list[dict[str, Any]] = []
         self.created_repos: list[dict[str, Any]] = []
         # ``None`` preserves the historical permissive stub behavior.
         # Supplying a set enables explicit remote-state simulation.
         self.remote_files = remote_files
+        self.remote_content: dict[str, bytes] = dict(remote_content or {})
+        self._revision: str | None = str(uuid4()) if self.remote_content or remote_files else None
 
     def file_exists(
         self,
@@ -59,16 +67,37 @@ class StubHfHub:
         repo_id: str,
         paths: list[str],
         *,
+        revision: str | None = None,
         repo_type: str,
     ) -> list[Any]:
-        del repo_id, repo_type
-        if self.remote_files is None:
-            return []
+        del repo_id, revision, repo_type
         return [
-            SimpleNamespace(path=path, size=0, lfs=None)
+            _remote_path_info(path, self.remote_content)
             for path in paths
-            if path in self.remote_files
+            if _remote_path_exists(path, self.remote_files, self.remote_content)
         ]
+
+    def repo_info(self, repo_id: str, *, repo_type: str) -> Any:
+        del repo_id, repo_type
+        return SimpleNamespace(sha=self._revision or "")
+
+    def hf_hub_download(
+        self,
+        repo_id: str,
+        filename: str,
+        *,
+        revision: str,
+        repo_type: str,
+        cache_dir: str | None = None,
+    ) -> str:
+        del repo_id, revision, repo_type
+        if filename not in self.remote_content:
+            raise FileNotFoundError(filename)
+        root = Path(cache_dir) if cache_dir is not None else Path.cwd() / ".stub-hf-cache"
+        path = root / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self.remote_content[filename])
+        return str(path)
 
     def upload_file(
         self,
@@ -79,17 +108,7 @@ class StubHfHub:
         repo_type: str,
         commit_message: str,
     ) -> str:
-        data: bytes
-        if isinstance(path_or_fileobj, (bytes, bytearray)):
-            data = bytes(path_or_fileobj)
-        elif isinstance(path_or_fileobj, (str, os.PathLike)):
-            with open(path_or_fileobj, "rb") as f:
-                data = f.read()
-        elif hasattr(path_or_fileobj, "read"):
-            raw = path_or_fileobj.read()
-            data = raw if isinstance(raw, bytes) else bytes(raw)
-        else:
-            data = bytes(path_or_fileobj)
+        data = _upload_bytes(path_or_fileobj)
         self.uploads.append(
             {
                 "path_in_repo": path_in_repo,
@@ -100,6 +119,10 @@ class StubHfHub:
                 "commit_id": str(uuid4()),
             }
         )
+        self.remote_content[path_in_repo] = data
+        self._revision = self.uploads[-1]["commit_id"]
+        if self.remote_files is not None:
+            self.remote_files.add(path_in_repo)
         return path_in_repo
 
     def create_commit(
@@ -111,9 +134,12 @@ class StubHfHub:
         repo_type: str,
         num_threads: int,
     ) -> str:
-        ops = [_serialize_operation(operation) for operation in operations]
+        original_operations = list(operations)
+        ops = [_serialize_operation(operation) for operation in original_operations]
+        commit_id = str(uuid4())
         self.commits.append(
             {
+                "commit_id": commit_id,
                 "repo_id": repo_id,
                 "paths": [op["path_in_repo"] for op in ops],
                 "operations": ops,
@@ -122,8 +148,14 @@ class StubHfHub:
                 "num_threads": num_threads,
             }
         )
-        _apply_remote_operations(self.remote_files, ops)
-        return str(uuid4())
+        _apply_remote_operations(
+            self.remote_files,
+            self.remote_content,
+            original_operations,
+            ops,
+        )
+        self._revision = commit_id
+        return commit_id
 
     def create_repo(
         self,
@@ -146,14 +178,70 @@ def _serialize_operation(operation: Any) -> dict[str, Any]:
     return {"action": action, "path_in_repo": getattr(operation, "path_in_repo", None)}
 
 
+def _remote_path_exists(
+    path: str,
+    remote_files: set[str] | None,
+    remote_content: Mapping[str, bytes],
+) -> bool:
+    return path in remote_content or (remote_files is not None and path in remote_files)
+
+
+def _remote_path_info(path: str, remote_content: Mapping[str, bytes]) -> Any:
+    return SimpleNamespace(
+        path=path,
+        size=(len(remote_content[path]) if path in remote_content else 0),
+        lfs=None,
+    )
+
+
+def _upload_bytes(source: Any) -> bytes:
+    if isinstance(source, (bytes, bytearray)):
+        return bytes(source)
+    if isinstance(source, (str, os.PathLike)):
+        return Path(source).read_bytes()
+    if hasattr(source, "read"):
+        raw = source.read()
+        return raw if isinstance(raw, bytes) else bytes(raw)
+    return bytes(source)
+
+
 def _apply_remote_operations(
     remote_files: set[str] | None,
-    operations: list[dict[str, Any]],
+    remote_content: dict[str, bytes],
+    operations: Iterable[Any],
+    serialized_operations: list[dict[str, Any]],
 ) -> None:
-    if remote_files is None:
-        return
-    for operation in operations:
+    for original, operation in zip(operations, serialized_operations, strict=True):
         if operation["action"] == "add":
-            remote_files.add(operation["path_in_repo"])
+            data = _operation_bytes(original)
+            remote_content[operation["path_in_repo"]] = data
+            if remote_files is not None:
+                remote_files.add(operation["path_in_repo"])
         else:
-            remote_files.discard(operation["path_in_repo"])
+            remote_content.pop(operation["path_in_repo"], None)
+            if remote_files is not None:
+                remote_files.discard(operation["path_in_repo"])
+
+
+def _operation_bytes(operation: Any) -> bytes:
+    source = getattr(operation, "path_or_fileobj", None)
+    return _operation_source_bytes(source)
+
+
+def _operation_source_bytes(source: Any) -> bytes:
+    if isinstance(source, bytes):
+        return source
+    return _operation_non_bytes(source)
+
+
+def _operation_non_bytes(source: Any) -> bytes:
+    if isinstance(source, (str, os.PathLike)):
+        return Path(source).read_bytes()
+    return _operation_stream_bytes(source)
+
+
+def _operation_stream_bytes(source: Any) -> bytes:
+    if hasattr(source, "read"):
+        value = source.read()
+        return value if isinstance(value, bytes) else bytes(value)
+    return b""

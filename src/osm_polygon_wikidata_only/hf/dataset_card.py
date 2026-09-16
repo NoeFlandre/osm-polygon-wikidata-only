@@ -6,20 +6,14 @@ attribution, and license info. The augmentation schema descriptions
 live in :mod:`osm_polygon_wikidata_only.augmentation.schema_descriptions`
 which is the single source of truth referenced from here.
 
-The ``Generated on`` line uses the current wall-clock date
-(``datetime.now(UTC)``) at every invocation. Tests that need a
-stable golden fixture MUST post-process the produced Markdown by
-substituting the date with a stable placeholder
-(``re.sub(r"Generated on \\d{4}-\\d{2}-\\d{2}\\.", "Generated on YYYY-MM-DD.", md)``).
-No clock parameter is exposed on the public function: production
-behaviour and the public function signature stay stable across
-refactors.
+Cards are byte-stable by default. A ``Generated on`` line is rendered
+only when the caller supplies a pinned date; the release path therefore
+never depends on the wall clock.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 
 from osm_polygon_wikidata_only.augmentation.schema import (
@@ -61,6 +55,7 @@ def render_dataset_card(
     maintainer: str = "Noé Flandre",
     stats_section: str | None = None,
     rejections_section: str | None = None,
+    generated_on: str | None = None,
 ) -> str:
     """Render the dataset card markdown.
 
@@ -80,13 +75,10 @@ def render_dataset_card(
 
     The YAML front matter declares the canonical dataset tables.
 
-    The ``Generated on`` line uses the current UTC date at every
-    invocation. Tests that compare against a golden fixture must
-    post-process the rendered Markdown by substituting the date
-    with a stable placeholder via regex; the production output
-    itself always reflects the real publication date.
+    ``generated_on`` is optional pinned release metadata. It is never
+    inferred from the wall clock, so repeated renders are byte-identical
+    unless the caller changes the supplied value.
     """
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
     rc_lines = _render_front_matter(
         repo_id=repo_id,
         license="odbl",
@@ -105,9 +97,10 @@ def render_dataset_card(
         link_descriptions,
     )
 
-    stats_block = stats_section if stats_section is not None else ""
+    stats_block = _optional_card_block(stats_section)
     trackio_block = render_snapshot_markdown()
-    rejections_block = rejections_section if rejections_section is not None else ""
+    rejections_block = _optional_card_block(rejections_section)
+    generated_block = _generated_card_block(generated_on)
 
     body = (
         f"# {repo_id}\n\n"
@@ -132,7 +125,7 @@ def render_dataset_card(
         "entities\n\n"
         "Links are derived from the Wikidata identifiers shared by each OSM polygon and "
         "its Wikipedia or Wikivoyage documents.\n\n"
-        f"Generated on {today}.\n\n"
+        f"{generated_block}"
         f"Maintained by **{maintainer}**.\n\n"
         "Source code: [GitHub repository]"
         "(https://github.com/NoeFlandre/osm-polygon-wikidata-only).\n\n"
@@ -141,21 +134,25 @@ def render_dataset_card(
         "## Coverage\n\n"
         "### Polygons with Wikipedia or Wikivoyage text\n\n"
         f"![Polygons with Wikipedia or Wikivoyage text]({REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE})\n\n"
-        "Each point is a dataset polygon with at least one non-empty Wikipedia document "
-        "or a non-empty Wikivoyage document sharing its Wikidata entity. A polygon is "
-        "shown once even when several documents qualify.\n\n"
+        "Each point is one globally unique `(osm_type, osm_id)` polygon identity linked "
+        "to a Wikipedia or Wikivoyage document whose extraction succeeded "
+        "(`fetch_status=ok`) and whose trimmed `full_text` is non-empty. Overlapping "
+        "regional rows and multiple qualifying documents count once.\n\n"
         "### All dataset polygons\n\n"
         f"![Coverage Map]({REMOTE_COVERAGE_MAP_FILE})\n\n"
-        "Each point represents one dataset polygon carrying an OSM `wikidata=*` tag, "
-        "whether or not corresponding Wikipedia or Wikivoyage text is available.\n\n"
+        "Each point represents one globally unique `(osm_type, osm_id)` identity carrying "
+        "an OSM `wikidata=*` tag, whether or not corresponding Wikipedia or Wikivoyage "
+        "text is available. Regional polygon rows remain separate source records.\n\n"
         "## Geographic coverage\n\n"
         "### Wikipedia + Wikivoyage text density\n\n"
         f"![Geographic Wikipedia and Wikivoyage Text Density]"
         f"({REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE})\n\n"
-        "Each H3 cell contains the raw number of polygons with non-empty Wikipedia or "
-        "Wikivoyage text. A polygon is counted once even when both projects or several "
-        "documents qualify. Colour uses a logarithmic purple-to-yellow scale; this is "
-        "an absolute density count, not a proportion of all polygons.\n\n"
+        "Each H3 cell contains the raw number of unique `(osm_type, osm_id)` polygon "
+        "identities with successfully extracted (`fetch_status=ok`) non-empty Wikipedia "
+        "or Wikivoyage text. A polygon is counted once even when both projects, several "
+        "documents, or overlapping regional rows qualify. Colour uses a logarithmic "
+        "purple-to-yellow scale; this is an absolute density count, not a proportion "
+        "of all polygon rows.\n\n"
         f"{stats_block}\n"
         f"{schema_section}\n"
         "## Data sources & licenses\n\n"
@@ -182,15 +179,37 @@ def render_dataset_card(
         "from [`CITATION.cff`](CITATION.cff).\n"
     )
 
-    if rejections_block:
-        insertion_marker = f"{stats_block}\n" if stats_block else ""
-        body = body.replace(
-            insertion_marker + f"{schema_section}\n",
-            insertion_marker + f"{rejections_block}\n" + f"{schema_section}\n",
-            1,
-        )
+    return _insert_rejections_block(
+        rc_lines + "\n" + body,
+        stats_block=stats_block,
+        rejections_block=rejections_block,
+        schema_section=schema_section,
+    )
 
-    return rc_lines + "\n" + body
+
+def _optional_card_block(block: str | None) -> str:
+    return block if block is not None else ""
+
+
+def _generated_card_block(generated_on: str | None) -> str:
+    return f"Generated on {generated_on}.\n\n" if generated_on else ""
+
+
+def _insert_rejections_block(
+    body: str,
+    *,
+    stats_block: str,
+    rejections_block: str,
+    schema_section: str,
+) -> str:
+    if not rejections_block:
+        return body
+    insertion_marker = f"{stats_block}\n" if stats_block else ""
+    return body.replace(
+        insertion_marker + f"{schema_section}\n",
+        insertion_marker + f"{rejections_block}\n" + f"{schema_section}\n",
+        1,
+    )
 
 
 def _render_front_matter(

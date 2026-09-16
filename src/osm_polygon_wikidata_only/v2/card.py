@@ -14,6 +14,11 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
+from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
+    PolygonIdentity,
+    PolygonIndex,
+    load_unique_polygon_records,
+)
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import render_polygon_stats_section
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -69,6 +74,7 @@ class V2CardStats:
     additional_unique_sections_vs_v1: int | None = None
     new_wikipedia_tag_document_polygons_vs_v1: int | None = None
     non_empty_text_polygons: int | None = None
+    unique_polygon_identities: int | None = None
     sentence_stats: _SentenceCardStats | None = None
 
     @property
@@ -114,6 +120,7 @@ class _CardMetrics:
     wikivoyage_document_row_count: int
     wikidata_fact_row_count: int
     link_row_count: int
+    unique_polygon_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +145,7 @@ class _DocumentMetrics:
     text_document_languages: dict[str, str]
     wikipedia_language_counts: Counter[str]
     non_empty_text_document_keys: set[tuple[str, str]] = field(default_factory=set)
+    successful_text_document_languages: dict[tuple[str, str], str] = field(default_factory=dict)
     wikipedia_document_row_count: int = 0
     wikivoyage_document_row_count: int = 0
     document_words: int = 0
@@ -228,15 +236,18 @@ def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
         document_files,
         files.wikipedia_document_files,
     )
+    polygon_index = _load_polygon_index(files.polygon_files)
     text_funnel, top_languages = _text_metrics_from_scanned(
-        document_metrics.text_document_languages,
+        document_metrics.successful_text_document_languages,
         document_metrics.wikipedia_language_counts,
         files.link_files,
+        polygon_index,
     )
     polygon_metrics = _scan_polygon_metrics(files.polygon_files)
     non_empty_text_polygon_count = _count_linked_non_empty_text_polygons(
         files.link_files,
         document_metrics.non_empty_text_document_keys,
+        polygon_index,
     )
     wikipedia_section_count = _sum_metadata(files.wikipedia_section_files)
     wikivoyage_section_count = _sum_metadata(files.wikivoyage_section_files)
@@ -251,7 +262,7 @@ def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
         document_words=document_metrics.document_words,
         wikipedia_section_count=wikipedia_section_count,
         wikivoyage_section_count=wikivoyage_section_count,
-        text_funnel=(("All polygons", len(polygon_metrics.polygon_ids)), *text_funnel[1:]),
+        text_funnel=(("All polygons", len(polygon_index.records)), *text_funnel[1:]),
         top_languages=top_languages,
         polygon_row_count=polygon_metrics.polygon_row_count,
         non_empty_text_polygon_count=non_empty_text_polygon_count,
@@ -259,7 +270,18 @@ def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
         wikivoyage_document_row_count=document_metrics.wikivoyage_document_row_count,
         wikidata_fact_row_count=wikidata_fact_count,
         link_row_count=link_count,
+        unique_polygon_count=len(polygon_index.records),
     )
+
+
+def _load_polygon_index(paths: Iterable[Path]) -> PolygonIndex:
+    """Load canonical polygon identities while retaining incomplete-test compatibility."""
+    materialized = tuple(paths)
+    if not materialized:
+        return PolygonIndex(records={}, by_polygon_id={})
+    if any("polygon_id" not in pq.read_schema(path).names for path in materialized):
+        return PolygonIndex(records={}, by_polygon_id={})
+    return load_unique_polygon_records(materialized)
 
 
 def _load_v1_baseline(processed: Path) -> _V1Baseline:
@@ -438,6 +460,7 @@ def _build_card_stats(
         additional_unique_sections_vs_v1=comparison.unique_sections,
         new_wikipedia_tag_document_polygons_vs_v1=comparison.wikipedia_tag_document_polygons,
         non_empty_text_polygons=metrics.non_empty_text_polygon_count,
+        unique_polygon_identities=metrics.unique_polygon_count,
         sentence_stats=sentence_stats,
     )
 
@@ -447,11 +470,13 @@ def render_v2_card(
     *,
     v1_processed: Path | None = None,
     stats: V2CardStats | None = None,
+    generated_on: str | None = None,
 ) -> str:
     """Render a concise, viewer-compatible card from V2 files on disk."""
     snapshot = stats or compute_v2_card_stats(processed_v2, v1_processed=v1_processed)
     front_matter = _render_front_matter(snapshot, processed_v2=processed_v2)
     comparison = _render_comparison(snapshot)
+    generated_block = [f"Generated on {generated_on}.", ""] if generated_on else []
     return (
         front_matter
         + "\n"
@@ -467,15 +492,17 @@ def render_v2_card(
                 f"references, including polygons without a Wikidata QID. "
                 f"The code is maintained in the [GitHub repository]({V2_GITHUB_URL}).",
                 "",
+                *generated_block,
                 f"The public V2 Trackio snapshot is [`{V2_TRACKIO_RUN_NAME}`](https://huggingface.co/spaces/{V2_TRACKIO_SPACE_ID}).",
                 "",
                 "## Snapshot",
                 "",
                 f"- **Hugging Face dataset:** [{V2_REPO_ID}](https://huggingface.co/datasets/{V2_REPO_ID})",
                 f"- **Regions:** {snapshot.regions:,}",
-                f"- **Polygons:** {snapshot.polygons:,}",
+                f"- **Polygon rows across regional extracts:** {snapshot.polygons:,}",
+                f"- **Unique polygon identities:** {_unique_polygon_count(snapshot):,}",
                 f"- **Polygons with non-empty Wikipedia or Wikivoyage text:** {_non_empty_text_polygon_count(snapshot):,}",
-                "Counted once per unique `(osm_type, osm_id)` in polygon-document links. Only linked Wikipedia or Wikivoyage documents with `fetch_status=ok` and trimmed non-empty `full_text` qualify; regional rows and `text_available` are not used.",
+                "Counted once per unique `(osm_type, osm_id)` represented in the polygon table and linked to a Wikipedia or Wikivoyage document whose extraction succeeded (`fetch_status=ok`) and whose trimmed `full_text` is non-empty. Regional rows and `text_available` are not used.",
                 f"- **Unique Wikidata entities:** {snapshot.unique_wikidata_entities:,}",
                 f"- **Wikipedia documents:** {snapshot.wikipedia_documents:,}",
                 f"- **Wikivoyage documents:** {snapshot.wikivoyage_documents:,}",
@@ -498,25 +525,25 @@ def render_v2_card(
                 "",
                 "![All V2 dataset polygons](assets/coverage_map.png)",
                 "",
-                "Every point is one retained V2 polygon, including polygons without text.",
+                "Every point is one globally unique retained V2 `(osm_type, osm_id)` identity, including identities without text. Regional polygon rows remain separate source/provenance records.",
                 "",
                 "### Polygons with Wikipedia or Wikivoyage text",
                 "",
                 "![V2 polygons with text](assets/geographic_text_presence.png)",
                 "",
-                "Each point is one polygon linked to at least one non-empty Wikipedia or Wikivoyage document. A polygon is counted once even when several documents qualify.",
+                "Each point is one globally unique `(osm_type, osm_id)` identity linked to at least one successfully extracted (`fetch_status=ok`) Wikipedia or Wikivoyage document with trimmed non-empty `full_text`. Overlapping regional rows and multiple qualifying documents count once.",
                 "",
                 "### H3 density of polygons with text",
                 "",
                 "![V2 geographic text density](assets/geographic_text_density.png)",
                 "",
-                "Each H3 cell shows the raw count of unique V2 polygons with non-empty Wikipedia or Wikivoyage text. Colour uses a logarithmic scale; it is not a proportion.",
+                "Each H3 cell shows the raw count of unique V2 `(osm_type, osm_id)` identities with successfully extracted (`fetch_status=ok`) non-empty Wikipedia or Wikivoyage text. Colour uses a logarithmic scale; it is not a proportion.",
                 "",
                 "## Deduplication and provenance",
                 "",
                 "V2 deduplicates documents by `document_id` and polygon-document links by `(polygon_id, project, document_id)` within each region. Byte-identical repeats collapse deterministically; conflicting rows fail closed. `discovery_sources` explains how a polygon was included: `wikidata` means the polygon came from an OSM `wikidata=*` tag, while `wikipedia_tag` means it came from an OSM `wikipedia=*` tag. `link_sources` explains each polygon-document relationship: `wikidata_sitelink` means the relationship came from a Wikidata sitelink, while `osm_wikipedia_tag` means it came directly from an OSM `wikipedia=*` tag. A relationship can list both when both routes agree.",
                 "",
-                "Regional extracts can overlap, so the same OSM object or document may appear in more than one regional file. We do not globally deduplicate these copies. We keep those copies to preserve regional membership and provenance; snapshot counts are regional-shard rows rather than globally unique objects or pages.",
+                "Regional extracts can overlap, so the same OSM object or document may appear in more than one regional file. We keep those copies to preserve regional membership and provenance. Row-based snapshot, document, link, and storage metrics retain those regional copies; map points, text funnels, and text-covered card metrics use one deterministic representative per global `(osm_type, osm_id)` identity.",
                 "",
                 "## Sentence-level text",
                 "",
@@ -551,12 +578,18 @@ def write_v2_card(
     *,
     v1_processed: Path | None = None,
     stats: V2CardStats | None = None,
+    generated_on: str | None = None,
 ) -> Path:
     """Write the deterministic V2 card atomically and return its path."""
     path = processed_v2 / "README.md"
     atomic_write_text(
         path,
-        render_v2_card(processed_v2, v1_processed=v1_processed, stats=stats),
+        render_v2_card(
+            processed_v2,
+            v1_processed=v1_processed,
+            stats=stats,
+            generated_on=generated_on,
+        ),
     )
     return path
 
@@ -708,16 +741,18 @@ def _sentence_polygon_count(
     if not value_sets:
         return 0
 
-    polygon_ids: set[str] = set()
+    polygon_index = _load_polygon_index(sorted((processed_v2 / "polygons").glob("*.parquet")))
+    polygon_ids: set[PolygonIdentity] = set()
     for path in sorted((processed_v2 / "polygon_document_links").glob("*.parquet")):
-        _collect_sentence_polygon_ids(path, value_sets, polygon_ids)
+        _collect_sentence_polygon_ids(path, value_sets, polygon_index, polygon_ids)
     return len(polygon_ids)
 
 
 def _collect_sentence_polygon_ids(
     path: Path,
     value_sets: Mapping[str, pa.Array],
-    polygon_ids: set[str],
+    polygon_index: PolygonIndex,
+    polygon_ids: set[PolygonIdentity],
 ) -> None:
     with pq.ParquetFile(path) as parquet_file:
         columns = {"polygon_id", "document_id", "project"}
@@ -727,15 +762,16 @@ def _collect_sentence_polygon_ids(
             columns=["polygon_id", "document_id", "project"],
             batch_size=65_536,
         ):
-            polygon_ids.update(_sentence_polygon_ids_from_batch(batch, value_sets))
+            polygon_ids.update(_sentence_polygon_ids_from_batch(batch, value_sets, polygon_index))
 
 
 def _sentence_polygon_ids_from_batch(
     batch: pa.RecordBatch,
     value_sets: Mapping[str, pa.Array],
-) -> set[str]:
+    polygon_index: PolygonIndex,
+) -> set[PolygonIdentity]:
     polygon_column, document_column, project_column = batch.columns
-    polygon_ids: set[str] = set()
+    polygon_ids: set[PolygonIdentity] = set()
     for project, value_set in value_sets.items():
         matches = _compute_array(
             "and",
@@ -747,15 +783,22 @@ def _sentence_polygon_ids_from_batch(
             ),
         )
         polygon_ids.update(
-            str(value)
+            polygon_identity
             for value in _compute_array("filter", polygon_column, matches).to_pylist()
             if value
+            and (polygon_identity := polygon_index.by_polygon_id.get(str(value))) is not None
         )
     return polygon_ids
 
 
 def _compute_array(function: str, *arguments: Any, options: Any = None) -> Any:
     return pc.call_function(function, list(arguments), options=options)
+
+
+def _unique_polygon_count(snapshot: V2CardStats) -> int:
+    if snapshot.unique_polygon_identities is not None:
+        return snapshot.unique_polygon_identities
+    return snapshot.polygons
 
 
 def _non_empty_text_polygon_count(snapshot: V2CardStats) -> int:
@@ -1087,12 +1130,13 @@ def _merge_link_sources(values: set[str], batch: Any, source: str, path: Path) -
 
 
 def _text_metrics_from_scanned(
-    document_languages: dict[str, str],
+    document_languages: dict[tuple[str, str], str],
     wikipedia_language_counts: Counter[str],
     link_paths: Iterable[Path],
+    polygon_index: PolygonIndex,
 ) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
     """Build text metrics from document columns already scanned once."""
-    languages_by_polygon = _polygon_languages(link_paths, document_languages)
+    languages_by_polygon = _polygon_languages(link_paths, document_languages, polygon_index)
     return (
         _text_funnel(languages_by_polygon),
         tuple(wikipedia_language_counts.most_common(10)),
@@ -1306,6 +1350,7 @@ def _record_document_row(
     _record_non_empty_text_document(
         metrics,
         identity,
+        language=language,
         fetch_status=fetch_status,
         full_text=full_text,
         is_wikipedia=is_wikipedia,
@@ -1316,6 +1361,7 @@ def _record_non_empty_text_document(
     metrics: _DocumentMetrics,
     identity: Any,
     *,
+    language: Any = None,
     fetch_status: Any,
     full_text: Any,
     is_wikipedia: bool,
@@ -1324,7 +1370,9 @@ def _record_non_empty_text_document(
         return
     project = "wikipedia" if is_wikipedia else "wikivoyage"
     if project in _TEXT_DOCUMENT_PROJECTS:
-        metrics.non_empty_text_document_keys.add((project, str(identity)))
+        key = (project, str(identity))
+        metrics.non_empty_text_document_keys.add(key)
+        metrics.successful_text_document_languages[key] = str(language or "")
 
 
 def _is_successful_non_empty_text(identity: Any, fetch_status: Any, full_text: Any) -> bool:
@@ -1386,15 +1434,17 @@ def _record_document_language(
 def _count_linked_non_empty_text_polygons(
     paths: Iterable[Path],
     eligible_document_keys: set[tuple[str, str]],
+    polygon_index: PolygonIndex,
 ) -> int:
     """Count unique OSM identities linked to successful non-empty documents."""
-    polygon_identities: set[tuple[str, int]] = set()
+    polygon_identities: set[PolygonIdentity] = set()
     if not eligible_document_keys:
         return 0
     for path in paths:
         _collect_linked_non_empty_text_polygons(
             path,
             eligible_document_keys,
+            polygon_index,
             polygon_identities,
         )
     return len(polygon_identities)
@@ -1403,19 +1453,21 @@ def _count_linked_non_empty_text_polygons(
 def _collect_linked_non_empty_text_polygons(
     path: Path,
     eligible_document_keys: set[tuple[str, str]],
-    polygon_identities: set[tuple[str, int]],
+    polygon_index: PolygonIndex,
+    polygon_identities: set[PolygonIdentity],
 ) -> None:
     with pq.ParquetFile(path) as parquet_file:
-        columns = {"osm_type", "osm_id", "document_id", "project"}
+        columns = {"polygon_id", "document_id", "project"}
         if not columns.issubset(parquet_file.schema_arrow.names):
             return
         for batch in parquet_file.iter_batches(
-            columns=["osm_type", "osm_id", "document_id", "project"],
+            columns=["polygon_id", "document_id", "project"],
             batch_size=65_536,
         ):
             _merge_linked_non_empty_text_polygons(
                 batch,
                 eligible_document_keys,
+                polygon_index,
                 polygon_identities,
             )
 
@@ -1423,19 +1475,19 @@ def _collect_linked_non_empty_text_polygons(
 def _merge_linked_non_empty_text_polygons(
     batch: Any,
     eligible_document_keys: set[tuple[str, str]],
-    polygon_identities: set[tuple[str, int]],
+    polygon_index: PolygonIndex,
+    polygon_identities: set[PolygonIdentity],
 ) -> None:
-    for osm_type, osm_id, document_id, project in zip(
+    for polygon_id, document_id, project in zip(
         batch.column(0).to_pylist(),
         batch.column(1).to_pylist(),
         batch.column(2).to_pylist(),
-        batch.column(3).to_pylist(),
         strict=True,
     ):
         document_key = (str(project), str(document_id))
         if document_key not in eligible_document_keys:
             continue
-        identity = _osm_polygon_identity(osm_type, osm_id)
+        identity = polygon_index.by_polygon_id.get(str(polygon_id))
         if identity is not None:
             polygon_identities.add(identity)
 
@@ -1543,46 +1595,64 @@ def _non_empty_strings(values: list[Any]) -> list[str]:
 
 def _polygon_languages(
     paths: Iterable[Path],
-    document_languages: dict[str, str],
-) -> defaultdict[str, set[str]]:
-    languages_by_polygon: defaultdict[str, set[str]] = defaultdict(set)
+    document_languages: dict[tuple[str, str], str],
+    polygon_index: PolygonIndex,
+) -> defaultdict[PolygonIdentity, set[str]]:
+    languages_by_polygon: defaultdict[PolygonIdentity, set[str]] = defaultdict(set)
     for path in paths:
-        languages_by_path = _polygon_languages_file(path, document_languages)
-        for polygon_id, languages in languages_by_path.items():
-            languages_by_polygon[polygon_id].update(languages)
+        languages_by_path = _polygon_languages_file(path, document_languages, polygon_index)
+        for identity, languages in languages_by_path.items():
+            languages_by_polygon[identity].update(languages)
     return languages_by_polygon
 
 
 def _polygon_languages_file(
     path: Path,
-    document_languages: dict[str, str],
-) -> dict[str, set[str]]:
-    values: defaultdict[str, set[str]] = defaultdict(set)
+    document_languages: dict[tuple[str, str], str],
+    polygon_index: PolygonIndex,
+) -> dict[PolygonIdentity, set[str]]:
+    values: defaultdict[PolygonIdentity, set[str]] = defaultdict(set)
     with pq.ParquetFile(path) as parquet_file:
         if not {"polygon_id", "document_id"}.issubset(parquet_file.schema_arrow.names):
             return values
-        for batch in parquet_file.iter_batches(
-            columns=["polygon_id", "document_id"], batch_size=65_536
-        ):
-            _merge_polygon_languages(values, batch, document_languages)
+        columns = ["polygon_id", "document_id"]
+        has_project = "project" in parquet_file.schema_arrow.names
+        if has_project:
+            columns.append("project")
+        for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+            _merge_polygon_languages(
+                values,
+                batch,
+                document_languages,
+                polygon_index,
+                has_project=has_project,
+            )
     return values
 
 
 def _merge_polygon_languages(
-    values: defaultdict[str, set[str]],
+    values: defaultdict[PolygonIdentity, set[str]],
     batch: Any,
-    document_languages: dict[str, str],
+    document_languages: dict[tuple[str, str], str],
+    polygon_index: PolygonIndex,
+    *,
+    has_project: bool,
 ) -> None:
-    for polygon_id, document_id in zip(
-        batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
+    projects = batch.column(2).to_pylist() if has_project else ["wikipedia"] * batch.num_rows
+    for polygon_id, document_id, project in zip(
+        batch.column(0).to_pylist(),
+        batch.column(1).to_pylist(),
+        projects,
+        strict=True,
     ):
-        language = document_languages.get(str(document_id))
-        if polygon_id and language is not None:
-            values[str(polygon_id)].add(language)
+        identity = polygon_index.by_polygon_id.get(str(polygon_id))
+        language = document_languages.get((str(project), str(document_id)))
+        if identity is not None and language is not None:
+            values[identity].add(language)
 
 
 def _text_funnel(
-    languages_by_polygon: dict[str, set[str]],
+    languages_by_polygon: dict[PolygonIdentity, set[str]],
 ) -> tuple[tuple[str, int], ...]:
     all_text = len(languages_by_polygon)
     english = sum("en" in languages for languages in languages_by_polygon.values())

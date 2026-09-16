@@ -26,7 +26,7 @@ def test_card_is_factual_and_deterministic(tmp_path: Path) -> None:
     write_v2_region(
         tmp_path,
         "region-latest",
-        polygons=[{"polygon_id": "p1", "has_wikidata": False}],
+        polygons=[{"polygon_id": "p1", "osm_type": "way", "osm_id": 1, "has_wikidata": False}],
         documents=[],
         links=[],
     )
@@ -68,9 +68,9 @@ def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path)
         tmp_path,
         "region-latest",
         polygons=[
-            {"polygon_id": "p1", "text_available": True},
-            {"polygon_id": "p2", "text_available": True},
-            {"polygon_id": "p3", "text_available": False},
+            {"polygon_id": "p1", "osm_type": "way", "osm_id": 1, "text_available": True},
+            {"polygon_id": "p2", "osm_type": "way", "osm_id": 2, "text_available": True},
+            {"polygon_id": "p3", "osm_type": "way", "osm_id": 3, "text_available": False},
         ],
         documents=[
             {
@@ -400,7 +400,10 @@ def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity
     assert stats.non_empty_text_polygons == 2
     card_text = render_v2_card(tmp_path, stats=stats)
     assert "**Polygons with non-empty Wikipedia or Wikivoyage text:** 2" in card_text
-    assert "Counted once per unique `(osm_type, osm_id)` in polygon-document links" in card_text
+    assert (
+        "Counted once per unique `(osm_type, osm_id)` represented in the polygon table and linked"
+        in card_text
+    )
     assert "`fetch_status=ok`" in card_text
     assert "trimmed non-empty `full_text`" in card_text
     assert "`text_available` are not used" in card_text
@@ -720,7 +723,7 @@ def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) 
     v2 = tmp_path / "v2"
 
     v1_polygon = empty_row(tuple(field.name for field in polygon_schema()))
-    v1_polygon.update({"polygon_id": "region-latest:way:1"})
+    v1_polygon.update({"polygon_id": "region-latest:way:1", "osm_type": "way", "osm_id": 1})
     v1_polygon_path = v1 / "polygons" / "region-latest.parquet"
     v1_polygon_path.parent.mkdir(parents=True)
     pq.write_table(
@@ -759,6 +762,8 @@ def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) 
         row.update(
             {
                 "polygon_id": polygon_id,
+                "osm_type": polygon_id.rsplit(":", 2)[1],
+                "osm_id": int(polygon_id.rsplit(":", 1)[1]),
                 "discovery_sources": sources,
                 "has_wikidata": "wikidata" in sources,
             }

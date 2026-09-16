@@ -192,7 +192,8 @@ def test_load_existing_core_artifacts_success(tmp_path: Path) -> None:
     stem = "mexico-latest"
     # Write valid schema parquet files
     poly_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "lat": 1.0, "lon": 2.0}], schema=polygon_schema()
+        [{"polygon_id": "1", "osm_type": "way", "osm_id": 1, "lat": 1.0, "lon": 2.0}],
+        schema=polygon_schema(),
     )
     pq.write_table(poly_table, data_root.processed_polygons / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 
@@ -540,7 +541,8 @@ def _setup_minimal_region(data_root: DataRoot, stem: str) -> None:
     data_root.processed_manifests.mkdir(parents=True, exist_ok=True)
 
     poly_table = pa.Table.from_pylist(
-        [{"polygon_id": "1", "lat": 19.0, "lon": -99.0}], schema=polygon_schema()
+        [{"polygon_id": "1", "osm_type": "way", "osm_id": 1, "lat": 19.0, "lon": -99.0}],
+        schema=polygon_schema(),
     )
     pq.write_table(poly_table, data_root.processed_polygons / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 

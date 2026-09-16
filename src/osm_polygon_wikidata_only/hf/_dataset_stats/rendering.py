@@ -112,10 +112,10 @@ def _render_headline_table(
 ) -> str:
     """Render the headline table.
 
-    Without augmentation, the rows are exactly the documented eight;
+    Without augmentation, the historical rows remain present;
     the legacy ``Dataset size on disk`` label MUST stay preserved
-    byte-for-byte. With augmentation, the last row is renamed to
-    ``Core tables size`` and additional augmentation totals follow.
+    byte-for-byte. When canonical identity metrics are available, they
+    are added explicitly alongside the regional row count.
 
     When augmentation is present the legacy ``Wikipedia articles``
     and ``Total words`` rows are dropped: the augmentation-aware
@@ -126,6 +126,15 @@ def _render_headline_table(
     rows = _headline_rows(stats, augmentation_stats)
     lines = ["| Metric | Value |", "| --- | ---: |"]
     lines.extend(f"| {label} | {value} |" for label, value in rows)
+    if stats.unique_polygon_identities is not None:
+        lines.extend(
+            [
+                "",
+                "Polygon rows retain regional copies. Identity metrics use one deterministic "
+                "representative per `(osm_type, osm_id)`; successful text additionally requires "
+                "`fetch_status=ok` and trimmed non-empty `full_text`.",
+            ]
+        )
     if augmentation_stats is not None:
         lines.extend(
             [
@@ -142,73 +151,84 @@ def _headline_rows(
     stats: DatasetStats,
     augmentation_stats: AugmentationStats | None,
 ) -> list[tuple[str, str]]:
+    rows = _identity_headline_rows(stats)
+    rows.extend(_base_headline_rows(stats, augmentation_stats))
+    rows.extend(_augmentation_headline_rows(augmentation_stats))
+    return rows
+
+
+def _identity_headline_rows(stats: DatasetStats) -> list[tuple[str, str]]:
     rows = [
-        ("Polygons", _fmt_int(stats.polygon_count)),
+        (
+            "Polygon rows across regional extracts"
+            if stats.unique_polygon_identities is not None
+            else "Polygons",
+            _fmt_int(stats.polygon_count),
+        ),
         ("Unique Wikidata entities", _fmt_int(stats.unique_wikidata_count)),
     ]
-    if augmentation_stats is None:
-        # Legacy-only render: all eight documented rows, unchanged.
-        rows.extend(
-            [
-                ("Wikipedia articles", _fmt_int(stats.article_count)),
-                ("Polygon-article links", _fmt_int(stats.link_count)),
-                ("Languages", _fmt_int(stats.language_count)),
-                ("Geographic regions", _fmt_int(stats.region_count)),
-                ("Total words", _fmt_int(stats.total_words)),
-                ("Dataset size on disk", _fmt_size(stats.dataset_size_bytes)),
-            ]
+    if stats.unique_polygon_identities is not None:
+        rows.append(
+            (
+                "Unique polygon identities (osm_type, osm_id)",
+                _fmt_int(stats.unique_polygon_identities),
+            )
         )
-    else:
-        # Augmentation-aware render: drop the redundant/ambiguous
-        # legacy rows, keep the augmentation-broken-down totals.
-        rows.extend(
-            [
-                ("Wikipedia polygon-document links", _fmt_int(stats.link_count)),
-                (
-                    "Wikipedia + Wikivoyage languages",
-                    _fmt_int(
-                        augmentation_stats.combined_languages.language_count or stats.language_count
-                    ),
-                ),
-                ("Geographic regions", _fmt_int(stats.region_count)),
-                ("Polygon and link tables size", _fmt_size(stats.dataset_size_bytes)),
-            ]
-        )
-    if augmentation_stats is not None:
-        aug = augmentation_stats
-        rows.extend(
-            [
-                (
-                    "Wikipedia documents",
-                    _fmt_int(aug.wikipedia_documents.rows),
-                ),
-                (
-                    "Wikipedia sections",
-                    _fmt_int(aug.wikipedia_sections.rows),
-                ),
-                (
-                    "Wikivoyage documents",
-                    _fmt_int(aug.wikivoyage_documents.rows),
-                ),
-                (
-                    "Wikivoyage sections",
-                    _fmt_int(aug.wikivoyage_sections.rows),
-                ),
-                (
-                    "Wikidata facts",
-                    _fmt_int(aug.wikidata_facts.rows),
-                ),
-                (
-                    "Wikipedia + Wikivoyage document words",
-                    _fmt_int(_document_corpus_words(aug)),
-                ),
-                (
-                    "Total Parquet size",
-                    _fmt_size(aug.total_parquet_bytes),
-                ),
-            ]
+    if stats.unique_text_polygons is not None:
+        rows.append(
+            (
+                "Polygons with successful non-empty text (unique OSM identities)",
+                _fmt_int(stats.unique_text_polygons),
+            )
         )
     return rows
+
+
+def _base_headline_rows(
+    stats: DatasetStats,
+    augmentation_stats: AugmentationStats | None,
+) -> list[tuple[str, str]]:
+    if augmentation_stats is None:
+        # Legacy-only render: all eight documented rows, unchanged.
+        return [
+            ("Wikipedia articles", _fmt_int(stats.article_count)),
+            ("Polygon-article links", _fmt_int(stats.link_count)),
+            ("Languages", _fmt_int(stats.language_count)),
+            ("Geographic regions", _fmt_int(stats.region_count)),
+            ("Total words", _fmt_int(stats.total_words)),
+            ("Dataset size on disk", _fmt_size(stats.dataset_size_bytes)),
+        ]
+    # Augmentation-aware render: drop the redundant/ambiguous legacy rows,
+    # keep the augmentation-broken-down totals.
+    return [
+        ("Wikipedia polygon-document links", _fmt_int(stats.link_count)),
+        (
+            "Wikipedia + Wikivoyage languages",
+            _fmt_int(augmentation_stats.combined_languages.language_count or stats.language_count),
+        ),
+        ("Geographic regions", _fmt_int(stats.region_count)),
+        ("Polygon and link tables size", _fmt_size(stats.dataset_size_bytes)),
+    ]
+
+
+def _augmentation_headline_rows(
+    augmentation_stats: AugmentationStats | None,
+) -> list[tuple[str, str]]:
+    if augmentation_stats is None:
+        return []
+    aug = augmentation_stats
+    return [
+        ("Wikipedia documents", _fmt_int(aug.wikipedia_documents.rows)),
+        ("Wikipedia sections", _fmt_int(aug.wikipedia_sections.rows)),
+        ("Wikivoyage documents", _fmt_int(aug.wikivoyage_documents.rows)),
+        ("Wikivoyage sections", _fmt_int(aug.wikivoyage_sections.rows)),
+        ("Wikidata facts", _fmt_int(aug.wikidata_facts.rows)),
+        (
+            "Wikipedia + Wikivoyage document words",
+            _fmt_int(_document_corpus_words(aug)),
+        ),
+        ("Total Parquet size", _fmt_size(aug.total_parquet_bytes)),
+    ]
 
 
 def _document_corpus_words(aug: AugmentationStats) -> int:

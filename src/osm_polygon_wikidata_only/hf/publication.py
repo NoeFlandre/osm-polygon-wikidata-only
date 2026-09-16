@@ -305,6 +305,17 @@ def write_readme_snapshot(
     repo_id: str,
     destination: Path,
 ) -> None:
+    """Render the canonical dataset README without wall-clock metadata."""
+    _write_readme_snapshot(data_root, repo_id, destination, generated_on=None)
+
+
+def _write_readme_snapshot(
+    data_root: DataRoot,
+    repo_id: str,
+    destination: Path,
+    *,
+    generated_on: str | None,
+) -> None:
     """Render the canonical dataset README from current local artifacts.
 
     The README is recomputed by:
@@ -375,6 +386,7 @@ def write_readme_snapshot(
             maintainer="Noé Flandre",
             stats_section=stats_section,
             rejections_section=rejections_section,
+            generated_on=generated_on,
         ),
     )
 

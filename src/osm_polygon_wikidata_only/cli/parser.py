@@ -128,14 +128,32 @@ def _add_release_stats_parser(sub: argparse._SubParsersAction) -> None:
         metavar="REPO_ID",
         help="Exact target repo id; repeat once per released dataset",
     )
-    release.add_argument(
+    release_mode = release.add_mutually_exclusive_group()
+    release_mode.add_argument(
         "--apply", action="store_true", help="Publish and verify (default: dry run)"
     )
     release.add_argument("--hf-token", default=None)
     release.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
-    release.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
+    release_mode.add_argument(
+        "--dry-run", action="store_true", help="Use a stub HF client (no network)"
+    )
+    release.add_argument(
+        "--source-revision",
+        default=None,
+        help="Pinned source/PBF revision to record in the release provenance",
+    )
+    release.add_argument(
+        "--data-revision",
+        default=None,
+        help="Pinned processed-data revision to record in the release provenance",
+    )
+    release.add_argument(
+        "--generated-on",
+        default=None,
+        help="Optional pinned YYYY-MM-DD card metadata; omitted by default",
+    )
     release.set_defaults(push=False)
 
 

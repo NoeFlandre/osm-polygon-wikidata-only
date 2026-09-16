@@ -66,3 +66,15 @@ class HfHub(Protocol):
         *,
         repo_type: str,
     ) -> Iterable[Any]: ...
+
+    def repo_info(self, repo_id: str, *, repo_type: str) -> Any: ...
+
+    def hf_hub_download(
+        self,
+        repo_id: str,
+        filename: str,
+        *,
+        revision: str,
+        repo_type: str,
+        cache_dir: str | None = None,
+    ) -> str: ...

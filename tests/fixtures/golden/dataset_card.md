@@ -63,8 +63,6 @@ OSM polygons tagged with a `wikidata=*` reference, enriched with Wikipedia and W
 
 Links are derived from the Wikidata identifiers shared by each OSM polygon and its Wikipedia or Wikivoyage documents.
 
-Generated on 2026-08-02.
-
 Maintained by **Noé Flandre**.
 
 Source code: [GitHub repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only).
@@ -99,13 +97,13 @@ The funnel's language thresholds use the canonical Wikipedia polygon fields. Wik
 
 ![Polygons with Wikipedia or Wikivoyage text](assets/geographic_text_presence.png)
 
-Each point is a dataset polygon with at least one non-empty Wikipedia document or a non-empty Wikivoyage document sharing its Wikidata entity. A polygon is shown once even when several documents qualify.
+Each point is one globally unique `(osm_type, osm_id)` polygon identity linked to a Wikipedia or Wikivoyage document whose extraction succeeded (`fetch_status=ok`) and whose trimmed `full_text` is non-empty. Overlapping regional rows and multiple qualifying documents count once.
 
 ### All dataset polygons
 
 ![Coverage Map](assets/coverage_map.png)
 
-Each point represents one dataset polygon carrying an OSM `wikidata=*` tag, whether or not corresponding Wikipedia or Wikivoyage text is available.
+Each point represents one globally unique `(osm_type, osm_id)` identity carrying an OSM `wikidata=*` tag, whether or not corresponding Wikipedia or Wikivoyage text is available. Regional polygon rows remain separate source records.
 
 ## Geographic coverage
 
@@ -113,7 +111,7 @@ Each point represents one dataset polygon carrying an OSM `wikidata=*` tag, whet
 
 ![Geographic Wikipedia and Wikivoyage Text Density](assets/geographic_text_density.png)
 
-Each H3 cell contains the raw number of polygons with non-empty Wikipedia or Wikivoyage text. A polygon is counted once even when both projects or several documents qualify. Colour uses a logarithmic purple-to-yellow scale; this is an absolute density count, not a proportion of all polygons.
+Each H3 cell contains the raw number of unique `(osm_type, osm_id)` polygon identities with successfully extracted (`fetch_status=ok`) non-empty Wikipedia or Wikivoyage text. A polygon is counted once even when both projects, several documents, or overlapping regional rows qualify. Colour uses a logarithmic purple-to-yellow scale; this is an absolute density count, not a proportion of all polygon rows.
 
 
 ## Schema

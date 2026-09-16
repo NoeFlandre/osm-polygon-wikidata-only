@@ -22,6 +22,8 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from osm_polygon_wikidata_only.hf._geographic.models import CoverageMapError
+
 from .models import DatasetStats
 from .scanning import safe_metadata_row_count, safe_table, sorted_parquets
 
@@ -53,6 +55,8 @@ class _StatsAccumulator:
         default_factory=dict,
         repr=False,
     )
+    unique_polygon_identities: int | None = None
+    unique_text_polygons: int | None = None
 
     def to_stats(self) -> DatasetStats:
         return DatasetStats(
@@ -74,6 +78,8 @@ class _StatsAccumulator:
             polygons_with_10plus_langs=self.polygons_with_10plus_langs,
             articles_per_language=dict(self.articles_per_language.most_common()),
             polygons_per_language=dict(self.polygons_per_language.most_common()),
+            unique_polygon_identities=self.unique_polygon_identities,
+            unique_text_polygons=self.unique_text_polygons,
         )
 
 
@@ -92,7 +98,27 @@ def compute_dataset_stats(processed_dir: Path) -> DatasetStats:
     _accumulate_polygon_files(stats, processed_dir / "polygons")
     _accumulate_article_files(stats, articles_dir)
     _accumulate_link_files(stats, processed_dir / "polygon_articles")
+    (
+        stats.unique_polygon_identities,
+        stats.unique_text_polygons,
+    ) = _load_unique_text_polygon_counts(processed_dir)
     return stats.to_stats()
+
+
+def _load_unique_text_polygon_counts(processed_dir: Path) -> tuple[int | None, int | None]:
+    """Return global polygon and successful-text identity counts when available.
+
+    The legacy core statistics contract is also used before augmentation
+    tables exist. In that state the historical row counters remain the
+    source of truth and this optional metric is omitted.
+    """
+    try:
+        from osm_polygon_wikidata_only.hf.geographic_text_presence import load_text_presence
+
+        snapshot = load_text_presence(processed_dir)
+    except (CoverageMapError, OSError, KeyError, ValueError):
+        return None, None
+    return snapshot.polygon_count, len(snapshot.combined_polygon_identities)
 
 
 def _accumulate_polygon_files(stats: _StatsAccumulator, polygons_dir: Path) -> None:

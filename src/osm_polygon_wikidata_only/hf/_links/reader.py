@@ -78,8 +78,10 @@ def _read_source_rows(
         )
     if _is_legacy_schema(schema):
         return _read_legacy_rows(processed_root, path)
+    missing = "polygon_id" if "polygon_id" not in schema.names else "canonical link columns"
     raise CoverageMapError(
-        f"polygon link parquet {path} does not use the canonical or supported legacy schema"
+        f"polygon link parquet {path} does not use the canonical or supported legacy schema; "
+        f"missing required {missing}"
     )
 
 
