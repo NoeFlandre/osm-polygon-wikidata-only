@@ -48,6 +48,7 @@ nav:
   - API reference: api.md
   - Architecture: architecture.md
   - Quality boundary ADR: adr/0001-quality-boundaries.md
+  - Language-split contract ADR: adr/0002-language-split-contract.md
   - Development: development.md
   - V2 sentence splitting: sentence-splitting.md
   - Grid5000 sentence operations: grid5000-sentence-splitting.md
