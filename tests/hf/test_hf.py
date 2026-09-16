@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -160,6 +162,51 @@ def test_upload_files_commits_every_artifact_atomically(tmp_path: Path) -> None:
     assert stub.commits[0]["num_threads"] == 3
 
 
+def test_stub_hub_preserves_upload_and_commit_source_bytes(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact.bin"
+    artifact.write_bytes(b"path-bytes")
+    stub = StubHfHub()
+
+    for path, source in (
+        ("upload-bytes", b"raw-bytes"),
+        ("upload-bytearray", bytearray(b"array-bytes")),
+        ("upload-path", artifact),
+        ("upload-stream", BytesIO(b"stream-bytes")),
+    ):
+        stub.upload_file(
+            path_or_fileobj=source,
+            path_in_repo=path,
+            repo_id="org/name",
+            repo_type="dataset",
+            commit_message="x",
+        )
+
+    operations = [
+        SimpleNamespace(path_in_repo="commit-path", path_or_fileobj=str(artifact)),
+        SimpleNamespace(path_in_repo="commit-bytes", path_or_fileobj=b"commit-raw"),
+        SimpleNamespace(path_in_repo="commit-stream", path_or_fileobj=BytesIO(b"commit-stream")),
+        SimpleNamespace(path_in_repo="commit-unsupported", path_or_fileobj=None),
+    ]
+    stub.create_commit(
+        repo_id="org/name",
+        operations=operations,
+        commit_message="x",
+        repo_type="dataset",
+        num_threads=1,
+    )
+
+    assert stub.remote_content == {
+        "upload-bytes": b"raw-bytes",
+        "upload-bytearray": b"array-bytes",
+        "upload-path": b"path-bytes",
+        "upload-stream": b"stream-bytes",
+        "commit-path": b"path-bytes",
+        "commit-bytes": b"commit-raw",
+        "commit-stream": b"commit-stream",
+        "commit-unsupported": b"",
+    }
+
+
 def test_background_upload_submit_does_not_wait_for_upload(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
@@ -299,6 +346,31 @@ def test_upload_files_uses_resolved_token_to_build_hub(tmp_path: Path) -> None:
         _api_factory=lambda *, token: _FakeApi(token=token),
     )
     assert captured == {"token": "my-token"}
+
+
+def test_upload_files_returns_the_upload_commit_oid(tmp_path: Path) -> None:
+    class _CommitInfo:
+        oid = "uploaded-commit-oid"
+
+    class _FakeApi:
+        token = "my-token"
+
+        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
+            return repo_id
+
+        def create_commit(self, **_kwargs: object) -> _CommitInfo:
+            return _CommitInfo()
+
+    polygon = _small_parquet(tmp_path)
+    result = upload_files(
+        "org/name",
+        [(polygon, "polygons/x.parquet")],
+        commit_message="x",
+        token="my-token",
+        _api_factory=lambda *, token: _FakeApi(),
+    )
+
+    assert result == "uploaded-commit-oid"
 
 
 def _fake_hf_response(status_code: int, body: str) -> httpx.Response:
@@ -534,7 +606,7 @@ def test_render_dataset_card_explains_combined_text_density_metric() -> None:
     )
     coverage_section = markdown.split("## Geographic coverage", 1)[1].split("\n## ", 1)[0]
 
-    assert "raw number of polygons" in coverage_section
+    assert "raw number of unique `(osm_type, osm_id)` polygon identities" in coverage_section
     assert "Wikipedia or Wikivoyage" in coverage_section
     assert "counted once" in coverage_section
     assert "not a proportion" in coverage_section

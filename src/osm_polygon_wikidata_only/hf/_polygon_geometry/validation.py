@@ -184,7 +184,42 @@ def _decode_manifest(manifest: Path) -> dict[str, int]:
         ) from error
     if not isinstance(payload, dict):
         raise PolygonStatsInputError(f"Processed manifest is not a JSON object: {manifest}")
+    regions = payload.get("regions")
+    if isinstance(regions, dict):
+        return dict(_v2_manifest_entries(manifest, regions))
     return dict(_manifest_entries(manifest, payload))
+
+
+def _v2_manifest_entries(manifest: Path, regions: dict[str, Any]) -> list[tuple[str, int]]:
+    """Decode the V2 manifest, which nests its regions under ``regions``."""
+    entries = [_v2_manifest_entry(manifest, key, entry) for key, entry in regions.items()]
+    _refuse_duplicate_stems(manifest, entries)
+    return entries
+
+
+def _v2_manifest_entry(manifest: Path, key: str, entry: Any) -> tuple[str, int]:
+    if not isinstance(entry, dict):
+        raise PolygonStatsInputError(f"Processed manifest holds a non-object entry: {manifest}")
+    polygons_path = entry.get("polygons_path")
+    polygon_count = _v2_polygon_count(entry)
+    if not isinstance(polygons_path, str) or polygon_count is None:
+        raise PolygonStatsInputError(
+            f"Processed manifest entry lacks polygons_path/row_counts.polygons: {manifest}"
+        )
+    stem = _canonical_polygons_stem(manifest, polygons_path)
+    if key != stem:
+        raise PolygonStatsInputError(
+            f"Processed manifest entry {key!r} points at polygons/{stem}.parquet: {manifest}"
+        )
+    return stem, polygon_count
+
+
+def _v2_polygon_count(entry: dict[str, Any]) -> int | None:
+    row_counts = entry.get("row_counts")
+    if not isinstance(row_counts, dict):
+        return None
+    polygons = row_counts.get("polygons")
+    return polygons if isinstance(polygons, int) else None
 
 
 def _manifest_entries(manifest: Path, payload: dict[str, Any]) -> list[tuple[str, int]]:

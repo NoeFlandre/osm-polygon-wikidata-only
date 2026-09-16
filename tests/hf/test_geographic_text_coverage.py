@@ -1074,6 +1074,42 @@ def test_polygon_count_each_polygon_counted_once(tmp_path: Path) -> None:
     assert sum(c.polygon_count for c in cells) == len(polygons)
 
 
+def test_polygon_count_deduplicates_overlapping_typed_identity(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    polygons_dir = processed / "polygons"
+    (processed / "articles").mkdir(parents=True)
+    (processed / "polygon_articles").mkdir(parents=True)
+    polygons_dir.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["north:way:7", "relation:9"],
+                "osm_type": ["way", "relation"],
+                "osm_id": [7, 9],
+                "lat": [48.0, 50.0],
+                "lon": [2.0, 4.0],
+            }
+        ),
+        polygons_dir / "a-region.parquet",
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["south:way:7"],
+                "osm_type": ["way"],
+                "osm_id": [7],
+                "lat": [49.0],
+                "lon": [3.0],
+            }
+        ),
+        polygons_dir / "b-region.parquet",
+    )
+
+    cells = aggregate_geographic_polygon_count(processed)
+
+    assert sum(cell.polygon_count for cell in cells) == 2
+
+
 # --- Polygon count map rendering ---------------------------------------
 
 

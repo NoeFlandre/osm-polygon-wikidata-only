@@ -474,6 +474,7 @@ def build_golden_help(out: Path) -> dict[str, Path]:
         "split-v2-sentences": ["split-v2-sentences"],
         "augment-region": ["augment-region"],
         "augment-dir": ["augment-dir"],
+        "release-stats": ["release-stats"],
     }
     for name, prog_args in targets.items():
         path = out / "golden" / f"cli_help_{name}.txt"

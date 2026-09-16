@@ -20,6 +20,7 @@ direct ``upload_files`` helper.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -340,10 +341,33 @@ def _authenticate_for_push(
     settings: Settings,
 ) -> None:
     """Validate Hugging Face credentials when a real push was requested."""
-    if not args.push or args.dry_run:
+    release_apply = _release_apply_requested(args)
+    if not _push_authentication_required(args, release_apply) or args.dry_run:
+        return
+    if release_apply:
+        _authenticate_release_targets(parser, args, settings)
         return
     _require_push_token(parser, settings)
     _verify_push_access(parser, settings)
+
+
+def _release_apply_requested(args: argparse.Namespace) -> bool:
+    return getattr(args, "command", None) == "release-stats" and getattr(args, "apply", False)
+
+
+def _push_authentication_required(args: argparse.Namespace, release_apply: bool) -> bool:
+    return bool(args.push or release_apply)
+
+
+def _authenticate_release_targets(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    settings: Settings,
+) -> None:
+    for target in _selected_release_targets(args.dataset_version):
+        target_settings = replace(settings, repo_id=_RELEASE_TARGETS[target])
+        _require_push_token(parser, target_settings)
+        _verify_push_access(parser, target_settings)
 
 
 def _run_v2_sync(
@@ -628,6 +652,68 @@ def _run_processing_command(
     return 0
 
 
+_RELEASE_TARGETS: dict[str, str] = {"v1": DEFAULT_REPO_ID, "v2": V2_REPO_ID}
+
+
+def _selected_release_targets(dataset_version: str) -> tuple[str, ...]:
+    """Return the ordered contracts a release run publishes."""
+    if dataset_version == "both":
+        return ("v1", "v2")
+    return (dataset_version,)
+
+
+def _release_confirmations(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    targets: tuple[str, ...],
+) -> dict[str, str]:
+    """Map each released contract to its required exact repository id."""
+    supplied = list(getattr(args, "confirm_repo", None) or [])
+    expected = [_RELEASE_TARGETS[target] for target in targets]
+    if sorted(supplied) != sorted(expected):
+        parser.error(
+            "release-stats requires one --confirm-repo per released dataset: " + ", ".join(expected)
+        )
+    return dict(zip(targets, expected, strict=True))
+
+
+def _run_release_stats(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+) -> int:
+    """Recompute and publish only the card and statistics report."""
+    from osm_polygon_wikidata_only.hf.stats_release import (
+        StatsReleaseError,
+        release_v1_polygon_stats,
+        release_v2_polygon_stats,
+    )
+
+    targets = _selected_release_targets(args.dataset_version)
+    confirmations = _release_confirmations(parser, args, targets)
+    releases = {"v1": release_v1_polygon_stats, "v2": release_v2_polygon_stats}
+    hub = StubHfHub() if args.dry_run else None
+    reports = []
+    for target in targets:
+        try:
+            report = releases[target](
+                data_root,
+                confirm_repo=confirmations[target],
+                apply=args.apply,
+                hub=hub,
+                token=getattr(args, "hf_token", None),
+                source_revision=getattr(args, "source_revision", None),
+                data_revision=getattr(args, "data_revision", None),
+                generated_on=getattr(args, "generated_on", None),
+            )
+        except StatsReleaseError as error:
+            parser.error(str(error))
+        reports.append(report)
+        print(json.dumps(report.to_payload(), sort_keys=True))
+    return 0
+
+
 def _dispatch_command(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -638,6 +724,8 @@ def _dispatch_command(
     """Run the handler for the parsed command."""
     if args.command == "split-v2-sentences":
         return _run_v2_sentence_split(parser, args, data_root=data_root, settings=settings)
+    if args.command == "release-stats":
+        return _run_release_stats(parser, args, data_root=data_root)
     if args.command == "sync-dir":
         return _run_sync_command(parser, args, data_root=data_root, settings=settings)
     if args.command in {"augment-region", "augment-dir"}:

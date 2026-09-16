@@ -307,7 +307,27 @@ def _create_upload_commit(
         )
     except Exception as error:
         raise _translate_hf_error(error, repo_id=repo_id) from error
-    return str(result)
+    return _commit_identity(result, repo_id=repo_id)
+
+
+def _commit_identity(result: Any, *, repo_id: str) -> str:
+    """Return the immutable commit OID from Hub ``CommitInfo`` results."""
+    if isinstance(result, str) and result:
+        return result
+    for candidate in _commit_identity_candidates(result):
+        if candidate:
+            return str(candidate)
+    raise UploadError(f"Hugging Face upload to {repo_id} returned no commit OID")
+
+
+def _commit_identity_candidates(result: Any) -> tuple[Any, ...]:
+    if isinstance(result, dict):
+        return (result.get("oid"), result.get("commit_oid"), result.get("sha"))
+    return (
+        getattr(result, "oid", None),
+        getattr(result, "commit_oid", None),
+        getattr(result, "sha", None),
+    )
 
 
 def _validate_upload_safety(add_paths: set[str], delete_paths: set[str]) -> None:

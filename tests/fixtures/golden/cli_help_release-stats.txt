@@ -1,0 +1,25 @@
+usage: PROG release-stats [-h] [--data-root DATA_ROOT]
+ [--dataset-version {v1,v2,both}]
+ [--confirm-repo REPO_ID] [--apply]
+ [--hf-token HF_TOKEN]
+ [--log-level {DEBUG,INFO,WARNING,ERROR}] [--dry-run]
+ [--source-revision SOURCE_REVISION]
+ [--data-revision DATA_REVISION]
+ [--generated-on GENERATED_ON]
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT Data root directory
+ --dataset-version {v1,v2,both}
+ Which published contract to release (default: both)
+ --confirm-repo REPO_ID Exact target repo id; repeat once per released dataset
+ --apply Publish and verify (default: dry run)
+ --hf-token HF_TOKEN
+ --log-level {DEBUG,INFO,WARNING,ERROR}
+ --dry-run Use a stub HF client (no network)
+ --source-revision SOURCE_REVISION
+ Pinned source/PBF revision to record in the release provenance
+ --data-revision DATA_REVISION
+ Pinned processed-data revision to record in the release provenance
+ --generated-on GENERATED_ON
+ Optional pinned YYYY-MM-DD card metadata; omitted by default

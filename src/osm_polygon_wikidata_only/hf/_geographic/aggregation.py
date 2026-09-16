@@ -9,15 +9,19 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from osm_polygon_wikidata_only.hf.geographic_text_presence import TextPresenceSnapshot
 
 from .h3_geometry import DEFAULT_H3_RESOLUTION, DEFAULT_MIN_POLYGONS_PER_CELL
 from .models import CoverageCell, CoverageMapError, PolygonCountCell
 from .parquet_inputs import (
-    load_covered_polygon_ids,
     load_polygon_cells,
-    load_qualifying_article_ids,
     require_directory,
+    sorted_parquets,
 )
+from .polygon_identities import PolygonIdentity, load_unique_polygon_records
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,20 +34,32 @@ def aggregate_geographic_text_coverage(
 ) -> list[CoverageCell]:
     """Aggregate Wikipedia text coverage statistics per H3 cell.
 
-    The denominator counts every polygon row in
-    ``processed/polygons/*.parquet`` exactly once; the numerator
-    counts unique polygons (never polygon-article links) linked to at
-    least one article with non-empty full text. Both inputs are
-    inherited from the upstream schema where polygons must already
-    carry an OSM ``wikidata=*`` tag.
+    The denominator counts each unique ``(osm_type, osm_id)`` polygon
+    identity once; the numerator counts the subset linked to at least
+    one successfully extracted Wikipedia document with trimmed,
+    non-empty ``full_text``. Regional polygon rows remain available to
+    row-based reporting. Both inputs are inherited from the upstream
+    schema where polygons must already carry an OSM ``wikidata=*`` tag.
     """
     if min_polygons_per_cell < 1:
         raise CoverageMapError(f"min_polygons_per_cell must be >= 1; got {min_polygons_per_cell}")
-    polygons_dir, articles_dir, links_dir = _coverage_input_dirs(processed_root)
-    qualifying_article_ids = load_qualifying_article_ids(articles_dir)
-    covered_polygon_ids = load_covered_polygon_ids(links_dir, qualifying_article_ids)
-    polygon_cells = load_polygon_cells(polygons_dir, h3_resolution=h3_resolution)
-    cells = _build_coverage_cells(polygon_cells, covered_polygon_ids, min_polygons_per_cell)
+    polygons_dir, _articles_dir, _links_dir = _coverage_input_dirs(processed_root)
+    from osm_polygon_wikidata_only.hf.geographic_text_presence import load_text_presence
+
+    presence: TextPresenceSnapshot = load_text_presence(processed_root)
+    polygon_index = load_unique_polygon_records(sorted_parquets(polygons_dir))
+    polygon_cells = [
+        (polygon_index.by_polygon_id[polygon_id], cell)
+        for polygon_id, cell in load_polygon_cells(
+            polygons_dir,
+            h3_resolution=h3_resolution,
+        )
+    ]
+    cells = _build_coverage_cells(
+        polygon_cells,
+        set(presence.wikipedia_polygon_identities),
+        min_polygons_per_cell,
+    )
     LOGGER.info(
         "Aggregated %d H3 cell(s); %d covered polygon(s) of %d total.",
         len(cells),
@@ -66,8 +82,8 @@ def _coverage_input_dirs(processed_root: Path) -> tuple[Path, Path, Path]:
 
 
 def _build_coverage_cells(
-    polygon_cells: list[tuple[str, str]],
-    covered_polygon_ids: set[str],
+    polygon_cells: list[tuple[PolygonIdentity, str]],
+    covered_polygon_ids: set[PolygonIdentity],
     min_polygons_per_cell: int,
 ) -> list[CoverageCell]:
     counts: dict[str, int] = {}

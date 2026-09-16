@@ -43,6 +43,11 @@ constructs these clients with the project defaults.
   `upload_manifest`, `upload_card`, and `upload_files`, plus the `HfHub` and
   `StubHfHub` in-memory stub and token/authorization helpers. These functions
   can write to the Hub; use the CLI for the normal atomic publication path.
+- `osm_polygon_wikidata_only.hf.stats_release` exposes `release_v1_polygon_stats`
+  and `release_v2_polygon_stats`, the deterministic compute-publish-verify path
+  behind the `release-stats` command. Each recomputes `stats.json` and the
+  dataset card from every published polygon row, publishes only those two files
+  to the confirmed dataset, and verifies the resulting remote revision.
 - `osm_polygon_wikidata_only.hf.trackio_snapshot.publish_trackio_snapshot`
   publishes the single static `final-dataset-snapshot` run. The corresponding
   console script is `osm-polygon-wikidata-only-trackio`.

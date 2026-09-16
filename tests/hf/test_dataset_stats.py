@@ -767,6 +767,87 @@ def test_compute_stats_funnel_counts(tmp_path: Path) -> None:
     assert stats.polygons_with_10plus_langs == 0
 
 
+def test_compute_stats_counts_successful_text_by_global_osm_identity(
+    tmp_path: Path,
+) -> None:
+    processed = _setup_processed_dir(tmp_path)
+    polygon_rows = [
+        {
+            "polygon_id": "north:way:7",
+            "osm_type": "way",
+            "osm_id": 7,
+            "lon": 2.0,
+            "lat": 48.0,
+            "wikidata": "Q7",
+            "region": "north",
+            "has_wikipedia": True,
+            "text_available": True,
+            "has_english_wikipedia": True,
+            "wikipedia_language_count": 1,
+            "wikipedia_languages": '["en"]',
+        },
+        {
+            "polygon_id": "south:way:7",
+            "osm_type": "way",
+            "osm_id": 7,
+            "lon": 3.0,
+            "lat": 49.0,
+            "wikidata": "Q7",
+            "region": "south",
+            "has_wikipedia": True,
+            "text_available": True,
+            "has_english_wikipedia": True,
+            "wikipedia_language_count": 1,
+            "wikipedia_languages": '["en"]',
+        },
+        {
+            "polygon_id": "relation:9",
+            "osm_type": "relation",
+            "osm_id": 9,
+            "lon": 4.0,
+            "lat": 50.0,
+            "wikidata": "Q9",
+            "region": "north",
+            "has_wikipedia": True,
+            "text_available": True,
+            "has_english_wikipedia": True,
+            "wikipedia_language_count": 1,
+            "wikipedia_languages": '["en"]',
+        },
+    ]
+    table = pa.Table.from_pylist(polygon_rows)
+    pq.write_table(table.slice(0, 2), processed / "polygons" / "a.parquet")
+    pq.write_table(table.slice(1, 2), processed / "polygons" / "b.parquet")
+    pq.write_table(
+        pa.table(
+            {
+                "article_id": ["ok", "failed"],
+                "language": ["en", "en"],
+                "full_text": ["body", "looks non-empty"],
+                "fetch_status": ["ok", "http_error"],
+                "article_length_words": [1, 2],
+                "article_length_tokens_estimate": [1, 1],
+            }
+        ),
+        processed / "articles" / "a.parquet",
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "polygon_id": ["north:way:7", "south:way:7", "relation:9"],
+                "article_id": ["ok", "ok", "failed"],
+            }
+        ),
+        processed / "polygon_articles" / "a.parquet",
+    )
+
+    stats = compute_dataset_stats(processed)
+
+    assert stats.polygon_count == 4
+    assert stats.unique_polygon_identities == 2
+    assert stats.unique_text_polygons == 1
+
+
 def test_compute_stats_funnel_handles_empty(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     stats = compute_dataset_stats(processed)

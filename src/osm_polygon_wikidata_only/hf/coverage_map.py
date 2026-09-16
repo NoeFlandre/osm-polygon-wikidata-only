@@ -25,6 +25,8 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import pyarrow.parquet as pq
 
+from ._geographic.polygon_identities import load_unique_polygon_records
+
 LOGGER = logging.getLogger(__name__)
 
 WORLD_LAND_URL = (
@@ -60,16 +62,85 @@ def load_centroids_from_parquet(
     hundreds of processed PBFs. When ``polygon_ids`` is supplied, only those
     polygon identities are returned. ``None``/missing values are skipped.
     """
+    if not polygons_dir.exists():
+        return [], []
+    selected_ids = _selected_polygon_ids(polygon_ids)
+    parquet_paths = sorted(polygons_dir.glob("*.parquet"))
+    if parquet_paths and _has_polygon_ids(parquet_paths):
+        return _load_unique_centroids(parquet_paths, selected_ids)
+    return _load_legacy_centroids(parquet_paths, selected_ids)
+
+
+def _selected_polygon_ids(polygon_ids: Collection[str] | None) -> set[str] | None:
+    if polygon_ids is None:
+        return None
+    return {str(value) for value in polygon_ids}
+
+
+def _load_legacy_centroids(
+    parquet_paths: list[Path], selected_ids: set[str] | None
+) -> tuple[list[float], list[float]]:
     lons: list[float] = []
     lats: list[float] = []
-    if not polygons_dir.exists():
-        return lons, lats
-    selected_ids = None if polygon_ids is None else {str(value) for value in polygon_ids}
-    for parquet_path in sorted(polygons_dir.glob("*.parquet")):
+    for parquet_path in parquet_paths:
         file_lons, file_lats = _load_centroid_file(parquet_path, selected_ids)
         lons.extend(file_lons)
         lats.extend(file_lats)
     return lons, lats
+
+
+def _has_polygon_ids(paths: list[Path]) -> bool:
+    try:
+        return all("polygon_id" in pq.read_schema(path).names for path in paths)
+    except (OSError, KeyError):
+        return False
+
+
+def _load_unique_centroids(
+    paths: list[Path], selected_ids: set[str] | None
+) -> tuple[list[float], list[float]]:
+    index = load_unique_polygon_records(paths)
+    selected_identities = _selected_identities(index.by_polygon_id, selected_ids)
+    coordinates: list[tuple[float, float]] = []
+    for identity, record in sorted(
+        index.records.items(), key=lambda item: (item[0][0], str(item[0][1]))
+    ):
+        coordinate = _selected_record_centroid(identity, record, selected_identities)
+        if coordinate is not None:
+            coordinates.append(coordinate)
+    return [lon for lon, _ in coordinates], [lat for _, lat in coordinates]
+
+
+def _selected_record_centroid(
+    identity: tuple[str, int | str],
+    record: Any,
+    selected_identities: set[tuple[str, int | str]] | None,
+) -> tuple[float, float] | None:
+    if not _identity_is_selected(identity, selected_identities):
+        return None
+    return _record_centroid(record.lon, record.lat)
+
+
+def _selected_identities(
+    polygon_index: dict[str, tuple[str, int | str]], selected_ids: set[str] | None
+) -> set[tuple[str, int | str]] | None:
+    if selected_ids is None:
+        return None
+    return {
+        identity for polygon_id, identity in polygon_index.items() if polygon_id in selected_ids
+    }
+
+
+def _identity_is_selected(
+    identity: tuple[str, int | str], selected_identities: set[tuple[str, int | str]] | None
+) -> bool:
+    return selected_identities is None or identity in selected_identities
+
+
+def _record_centroid(lon: float | None, lat: float | None) -> tuple[float, float] | None:
+    if lon is None or lat is None:
+        return None
+    return float(lon), float(lat)
 
 
 def _load_centroid_file(

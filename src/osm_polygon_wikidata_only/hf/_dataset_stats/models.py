@@ -48,6 +48,11 @@ class DatasetStats:
     articles_per_language: dict[str, int]
     polygons_per_language: dict[str, int]
 
+    # Global identity metrics used by map and text reporting. ``None`` means
+    # the legacy input contract did not contain enough canonical columns.
+    unique_polygon_identities: int | None = None
+    unique_text_polygons: int | None = None
+
 
 # ---------------------------------------------------------------------------
 # Private augmentation models. NOT part of the public facade contract.

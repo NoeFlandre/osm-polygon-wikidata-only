@@ -145,6 +145,81 @@ def test_v2_map_assets_discovers_sibling_land_cache(tmp_path: Path, monkeypatch)
     }
 
 
+def test_v2_map_assets_deduplicate_overlapping_typed_identities(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    north = _polygon()
+    north.update({"polygon_id": "north:way:7", "osm_id": 7, "lon": 2.0, "lat": 48.0})
+    relation = _polygon()
+    relation.update(
+        {
+            "polygon_id": "relation:9",
+            "osm_type": "relation",
+            "osm_id": 9,
+            "lon": 4.0,
+            "lat": 50.0,
+        }
+    )
+    south = _polygon()
+    south.update({"polygon_id": "south:way:7", "osm_id": 7, "lon": 3.0, "lat": 49.0})
+    write_v2_region(
+        tmp_path,
+        "a-region",
+        polygons=[north, relation],
+        documents=[
+            {"document_id": "wiki-ok", "full_text": "body", "fetch_status": "ok"},
+            {
+                "document_id": "wiki-failed",
+                "full_text": "looks like body",
+                "fetch_status": "http_error",
+            },
+        ],
+        links=[
+            {"polygon_id": "north:way:7", "document_id": "wiki-ok", "project": "wikipedia"},
+            {
+                "polygon_id": "relation:9",
+                "document_id": "wiki-failed",
+                "project": "wikipedia",
+            },
+        ],
+    )
+    write_v2_region(
+        tmp_path,
+        "b-region",
+        polygons=[south],
+        documents=[],
+        links=[{"polygon_id": "south:way:7", "document_id": "wiki-ok", "project": "wikipedia"}],
+    )
+
+    seen: dict[str, object] = {}
+
+    def fake_coverage(lons, lats, output_path, **_kwargs):
+        seen["coverage"] = list(zip(lons, lats, strict=True))
+        output_path.touch()
+
+    def fake_presence(_processed_root, output_path, *, snapshot, **_kwargs):
+        seen["presence"] = snapshot
+        output_path.touch()
+
+    def fake_density(_processed_root, output_path, *, snapshot, **_kwargs):
+        seen["density"] = snapshot
+        output_path.touch()
+
+    monkeypatch.setattr(v2_maps, "generate_coverage_map", fake_coverage)
+    monkeypatch.setattr(v2_maps, "generate_geographic_text_presence", fake_presence)
+    monkeypatch.setattr(v2_maps, "generate_geographic_text_density", fake_density)
+
+    generate_v2_map_assets(tmp_path, tmp_path / "assets")
+
+    assert seen["coverage"] == [(4.0, 50.0), (2.0, 48.0)]
+    presence = seen["presence"]
+    assert presence.polygon_count == 2
+    assert presence.combined_polygon_identities == frozenset({("way", 7)})
+    assert len(presence.covered_points) == 1
+    assert seen["density"] == presence
+
+
 def test_v2_comparison_map_contains_only_qualifying_v2_polygons(tmp_path: Path) -> None:
     v1 = tmp_path / "v1"
     v2 = tmp_path / "v2"

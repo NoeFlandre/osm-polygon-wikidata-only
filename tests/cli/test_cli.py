@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ def test_parser_has_documented_subcommands() -> None:
         "augment-region",
         "process-pbf",
         "process-dir",
+        "release-stats",
         "sync-dir",
         "split-v2-sentences",
     }
@@ -1215,3 +1217,134 @@ def test_a_dry_run_never_touches_the_refresh_marker(
     assert len(refreshes) == 1
     assert recorded == []
     assert cleared == []
+
+
+def test_release_stats_requires_one_confirmation_per_released_dataset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from osm_polygon_wikidata_only.v2.storage import write_v2_region
+
+    write_v2_region(
+        tmp_path / "processed_v2",
+        "region-latest",
+        polygons=[{"polygon_id": "p1", "osm_type": "way", "osm_id": 1, "has_wikidata": False}],
+        documents=[],
+        links=[],
+    )
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "release-stats",
+                "--data-root",
+                str(tmp_path),
+                "--dataset-version",
+                "v2",
+                "--confirm-repo",
+                "NoeFlandre/osm-polygon-wikidata-only",
+            ]
+        )
+
+    assert "one --confirm-repo per released dataset" in capsys.readouterr().err
+
+
+def test_release_stats_dry_run_reports_the_v2_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from osm_polygon_wikidata_only.v2.storage import write_v2_region
+
+    write_v2_region(
+        tmp_path / "processed_v2",
+        "region-latest",
+        polygons=[{"polygon_id": "p1", "osm_type": "way", "osm_id": 1, "has_wikidata": False}],
+        documents=[],
+        links=[],
+    )
+
+    assert (
+        main(
+            [
+                "release-stats",
+                "--data-root",
+                str(tmp_path),
+                "--dataset-version",
+                "v2",
+                "--confirm-repo",
+                "NoeFlandre/osm-polygon-wikidata-and-wikipedia",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["repo_id"] == "NoeFlandre/osm-polygon-wikidata-and-wikipedia"
+    assert payload["published"] is False
+    assert [item["path_in_repo"] for item in payload["files"]] == ["README.md", "stats.json"]
+
+
+def test_release_stats_rejects_apply_and_dry_run_together() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["release-stats", "--apply", "--dry-run"])
+
+
+def test_release_apply_runs_credential_preflight_even_without_push_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        commands,
+        "_require_push_token",
+        lambda parser, settings: calls.append(f"token:{settings.hf_token}"),
+    )
+    monkeypatch.setattr(
+        commands,
+        "_verify_push_access",
+        lambda parser, settings: calls.append(f"access:{settings.hf_token}"),
+    )
+
+    commands._authenticate_for_push(
+        argparse.ArgumentParser(),
+        argparse.Namespace(
+            command="release-stats",
+            dataset_version="v2",
+            push=False,
+            apply=True,
+            dry_run=False,
+        ),
+        Settings(hf_token="explicit-token"),
+    )
+
+    assert calls == ["token:explicit-token", "access:explicit-token"]
+
+
+def test_release_forwards_explicit_token_to_the_release_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from osm_polygon_wikidata_only.hf import stats_release
+
+    captured: dict[str, object] = {}
+
+    def fake_release(data_root: DataRoot, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            to_payload=lambda: {"repo_id": kwargs["confirm_repo"], "published": False}
+        )
+
+    monkeypatch.setattr(stats_release, "release_v2_polygon_stats", fake_release)
+    args = argparse.Namespace(
+        dataset_version="v2",
+        confirm_repo=["NoeFlandre/osm-polygon-wikidata-and-wikipedia"],
+        dry_run=True,
+        apply=False,
+        hf_token="explicit-token",
+        source_revision=None,
+        data_revision=None,
+        generated_on=None,
+    )
+
+    assert (
+        commands._run_release_stats(argparse.ArgumentParser(), args, data_root=DataRoot(tmp_path))
+        == 0
+    )
+    capsys.readouterr()
+    assert captured["token"] == "explicit-token"
