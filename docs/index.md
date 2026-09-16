@@ -64,6 +64,37 @@ The default V1 contract publishes these logical tables for each region:
 | `wikidata/facts/<stem>.parquet` | Structured claims for polygon entities. |
 | `manifests/processed_pbfs.json` | Aggregate counts and provenance for source extracts. |
 
+## Row-level language splits
+
+The [language-split contract ADR](adr/0002-language-split-contract.md) defines
+an additive, row-level Hugging Face surface for both published datasets. The
+split key is the `language` column on each textual/document row. Polygon
+`best_language` is not a split key, so a polygon's French and German rows are
+retained in both relevant partitions without collapsing them by OSM identity.
+
+| Dataset contract | Language-bearing tables | Language-neutral tables remain in the default contract |
+| --- | --- | --- |
+| V1 `NoeFlandre/osm-polygon-wikidata-only` | `polygon_articles`, Wikipedia documents/sections, Wikivoyage documents/sections | `polygons`, `wikidata/facts` |
+| V2 `NoeFlandre/osm-polygon-wikidata-and-wikipedia` | `polygon_document_links`, Wikipedia documents/sections | `polygons` |
+
+Each language-bearing table uses an additive `<table>_by_language`
+configuration and a `lang-<language>` split. Missing, blank, malformed, and
+legacy-unusable values go to `lang-unknown` with reason counts; no row is
+dropped. The two inventories are generated independently from their
+schema-validated artifacts and manifests.
+
+For example, load only French V1 Wikipedia documents with:
+
+```python
+from datasets import load_dataset
+
+french_documents = load_dataset(
+    "NoeFlandre/osm-polygon-wikidata-only",
+    name="wikipedia_documents_by_language",
+    split="lang-fr",
+)
+```
+
 ## V2 contract differences
 
 V2 keeps the V1 document and sidecar tables but stores its isolated artifacts

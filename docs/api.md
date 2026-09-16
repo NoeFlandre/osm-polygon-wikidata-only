@@ -55,6 +55,23 @@ typed H3 aggregation and render helpers used for geographic coverage assets, inc
 `assign_h3_cell`, `aggregate_geographic_text_coverage`, and
 `render_geographic_text_coverage`.
 
+## Language-split inventory
+
+`osm_polygon_wikidata_only.hf.language_splits` exposes the shared row-level
+normalizer and the separate V1/V2 inventory contracts:
+
+- `normalize_language` and `language_split_name` apply the repository language
+  rule and route unusable values to `lang-unknown` with an explicit reason.
+- `language_table_specs` returns the exact language-bearing table and schema
+  mapping for `DatasetContract.V1` or `DatasetContract.V2`.
+- `build_language_inventory` validates the selected contract's manifest and
+  Parquet schemas, then streams only each textual/document `language` column
+  to derive languages and per-table counts. Pass `data_root.processed` for V1
+  or `data_root.processed_v2` for V2; never combine those roots.
+
+This stage only defines and inventories the contract. It does not generate
+language partitions or publish them.
+
 ## Compatibility rules
 
 The CLI, Parquet schemas, manifest names, deterministic ordering, and public
