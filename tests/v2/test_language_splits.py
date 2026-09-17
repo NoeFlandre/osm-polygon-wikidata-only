@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
+    LanguageInventory,
     LanguageTable,
     LanguageTableInventory,
     build_language_inventory,
@@ -377,6 +379,26 @@ def test_v2_split_result_and_nested_output_parent_are_explicit(tmp_path: Path) -
     }
 
 
+def test_v2_alternating_output_roots_remove_previous_owned_shards(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+    custom = root / "nested/releases/language_splits"
+
+    build_v2_language_splits(root)
+    default_shards = sorted((root / "language_splits").rglob("*.parquet"))
+    assert default_shards
+
+    build_v2_language_splits(root, output_root=custom)
+
+    assert default_shards
+    assert all(not path.exists() for path in default_shards)
+    assert list(custom.rglob("*.parquet"))
+
+    build_v2_language_splits(root)
+
+    assert not list(custom.rglob("*.parquet"))
+    assert list((root / "language_splits").rglob("*.parquet"))
+
+
 def test_v2_split_overlap_rejection_checks_each_source_location(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -448,17 +470,21 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
     monkeypatch.setattr(language_splits, "_manifest_payload", fake_manifest)
     monkeypatch.setattr(language_splits, "atomic_write_json", lambda *args: None)
     monkeypatch.setattr(language_splits, "_install_staged_files", fake_install)
+    inventory = cast(LanguageInventory, object())
+    monkeypatch.setattr(
+        language_splits, "_verify_source_inventory", lambda root, expected: expected
+    )
     monkeypatch.setattr(language_splits.shutil, "rmtree", fake_rmtree)
 
     result = language_splits._stage_and_install_v2_release(
         root,
         destination,
-        None,
+        inventory,
         1,
         root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
     )
 
-    assert result == ()
+    assert result == (inventory, ())
     assert calls["mkdtemp"] == (".language_splits-", destination.parent)
     assert calls["rmtree"] == (stage_root, True)
     assert calls["install"] == (
@@ -734,6 +760,7 @@ def test_v2_main_parses_a_path_and_default_batch_size(
             processed_root=processed_root,
             output_root=output_root or processed_root / "language_splits",
             manifest_path=processed_root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+            inventory=cast(LanguageInventory, object()),
             files=(),
         )
 
@@ -947,7 +974,12 @@ def test_v2_split_rolls_back_after_install_failure(
     rows[0]["language"] = "de"
     _write_table(source_path, rows, polygon_document_link_v2_schema())
 
-    def fail_after_first_install(staged: dict[Path, Path], installed: list[Path]) -> None:
+    def fail_after_first_install(
+        staged: dict[Path, Path],
+        installed: list[Path],
+        *,
+        manifest_path: Path,
+    ) -> None:
         final, temporary = min(staged.items(), key=lambda item: item[0].as_posix())
         final.parent.mkdir(parents=True, exist_ok=True)
         language_splits.os.replace(temporary, final)
@@ -1011,6 +1043,68 @@ def test_v2_install_files_sorts_by_final_path_and_records_every_install(
     assert installed == [final_a, final_z]
     assert final_a.read_bytes() == b"a"
     assert final_z.read_bytes() == b"z"
+
+
+def test_v2_nested_output_files_are_installed_before_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "processed_v2"
+    destination = root / "nested/releases/language_splits"
+    data_final = destination / "wikipedia_documents_by_language/lang-fr/a.parquet"
+    data_stage = destination.parent / ".language_splits-stage/data.parquet"
+    manifest_final = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
+    manifest_stage = destination.parent / ".language_splits-stage/manifests/language_splits.json"
+    data_stage.parent.mkdir(parents=True)
+    manifest_stage.parent.mkdir(parents=True)
+    data_stage.write_bytes(b"data")
+    manifest_stage.write_bytes(b"manifest")
+    replacements: list[tuple[Path, Path]] = []
+    original_replace = language_splits.os.replace
+
+    def recording_replace(source: Path, target: Path) -> None:
+        replacements.append((source, target))
+        original_replace(source, target)
+
+    monkeypatch.setattr(language_splits.os, "replace", recording_replace)
+
+    language_splits._install_staged_files(
+        root,
+        destination,
+        {data_final: data_stage, manifest_final: manifest_stage},
+    )
+
+    assert replacements[-1] == (manifest_stage, manifest_final)
+    assert data_final.read_bytes() == b"data"
+    assert manifest_final.read_bytes() == b"manifest"
+
+
+def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _write_v2_fixture(tmp_path)
+    build_v2_language_splits(root)
+    before = _release_snapshot(root)
+    manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
+    original_replace = language_splits.os.replace
+    failed = False
+
+    def reject_manifest_install(source: Path, target: Path) -> None:
+        nonlocal failed
+        if target == manifest_path and not failed:
+            failed = True
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        original_replace(source, target)
+
+    monkeypatch.setattr(language_splits.os, "replace", reject_manifest_install)
+
+    with pytest.raises(V2LanguageSplitError, match="EXDEV") as error:
+        build_v2_language_splits(root)
+
+    assert str(error.value).startswith(
+        "V2 language split publication cannot cross filesystems (EXDEV): "
+    )
+    assert _release_snapshot(root) == before
+    assert not list(root.glob(".language_splits-*"))
 
 
 def test_v2_install_files_requires_explicit_final_path_order(
@@ -1082,16 +1176,21 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
     staged = {final_z: SortPath("stage/z"), final_a: SortPath("stage/a")}
     observed: dict[str, object] = {}
 
-    monkeypatch.setattr(
-        language_splits,
-        "_previous_partition_paths",
-        lambda root, destination: {stale},
-    )
+    def fake_previous(root_arg: Path, destination_arg: Path) -> set[SortPath]:
+        observed["previous"] = (root_arg, destination_arg)
+        return {stale}
+
+    monkeypatch.setattr(language_splits, "_previous_partition_paths", fake_previous)
 
     def fake_backup(targets: list[SortPath], backups: dict[SortPath, SortPath]) -> None:
         observed["backup"] = targets
 
-    def fake_install(staged_arg: dict[SortPath, SortPath], installed: list[SortPath]) -> None:
+    def fake_install(
+        staged_arg: dict[SortPath, SortPath],
+        installed: list[SortPath],
+        *,
+        manifest_path: Path,
+    ) -> None:
         observed["install"] = list(staged_arg)
 
     def fake_cleanup(staged_arg: object, backups: object) -> None:
@@ -1107,6 +1206,7 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
 
     language_splits._install_staged_files(tmp_path, tmp_path / "language_splits", staged)
 
+    assert observed["previous"] == (tmp_path, tmp_path / "language_splits")
     assert observed["backup"] == [final_a, stale, final_z]
     assert observed["install"] == [final_z, final_a]
     assert observed["owned"] == {final_a, final_z, stale}
@@ -1291,6 +1391,34 @@ def test_v2_remove_empty_output_directories_requires_depth_order(
 
         def rmdir(self) -> None:
             self.events.append(self.name)
+
+    events: list[str] = []
+    outer = Directory("outer", 2, events)
+    inner = Directory("inner", 3, events)
+    monkeypatch.setattr(
+        language_splits,
+        "_output_directories_for_paths",
+        lambda destination, owned_paths: {outer, inner},
+    )
+
+    language_splits._remove_empty_output_directories(tmp_path, set())
+
+    assert events == ["inner", "outer"]
+
+
+def test_v2_remove_empty_output_directories_continues_after_nonempty_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Directory:
+        def __init__(self, name: str, depth: int, events: list[str]) -> None:
+            self.name = name
+            self.parts = tuple(f"part-{index}" for index in range(depth))
+            self.events = events
+
+        def rmdir(self) -> None:
+            self.events.append(self.name)
+            if self.name == "inner":
+                raise OSError("directory is not empty")
 
     events: list[str] = []
     outer = Directory("outer", 2, events)

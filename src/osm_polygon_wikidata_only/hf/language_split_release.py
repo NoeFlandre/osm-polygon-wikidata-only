@@ -7,12 +7,16 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import pyarrow.parquet as pq
+
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
     LanguageInventory,
     LanguageInventoryError,
     build_language_inventory,
+    language_split_name,
+    normalize_language,
 )
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 
@@ -42,22 +46,28 @@ class LanguageSplitVersionPlan:
     manifest_path: Path
     inventory: LanguageInventory
 
-    def to_dict(self, data_root: Path) -> dict[str, object]:
+    def to_dict(
+        self,
+        data_root: Path,
+        *,
+        inventory: LanguageInventory | None = None,
+    ) -> dict[str, object]:
         """Serialize the plan with paths relative to the operator data root."""
+        active_inventory = inventory or self.inventory
         return {
             "dataset_version": self.version.value,
-            "dataset_id": self.inventory.dataset_id,
+            "dataset_id": active_inventory.dataset_id,
             "processed_root": _relative_path(self.processed_root, data_root),
             "output_root": _relative_path(self.output_root, data_root),
             "manifest_path": _relative_path(self.manifest_path, data_root),
             "source_manifest": _relative_path(
-                self.processed_root / self.inventory.source_manifest, data_root
+                self.processed_root / active_inventory.source_manifest, data_root
             ),
-            "source_manifest_sha256": self.inventory.source_manifest_sha256,
-            "artifact_fingerprint": self.inventory.artifact_fingerprint,
-            "languages": list(self.inventory.languages),
-            "tables": [table.to_dict() for table in self.inventory.tables],
-            "expected_files": _expected_files(self),
+            "source_manifest_sha256": active_inventory.source_manifest_sha256,
+            "artifact_fingerprint": active_inventory.artifact_fingerprint,
+            "languages": list(active_inventory.languages),
+            "tables": [table.to_dict() for table in active_inventory.tables],
+            "expected_files": _expected_files(self, active_inventory),
         }
 
 
@@ -199,17 +209,24 @@ def _plan_version(root: Path, version: LanguageSplitVersion) -> LanguageSplitVer
     )
 
 
-def _expected_files(plan: LanguageSplitVersionPlan) -> list[dict[str, object]]:
+def _expected_files(
+    plan: LanguageSplitVersionPlan,
+    inventory: LanguageInventory | None = None,
+) -> list[dict[str, object]]:
+    active_inventory = plan.inventory if inventory is None else inventory
     if plan.version is LanguageSplitVersion.V1:
-        records = _expected_v1_files(plan)
+        records = _expected_v1_files(plan, active_inventory)
     else:
-        records = _expected_v2_files(plan)
+        records = _expected_v2_files(plan, active_inventory)
     return sorted(records, key=_expected_file_sort_key)
 
 
-def _expected_v1_files(plan: LanguageSplitVersionPlan) -> list[dict[str, object]]:
+def _expected_v1_files(
+    plan: LanguageSplitVersionPlan,
+    inventory: LanguageInventory,
+) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for table in plan.inventory.tables:
+    for table in inventory.tables:
         for bucket in table.buckets:
             if bucket.row_count == 0:
                 continue
@@ -232,27 +249,52 @@ def _expected_v1_files(plan: LanguageSplitVersionPlan) -> list[dict[str, object]
     return records
 
 
-def _expected_v2_files(plan: LanguageSplitVersionPlan) -> list[dict[str, object]]:
+def _expected_v2_files(
+    plan: LanguageSplitVersionPlan,
+    inventory: LanguageInventory,
+) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for table in plan.inventory.tables:
-        for bucket in table.buckets:
-            if bucket.row_count == 0:
-                continue
-            path = (
-                plan.output_root / table.configuration / bucket.split / "<source_file_stem>.parquet"
-            )
-            records.append(
-                {
-                    "table": table.table.value,
-                    "configuration": table.configuration,
-                    "language": bucket.language,
-                    "split": bucket.split,
-                    "path_template": _relative_path(path, plan.processed_root.parent),
-                    "source_files": list(table.source_files),
-                    "row_count": bucket.row_count,
-                }
-            )
+    for table in inventory.tables:
+        for source_file in table.source_files:
+            source_path = plan.processed_root / source_file
+            counts = _source_language_counts(source_path, table.language_column)
+            for language, row_count in counts.items():
+                path = (
+                    plan.output_root
+                    / table.configuration
+                    / language_split_name(language)
+                    / f"{source_path.stem}.parquet"
+                )
+                records.append(
+                    {
+                        "table": table.table.value,
+                        "configuration": table.configuration,
+                        "language": language,
+                        "split": language_split_name(language),
+                        "path": _relative_path(path, plan.processed_root.parent),
+                        "source_file": source_file,
+                        "row_count": row_count,
+                        "status": "candidate",
+                    }
+                )
     return records
+
+
+def _source_language_counts(source_path: Path, language_column: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    try:
+        with pq.ParquetFile(source_path) as parquet_file:
+            for batch in parquet_file.iter_batches(
+                columns=[language_column], batch_size=DEFAULT_BATCH_SIZE
+            ):
+                for value in batch.column(0).to_pylist():
+                    language = normalize_language(value).partition
+                    counts[language] = counts.get(language, 0) + 1
+    except (OSError, RuntimeError, ValueError) as error:
+        raise LanguageSplitReleaseError(
+            f"Could not inspect V2 source file for dry-run planning: {source_path}: {error}"
+        ) from error
+    return dict(sorted(counts.items(), key=lambda item: (item[0] == "unknown", item[0])))
 
 
 def _expected_file_sort_key(record: dict[str, object]) -> tuple[str, str, str, str]:
@@ -297,8 +339,43 @@ def _generated_release_payload(
     generated: Any,
     data_root: Path,
 ) -> dict[str, object]:
-    payload = plan.to_dict(data_root)
+    actual_inventory = _recompute_inventory(plan)
+    _validate_generated_inventory(plan, generated, actual_inventory)
+    payload = plan.to_dict(data_root, inventory=actual_inventory)
     payload["manifest_path"] = _relative_path(generated.manifest_path, data_root)
+    payload["files"] = _generated_files_payload(plan, generated, data_root)
+    return payload
+
+
+def _validate_generated_inventory(
+    plan: LanguageSplitVersionPlan,
+    generated: Any,
+    actual_inventory: LanguageInventory,
+) -> None:
+    generated_inventory = getattr(generated, "inventory", None)
+    if not isinstance(generated_inventory, LanguageInventory):
+        raise LanguageSplitReleaseError(
+            f"{plan.version.value} generated result is missing its source inventory"
+        )
+    if actual_inventory.artifact_fingerprint != plan.inventory.artifact_fingerprint:
+        raise LanguageSplitReleaseError(
+            f"{plan.version.value} source artifact fingerprint changed after planning: "
+            f"planned={plan.inventory.artifact_fingerprint}, "
+            f"actual={actual_inventory.artifact_fingerprint}"
+        )
+    if actual_inventory.artifact_fingerprint != generated_inventory.artifact_fingerprint:
+        raise LanguageSplitReleaseError(
+            f"{plan.version.value} generated result fingerprint does not match source inputs: "
+            f"generated={generated_inventory.artifact_fingerprint}, "
+            f"actual={actual_inventory.artifact_fingerprint}"
+        )
+
+
+def _generated_files_payload(
+    plan: LanguageSplitVersionPlan,
+    generated: Any,
+    data_root: Path,
+) -> list[dict[str, object]]:
     if plan.version is LanguageSplitVersion.V1:
         files = [
             {
@@ -315,8 +392,21 @@ def _generated_release_payload(
             }
             for file in generated.files
         ]
-    payload["files"] = sorted(files, key=_generated_file_sort_key)
-    return payload
+    return sorted(files, key=_generated_file_sort_key)
+
+
+def _recompute_inventory(plan: LanguageSplitVersionPlan) -> LanguageInventory:
+    contract = DatasetContract.V1 if plan.version is LanguageSplitVersion.V1 else DatasetContract.V2
+    try:
+        return build_language_inventory(
+            plan.processed_root,
+            contract,
+            manifest_path=plan.processed_root / plan.inventory.source_manifest,
+        )
+    except LanguageInventoryError as error:
+        raise LanguageSplitReleaseError(
+            f"{plan.version.value} generated metadata fingerprint check failed: {error}"
+        ) from error
 
 
 def _generated_file_sort_key(record: dict[str, object]) -> tuple[str, str, str, str]:

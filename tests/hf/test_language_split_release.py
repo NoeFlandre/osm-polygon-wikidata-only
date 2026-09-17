@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -25,12 +26,22 @@ from osm_polygon_wikidata_only.hf.language_split_release import (
     LanguageSplitReleasePlan,
     LanguageSplitVersion,
     _expected_file_sort_key,
+    _expected_files,
     _generate_version,
     _generated_file_sort_key,
     _generated_release_payload,
+    _recompute_inventory,
+    _source_language_counts,
+    _validate_generated_inventory,
     plan_language_split_release,
     run_language_split_release,
 )
+from osm_polygon_wikidata_only.hf.language_splits import (
+    DatasetContract,
+    LanguageInventory,
+    LanguageTableInventory,
+)
+from osm_polygon_wikidata_only.v2.language_splits import V2LanguageSplitResult
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
     polygon_v2_schema,
@@ -85,23 +96,33 @@ def _write_v1_manifest(root: Path) -> None:
     )
 
 
-def _write_v2_manifest(root: Path) -> None:
+def _write_v2_manifest(root: Path, *, include_z: bool = False) -> None:
     path = root / "manifests/processed_pbfs.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    regions: dict[str, dict[str, str]] = {
+        "a-latest": {
+            "source_pbf": "a-latest.osm.pbf",
+            "region": "fixture",
+            "polygons_path": "polygons/a-latest.parquet",
+            "documents_path": "wikipedia/documents/a-latest.parquet",
+            "sections_path": "wikipedia/sections/a-latest.parquet",
+            "links_path": "polygon_document_links/a-latest.parquet",
+        }
+    }
+    if include_z:
+        regions["z-latest"] = {
+            "source_pbf": "z-latest.osm.pbf",
+            "region": "fixture",
+            "polygons_path": "polygons/z-latest.parquet",
+            "documents_path": "wikipedia/documents/z-latest.parquet",
+            "sections_path": "wikipedia/sections/z-latest.parquet",
+            "links_path": "polygon_document_links/z-latest.parquet",
+        }
     path.write_text(
         json.dumps(
             {
                 "contract_version": "wikipedia-tags-v2",
-                "regions": {
-                    "a-latest": {
-                        "source_pbf": "a-latest.osm.pbf",
-                        "region": "fixture",
-                        "polygons_path": "polygons/a-latest.parquet",
-                        "documents_path": "wikipedia/documents/a-latest.parquet",
-                        "sections_path": "wikipedia/sections/a-latest.parquet",
-                        "links_path": "polygon_document_links/a-latest.parquet",
-                    }
-                },
+                "regions": regions,
             },
             sort_keys=True,
         )
@@ -386,23 +407,232 @@ def test_release_defaults_and_expected_file_payloads_are_explicit(tmp_path: Path
             "configuration",
             "language",
             "split",
-            "path_template",
-            "source_files",
+            "path",
+            "source_file",
             "row_count",
+            "status",
         }
         for record in v2_expected
     )
     assert all(
-        cast(str, record["path_template"]).startswith("processed_v2/language_splits/")
+        cast(str, record["path"]).startswith("processed_v2/language_splits/")
         for record in v2_expected
     )
-    assert all(
-        cast(str, record["path_template"]).endswith("/<source_file_stem>.parquet")
-        for record in v2_expected
-    )
+    assert all(cast(str, record["path"]).endswith(".parquet") for record in v2_expected)
 
     with pytest.raises(LanguageSplitReleaseError, match="batch_size must be positive"):
         plan_language_split_release(tmp_path, dataset_version="v1", batch_size=0)
+
+
+def test_v2_dry_run_reports_source_specific_candidate_files_and_rows(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+    _write_table(
+        root / "polygons/z-latest.parquet",
+        [
+            _row_for_schema(
+                polygon_v2_schema(),
+                polygon_id="polygon-2",
+                region="fixture",
+                source_pbf="z-latest.osm.pbf",
+                osm_type="way",
+                osm_id=2,
+                wikidata="Q2",
+                best_language="en",
+            )
+        ],
+        polygon_v2_schema(),
+    )
+    _write_table(
+        root / "wikipedia/documents/z-latest.parquet",
+        [
+            _row_for_schema(
+                wikipedia_document_v2_schema(),
+                document_id="doc-en-z",
+                article_id="article-doc-en-z",
+                wikidata="Q2",
+                project="wikipedia",
+                language="en",
+                site="enwiki",
+                title="English Z",
+                page_id=2,
+                revision_id=2,
+                full_text="English Z",
+                fetch_status="ok",
+            )
+        ],
+        wikipedia_document_v2_schema(),
+    )
+    _write_table(
+        root / "wikipedia/sections/z-latest.parquet",
+        [
+            _row_for_schema(
+                section_schema(),
+                section_id="section-en-z",
+                document_id="doc-en-z",
+                article_id="article-doc-en-z",
+                project="wikipedia",
+                language="en",
+                page_id=2,
+                revision_id=2,
+                section_index=0,
+                text="English Z",
+            )
+        ],
+        section_schema(),
+    )
+    _write_table(
+        root / "polygon_document_links/z-latest.parquet",
+        [
+            _row_for_schema(
+                polygon_document_link_v2_schema(),
+                polygon_id="polygon-2",
+                document_id="doc-en-z",
+                project="wikipedia",
+                wikidata="Q2",
+                language="en",
+                source_pbf="z-latest.osm.pbf",
+                region="fixture",
+                osm_type="way",
+                osm_id=2,
+                page_id=2,
+                revision_id=2,
+                link_sources='["wikidata"]',
+            )
+        ],
+        polygon_document_link_v2_schema(),
+    )
+    _write_v2_manifest(root, include_z=True)
+
+    plan = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1)
+    release = cast(list[dict[str, object]], plan.to_payload()["releases"])[0]
+    documents = [
+        record
+        for record in cast(list[dict[str, object]], release["expected_files"])
+        if record["table"] == "wikipedia_documents"
+    ]
+
+    assert sorted(
+        (
+            record["source_file"],
+            record["language"],
+            record["split"],
+            record["path"],
+            record["row_count"],
+            record["status"],
+        )
+        for record in documents
+    ) == sorted(
+        [
+            (
+                "wikipedia/documents/z-latest.parquet",
+                "en",
+                "lang-en",
+                "processed_v2/language_splits/wikipedia_documents_by_language/lang-en/z-latest.parquet",
+                1,
+                "candidate",
+            ),
+            (
+                "wikipedia/documents/a-latest.parquet",
+                "fr",
+                "lang-fr",
+                "processed_v2/language_splits/wikipedia_documents_by_language/lang-fr/a-latest.parquet",
+                1,
+                "candidate",
+            ),
+            (
+                "wikipedia/documents/a-latest.parquet",
+                "unknown",
+                "lang-unknown",
+                "processed_v2/language_splits/wikipedia_documents_by_language/lang-unknown/a-latest.parquet",
+                1,
+                "candidate",
+            ),
+        ]
+    )
+    assert all("path" in record for record in documents)
+    assert all("path_template" not in record for record in documents)
+
+
+@pytest.mark.parametrize(
+    ("dataset_version", "table_name"),
+    [
+        (LanguageSplitVersion.V1, "polygon_articles"),
+        (LanguageSplitVersion.V2, "wikipedia_documents"),
+    ],
+)
+def test_expected_files_honor_explicit_inventory_override(
+    tmp_path: Path,
+    dataset_version: LanguageSplitVersion,
+    table_name: str,
+) -> None:
+    _write_both_fixture(tmp_path)
+    plan = plan_language_split_release(
+        tmp_path, dataset_version=dataset_version.value, batch_size=1
+    ).releases[0]
+    original = cast(LanguageTableInventory, plan.inventory.table(table_name))
+    if dataset_version is LanguageSplitVersion.V1:
+        replacement = replace(original, buckets=(), row_count=0)
+    else:
+        replacement = replace(original, source_files=(), row_count=0, buckets=())
+    alternate_inventory = replace(
+        plan.inventory,
+        tables=tuple(
+            replacement if table.table.value == table_name else table
+            for table in plan.inventory.tables
+        ),
+    )
+
+    expected = _expected_files(plan, alternate_inventory)
+
+    assert not any(record["table"] == table_name for record in expected)
+
+
+def test_source_language_counts_are_bounded_exact_and_stably_ordered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "documents.parquet"
+    schema = wikipedia_document_v2_schema()
+    _write_table(
+        source,
+        [
+            _row_for_schema(schema, document_id="missing", language=None),
+            _row_for_schema(schema, document_id="english-1", language="en"),
+            _row_for_schema(schema, document_id="english-2", language="en"),
+            _row_for_schema(schema, document_id="zz", language="zz"),
+        ],
+        schema,
+    )
+    original_parquet_file = language_split_release.pq.ParquetFile
+    batch_calls: list[dict[str, object]] = []
+
+    class RecordingParquetFile:
+        def __init__(self, path: Path) -> None:
+            self._inner = original_parquet_file(path)
+
+        def __enter__(self) -> RecordingParquetFile:
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+            self._inner.__exit__(exc_type, exc_value, traceback)
+
+        def iter_batches(self, **kwargs: object):
+            batch_calls.append(kwargs)
+            return self._inner.iter_batches(**kwargs)
+
+    monkeypatch.setattr(language_split_release.pq, "ParquetFile", RecordingParquetFile)
+
+    counts = _source_language_counts(source, "language")
+    assert counts == {
+        "en": 2,
+        "zz": 1,
+        "unknown": 1,
+    }
+    assert list(counts) == ["en", "zz", "unknown"]
+    assert batch_calls == [
+        {"columns": ["language"], "batch_size": language_split_release.DEFAULT_BATCH_SIZE}
+    ]
 
 
 def test_release_file_sort_keys_distinguish_table_language_and_path() -> None:
@@ -537,13 +767,100 @@ def test_generated_payload_prefers_the_published_manifest_path(tmp_path: Path) -
     )
     generated = SimpleNamespace(
         manifest_path=tmp_path / "processed_v2/manifests/generated.json",
+        inventory=cast(LanguageInventory, object()),
         files=(),
         processed_root=tmp_path / "processed_v2",
     )
 
+    fixture_root = _write_v2_fixture(tmp_path)
+    release_plan = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1)
+    plan = release_plan.releases[0]
+    generated.inventory = plan.inventory
+    generated.processed_root = fixture_root
+
     payload = _generated_release_payload(plan, generated, tmp_path)
 
     assert payload["manifest_path"] == "processed_v2/manifests/generated.json"
+
+
+def test_generated_payload_passes_recomputed_inventory_to_plan_serializer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _write_v2_fixture(tmp_path)
+    planned = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1).releases[0]
+    actual = replace(planned.inventory, dataset_id="recomputed-dataset")
+    captured: dict[str, object] = {}
+
+    def fake_to_dict(
+        data_root: Path, *, inventory: LanguageInventory | None = None
+    ) -> dict[str, object]:
+        captured["data_root"] = data_root
+        captured["inventory"] = inventory
+        return {"expected_files": []}
+
+    plan = SimpleNamespace(
+        version=LanguageSplitVersion.V2,
+        inventory=planned.inventory,
+        processed_root=planned.processed_root,
+        to_dict=fake_to_dict,
+    )
+    generated = SimpleNamespace(
+        manifest_path=root / "manifests/language_splits.json",
+        inventory=actual,
+        files=(),
+        processed_root=root,
+    )
+    monkeypatch.setattr(language_split_release, "_recompute_inventory", lambda _: actual)
+
+    _generated_release_payload(plan, generated, tmp_path)
+
+    assert captured == {"data_root": tmp_path, "inventory": actual}
+
+
+def test_generated_inventory_without_attribute_is_rejected(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+    plan = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1).releases[0]
+
+    with pytest.raises(LanguageSplitReleaseError, match="missing its source inventory"):
+        _validate_generated_inventory(plan, SimpleNamespace(), plan.inventory)
+
+
+@pytest.mark.parametrize("version", [LanguageSplitVersion.V1, LanguageSplitVersion.V2])
+def test_recompute_inventory_passes_planned_source_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: LanguageSplitVersion,
+) -> None:
+    processed_root = tmp_path / version.value
+    source_manifest = "manifests/processed_pbfs.json"
+    expected_inventory = object()
+    calls: list[tuple[Path, DatasetContract, Path]] = []
+
+    def fake_build_inventory(
+        root: Path,
+        contract: DatasetContract,
+        *,
+        manifest_path: Path,
+    ) -> object:
+        calls.append((root, contract, manifest_path))
+        return expected_inventory
+
+    monkeypatch.setattr(language_split_release, "build_language_inventory", fake_build_inventory)
+    plan = SimpleNamespace(
+        version=version,
+        processed_root=processed_root,
+        inventory=SimpleNamespace(source_manifest=source_manifest),
+    )
+
+    assert _recompute_inventory(plan) is expected_inventory
+    assert calls == [
+        (
+            processed_root,
+            DatasetContract.V1 if version is LanguageSplitVersion.V1 else DatasetContract.V2,
+            processed_root / source_manifest,
+        )
+    ]
 
 
 def test_dry_run_is_deterministic_and_writes_no_language_outputs(tmp_path: Path) -> None:
@@ -638,6 +955,19 @@ def test_v2_generation_preserves_rows_and_uses_hugging_face_compatible_names(
     assert not (tmp_path / "processed_v2/language_splits/polygons").exists()
 
 
+def test_generated_v2_payload_rejects_source_fingerprint_mismatch(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+    result = run_language_split_release(DataRoot(tmp_path), dataset_version="v2", batch_size=1)
+
+    source = root / "wikipedia/documents/a-latest.parquet"
+    rows = pq.read_table(source).to_pylist()
+    rows[0]["title"] = "Changed after generation"
+    _write_table(source, rows, wikipedia_document_v2_schema())
+
+    with pytest.raises(LanguageSplitReleaseError, match="fingerprint"):
+        result.to_payload()
+
+
 def test_both_generation_conserves_rows_and_writes_both_manifests(tmp_path: Path) -> None:
     _write_both_fixture(tmp_path)
 
@@ -719,3 +1049,45 @@ def test_language_split_result_loads_with_standard_datasets_loader(tmp_path: Pat
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {"num_rows": 1, "language": ["fr"]}
+
+
+def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+
+    result = run_language_split_release(DataRoot(tmp_path), dataset_version="v2", batch_size=1)
+    generated = cast(V2LanguageSplitResult, result.generated[0])
+    french_files = [
+        generated.processed_root / file.path
+        for file in generated.files
+        if file.table.value == "wikipedia_documents" and file.language == "fr"
+    ]
+    assert french_files
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "import json",
+                    "import sys",
+                    "from datasets import load_dataset",
+                    "dataset = load_dataset(",
+                    '    "parquet",',
+                    "    data_files=sys.argv[1:-1],",
+                    '    split="train",',
+                    "    cache_dir=sys.argv[-1],",
+                    ")",
+                    'print(json.dumps({"num_rows": dataset.num_rows, "document_id": list(dataset["document_id"])}))',
+                )
+            ),
+            *(str(path) for path in french_files),
+            str(tmp_path / "hf-v2-cache"),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"num_rows": 1, "document_id": ["doc-fr"]}

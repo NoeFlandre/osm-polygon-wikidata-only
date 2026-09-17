@@ -9,6 +9,7 @@ own ``language`` value is the only partition key.
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import shutil
 import tempfile
@@ -84,6 +85,7 @@ class V2LanguageSplitResult:
     processed_root: Path
     output_root: Path
     manifest_path: Path
+    inventory: LanguageInventory
     files: tuple[V2LanguageSplitFile, ...]
 
 
@@ -114,7 +116,7 @@ def build_v2_language_splits(
         processed_root, output_root, batch_size
     )
     manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
-    ordered_files = _stage_and_install_v2_release(
+    inventory, ordered_files = _stage_and_install_v2_release(
         root, destination, inventory, batch_size, manifest_path
     )
 
@@ -122,6 +124,7 @@ def build_v2_language_splits(
         processed_root=root,
         output_root=destination,
         manifest_path=manifest_path,
+        inventory=inventory,
         files=ordered_files,
     )
 
@@ -150,22 +153,33 @@ def _stage_and_install_v2_release(
     inventory: LanguageInventory,
     batch_size: int,
     manifest_path: Path,
-) -> tuple[V2LanguageSplitFile, ...]:
+) -> tuple[LanguageInventory, tuple[V2LanguageSplitFile, ...]]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     stage_root = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent))
     try:
         files, staged_paths = _stage_v2_files(root, destination, stage_root, inventory, batch_size)
         ordered_files = tuple(sorted(files, key=_file_sort_key))
-        _validate_conservation(inventory, ordered_files)
+        actual_inventory = _verify_source_inventory(root, inventory)
+        _validate_conservation(actual_inventory, ordered_files)
         manifest_stage = stage_root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
         atomic_write_json(
-            manifest_stage, _manifest_payload(root, destination, inventory, ordered_files)
+            manifest_stage, _manifest_payload(root, destination, actual_inventory, ordered_files)
         )
         staged_paths[manifest_path] = manifest_stage
         _install_staged_files(root, destination, staged_paths)
-        return ordered_files
+        return actual_inventory, ordered_files
     finally:
         shutil.rmtree(stage_root, ignore_errors=True)
+
+
+def _verify_source_inventory(root: Path, expected: LanguageInventory) -> LanguageInventory:
+    actual = build_language_inventory(root, DatasetContract.V2)
+    if actual.artifact_fingerprint != expected.artifact_fingerprint:
+        raise V2LanguageSplitError(
+            "V2 source artifact fingerprint changed during generation: "
+            f"expected={expected.artifact_fingerprint}, actual={actual.artifact_fingerprint}"
+        )
+    return actual
 
 
 def _stage_v2_files(
@@ -423,7 +437,11 @@ def _install_staged_files(
     installed: list[Path] = []
     try:
         _backup_targets(targets, backups)
-        _install_files(staged, installed)
+        _install_files(
+            staged,
+            installed,
+            manifest_path=root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+        )
     except BaseException:
         _restore_files(installed, backups)
         raise
@@ -442,10 +460,22 @@ def _backup_targets(targets: list[Path], backups: dict[Path, Path]) -> None:
         raise
 
 
-def _install_files(staged: dict[Path, Path], installed: list[Path]) -> None:
-    for final, temporary in sorted(staged.items(), key=lambda item: item[0].as_posix()):
+def _install_files(
+    staged: dict[Path, Path],
+    installed: list[Path],
+    *,
+    manifest_path: Path | None = None,
+) -> None:
+    ordered = sorted(
+        staged.items(),
+        key=lambda item: (
+            manifest_path is not None and item[0] == manifest_path,
+            item[0].as_posix(),
+        ),
+    )
+    for final, temporary in ordered:
         final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(temporary, final)
+        _replace_path(temporary, final)
         installed.append(final)
 
 
@@ -455,7 +485,7 @@ def _restore_files(installed: list[Path], backups: dict[Path, Path]) -> None:
     for final, backup in sorted(backups.items(), key=lambda item: item[0].as_posix()):
         if backup.exists():
             final.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(backup, final)
+            _replace_path(backup, final)
 
 
 def _cleanup_transaction(staged: dict[Path, Path], backups: dict[Path, Path]) -> None:
@@ -471,16 +501,29 @@ def _backup_existing(path: Path) -> Path:
     )
     os.close(descriptor)
     backup = Path(raw_backup)
-    os.replace(path, backup)
+    _replace_path(path, backup)
     return backup
+
+
+def _replace_path(source: Path, destination: Path) -> None:
+    try:
+        os.replace(source, destination)
+    except OSError as error:
+        if error.errno == errno.EXDEV:
+            raise V2LanguageSplitError(
+                "V2 language split publication cannot cross filesystems (EXDEV): "
+                f"{source} -> {destination}"
+            ) from error
+        raise
 
 
 def _previous_partition_paths(root: Path, destination: Path) -> set[Path]:
     payload = _read_previous_manifest(root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH)
-    if not _manifest_matches_destination(payload, root, destination):
+    previous_destination = _manifest_output_root(payload, root)
+    if previous_destination is None:
         return set()
     assert payload is not None
-    return _manifest_partition_paths(payload, root, destination)
+    return _manifest_partition_paths(payload, root, previous_destination)
 
 
 def _read_previous_manifest(path: Path) -> dict[str, object] | None:
@@ -493,12 +536,18 @@ def _read_previous_manifest(path: Path) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _manifest_matches_destination(
-    payload: dict[str, object] | None,
-    root: Path,
-    destination: Path,
-) -> bool:
-    return payload is not None and payload.get("output_root") == _relative_path(destination, root)
+def _manifest_output_root(payload: dict[str, object] | None, root: Path) -> Path | None:
+    if payload is None:
+        return None
+    output_root = payload.get("output_root")
+    if not isinstance(output_root, str):
+        return None
+    candidate = (root / output_root).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
 
 
 def _manifest_partition_paths(
