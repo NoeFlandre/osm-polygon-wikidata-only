@@ -18,6 +18,7 @@ def test_mkdocs_configuration_defines_public_navigation_and_exclusions() -> None
         "api.md",
         "architecture.md",
         "development.md",
+        "language-splits.md",
         "sentence-splitting.md",
         "grid5000-sentence-splitting.md",
     ):

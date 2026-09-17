@@ -20,6 +20,7 @@ EXPECTED_COMMANDS = {
     "augment-region",
     "augment-dir",
     "split-v2-sentences",
+    "language-splits",
     "release-stats",
 }
 

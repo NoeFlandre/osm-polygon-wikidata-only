@@ -194,6 +194,7 @@ uv run osm-polygon-wikidata-only process-pbf <input.pbf> [--options]
 uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 uv run osm-polygon-wikidata-only augment-region <stem>  [--options]
 uv run osm-polygon-wikidata-only augment-dir             [--options]
+uv run osm-polygon-wikidata-only language-splits         [--options]
 uv run osm-polygon-wikidata-only split-v2-sentences       [--options]
 uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 ```
@@ -235,6 +236,14 @@ uv run osm-polygon-wikidata-only sync-dir \
     --dataset-version v2 \
     --skip-existing \
     --push
+```
+
+Build deterministic row-level language partitions for the selected release:
+
+```bash
+uv run osm-polygon-wikidata-only language-splits \
+    --data-root "$OSM_POLYGON_DATA_ROOT" \
+    --dataset-version both
 ```
 
 V2 writes below `processed_v2/` and keeps its reuse index and restart

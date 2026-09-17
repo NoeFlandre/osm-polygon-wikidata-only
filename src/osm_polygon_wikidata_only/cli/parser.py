@@ -104,6 +104,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_augment.add_argument("stem", help="Completed region stem, e.g. andorra-latest")
     sub.add_parser("augment-dir", parents=[common], help="Augment every completed core region")
+    p_language = sub.add_parser(
+        "language-splits",
+        help="Generate deterministic V1/V2 language partitions without reading PBF files",
+    )
+    p_language.add_argument("--data-root", type=Path, default=None, help="Data root directory")
+    p_language.add_argument(
+        "--dataset-version",
+        choices=("v1", "v2", "both"),
+        default="both",
+        help="Select language-split contracts to generate (default: both)",
+    )
+    p_language.add_argument(
+        "--batch-size",
+        type=int,
+        default=65_536,
+        help="Rows to stream per input batch (default: 65536)",
+    )
+    p_language.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inventories and print the deterministic plan without writing",
+    )
+    p_language.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
+    p_language.set_defaults(push=False)
     _add_release_stats_parser(sub)
     return parser
 

@@ -25,6 +25,7 @@ def test_parser_has_documented_subcommands() -> None:
         "augment-region",
         "process-pbf",
         "process-dir",
+        "language-splits",
         "release-stats",
         "sync-dir",
         "split-v2-sentences",
