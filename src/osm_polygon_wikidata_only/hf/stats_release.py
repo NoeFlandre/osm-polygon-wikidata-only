@@ -122,7 +122,7 @@ class StatsReleaseReport:
         }
 
 
-def _paths_info_revision(revision: str) -> str:
+def _hub_revision(revision: str) -> str:
     match = _HF_DATASET_COMMIT_URL.fullmatch(revision)
     return match.group("revision") if match else revision
 
@@ -518,7 +518,7 @@ def _remote_entries(client: Any, repo_id: str, path: str, revision: str) -> list
         entries = get_paths_info(
             repo_id,
             paths=[path],
-            revision=_paths_info_revision(revision),
+            revision=_hub_revision(revision),
             repo_type="dataset",
         )
     except TypeError:
@@ -539,7 +539,7 @@ def _download_remote_file(
         raise StatsReleaseError("Hub client cannot download files for release verification")
     kwargs: dict[str, Any] = {
         "repo_type": "dataset",
-        "revision": revision,
+        "revision": _hub_revision(revision),
     }
     if cache_dir is not None:
         kwargs["cache_dir"] = str(cache_dir)
