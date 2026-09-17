@@ -12,7 +12,7 @@ import hashlib
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -290,7 +290,7 @@ def _publish_one_version(
 ) -> LanguagePublicationReport:
     plan = _plan_from_generated(version_plan, generated)
     revision = _remote_revision(hub, plan.repo_id)
-    remote_files = _remote_files(hub, plan.repo_id)
+    remote_files = _remote_files(hub, plan.repo_id, revision=revision)
     old_manifest = _remote_bytes(
         hub,
         plan.repo_id,
@@ -299,7 +299,13 @@ def _publish_one_version(
         data_root=data_root,
         required=False,
     )
-    stale_files = tuple(sorted(_manifest_owned_paths(old_manifest) - _plan_paths(plan)))
+    stale_files = tuple(
+        sorted(
+            path
+            for path in _manifest_owned_paths(old_manifest, plan)
+            if path in remote_files and path not in _plan_paths(plan)
+        )
+    )
 
     card_path = _write_card_snapshot(
         data_root,
@@ -316,27 +322,13 @@ def _publish_one_version(
     changed_files = tuple(sorted(op.path_in_repo for op in operations))
 
     if not operations:
-        _verify_remote_release(
-            hub,
+        return _record_no_op(
+            data_root,
             plan,
+            hub=hub,
             revision=revision,
             stale_files=stale_files,
-            data_root=data_root,
         )
-        report = LanguagePublicationReport(
-            version=plan.version,
-            repo_id=plan.repo_id,
-            dry_run=False,
-            published=True,
-            committed=False,
-            no_op=True,
-            revision=revision,
-            files=plan.files,
-            changed_files=(),
-            stale_files=stale_files,
-        )
-        _write_report(data_root, report)
-        return report
 
     commit_revision = upload_files(
         plan.repo_id,
@@ -344,14 +336,22 @@ def _publish_one_version(
         hub=hub,
         token=token,
         commit_message=LANGUAGE_PUBLICATION_COMMIT_MESSAGE,
+        allow_noop=True,
     )
     if not commit_revision:
-        raise LanguagePublicationError(f"Hub returned an empty revision for {plan.repo_id}")
+        latest_revision = _remote_revision(hub, plan.repo_id)
+        return _record_no_op(
+            data_root,
+            plan,
+            hub=hub,
+            revision=latest_revision,
+            stale_files=stale_files,
+        )
     _verify_remote_release(
         hub,
         plan,
         revision=commit_revision,
-        stale_files=stale_files,
+        stale_files=tuple(stale_files),
         data_root=data_root,
     )
     report = LanguagePublicationReport(
@@ -364,7 +364,39 @@ def _publish_one_version(
         revision=commit_revision,
         files=plan.files,
         changed_files=changed_files,
+        stale_files=tuple(stale_files),
+    )
+    _write_report(data_root, report)
+    return report
+
+
+def _record_no_op(
+    data_root: Path,
+    plan: LanguagePublicationPlan,
+    *,
+    hub: HfHub,
+    revision: str,
+    stale_files: Sequence[str],
+) -> LanguagePublicationReport:
+    """Verify and record a publication that required no remote commit."""
+    _verify_remote_release(
+        hub,
+        plan,
+        revision=revision,
         stale_files=stale_files,
+        data_root=data_root,
+    )
+    report = LanguagePublicationReport(
+        version=plan.version,
+        repo_id=plan.repo_id,
+        dry_run=False,
+        published=True,
+        committed=False,
+        no_op=True,
+        revision=revision,
+        files=plan.files,
+        changed_files=(),
+        stale_files=tuple(stale_files),
     )
     _write_report(data_root, report)
     return report
@@ -540,30 +572,37 @@ def _remote_entries(
     wanted = sorted(set(paths))
     result: dict[str, Any] = {}
     client = cast(Any, hub)
+    get_paths_info = getattr(client, "get_paths_info", None)
+    if not callable(get_paths_info):
+        raise LanguagePublicationError(
+            f"remote client cannot read paths at immutable revision {revision}"
+        )
     for start in range(0, len(wanted), 256):
         chunk = wanted[start : start + 256]
         try:
-            entries = client.get_paths_info(
+            entries = get_paths_info(
                 repo_id=repo_id,
                 paths=chunk,
                 revision=revision,
                 repo_type="dataset",
             )
-        except TypeError:
-            entries = client.get_paths_info(repo_id=repo_id, paths=chunk, repo_type="dataset")
-        for entry in entries:
-            path = getattr(entry, "path", None)
-            if isinstance(path, str):
-                result[path] = entry
+            for entry in entries:
+                path = getattr(entry, "path", None)
+                if isinstance(path, str):
+                    result[path] = entry
+        except Exception as error:
+            raise LanguagePublicationError(
+                f"could not read remote paths for {repo_id}@{revision}: {error}"
+            ) from error
     return result
 
 
-def _remote_files(hub: HfHub, repo_id: str) -> set[str]:
+def _remote_files(hub: HfHub, repo_id: str, *, revision: str) -> set[str]:
     try:
-        return set(hub.list_repo_files(repo_id=repo_id, repo_type="dataset"))
+        return set(hub.list_repo_files(repo_id=repo_id, revision=revision, repo_type="dataset"))
     except Exception as error:
         raise LanguagePublicationError(
-            f"could not list remote files for {repo_id}: {error}"
+            f"could not list remote files for {repo_id}@{revision}: {error}"
         ) from error
 
 
@@ -576,7 +615,9 @@ def _remote_revision(hub: HfHub, repo_id: str) -> str:
         ) from error
     revision = getattr(info, "sha", None)
     if not isinstance(revision, str) or not revision:
-        return "main"
+        raise LanguagePublicationError(
+            f"remote revision unavailable for {repo_id}; refusing an unpinned publication"
+        )
     return revision
 
 
@@ -699,7 +740,7 @@ def _render_language_card_section(
     return "\n".join(lines)
 
 
-def _manifest_owned_paths(raw: bytes | None) -> set[str]:
+def _manifest_owned_paths(raw: bytes | None, plan: LanguagePublicationPlan) -> set[str]:
     if raw is None:
         return set()
     try:
@@ -708,7 +749,26 @@ def _manifest_owned_paths(raw: bytes | None) -> set[str]:
         return set()
     paths: set[str] = set()
     _collect_manifest_paths(payload, paths)
-    return paths
+    return {path for path in paths if _is_managed_language_path(plan, path)}
+
+
+def _is_managed_language_path(plan: LanguagePublicationPlan, path: str) -> bool:
+    parts = PurePosixPath(path).parts
+    if plan.version is LanguageSplitVersion.V1:
+        return (
+            len(parts) == 3
+            and parts[0] == "data"
+            and parts[1] in plan.configurations
+            and parts[2].startswith("lang-")
+            and parts[2].endswith(".parquet")
+        )
+    return (
+        len(parts) == 4
+        and parts[0] == "language_splits"
+        and parts[1] in plan.configurations
+        and parts[2].startswith("lang-")
+        and parts[3].endswith(".parquet")
+    )
 
 
 def _collect_manifest_paths(value: object, paths: set[str]) -> None:

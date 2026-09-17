@@ -55,9 +55,10 @@ class StubHfHub:
         self,
         repo_id: str,
         *,
+        revision: str | None = None,
         repo_type: str,
     ) -> list[str]:
-        del repo_id, repo_type
+        del repo_id, revision, repo_type
         if self.remote_files is not None:
             return sorted(list(self.remote_files))
         return []

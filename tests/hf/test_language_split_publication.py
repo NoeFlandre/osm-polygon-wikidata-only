@@ -22,8 +22,12 @@ from osm_polygon_wikidata_only.hf.language_split_publication import (
     LanguagePublicationResult,
     LanguagePublishedFile,
     _git_blob_sha1,
+    _manifest_owned_paths,
     _merge_language_card,
     _plan_from_version_plan,
+    _publish_one_version,
+    _remote_entries,
+    _remote_files,
     _remote_matches,
     _remote_path_for_local,
     _verify_remote_release,
@@ -378,6 +382,148 @@ def test_remote_verification_rejects_missing_and_stale_files(tmp_path: Path) -> 
             stale_files=("old.parquet",),
             data_root=tmp_path,
         )
+
+
+@pytest.mark.parametrize(
+    ("version", "configuration", "valid_path", "invalid_path"),
+    [
+        (
+            LanguageSplitVersion.V1,
+            "polygon_articles_by_language",
+            "data/polygon_articles_by_language/lang-fr-00000-of-00001.parquet",
+            "data/polygon_articles_by_language/canonical.parquet",
+        ),
+        (
+            LanguageSplitVersion.V2,
+            "wikipedia_documents_by_language",
+            "language_splits/wikipedia_documents_by_language/lang-fr/source.parquet",
+            "wikipedia/documents/source.parquet",
+        ),
+    ],
+)
+def test_manifest_owned_paths_are_limited_to_language_namespaces(
+    version: LanguageSplitVersion,
+    configuration: str,
+    valid_path: str,
+    invalid_path: str,
+    tmp_path: Path,
+) -> None:
+    plan = LanguagePublicationPlan(
+        version=version,
+        repo_id=V1_REPO if version is LanguageSplitVersion.V1 else V2_REPO,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "processed/language_splits",
+        manifest_path=tmp_path / "manifest.json",
+        manifest_remote_path="manifests/language_splits.json",
+        languages=("fr",),
+        configurations=(configuration,),
+        files=(),
+    )
+    raw = json.dumps(
+        {"tables": [{"buckets": [{"files": [{"path": valid_path}, {"path": invalid_path}]}]}]}
+    ).encode()
+
+    assert _manifest_owned_paths(raw, plan) == {valid_path}
+
+
+def test_remote_reads_require_the_initial_immutable_revision() -> None:
+    class RecordingHub:
+        def list_repo_files(self, **kwargs: object) -> list[str]:
+            assert kwargs["revision"] == "immutable-rev"
+            return []
+
+        def get_paths_info(self, **kwargs: object) -> list[object]:
+            assert kwargs["revision"] == "immutable-rev"
+            return []
+
+    hub = RecordingHub()
+    assert _remote_files(hub, V1_REPO, revision="immutable-rev") == set()
+    assert _remote_entries(hub, V1_REPO, (), revision="immutable-rev") == {}
+
+
+def test_remote_path_fallback_cannot_drop_revision_pin() -> None:
+    class LegacyHub:
+        def get_paths_info(self, *, repo_id: str, paths: list[str], repo_type: str) -> list[object]:
+            del repo_id, paths, repo_type
+            return []
+
+    with pytest.raises(LanguagePublicationError, match="revision"):
+        _remote_entries(LegacyHub(), V1_REPO, ("README.md",), revision="immutable-rev")
+
+
+def test_empty_upload_result_is_verified_as_a_noop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+
+    readme = tmp_path / "README.md"
+    readme.write_text("# card\n", encoding="utf-8")
+    plan = LanguagePublicationPlan(
+        version=LanguageSplitVersion.V1,
+        repo_id=V1_REPO,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "processed/language_splits",
+        manifest_path=tmp_path / "manifest.json",
+        manifest_remote_path="manifests/language_splits_v1.json",
+        languages=("en",),
+        configurations=(),
+        files=(),
+    )
+    revisions = iter(("before", "after"))
+    verified_revisions: list[str] = []
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._plan_from_generated",
+        lambda *args, **kwargs: plan,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._remote_revision",
+        lambda *args, **kwargs: next(revisions),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._remote_files",
+        lambda *args, **kwargs: set(),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._remote_bytes",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._remote_card",
+        lambda *args, **kwargs: "# card\n",
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._write_card_snapshot",
+        lambda *args, **kwargs: readme,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._remote_entries",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._publication_operations",
+        lambda *args, **kwargs: [delete_op("language_splits/old.parquet")],
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.upload_files",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._verify_remote_release",
+        lambda *args, **kwargs: verified_revisions.append(kwargs["revision"]),
+    )
+
+    report = _publish_one_version(
+        tmp_path,
+        SimpleNamespace(version=LanguageSplitVersion.V1),
+        SimpleNamespace(),
+        hub=StubHfHub(),
+        token="stub-token",
+    )
+
+    assert report.no_op is True
+    assert report.committed is False
+    assert report.revision == "after"
+    assert verified_revisions == ["after"]
 
 
 def test_publication_uses_one_commit_and_second_run_is_noop(

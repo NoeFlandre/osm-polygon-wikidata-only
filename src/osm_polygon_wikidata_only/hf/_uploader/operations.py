@@ -246,6 +246,7 @@ def upload_files(
     token: str | None = None,
     commit_message: str,
     num_threads: int = 5,
+    allow_noop: bool = False,
     _resolve_token: Any = _resolve_hf_token,
     _api_factory: Any = None,
 ) -> str:
@@ -266,6 +267,9 @@ def upload_files(
     both raises ``UploadError``. The atomic-commit guarantee holds
     for both signatures: a single ``create_commit`` call always
     represents the full set of operations.
+
+    ``allow_noop=True`` returns an empty string when idempotent delete
+    filtering removes every operation, without calling ``create_commit``.
     """
     if (files is None) == (ops is None):
         raise UploadError("upload_files requires exactly one of `files=` or `ops=`")
@@ -278,6 +282,11 @@ def upload_files(
     client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
     _ensure_repo_exists(client, repo_id)
     operations_obj = _drop_absent_deletes(client, repo_id, operations_obj, delete_paths)
+    if not operations_obj:
+        if allow_noop:
+            LOGGER.info("No upload operations remain after idempotent delete filtering")
+            return ""
+        raise UploadError("No upload operations remain after idempotent delete filtering")
     return _create_upload_commit(
         client,
         repo_id,
