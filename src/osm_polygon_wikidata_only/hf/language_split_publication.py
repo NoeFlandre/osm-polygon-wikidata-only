@@ -289,6 +289,37 @@ def _publish_one_version(
     token: str | None,
 ) -> LanguagePublicationReport:
     plan = _plan_from_generated(version_plan, generated)
+    revision, remote_files, old_manifest = _remote_snapshot(hub, plan, data_root)
+    stale_files = _stale_manifest_files(old_manifest, plan, remote_files)
+    plan = _plan_with_card_file(
+        data_root,
+        plan,
+        _remote_card(hub, plan.repo_id, revision, remote_files, data_root),
+    )
+    operations, changed_files = _build_publication_operations(
+        plan,
+        stale_files,
+        hub=hub,
+        revision=revision,
+        data_root=data_root,
+    )
+    return _publish_or_record(
+        data_root,
+        plan,
+        operations,
+        changed_files,
+        stale_files,
+        hub=hub,
+        token=token,
+        revision=revision,
+    )
+
+
+def _remote_snapshot(
+    hub: HfHub,
+    plan: LanguagePublicationPlan,
+    data_root: Path,
+) -> tuple[str, set[str], bytes | None]:
     revision = _remote_revision(hub, plan.repo_id)
     remote_files = _remote_files(hub, plan.repo_id, revision=revision)
     old_manifest = _remote_bytes(
@@ -299,28 +330,61 @@ def _publish_one_version(
         data_root=data_root,
         required=False,
     )
-    stale_files = tuple(
+    return revision, remote_files, old_manifest
+
+
+def _stale_manifest_files(
+    old_manifest: bytes | None,
+    plan: LanguagePublicationPlan,
+    remote_files: set[str],
+) -> tuple[str, ...]:
+    planned_paths = _plan_paths(plan)
+    return tuple(
         sorted(
             path
             for path in _manifest_owned_paths(old_manifest, plan)
-            if path in remote_files and path not in _plan_paths(plan)
+            if path in remote_files and path not in planned_paths
         )
     )
 
-    card_path = _write_card_snapshot(
-        data_root,
-        plan,
-        _remote_card(hub, plan.repo_id, revision, remote_files, data_root),
-    )
-    plan = replace(plan, files=(*plan.files, _local_file(card_path, _REMOTE_README)))
 
+def _plan_with_card_file(
+    data_root: Path,
+    plan: LanguagePublicationPlan,
+    existing_card: str,
+) -> LanguagePublicationPlan:
+    card_path = _write_card_snapshot(data_root, plan, existing_card)
+    return replace(plan, files=(*plan.files, _local_file(card_path, _REMOTE_README)))
+
+
+def _build_publication_operations(
+    plan: LanguagePublicationPlan,
+    stale_files: Sequence[str],
+    *,
+    hub: HfHub,
+    revision: str,
+    data_root: Path,
+) -> tuple[list[PublicationOp], tuple[str, ...]]:
     remote_entries = _remote_entries(hub, plan.repo_id, _plan_paths(plan), revision=revision)
     operations = _publication_operations(
         plan.files, remote_entries, hub, plan.repo_id, revision, data_root
     )
     operations.extend(delete_op(path) for path in stale_files)
     changed_files = tuple(sorted(op.path_in_repo for op in operations))
+    return operations, changed_files
 
+
+def _publish_or_record(
+    data_root: Path,
+    plan: LanguagePublicationPlan,
+    operations: list[PublicationOp],
+    changed_files: tuple[str, ...],
+    stale_files: Sequence[str],
+    *,
+    hub: HfHub,
+    token: str | None,
+    revision: str,
+) -> LanguagePublicationReport:
     if not operations:
         return _record_no_op(
             data_root,
@@ -571,30 +635,51 @@ def _remote_entries(
 ) -> dict[str, Any]:
     wanted = sorted(set(paths))
     result: dict[str, Any] = {}
-    client = cast(Any, hub)
-    get_paths_info = getattr(client, "get_paths_info", None)
-    if not callable(get_paths_info):
+    get_paths_info = _path_info_reader(hub, revision)
+    for start in range(0, len(wanted), 256):
+        chunk = wanted[start : start + 256]
+        _read_remote_entries(
+            result,
+            get_paths_info,
+            repo_id=repo_id,
+            paths=chunk,
+            revision=revision,
+        )
+    return result
+
+
+def _path_info_reader(hub: HfHub, revision: str) -> Any:
+    reader = getattr(cast(Any, hub), "get_paths_info", None)
+    if not callable(reader):
         raise LanguagePublicationError(
             f"remote client cannot read paths at immutable revision {revision}"
         )
-    for start in range(0, len(wanted), 256):
-        chunk = wanted[start : start + 256]
-        try:
-            entries = get_paths_info(
-                repo_id=repo_id,
-                paths=chunk,
-                revision=revision,
-                repo_type="dataset",
-            )
-            for entry in entries:
-                path = getattr(entry, "path", None)
-                if isinstance(path, str):
-                    result[path] = entry
-        except Exception as error:
-            raise LanguagePublicationError(
-                f"could not read remote paths for {repo_id}@{revision}: {error}"
-            ) from error
-    return result
+    return reader
+
+
+def _read_remote_entries(
+    result: dict[str, Any],
+    get_paths_info: Any,
+    *,
+    repo_id: str,
+    paths: list[str],
+    revision: str,
+) -> None:
+    try:
+        entries = get_paths_info(
+            repo_id=repo_id,
+            paths=paths,
+            revision=revision,
+            repo_type="dataset",
+        )
+        for entry in entries:
+            path = getattr(entry, "path", None)
+            if isinstance(path, str):
+                result[path] = entry
+    except Exception as error:
+        raise LanguagePublicationError(
+            f"could not read remote paths for {repo_id}@{revision}: {error}"
+        ) from error
 
 
 def _remote_files(hub: HfHub, repo_id: str, *, revision: str) -> set[str]:
@@ -752,22 +837,24 @@ def _manifest_owned_paths(raw: bytes | None, plan: LanguagePublicationPlan) -> s
     return {path for path in paths if _is_managed_language_path(plan, path)}
 
 
+_LANGUAGE_PATH_SHAPES: dict[LanguageSplitVersion, tuple[int, str, int]] = {
+    LanguageSplitVersion.V1: (3, "data", 2),
+    LanguageSplitVersion.V2: (4, "language_splits", 3),
+}
+
+
 def _is_managed_language_path(plan: LanguagePublicationPlan, path: str) -> bool:
     parts = PurePosixPath(path).parts
-    if plan.version is LanguageSplitVersion.V1:
-        return (
-            len(parts) == 3
-            and parts[0] == "data"
-            and parts[1] in plan.configurations
-            and parts[2].startswith("lang-")
-            and parts[2].endswith(".parquet")
+    expected_length, root, filename_index = _LANGUAGE_PATH_SHAPES[plan.version]
+    if len(parts) != expected_length:
+        return False
+    return all(
+        (
+            parts[0] == root,
+            parts[1] in plan.configurations,
+            parts[2].startswith("lang-"),
+            parts[filename_index].endswith(".parquet"),
         )
-    return (
-        len(parts) == 4
-        and parts[0] == "language_splits"
-        and parts[1] in plan.configurations
-        and parts[2].startswith("lang-")
-        and parts[3].endswith(".parquet")
     )
 
 

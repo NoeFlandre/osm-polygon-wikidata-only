@@ -283,10 +283,7 @@ def upload_files(
     _ensure_repo_exists(client, repo_id)
     operations_obj = _drop_absent_deletes(client, repo_id, operations_obj, delete_paths)
     if not operations_obj:
-        if allow_noop:
-            LOGGER.info("No upload operations remain after idempotent delete filtering")
-            return ""
-        raise UploadError("No upload operations remain after idempotent delete filtering")
+        return _empty_upload_result(allow_noop)
     return _create_upload_commit(
         client,
         repo_id,
@@ -294,6 +291,13 @@ def upload_files(
         commit_message=commit_message,
         num_threads=num_threads,
     )
+
+
+def _empty_upload_result(allow_noop: bool) -> str:
+    if allow_noop:
+        LOGGER.info("No upload operations remain after idempotent delete filtering")
+        return ""
+    raise UploadError("No upload operations remain after idempotent delete filtering")
 
 
 def _create_upload_commit(

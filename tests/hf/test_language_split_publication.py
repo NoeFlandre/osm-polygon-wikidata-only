@@ -434,11 +434,19 @@ def test_remote_reads_require_the_initial_immutable_revision() -> None:
 
         def get_paths_info(self, **kwargs: object) -> list[object]:
             assert kwargs["revision"] == "immutable-rev"
-            return []
+            return [SimpleNamespace(path=object())]
 
     hub = RecordingHub()
     assert _remote_files(hub, V1_REPO, revision="immutable-rev") == set()
     assert _remote_entries(hub, V1_REPO, (), revision="immutable-rev") == {}
+
+
+def test_remote_entries_rejects_clients_without_path_reads() -> None:
+    class NoPathInfoHub:
+        pass
+
+    with pytest.raises(LanguagePublicationError, match="remote client cannot read paths"):
+        _remote_entries(NoPathInfoHub(), V1_REPO, ("README.md",), revision="immutable-rev")
 
 
 def test_remote_path_fallback_cannot_drop_revision_pin() -> None:
