@@ -56,6 +56,7 @@ class HfHub(Protocol):
         self,
         repo_id: str,
         *,
+        revision: str | None = None,
         repo_type: str,
     ) -> list[str]: ...
 
@@ -64,6 +65,7 @@ class HfHub(Protocol):
         repo_id: str,
         paths: list[str],
         *,
+        revision: str | None = None,
         repo_type: str,
     ) -> Iterable[Any]: ...
 

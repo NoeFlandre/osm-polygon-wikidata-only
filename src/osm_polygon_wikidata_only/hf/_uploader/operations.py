@@ -246,6 +246,7 @@ def upload_files(
     token: str | None = None,
     commit_message: str,
     num_threads: int = 5,
+    allow_noop: bool = False,
     _resolve_token: Any = _resolve_hf_token,
     _api_factory: Any = None,
 ) -> str:
@@ -266,18 +267,18 @@ def upload_files(
     both raises ``UploadError``. The atomic-commit guarantee holds
     for both signatures: a single ``create_commit`` call always
     represents the full set of operations.
+
+    ``allow_noop=True`` returns an empty string when idempotent delete
+    filtering removes every operation, without calling ``create_commit``.
     """
-    if (files is None) == (ops is None):
-        raise UploadError("upload_files requires exactly one of `files=` or `ops=`")
-    operations_obj, add_paths, delete_paths = _build_operations(
-        files=list(files) if files is not None else None,
-        ops=list(ops) if ops is not None else None,
-    )
+    operations_obj, add_paths, delete_paths = _prepare_upload_operations(files, ops)
     _validate_upload_safety(add_paths, delete_paths)
     _validate_upload_operations(operations_obj)
     client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
     _ensure_repo_exists(client, repo_id)
     operations_obj = _drop_absent_deletes(client, repo_id, operations_obj, delete_paths)
+    if not operations_obj:
+        return _empty_upload_result(allow_noop)
     return _create_upload_commit(
         client,
         repo_id,
@@ -285,6 +286,25 @@ def upload_files(
         commit_message=commit_message,
         num_threads=num_threads,
     )
+
+
+def _prepare_upload_operations(
+    files: Iterable[tuple[Path, str]] | None,
+    ops: Sequence[PublicationOp] | None,
+) -> tuple[list[Any], set[str], set[str]]:
+    if (files is None) == (ops is None):
+        raise UploadError("upload_files requires exactly one of `files=` or `ops=`")
+    return _build_operations(
+        files=list(files) if files is not None else None,
+        ops=list(ops) if ops is not None else None,
+    )
+
+
+def _empty_upload_result(allow_noop: bool) -> str:
+    if allow_noop:
+        LOGGER.info("No upload operations remain after idempotent delete filtering")
+        return ""
+    raise UploadError("No upload operations remain after idempotent delete filtering")
 
 
 def _create_upload_commit(

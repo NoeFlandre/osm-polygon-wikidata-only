@@ -373,6 +373,51 @@ def test_upload_files_returns_the_upload_commit_oid(tmp_path: Path) -> None:
     assert result == "uploaded-commit-oid"
 
 
+def test_upload_files_can_report_noop_after_absent_delete_filtering() -> None:
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+
+    hub = StubHfHub(remote_files=set())
+    result = upload_files(
+        "org/name",
+        ops=[delete_op("language_splits/old.parquet")],
+        hub=hub,
+        token="stub-token",
+        commit_message="idempotent cleanup",
+        allow_noop=True,
+    )
+
+    assert result == ""
+    assert hub.commits == []
+
+
+def test_upload_files_rejects_empty_after_absent_delete_filtering_by_default() -> None:
+    from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
+
+    hub = StubHfHub(remote_files=set())
+    with pytest.raises(UploadError, match="No upload operations remain"):
+        upload_files(
+            "org/name",
+            ops=[delete_op("language_splits/old.parquet")],
+            hub=hub,
+            token="stub-token",
+            commit_message="idempotent cleanup",
+        )
+
+    assert hub.commits == []
+
+
+def test_upload_files_requires_exactly_one_source() -> None:
+    with pytest.raises(UploadError, match="exactly one"):
+        upload_files(
+            "org/name",
+            files=(),
+            ops=(),
+            hub=StubHfHub(),
+            token="stub-token",
+            commit_message="invalid plan",
+        )
+
+
 def _fake_hf_response(status_code: int, body: str) -> httpx.Response:
     return httpx.Response(
         status_code,

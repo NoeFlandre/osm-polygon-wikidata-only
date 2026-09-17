@@ -475,6 +475,7 @@ def build_golden_help(out: Path) -> dict[str, Path]:
         "augment-region": ["augment-region"],
         "augment-dir": ["augment-dir"],
         "language-splits": ["language-splits"],
+        "publish-language-splits": ["publish-language-splits"],
         "release-stats": ["release-stats"],
     }
     for name, prog_args in targets.items():

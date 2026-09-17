@@ -68,6 +68,7 @@ def help_outputs() -> dict[str, str]:
         "augment-region": _capture_help(parser, ["augment-region"]),
         "augment-dir": _capture_help(parser, ["augment-dir"]),
         "language-splits": _capture_help(parser, ["language-splits"]),
+        "publish-language-splits": _capture_help(parser, ["publish-language-splits"]),
         "release-stats": _capture_help(parser, ["release-stats"]),
     }
 
@@ -126,6 +127,12 @@ def test_language_splits_help_frozen(help_outputs: dict[str, str]) -> None:
     assert help_outputs["language-splits"] == golden_path.read_text(encoding="utf-8")
 
 
+def test_publish_language_splits_help_frozen(help_outputs: dict[str, str]) -> None:
+    golden_path = GOLDEN / "cli_help_publish-language-splits.txt"
+    assert golden_path.exists(), f"missing golden help file: {golden_path}"
+    assert help_outputs["publish-language-splits"] == golden_path.read_text(encoding="utf-8")
+
+
 def test_root_help_lists_every_subcommand(help_outputs: dict[str, str]) -> None:
     text = help_outputs["root"]
     for command in (
@@ -136,6 +143,7 @@ def test_root_help_lists_every_subcommand(help_outputs: dict[str, str]) -> None:
         "augment-region",
         "augment-dir",
         "language-splits",
+        "publish-language-splits",
     ):
         assert command in text
 

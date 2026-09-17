@@ -21,6 +21,12 @@ def test_language_split_release_facade_is_in_mutation_source_and_test_scopes() -
         "tests/hf/test_language_split_release.py",
         "tests/v2/test_language_splits.py",
     } <= set(mutation["pytest_add_cli_args_test_selection"])
+    assert "src/osm_polygon_wikidata_only/hf/language_split_publication.py" not in set(
+        mutation["source_paths"]
+    )
+    assert "tests/hf/test_language_split_publication.py" not in set(
+        mutation["pytest_add_cli_args_test_selection"]
+    )
 
 
 def test_language_split_mutation_tests_are_collection_safe() -> None:
