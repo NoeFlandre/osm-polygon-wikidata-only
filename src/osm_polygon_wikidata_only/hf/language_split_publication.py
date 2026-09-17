@@ -690,9 +690,9 @@ def _manifest_owned_paths(raw: bytes | None) -> set[str]:
 
 def _collect_manifest_paths(value: object, paths: set[str]) -> None:
     if isinstance(value, dict):
-        _collect_manifest_mapping(value, paths)
+        _collect_manifest_mapping(cast(dict[object, object], value), paths)
     elif isinstance(value, list):
-        _collect_manifest_list(value, paths)
+        _collect_manifest_list(cast(list[object], value), paths)
 
 
 def _collect_manifest_mapping(value: dict[object, object], paths: set[str]) -> None:
