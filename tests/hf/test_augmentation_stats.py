@@ -32,6 +32,7 @@ from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
 )
 from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     AugmentationStats,
+    CombinedLanguageStats,
     PerFileSummary,
     ProjectTextStats,
     WikidataFactStats,
@@ -1417,6 +1418,25 @@ def test_render_stats_language_section_uses_wikipedia_documents_terminology() ->
     # The explanatory notion "of all articles" is replaced.
     assert "of all articles" not in md
     assert "of all Wikipedia documents" in md
+
+
+def test_render_stats_combined_language_polygons_describe_identity_success_semantics() -> None:
+    stats = _empty_dataset_stats()
+    aug = replace(
+        _sample_augmentation_stats(),
+        combined_languages=CombinedLanguageStats(
+            document_count=3,
+            language_count=2,
+            documents_per_language=(("en", 2), ("fr", 1)),
+            polygons_per_language=(("en", 1), ("fr", 1)),
+        ),
+    )
+
+    md = render_stats_section(stats, augmentation_stats=aug)
+
+    assert "unique `(osm_type, osm_id)` polygon identities" in md
+    assert "`fetch_status=ok`" in md
+    assert "trimmed non-empty `full_text`" in md
 
 
 def _sample_augmentation_stats() -> AugmentationStats:

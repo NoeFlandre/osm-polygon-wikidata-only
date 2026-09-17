@@ -84,6 +84,23 @@ The exact column descriptions are generated into each Hugging Face dataset
 card. Parquet schemas and manifest names are compatibility contracts; a
 schema change requires an explicit dataset-version decision.
 
+## Reporting identities and row semantics
+
+Regional extracts can overlap, so the same OSM object may appear in more than
+one polygon file. Row-based counts retain those copies for regional provenance,
+storage, links, and document inventories. Map points, text-covered counts,
+language polygon counts, funnels, and card captions instead use one
+deterministic representative per global `(osm_type, osm_id)` identity. A text
+identity qualifies only when its linked document extraction succeeded
+(`fetch_status=ok`) and its trimmed `full_text` is non-empty. The optional
+language-split tables remain additive row-level views and do not change these
+reporting semantics.
+
+Polygon surface and geometry statistics deliberately remain row-based. The
+release scanner reads every manifest-listed `polygons/<stem>.parquet` row in
+sorted order, preserves the per-`source_pbf` breakdown, and emits rounded,
+byte-stable `stats.json` and card output from that complete published table.
+
 ## Resumability and publication
 
 The command-line workflows are designed to be safe to stop and restart. They

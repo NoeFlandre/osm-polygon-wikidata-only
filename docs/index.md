@@ -54,7 +54,14 @@ skipped and resumable state is kept under the selected data root.
 `release-stats` publishes only the dataset card and the machine-readable
 `stats.json` report. It recomputes both from every published polygon row of the
 selected contract and uploads nothing else; Parquet tables, manifests, and maps
-are untouched. Each released dataset needs its own exact `--confirm-repo`:
+are untouched. Each released dataset needs its own exact `--confirm-repo`.
+
+The card's text-covered counts and explanatory captions use one deterministic
+global identity per `(osm_type, osm_id)` across overlapping regional extracts.
+Only successfully extracted (`fetch_status=ok`) documents with trimmed,
+non-empty `full_text` qualify. The `stats.json` area and geometry report remains
+row-based: it scans every published polygon row and keeps the deterministic
+per-source breakdown.
 
 ```bash
 # Dry run for both published datasets. No network writes.

@@ -323,12 +323,13 @@ def _render_combined_language_section(stats: CombinedLanguageStats) -> str:
     lines = [
         "Top 20 languages across Wikipedia and Wikivoyage documents:",
         "",
-        "Document counts include canonical rows from both projects. Polygon counts "
-        "deduplicate places per language and require non-empty text: Wikipedia uses "
-        "the `polygon_articles` link table, while Wikivoyage joins through the shared "
-        "Wikidata QID.",
+        "Document counts include canonical rows from both projects. Polygon counts are "
+        "unique `(osm_type, osm_id)` polygon identities per language and require "
+        "successfully extracted (`fetch_status=ok`) trimmed non-empty `full_text`. "
+        "Canonical links use the `polygon_articles` identity join; legacy Wikivoyage "
+        "links use the shared Wikidata QID fallback.",
         "",
-        "| Language | Documents | % of total | Polygons with non-empty text |",
+        "| Language | Documents | % of total | Polygons with successful non-empty text |",
         "| --- | ---: | ---: | ---: |",
     ]
     lines.extend(
@@ -375,7 +376,7 @@ def _combined_tail_lines(stats: CombinedLanguageStats) -> list[str]:
         f"- {sum(count < 10 for _, count in documents)} language(s) appear in fewer than 10 "
         "Wikipedia + Wikivoyage documents",
         f"- {sum(count < 5 for _, count in stats.polygons_per_language)} language(s) appear in "
-        "fewer than 5 polygons with non-empty text",
+        "fewer than 5 polygons with successful non-empty text",
     ]
 
 

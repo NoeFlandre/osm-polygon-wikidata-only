@@ -11,10 +11,13 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
+from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.stats_release import (
     REMOTE_CARD_FILE,
@@ -155,6 +158,59 @@ def test_v2_release_targets_the_wikidata_and_wikipedia_dataset(tmp_path: Path) -
     )
     assert "## Polygon surface and geometry" in card
     assert "[`stats.json`](stats.json)" in card
+
+
+def test_v1_release_includes_the_polygon_surface_report_in_card_and_stats(
+    tmp_path: Path,
+) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    polygon_path = data_root.processed / "polygons" / "region-latest.parquet"
+    row = empty_row(POLYGON_COLUMNS)
+    row.update(
+        {
+            "polygon_id": "region:way:1",
+            "osm_type": "way",
+            "osm_id": 1,
+            "source_pbf": "region-latest.osm.pbf",
+            "lon": 0.0,
+            "lat": 0.0,
+            "area_m2": 2500.0,
+            "area_km2": 0.0025,
+            "bbox": json.dumps([0.0, 0.0, 1.0, 1.0]),
+            "geometry": json.dumps(
+                {
+                    "type": "Polygon",
+                    "coordinates": [[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]],
+                }
+            ),
+        }
+    )
+    polygon_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist([row], schema=polygon_schema()), polygon_path)
+    manifest_path = data_root.processed / "manifests" / "processed_pbfs.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "region-latest.osm.pbf": {
+                    "polygons_path": "polygons/region-latest.parquet",
+                    "polygon_count": 1,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = release_v1_polygon_stats(data_root, confirm_repo=DEFAULT_REPO_ID)
+
+    assert report.repo_id == DEFAULT_REPO_ID
+    assert report.polygon_rows == 1
+    staging = data_root.cache / "stats_release_snapshots" / "v1"
+    card = (staging / "README.md").read_text(encoding="utf-8")
+    payload = json.loads((staging / "stats.json").read_text(encoding="utf-8"))
+    assert "## Polygon surface and geometry" in card
+    assert payload["area_m2"]["total"] == 2500.0
 
 
 def test_v1_release_refuses_an_unconfirmed_repository(tmp_path: Path) -> None:
