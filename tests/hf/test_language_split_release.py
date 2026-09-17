@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from datasets import load_dataset
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.cli.commands import main
@@ -335,10 +337,12 @@ def test_plan_selects_only_the_requested_contract_and_keeps_roots_isolated(
 
     assert v1.versions == ("v1",)
     assert v2.versions == ("v2",)
-    assert v1.to_payload()["releases"][0]["processed_root"] == "processed"
-    assert v1.to_payload()["releases"][0]["output_root"] == "processed/language_splits"
-    assert v2.to_payload()["releases"][0]["processed_root"] == "processed_v2"
-    assert v2.to_payload()["releases"][0]["output_root"] == "processed_v2/language_splits"
+    v1_release = cast(list[dict[str, object]], v1.to_payload()["releases"])[0]
+    v2_release = cast(list[dict[str, object]], v2.to_payload()["releases"])[0]
+    assert v1_release["processed_root"] == "processed"
+    assert v1_release["output_root"] == "processed/language_splits"
+    assert v2_release["processed_root"] == "processed_v2"
+    assert v2_release["output_root"] == "processed_v2/language_splits"
 
 
 def test_dry_run_is_deterministic_and_writes_no_language_outputs(tmp_path: Path) -> None:
@@ -373,13 +377,14 @@ def test_v1_generation_routes_multilingual_rows_and_unknown_values_by_row_langua
     assert [row["document_id"] for row in french] == ["doc-fr"]
     assert [row["document_id"] for row in english] == ["doc-en"]
     assert [row["document_id"] for row in unknown] == ["doc-unknown"]
-    assert payload["releases"][0]["manifest_path"] == (
+    release = cast(list[dict[str, object]], payload["releases"])[0]
+    assert release["manifest_path"] == (
         "processed/language_splits/manifests/language_splits_v1.json"
     )
     assert (
         sum(
-            item["row_count"]
-            for item in payload["releases"][0]["files"]
+            cast(int, item["row_count"])
+            for item in cast(list[dict[str, object]], release["files"])
             if item["table"] == "polygon_articles"
         )
         == 3
@@ -401,12 +406,11 @@ def test_v2_generation_preserves_rows_and_uses_hugging_face_compatible_names(
 
     assert [row["document_id"] for row in french] == ["doc-fr"]
     assert [row["document_id"] for row in unknown] == ["doc-unknown"]
-    assert payload["releases"][0]["manifest_path"] == (
-        "processed_v2/manifests/language_splits.json"
-    )
+    release = cast(list[dict[str, object]], payload["releases"])[0]
+    assert release["manifest_path"] == ("processed_v2/manifests/language_splits.json")
     assert all(
-        "_" not in item["split"] and item["split"].startswith("lang-")
-        for item in payload["releases"][0]["files"]
+        "_" not in cast(str, item["split"]) and cast(str, item["split"]).startswith("lang-")
+        for item in cast(list[dict[str, object]], release["files"])
     )
     assert not (tmp_path / "processed_v2/language_splits/polygons").exists()
 
@@ -417,18 +421,18 @@ def test_both_generation_conserves_rows_and_writes_both_manifests(tmp_path: Path
     result = run_language_split_release(DataRoot(tmp_path), dataset_version="both", batch_size=1)
 
     payload = result.to_payload()
-    assert [release["dataset_version"] for release in payload["releases"]] == ["v1", "v2"]
+    releases = cast(list[dict[str, object]], payload["releases"])
+    assert [release["dataset_version"] for release in releases] == ["v1", "v2"]
     assert (tmp_path / "processed/language_splits/manifests/language_splits_v1.json").is_file()
     assert (tmp_path / "processed_v2/manifests/language_splits.json").is_file()
-    for release in payload["releases"]:
+    for release in releases:
+        files = cast(list[dict[str, object]], release["files"])
+        tables = cast(list[dict[str, object]], release["tables"])
         files_by_table = {
-            table: sum(item["row_count"] for item in release["files"] if item["table"] == table)
-            for table in {item["table"] for item in release["files"]}
+            table: sum(cast(int, item["row_count"]) for item in files if item["table"] == table)
+            for table in {item["table"] for item in files}
         }
-        assert all(
-            files_by_table.get(table["table"], 0) == table["row_count"]
-            for table in release["tables"]
-        )
+        assert all(files_by_table.get(table["table"], 0) == table["row_count"] for table in tables)
 
 
 def test_both_selection_validates_every_inventory_before_writing(tmp_path: Path) -> None:
@@ -464,12 +468,31 @@ def test_language_split_result_loads_with_standard_datasets_loader(tmp_path: Pat
     _write_v1_fixture(tmp_path)
 
     run_language_split_release(DataRoot(tmp_path), dataset_version="v1", batch_size=1)
-    dataset = load_dataset(
-        "parquet",
-        data_files={"train": str(_v1_partition(tmp_path, "polygon_articles", "fr"))},
-        split="train",
-        cache_dir=str(tmp_path / "hf-cache"),
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "import json",
+                    "import sys",
+                    "from datasets import load_dataset",
+                    "dataset = load_dataset(",
+                    '    "parquet",',
+                    '    data_files={"train": sys.argv[1]},',
+                    '    split="train",',
+                    "    cache_dir=sys.argv[2],",
+                    ")",
+                    'print(json.dumps({"num_rows": dataset.num_rows, "language": list(dataset["language"])}))',
+                )
+            ),
+            str(_v1_partition(tmp_path, "polygon_articles", "fr")),
+            str(tmp_path / "hf-cache"),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
     )
 
-    assert dataset.num_rows == 1
-    assert dataset["language"] == ["fr"]
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"num_rows": 1, "language": ["fr"]}

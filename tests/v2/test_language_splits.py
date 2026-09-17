@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from datasets import load_dataset
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.hf.language_splits import (
@@ -16,6 +18,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     build_language_inventory,
     language_table_specs,
 )
+from osm_polygon_wikidata_only.v2 import language_splits
 from osm_polygon_wikidata_only.v2.language_splits import (
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
     V2LanguageSplitError,
@@ -219,6 +222,19 @@ def _rows(root: Path, table: str, language: str) -> list[dict[str, object]]:
     return [row for path in paths for row in pq.read_table(path).to_pylist()]
 
 
+def _release_snapshot(root: Path) -> dict[str, bytes]:
+    paths = [
+        path
+        for directory in (root / "language_splits",)
+        for path in directory.rglob("*")
+        if path.is_file()
+    ]
+    manifest = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
+    if manifest.is_file():
+        paths.append(manifest)
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(paths)}
+
+
 def test_v2_split_keeps_each_multilingual_row_in_its_own_partition(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -334,6 +350,9 @@ def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: 
     build_v2_language_splits(root)
     stale = _shard(root, "wikipedia_documents", "de", "a-latest")
     assert stale.is_file()
+    unmanaged = root / "language_splits/operator-data/operator-owned.parquet"
+    unmanaged.parent.mkdir(parents=True)
+    unmanaged.write_bytes(b"keep this file")
 
     _write_table(
         root / "wikipedia/documents/a-latest.parquet",
@@ -345,12 +364,13 @@ def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: 
 
     assert not stale.exists()
     assert not stale.parent.exists()
+    assert unmanaged.read_bytes() == b"keep this file"
     manifest = _manifest(root)
     assert all(
         file["path"] != "language_splits/wikipedia_documents_by_language/lang-de/a-latest.parquet"
-        for table in manifest["tables"]
-        for bucket in table["buckets"]
-        for file in bucket["files"]
+        for table in cast(list[dict[str, object]], manifest["tables"])
+        for bucket in cast(list[dict[str, object]], table["buckets"])
+        for file in cast(list[dict[str, object]], bucket["files"])
     )
 
 
@@ -408,6 +428,44 @@ def test_v2_split_rejects_output_outside_processed_root(tmp_path: Path) -> None:
     assert not (root / "language_splits").exists()
 
 
+def test_v2_split_rejects_output_root_that_overlaps_source_artifacts(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+    source = (root / "polygons/a-latest.parquet").read_bytes()
+
+    with pytest.raises(V2LanguageSplitError, match="must not overlap"):
+        build_v2_language_splits(root, output_root=root)
+
+    assert (root / "polygons/a-latest.parquet").read_bytes() == source
+    assert not (root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH).exists()
+
+
+def test_v2_split_rolls_back_after_install_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _write_v2_fixture(tmp_path)
+    build_v2_language_splits(root)
+    before = _release_snapshot(root)
+
+    source_path = root / "polygon_document_links/a-latest.parquet"
+    rows = pq.read_table(source_path).to_pylist()
+    rows[0]["language"] = "de"
+    _write_table(source_path, rows, polygon_document_link_v2_schema())
+
+    def fail_after_first_install(staged: dict[Path, Path], installed: list[Path]) -> None:
+        final, temporary = min(staged.items(), key=lambda item: item[0].as_posix())
+        final.parent.mkdir(parents=True, exist_ok=True)
+        language_splits.os.replace(temporary, final)
+        installed.append(final)
+        raise RuntimeError("injected language split failure")
+
+    monkeypatch.setattr(language_splits, "_install_files", fail_after_first_install)
+    with pytest.raises(RuntimeError, match="injected language split failure"):
+        build_v2_language_splits(root)
+
+    assert _release_snapshot(root) == before
+    assert not list(root.glob(".language_splits-*"))
+
+
 def test_v2_split_conservation_guard_rejects_missing_output(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     inventory = build_language_inventory(root, DatasetContract.V2)
@@ -423,16 +481,42 @@ def test_v2_split_can_be_loaded_with_standard_datasets(tmp_path: Path) -> None:
     french_files = sorted(
         (root / "language_splits/wikipedia_documents_by_language/lang-fr").glob("*.parquet")
     )
-    dataset = load_dataset(
-        "parquet",
-        data_files=[str(path) for path in french_files],
-        split="train",
-        cache_dir=str(tmp_path / "hf-cache"),
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "import json",
+                    "import sys",
+                    "from datasets import load_dataset",
+                    "dataset = load_dataset(",
+                    '    "parquet",',
+                    "    data_files=sys.argv[1:-1],",
+                    '    split="train",',
+                    "    cache_dir=sys.argv[-1],",
+                    ")",
+                    "print(json.dumps({",
+                    '    "num_rows": dataset.num_rows,',
+                    '    "column_names": dataset.column_names,',
+                    '    "document_id": list(dataset["document_id"]),',
+                    "}))",
+                )
+            ),
+            *(str(path) for path in french_files),
+            str(tmp_path / "hf-cache"),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
     )
 
-    assert dataset.num_rows == 2
-    assert dataset.column_names == [field.name for field in wikipedia_document_v2_schema()]
-    assert dataset["document_id"] == ["doc-fr-a", "doc-fr-z"]
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "num_rows": 2,
+        "column_names": [field.name for field in wikipedia_document_v2_schema()],
+        "document_id": ["doc-fr-a", "doc-fr-z"],
+    }
 
 
 def test_v2_split_module_runs_as_a_local_command(
