@@ -11,6 +11,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.hf._geographic.parquet_inputs import sorted_parquets
+from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
+    PolygonIdentity,
+    PolygonIndex,
+    load_unique_polygon_records,
+)
 from osm_polygon_wikidata_only.hf._links.reader import (
     is_canonical_link_schema,
     read_document_links,
@@ -20,7 +25,7 @@ from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from .cache import _file_fingerprint
 from .models import CombinedLanguageStats
 
-_CACHE_CONTRACT_VERSION = "combined-languages-v1"
+_CACHE_CONTRACT_VERSION = "combined-languages-v2"
 _CACHE_FILE = "combined_languages.json"
 _INPUT_SUBDIRS = (
     "polygons",
@@ -184,7 +189,7 @@ def _record_document_text(
     text_languages: dict[tuple[str, str], str],
     voyage_qid_languages: dict[str, set[str]] | None,
 ) -> None:
-    if not _non_blank(row.get("full_text")):
+    if not _successful_non_empty_text(row):
         return
     text_languages[identity] = language
     if voyage_qid_languages is None:
@@ -192,6 +197,18 @@ def _record_document_text(
     qid = str(row.get("wikidata") or "")
     if qid:
         voyage_qid_languages[qid].add(language)
+
+
+def _successful_non_empty_text(row: dict[str, object]) -> bool:
+    """Return whether a document has usable extracted text.
+
+    Older document tables do not carry ``fetch_status``; those retain the
+    historical non-empty-text fallback. When the status column is present,
+    only an explicit successful fetch qualifies.
+    """
+    return _non_blank(row.get("full_text")) and (
+        "fetch_status" not in row or row.get("fetch_status") == "ok"
+    )
 
 
 def _read_document_project(
@@ -204,7 +221,14 @@ def _read_document_project(
     text_languages: dict[tuple[str, str], str],
     voyage_qid_languages: dict[str, set[str]] | None = None,
 ) -> None:
-    columns = ("document_id", "article_id", "wikidata", "language", "full_text")
+    columns = (
+        "document_id",
+        "article_id",
+        "wikidata",
+        "language",
+        "full_text",
+        "fetch_status",
+    )
     for path in sorted_parquets(processed_root / subdir):
         for row in _read_available(path, columns):
             _record_document_row(
@@ -220,12 +244,14 @@ def _read_document_project(
 def _polygon_languages_from_links(
     processed_root: Path,
     text_languages: dict[tuple[str, str], str],
-) -> dict[str, set[str]]:
-    polygons_by_language: dict[str, set[str]] = defaultdict(set)
+    polygon_index: PolygonIndex,
+) -> dict[str, set[PolygonIdentity]]:
+    polygons_by_language: dict[str, set[PolygonIdentity]] = defaultdict(set)
     for link in read_document_links(processed_root):
         linked_language = text_languages.get((link.project, link.document_id))
-        if linked_language and link.polygon_id:
-            polygons_by_language[linked_language].add(link.polygon_id)
+        identity = polygon_index.by_polygon_id.get(link.polygon_id)
+        if linked_language and identity is not None:
+            polygons_by_language[linked_language].add(identity)
     return polygons_by_language
 
 
@@ -236,26 +262,28 @@ def _has_canonical_links(processed_root: Path) -> bool:
     )
 
 
-def _record_fallback_polygon(
-    row: dict[str, object],
-    voyage_qid_languages: dict[str, set[str]],
-    polygons_by_language: dict[str, set[str]],
-) -> None:
-    polygon_id = str(row.get("polygon_id") or "")
-    if not polygon_id:
-        return
-    for language in voyage_qid_languages.get(str(row.get("wikidata") or ""), ()):
-        polygons_by_language[language].add(polygon_id)
+def _load_polygon_index(processed_root: Path) -> PolygonIndex:
+    """Load identities when the polygon files expose the canonical columns.
+
+    Augmentation statistics also support incomplete fixture-shaped roots that
+    predate the polygon identity contract. Those roots still receive their
+    document and sidecar counts, but cannot contribute identity-based polygon
+    language counts.
+    """
+    paths = sorted_parquets(processed_root / "polygons")
+    if any("polygon_id" not in pq.read_schema(path).names for path in paths):
+        return PolygonIndex(records={}, by_polygon_id={})
+    return load_unique_polygon_records(paths)
 
 
 def _add_voyage_polygon_fallback(
-    processed_root: Path,
+    polygon_index: PolygonIndex,
     voyage_qid_languages: dict[str, set[str]],
-    polygons_by_language: dict[str, set[str]],
+    polygons_by_language: dict[str, set[PolygonIdentity]],
 ) -> None:
-    for path in sorted_parquets(processed_root / "polygons"):
-        for row in _read_available(path, ("polygon_id", "wikidata")):
-            _record_fallback_polygon(row, voyage_qid_languages, polygons_by_language)
+    for record in polygon_index.records.values():
+        for language in voyage_qid_languages.get(record.wikidata, ()):
+            polygons_by_language[language].add(record.identity)
 
 
 def compute_combined_language_stats(
@@ -310,11 +338,16 @@ def _compute_uncached_stats(processed_root: Path) -> CombinedLanguageStats:
         voyage_qid_languages=voyage_qid_languages,
     )
 
-    polygons_by_language = _polygon_languages_from_links(processed_root, text_languages)
+    polygon_index = _load_polygon_index(processed_root)
+    polygons_by_language = _polygon_languages_from_links(
+        processed_root,
+        text_languages,
+        polygon_index,
+    )
     has_canonical_links = _has_canonical_links(processed_root)
     if not has_canonical_links:
         _add_voyage_polygon_fallback(
-            processed_root,
+            polygon_index,
             voyage_qid_languages,
             polygons_by_language,
         )

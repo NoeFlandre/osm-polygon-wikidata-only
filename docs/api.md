@@ -47,7 +47,10 @@ constructs these clients with the project defaults.
   and `release_v2_polygon_stats`, the deterministic compute-publish-verify path
   behind the `release-stats` command. Each recomputes `stats.json` and the
   dataset card from every published polygon row, publishes only those two files
-  to the confirmed dataset, and verifies the resulting remote revision.
+  to the confirmed dataset, and verifies the resulting remote revision. The
+  card's text-covered metrics deduplicate globally by `(osm_type, osm_id)` and
+  require successful (`fetch_status=ok`) trimmed non-empty text; `stats.json`
+  keeps complete row-based area and geometry statistics.
 - `osm_polygon_wikidata_only.hf.trackio_snapshot.publish_trackio_snapshot`
   publishes the single static `final-dataset-snapshot` run. The corresponding
   console script is `osm-polygon-wikidata-only-trackio`.

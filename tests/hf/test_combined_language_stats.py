@@ -6,6 +6,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.domain.polygon_document_links import (
+    polygon_document_link_schema,
+)
 from osm_polygon_wikidata_only.hf._dataset_stats.combined_languages import (
     compute_combined_language_stats,
 )
@@ -57,6 +60,123 @@ def test_combined_languages_count_documents_and_unique_polygons(tmp_path: Path) 
     assert stats.documents_per_language == (("en", 2), ("fr", 2), ("de", 1), ("es", 1))
     assert stats.polygons_per_language == (("es", 2), ("en", 1), ("fr", 1))
     assert stats.language_count == 4
+
+
+def test_combined_languages_deduplicates_successful_text_by_typed_osm_identity(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    polygons = processed / "polygons"
+    wikipedia_documents = processed / "wikipedia" / "documents"
+    wikivoyage_documents = processed / "wikivoyage" / "documents"
+    polygon_articles = processed / "polygon_articles"
+    for directory in (
+        polygons,
+        wikipedia_documents,
+        wikivoyage_documents,
+        polygon_articles,
+    ):
+        directory.mkdir(parents=True)
+
+    _write(
+        polygons / "north.parquet",
+        [
+            {
+                "polygon_id": "north:way:7",
+                "osm_type": "way",
+                "osm_id": 7,
+                "wikidata": "Q7",
+            },
+            {
+                "polygon_id": "relation:9",
+                "osm_type": "relation",
+                "osm_id": 9,
+                "wikidata": "Q9",
+            },
+            {
+                "polygon_id": "relation:10",
+                "osm_type": "relation",
+                "osm_id": 10,
+                "wikidata": "Q10",
+            },
+        ],
+    )
+    _write(
+        polygons / "south.parquet",
+        [
+            {
+                "polygon_id": "south:way:7",
+                "osm_type": "way",
+                "osm_id": 7,
+                "wikidata": "Q7",
+            }
+        ],
+    )
+    _write(
+        wikipedia_documents / "docs.parquet",
+        [
+            {
+                "document_id": "wiki-7",
+                "language": "en",
+                "full_text": "Successful article",
+                "fetch_status": "ok",
+            },
+            {
+                "document_id": "wiki-10-failed",
+                "language": "fr",
+                "full_text": "Failed article should not qualify",
+                "fetch_status": "http_error",
+            },
+        ],
+    )
+    _write(
+        wikivoyage_documents / "docs.parquet",
+        [
+            {
+                "document_id": "voy-9",
+                "wikidata": "Q9",
+                "language": "fr",
+                "full_text": "Successful guide",
+                "fetch_status": "ok",
+            }
+        ],
+    )
+
+    link_schema = polygon_document_link_schema()
+
+    def link_row(
+        polygon_id: str,
+        document_id: str,
+        project: str,
+    ) -> dict[str, object]:
+        row = {field.name: None for field in link_schema}
+        row.update(
+            {
+                "polygon_id": polygon_id,
+                "document_id": document_id,
+                "project": project,
+            }
+        )
+        return row
+
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                link_row("north:way:7", "wiki-7", "wikipedia"),
+                link_row("south:way:7", "wiki-7", "wikipedia"),
+                link_row("relation:10", "wiki-10-failed", "wikipedia"),
+                link_row("relation:9", "voy-9", "wikivoyage"),
+            ],
+            schema=link_schema,
+        ),
+        polygon_articles / "links.parquet",
+    )
+
+    stats = compute_combined_language_stats(processed)
+
+    assert stats.document_count == 3
+    assert dict(stats.documents_per_language) == {"en": 1, "fr": 2}
+    assert stats.polygons_per_language == (("en", 1), ("fr", 1))
 
 
 def test_combined_languages_reuses_unchanged_cached_result(
