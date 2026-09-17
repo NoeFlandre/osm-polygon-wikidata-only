@@ -136,6 +136,7 @@ def test_root_help_lists_every_subcommand(help_outputs: dict[str, str]) -> None:
         "augment-region",
         "augment-dir",
         "language-splits",
+        "publish-language-splits",
     ):
         assert command in text
 

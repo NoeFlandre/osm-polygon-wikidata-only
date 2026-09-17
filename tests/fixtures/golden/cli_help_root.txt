@@ -1,11 +1,11 @@
 usage: PROG [-h]
- {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,release-stats}
+ {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,publish-language-splits,release-stats}
  ...
 
 Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage.
 
 positional arguments:
- {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,release-stats}
+ {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,publish-language-splits,release-stats}
  process-pbf Process one PBF file
  process-dir Process every PBF in a directory
  sync-dir Converge core and augmentation for every PBF
@@ -14,6 +14,7 @@ positional arguments:
  augment-dir Augment every completed core region
  language-splits Generate deterministic V1/V2 language partitions without reading PBF
  files
+ publish-language-splits Generate and publish exact-target V1/V2 language partitions
  release-stats Publish only the dataset card and the polygon statistics report
 
 options:

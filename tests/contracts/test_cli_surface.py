@@ -21,6 +21,7 @@ EXPECTED_COMMANDS = {
     "augment-dir",
     "split-v2-sentences",
     "language-splits",
+    "publish-language-splits",
     "release-stats",
 }
 
