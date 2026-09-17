@@ -130,6 +130,7 @@ def build_v2_language_splits(
 
     ordered_files = tuple(sorted(files, key=_file_sort_key))
     _validate_conservation(inventory, ordered_files)
+    _remove_stale_shards(root, destination, ordered_files)
     manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
     manifest = _manifest_payload(root, destination, inventory, ordered_files)
     atomic_write_json(manifest_path, manifest)
@@ -321,6 +322,47 @@ def _validate_conservation(
     observed = _observed_counts(files)
     for table_inventory in inventory.tables:
         _validate_table_conservation(table_inventory, observed)
+
+
+def _remove_stale_shards(
+    root: Path,
+    destination: Path,
+    files: tuple[V2LanguageSplitFile, ...],
+) -> None:
+    """Remove obsolete generated Parquet shards before publishing the manifest."""
+    if not destination.is_dir():
+        return
+    for path in _stale_shard_paths(root, destination, files):
+        path.unlink()
+    _remove_empty_output_directories(destination)
+
+
+def _stale_shard_paths(
+    root: Path,
+    destination: Path,
+    files: tuple[V2LanguageSplitFile, ...],
+) -> tuple[Path, ...]:
+    """Return generated Parquet paths absent from the current release."""
+    expected_paths = {root / file.path for file in files}
+    return tuple(
+        path
+        for path in sorted(destination.rglob("*.parquet"))
+        if path.is_file() and path not in expected_paths
+    )
+
+
+def _remove_empty_output_directories(destination: Path) -> None:
+    """Prune empty directories left by removed generated shards."""
+    directories = sorted(
+        (path for path in destination.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for directory in directories:
+        try:
+            directory.rmdir()
+        except OSError:
+            continue
 
 
 def _observed_counts(

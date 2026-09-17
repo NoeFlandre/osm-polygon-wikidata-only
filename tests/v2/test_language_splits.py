@@ -328,6 +328,32 @@ def test_v2_split_is_byte_stable_on_repeated_runs(tmp_path: Path) -> None:
     assert not list((root / "language_splits").rglob("*.tmp"))
 
 
+def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+
+    build_v2_language_splits(root)
+    stale = _shard(root, "wikipedia_documents", "de", "a-latest")
+    assert stale.is_file()
+
+    _write_table(
+        root / "wikipedia/documents/a-latest.parquet",
+        [_document("doc-fr-a", "fr", "French A")],
+        wikipedia_document_v2_schema(),
+    )
+
+    build_v2_language_splits(root)
+
+    assert not stale.exists()
+    assert not stale.parent.exists()
+    manifest = _manifest(root)
+    assert all(
+        file["path"] != "language_splits/wikipedia_documents_by_language/lang-de/a-latest.parquet"
+        for table in manifest["tables"]
+        for bucket in table["buckets"]
+        for file in bucket["files"]
+    )
+
+
 def test_v2_split_does_not_route_or_copy_the_polygon_table(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     source = (root / "polygons/a-latest.parquet").read_bytes()
