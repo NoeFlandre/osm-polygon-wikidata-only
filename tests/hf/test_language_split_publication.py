@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.cli.parser import build_parser
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.language_split_publication import (
+    MAX_ATOMIC_PUBLICATION_FILES,
     LanguagePublicationError,
     LanguagePublicationPlan,
     LanguagePublicationReport,
@@ -218,6 +219,55 @@ def test_dry_run_returns_only_the_planned_release(
     assert result.reports[0].published is False
 
 
+def test_apply_rejects_oversized_plan_before_generation_or_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = LanguagePublicationPlan(
+        version=LanguageSplitVersion.V1,
+        repo_id=V1_REPO,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "processed/language_splits",
+        manifest_path=tmp_path / "manifest.json",
+        manifest_remote_path="manifests/language_splits_v1.json",
+        languages=("en",),
+        configurations=("polygon_articles_by_language",),
+        files=tuple(
+            LanguagePublishedFile(
+                local_path=tmp_path / f"part-{index}.parquet",
+                path_in_repo=f"part-{index}.parquet",
+                size_bytes=None,
+                sha256=None,
+            )
+            for index in range(MAX_ATOMIC_PUBLICATION_FILES - 1)
+        ),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.plan_language_split_publication",
+        lambda *args, **kwargs: (plan,),
+    )
+    generation_called = False
+
+    def unexpected_generation(*args: object, **kwargs: object) -> None:
+        nonlocal generation_called
+        generation_called = True
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_release",
+        unexpected_generation,
+    )
+
+    with pytest.raises(LanguagePublicationError, match="no remote mutation was attempted"):
+        run_language_split_publication(
+            tmp_path,
+            dataset_version="v1",
+            confirm_repos=(V1_REPO,),
+            apply=True,
+            hub=StubHfHub(),
+        )
+
+    assert generation_called is False
+
+
 def test_cli_publication_handler_forwards_release_arguments(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -383,6 +433,22 @@ def test_publication_uses_one_commit_and_second_run_is_noop(
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_release",
         lambda *args, **kwargs: result,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.plan_language_split_publication",
+        lambda *args, **kwargs: (
+            LanguagePublicationPlan(
+                version=LanguageSplitVersion.V1,
+                repo_id=V1_REPO,
+                processed_root=processed_root,
+                output_root=output_root,
+                manifest_path=manifest,
+                manifest_remote_path="manifests/language_splits_v1.json",
+                languages=("en", "unknown"),
+                configurations=("polygon_articles_by_language",),
+                files=(),
+            ),
+        ),
     )
 
     hub = StubHfHub(

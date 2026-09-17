@@ -42,6 +42,7 @@ V2_LANGUAGE_MANIFEST_REMOTE = "manifests/language_splits.json"
 LANGUAGE_CARD_HEADING = "## Language partitions"
 _REMOTE_README = "README.md"
 _REMOTE_CACHE_DIR = "language_split_publication"
+MAX_ATOMIC_PUBLICATION_FILES = 25_000
 
 
 class LanguagePublicationError(RuntimeError):
@@ -191,6 +192,13 @@ def run_language_split_publication(
             batch_size=batch_size,
             confirm_repos=confirm_repos,
         )
+    plans = plan_language_split_publication(
+        root,
+        dataset_version=dataset_version,
+        batch_size=batch_size,
+        confirm_repos=confirm_repos,
+    )
+    _validate_atomic_publication_plans(plans)
     generated = run_language_split_release(
         root,
         dataset_version=dataset_version,
@@ -205,6 +213,21 @@ def run_language_split_publication(
         token=token,
     )
     return LanguagePublicationResult(reports=reports)
+
+
+def _validate_atomic_publication_plans(
+    plans: Sequence[LanguagePublicationPlan],
+) -> None:
+    """Reject plans that cannot fit one safe Hub commit before generation."""
+    for plan in plans:
+        planned_operation_files = len(plan.files) + 2
+        if planned_operation_files > MAX_ATOMIC_PUBLICATION_FILES:
+            raise LanguagePublicationError(
+                f"single atomic commit for {plan.repo_id} would contain "
+                f"{planned_operation_files:,} files, exceeding the Hugging Face "
+                f"create_commit limit of {MAX_ATOMIC_PUBLICATION_FILES:,} files; "
+                "no remote mutation was attempted"
+            )
 
 
 def _plan_only_publication(

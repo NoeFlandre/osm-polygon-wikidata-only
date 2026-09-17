@@ -58,3 +58,9 @@ exact confirmations for `both`. V1 publishes `data/<configuration>/lang-*`
 files; V2 publishes `language_splits/<configuration>/lang-*` files. The
 generated manifests remain under `manifests/` and are the ownership record
 used to remove only obsolete generated shards on later releases.
+
+The command refuses an apply before local generation or Hub mutation when the
+selected output cannot fit one atomic Hub commit. The current V2 dry-run plans
+179,847 files, above Hugging Face's 25,000-file atomic limit; publishing V2
+therefore needs an explicit shard-aggregation or non-atomic publication design
+change.
