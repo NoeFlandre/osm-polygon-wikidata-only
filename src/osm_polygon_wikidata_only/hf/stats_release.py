@@ -49,6 +49,9 @@ RELEASE_COMMIT_MESSAGE = "Publish dataset card and polygon statistics report"
 _MANIFEST_RELATIVE_PATH = Path("manifests/processed_pbfs.json")
 _STAGING_DIRNAME = "stats_release_snapshots"
 _REMOTE_CACHE_DIRNAME = "remote_verification"
+_HF_DATASET_COMMIT_URL = re.compile(
+    r"https://huggingface\.co/datasets/[^/]+/[^/]+/commit/(?P<revision>[0-9a-f]{40})"
+)
 _RELEASE_SECTION_HEADINGS = frozenset(
     {
         "## Dataset snapshot",
@@ -117,6 +120,11 @@ class StatsReleaseReport:
             "repo_id": self.repo_id,
             "revision": self.revision,
         }
+
+
+def _paths_info_revision(revision: str) -> str:
+    match = _HF_DATASET_COMMIT_URL.fullmatch(revision)
+    return match.group("revision") if match else revision
 
 
 class RemoteVerifier(Protocol):
@@ -510,7 +518,7 @@ def _remote_entries(client: Any, repo_id: str, path: str, revision: str) -> list
         entries = get_paths_info(
             repo_id,
             paths=[path],
-            revision=revision,
+            revision=_paths_info_revision(revision),
             repo_type="dataset",
         )
     except TypeError:

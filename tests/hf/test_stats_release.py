@@ -29,6 +29,8 @@ from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
 _REPO = "NoeFlandre/osm-polygon-wikidata-only"
+_COMMIT_HASH = "0123456789abcdef0123456789abcdef01234567"
+_COMMIT_URL = f"https://huggingface.co/datasets/{_REPO}/commit/{_COMMIT_HASH}"
 
 
 def _write_card(destination: Path) -> None:
@@ -336,8 +338,17 @@ def test_v2_release_rejects_noncanonical_repo_id(tmp_path: Path) -> None:
         )
 
 
-def test_default_remote_verifier_uses_supplied_upload_revision_and_hashes_files(
+@pytest.mark.parametrize(
+    ("revision", "paths_info_revision"),
+    [
+        pytest.param(_COMMIT_URL, _COMMIT_HASH, id="full-commit-url"),
+        pytest.param(_COMMIT_HASH, _COMMIT_HASH, id="bare-commit-hash"),
+    ],
+)
+def test_default_remote_verifier_normalizes_paths_info_revision_only(
     tmp_path: Path,
+    revision: str,
+    paths_info_revision: str,
 ) -> None:
     card = tmp_path / "README.md"
     report = tmp_path / "stats.json"
@@ -350,7 +361,8 @@ def test_default_remote_verifier_uses_supplied_upload_revision_and_hashes_files(
 
     class FakeHub:
         def __init__(self) -> None:
-            self.revisions: list[str | None] = []
+            self.paths_info_revisions: list[str] = []
+            self.download_revisions: list[str] = []
 
         def get_paths_info(
             self,
@@ -361,7 +373,7 @@ def test_default_remote_verifier_uses_supplied_upload_revision_and_hashes_files(
             repo_type: str,
         ) -> list[object]:
             del repo_id, repo_type
-            self.revisions.append(revision)
+            self.paths_info_revisions.append(revision)
             return [
                 SimpleNamespace(path=path, size=(4 if path == "README.md" else 6)) for path in paths
             ]
@@ -375,7 +387,7 @@ def test_default_remote_verifier_uses_supplied_upload_revision_and_hashes_files(
             repo_type: str,
         ) -> str:
             del repo_id, repo_type
-            self.revisions.append(revision)
+            self.download_revisions.append(revision)
             return str(tmp_path / filename)
 
     remote_card = tmp_path / REMOTE_CARD_FILE
@@ -384,7 +396,6 @@ def test_default_remote_verifier_uses_supplied_upload_revision_and_hashes_files(
     remote_stats.write_bytes(report.read_bytes())
     hub = FakeHub()
 
-    assert (
-        default_remote_verifier(_REPO, files, revision="upload-commit", hub=hub) == "upload-commit"
-    )
-    assert hub.revisions == ["upload-commit"] * 4
+    assert default_remote_verifier(_REPO, files, revision=revision, hub=hub) == revision
+    assert hub.paths_info_revisions == [paths_info_revision] * 2
+    assert hub.download_revisions == [revision] * 2
