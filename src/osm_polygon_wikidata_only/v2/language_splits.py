@@ -110,6 +110,27 @@ def build_v2_language_splits(
     their deterministic order; one output shard is produced per source file
     and normalized language.  The output manifest is published last.
     """
+    root, destination, inventory = _prepare_v2_split_request(
+        processed_root, output_root, batch_size
+    )
+    manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
+    ordered_files = _stage_and_install_v2_release(
+        root, destination, inventory, batch_size, manifest_path
+    )
+
+    return V2LanguageSplitResult(
+        processed_root=root,
+        output_root=destination,
+        manifest_path=manifest_path,
+        files=ordered_files,
+    )
+
+
+def _prepare_v2_split_request(
+    processed_root: Path,
+    output_root: Path | None,
+    batch_size: int,
+) -> tuple[Path, Path, LanguageInventory]:
     _validate_batch_size(batch_size)
     root = Path(processed_root).resolve()
     destination = (
@@ -118,46 +139,62 @@ def build_v2_language_splits(
     _ensure_output_is_under_root(destination, root)
     if destination.exists() and not destination.is_dir():
         raise V2LanguageSplitError(f"V2 language split output is not a directory: {destination}")
-
     inventory = build_language_inventory(root, DatasetContract.V2)
     _ensure_output_does_not_overlap_source(destination, root, inventory)
+    return root, destination, inventory
+
+
+def _stage_and_install_v2_release(
+    root: Path,
+    destination: Path,
+    inventory: LanguageInventory,
+    batch_size: int,
+    manifest_path: Path,
+) -> tuple[V2LanguageSplitFile, ...]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     stage_root = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent))
-    manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
     try:
-        specs = language_table_specs(DatasetContract.V2)
-        files: list[V2LanguageSplitFile] = []
-        staged_paths: dict[Path, Path] = {}
-        for spec in specs:
-            table_inventory = cast(LanguageTableInventory, inventory.table(spec.table))
-            for source_file in table_inventory.source_files:
-                generated, source_staged_paths = _write_source_file(
-                    root,
-                    destination,
-                    stage_root,
-                    spec,
-                    source_file,
-                    batch_size,
-                )
-                files.extend(generated)
-                staged_paths.update(source_staged_paths)
-
+        files, staged_paths = _stage_v2_files(root, destination, stage_root, inventory, batch_size)
         ordered_files = tuple(sorted(files, key=_file_sort_key))
         _validate_conservation(inventory, ordered_files)
-        manifest = _manifest_payload(root, destination, inventory, ordered_files)
         manifest_stage = stage_root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
-        atomic_write_json(manifest_stage, manifest)
+        atomic_write_json(
+            manifest_stage, _manifest_payload(root, destination, inventory, ordered_files)
+        )
         staged_paths[manifest_path] = manifest_stage
         _install_staged_files(root, destination, staged_paths)
+        return ordered_files
     finally:
         shutil.rmtree(stage_root, ignore_errors=True)
 
-    return V2LanguageSplitResult(
-        processed_root=root,
-        output_root=destination,
-        manifest_path=manifest_path,
-        files=ordered_files,
-    )
+
+def _stage_v2_files(
+    root: Path,
+    destination: Path,
+    stage_root: Path,
+    inventory: LanguageInventory,
+    batch_size: int,
+) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
+    files: list[V2LanguageSplitFile] = []
+    staged_paths: dict[Path, Path] = {}
+    for spec in language_table_specs(DatasetContract.V2):
+        table_inventory = cast(LanguageTableInventory, inventory.table(spec.table))
+        if not isinstance(table_inventory, LanguageTableInventory):
+            raise V2LanguageSplitError(
+                f"V2 inventory entry is not a language table: {spec.table.value}"
+            )
+        for source_file in table_inventory.source_files:
+            generated, source_staged_paths = _write_source_file(
+                root,
+                destination,
+                stage_root,
+                spec,
+                source_file,
+                batch_size,
+            )
+            files.extend(generated)
+            staged_paths.update(source_staged_paths)
+    return files, staged_paths
 
 
 def _validate_batch_size(batch_size: int) -> None:
@@ -392,13 +429,17 @@ def _install_staged_files(
         raise
     finally:
         _cleanup_transaction(staged, backups)
-    _remove_empty_output_directories(destination)
+    _remove_empty_output_directories(destination, previous | final_paths)
 
 
 def _backup_targets(targets: list[Path], backups: dict[Path, Path]) -> None:
-    for target in targets:
-        if target.exists():
-            backups[target] = _backup_existing(target)
+    try:
+        for target in targets:
+            if target.exists():
+                backups[target] = _backup_existing(target)
+    except BaseException:
+        _restore_files([], backups)
+        raise
 
 
 def _install_files(staged: dict[Path, Path], installed: list[Path]) -> None:
@@ -435,54 +476,71 @@ def _backup_existing(path: Path) -> Path:
 
 
 def _previous_partition_paths(root: Path, destination: Path) -> set[Path]:
-    manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
-    if not manifest_path.is_file():
+    payload = _read_previous_manifest(root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH)
+    if not _manifest_matches_destination(payload, root, destination):
         return set()
-    try:
-        payload = json_loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, TypeError, ValueError):
-        return set()
-    if not isinstance(payload, dict):
-        return set()
-    if payload.get("output_root") != _relative_path(destination, root):
-        return set()
+    assert payload is not None
+    return _manifest_partition_paths(payload, root, destination)
 
+
+def _read_previous_manifest(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _manifest_matches_destination(
+    payload: dict[str, object] | None,
+    root: Path,
+    destination: Path,
+) -> bool:
+    return payload is not None and payload.get("output_root") == _relative_path(destination, root)
+
+
+def _manifest_partition_paths(
+    payload: dict[str, object], root: Path, destination: Path
+) -> set[Path]:
     paths: set[Path] = set()
-    tables = payload.get("tables")
-    if not isinstance(tables, list):
-        return paths
-    for table in tables:
-        if not isinstance(table, dict):
-            continue
-        buckets = table.get("buckets")
-        if not isinstance(buckets, list):
-            continue
-        for bucket in buckets:
-            if not isinstance(bucket, dict):
-                continue
-            files = bucket.get("files")
-            if not isinstance(files, list):
-                continue
-            for file in files:
-                if not isinstance(file, dict):
-                    continue
-                raw_path = file.get("path")
-                if not isinstance(raw_path, str):
-                    continue
-                candidate = (root / raw_path).resolve()
-                try:
-                    relative = candidate.relative_to(destination)
-                except ValueError:
-                    continue
-                if len(relative.parts) == 3 and relative.suffix == ".parquet":
+    for table in _manifest_records(payload.get("tables")):
+        for bucket in _manifest_records(table.get("buckets")):
+            for file in _manifest_records(bucket.get("files")):
+                candidate = _manifest_partition_path(root, destination, file.get("path"))
+                if candidate is not None:
                     paths.add(candidate)
     return paths
 
 
-def _remove_empty_output_directories(destination: Path) -> None:
+def _manifest_records(value: object) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(cast(dict[str, object], record) for record in value if isinstance(record, dict))
+
+
+def _manifest_partition_path(root: Path, destination: Path, raw_path: object) -> Path | None:
+    if not isinstance(raw_path, str):
+        return None
+    candidate = (root / raw_path).resolve()
+    relative = _relative_to_output(candidate, destination)
+    if relative is None or len(relative.parts) != 3 or relative.suffix != ".parquet":
+        return None
+    return candidate
+
+
+def _relative_to_output(candidate: Path, destination: Path) -> Path | None:
+    try:
+        return candidate.relative_to(destination)
+    except ValueError:
+        return None
+
+
+def _remove_empty_output_directories(destination: Path, owned_paths: set[Path]) -> None:
     """Prune empty directories left by removed generated shards."""
     directories = sorted(
-        (path for path in destination.rglob("*") if path.is_dir()),
+        _output_directories_for_paths(destination, owned_paths),
         key=lambda path: len(path.parts),
         reverse=True,
     )
@@ -491,6 +549,20 @@ def _remove_empty_output_directories(destination: Path) -> None:
             directory.rmdir()
         except OSError:
             continue
+
+
+def _output_directories_for_paths(destination: Path, owned_paths: set[Path]) -> set[Path]:
+    directories: set[Path] = set()
+    for path in owned_paths:
+        try:
+            path.relative_to(destination)
+        except ValueError:
+            continue
+        for directory in path.parents:
+            if directory == destination:
+                break
+            directories.add(directory)
+    return directories
 
 
 def _observed_counts(

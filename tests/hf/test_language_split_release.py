@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pyarrow as pa
@@ -18,8 +19,15 @@ from osm_polygon_wikidata_only.cli.parser import build_parser
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
+from osm_polygon_wikidata_only.hf import language_split_release
 from osm_polygon_wikidata_only.hf.language_split_release import (
     LanguageSplitReleaseError,
+    LanguageSplitReleasePlan,
+    LanguageSplitVersion,
+    _expected_file_sort_key,
+    _generate_version,
+    _generated_file_sort_key,
+    _generated_release_payload,
     plan_language_split_release,
     run_language_split_release,
 )
@@ -343,6 +351,199 @@ def test_plan_selects_only_the_requested_contract_and_keeps_roots_isolated(
     assert v1_release["output_root"] == "processed/language_splits"
     assert v2_release["processed_root"] == "processed_v2"
     assert v2_release["output_root"] == "processed_v2/language_splits"
+    assert v1.releases[0].manifest_path == (
+        tmp_path / "processed/language_splits/manifests/language_splits_v1.json"
+    )
+    assert v2.releases[0].manifest_path == (
+        tmp_path / "processed_v2/manifests/language_splits.json"
+    )
+
+
+def test_release_defaults_and_expected_file_payloads_are_explicit(tmp_path: Path) -> None:
+    _write_both_fixture(tmp_path)
+
+    plan = plan_language_split_release(tmp_path, batch_size=1)
+    assert plan.versions == ("v1", "v2")
+    assert plan.data_root == tmp_path.resolve()
+
+    releases = cast(list[dict[str, object]], plan.to_payload()["releases"])
+    v1_expected = cast(list[dict[str, object]], releases[0]["expected_files"])
+    v2_expected = cast(list[dict[str, object]], releases[1]["expected_files"])
+    assert v1_expected
+    assert v2_expected
+    assert all(
+        set(record) == {"table", "configuration", "language", "split", "path", "row_count"}
+        for record in v1_expected
+    )
+    assert all(
+        cast(str, record["path"]).startswith("processed/language_splits/data/")
+        for record in v1_expected
+    )
+    assert all(
+        set(record)
+        == {
+            "table",
+            "configuration",
+            "language",
+            "split",
+            "path_template",
+            "source_files",
+            "row_count",
+        }
+        for record in v2_expected
+    )
+    assert all(
+        cast(str, record["path_template"]).startswith("processed_v2/language_splits/")
+        for record in v2_expected
+    )
+    assert all(
+        cast(str, record["path_template"]).endswith("/<source_file_stem>.parquet")
+        for record in v2_expected
+    )
+
+    with pytest.raises(LanguageSplitReleaseError, match="batch_size must be positive"):
+        plan_language_split_release(tmp_path, dataset_version="v1", batch_size=0)
+
+
+def test_release_file_sort_keys_distinguish_table_language_and_path() -> None:
+    expected_records: list[dict[str, object]] = [
+        {"table": "a", "language": "en", "path": "a"},
+        {"table": "a", "language": "en", "path": "z"},
+        {"table": "a", "language": "unknown", "path": "a"},
+        {"table": "b", "language": "en", "path": "a"},
+    ]
+    assert sorted(reversed(expected_records), key=_expected_file_sort_key) == expected_records
+    assert _expected_file_sort_key({"table": "a", "language": "unknown", "path": "a"}) == (
+        "a",
+        "True",
+        "unknown",
+        "a",
+    )
+    assert _expected_file_sort_key({"table": "a", "language": "en"}) == (
+        "a",
+        "False",
+        "en",
+        "",
+    )
+    assert (
+        _expected_file_sort_key({"table": "a", "language": "en", "path_template": "template"})[-1]
+        == "template"
+    )
+
+    generated_records: list[dict[str, object]] = [
+        {"table": "a", "language": "en", "path": "a"},
+        {"table": "a", "language": "en", "path": "z"},
+        {"table": "a", "language": "unknown", "path": "a"},
+        {"table": "b", "language": "en", "path": "a"},
+    ]
+    assert sorted(reversed(generated_records), key=_generated_file_sort_key) == generated_records
+    assert _generated_file_sort_key({"table": "a", "language": "unknown", "path": "a"}) == (
+        "a",
+        "True",
+        "unknown",
+        "a",
+    )
+    assert _generated_file_sort_key({"table": "a", "path": "a"})[1:3] == ("False", "")
+
+    calls: list[tuple[object, object]] = []
+
+    class RecordingRecord(dict[str, object]):
+        def get(self, key: object, default: object = None) -> object:
+            calls.append((key, default))
+            return super().get(key, default)
+
+    assert _generated_file_sort_key(RecordingRecord(table="a", language="en", path="a")) == (
+        "a",
+        "False",
+        "en",
+        "a",
+    )
+    assert calls == [("language", ""), ("language", "")]
+
+
+def test_run_release_uses_default_selector_and_forwards_batch_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, object] = {}
+
+    def fake_plan(
+        data_root: DataRoot | Path,
+        *,
+        dataset_version: str,
+        batch_size: int,
+    ) -> LanguageSplitReleasePlan:
+        calls.update(
+            data_root=data_root,
+            dataset_version=dataset_version,
+            batch_size=batch_size,
+        )
+        return LanguageSplitReleasePlan(
+            data_root=tmp_path,
+            dataset_version=dataset_version,
+            batch_size=batch_size,
+            releases=(),
+        )
+
+    monkeypatch.setattr(language_split_release, "plan_language_split_release", fake_plan)
+
+    result = run_language_split_release(tmp_path, batch_size=7)
+
+    assert calls == {"data_root": tmp_path, "dataset_version": "both", "batch_size": 7}
+    assert result.plan.dataset_version == "both"
+    assert result.plan.batch_size == 7
+
+
+@pytest.mark.parametrize("version", [LanguageSplitVersion.V1, LanguageSplitVersion.V2])
+def test_generate_version_forwards_paths_and_batch_size(
+    tmp_path: Path, version: LanguageSplitVersion, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed_root = tmp_path / "processed"
+    output_root = processed_root / "language_splits"
+    plan = SimpleNamespace(
+        version=version,
+        processed_root=processed_root,
+        output_root=output_root,
+    )
+    calls: list[tuple[object, ...]] = []
+
+    if version is LanguageSplitVersion.V1:
+        from osm_polygon_wikidata_only.hf import v1_language_splits
+
+        def fake_v1(root: Path, destination: Path, *, batch_size: int) -> object:
+            calls.append((root, destination, batch_size))
+            return "v1-generated"
+
+        monkeypatch.setattr(v1_language_splits, "generate_v1_language_splits", fake_v1)
+    else:
+        from osm_polygon_wikidata_only.v2 import language_splits as v2_language_splits
+
+        def fake_v2(root: Path, *, output_root: Path, batch_size: int) -> object:
+            calls.append((root, output_root, batch_size))
+            return "v2-generated"
+
+        monkeypatch.setattr(v2_language_splits, "build_v2_language_splits", fake_v2)
+
+    assert _generate_version(plan, batch_size=7) == f"{version.value}-generated"
+    assert calls == [(processed_root, output_root, 7)]
+
+
+def test_generated_payload_prefers_the_published_manifest_path(tmp_path: Path) -> None:
+    plan = SimpleNamespace(
+        version=LanguageSplitVersion.V2,
+        to_dict=lambda data_root: {
+            "manifest_path": "planned/manifest.json",
+            "expected_files": [],
+        },
+    )
+    generated = SimpleNamespace(
+        manifest_path=tmp_path / "processed_v2/manifests/generated.json",
+        files=(),
+        processed_root=tmp_path / "processed_v2",
+    )
+
+    payload = _generated_release_payload(plan, generated, tmp_path)
+
+    assert payload["manifest_path"] == "processed_v2/manifests/generated.json"
 
 
 def test_dry_run_is_deterministic_and_writes_no_language_outputs(tmp_path: Path) -> None:
@@ -378,8 +579,14 @@ def test_v1_generation_routes_multilingual_rows_and_unknown_values_by_row_langua
     assert [row["document_id"] for row in english] == ["doc-en"]
     assert [row["document_id"] for row in unknown] == ["doc-unknown"]
     release = cast(list[dict[str, object]], payload["releases"])[0]
+    assert payload["dry_run"] is False
+    assert payload["status"] == "generated"
     assert release["manifest_path"] == (
         "processed/language_splits/manifests/language_splits_v1.json"
+    )
+    assert all(
+        set(item) == {"table", "configuration", "split", "path", "row_count", "sha256", "columns"}
+        for item in cast(list[dict[str, object]], release["files"])
     )
     assert (
         sum(
@@ -407,7 +614,23 @@ def test_v2_generation_preserves_rows_and_uses_hugging_face_compatible_names(
     assert [row["document_id"] for row in french] == ["doc-fr"]
     assert [row["document_id"] for row in unknown] == ["doc-unknown"]
     release = cast(list[dict[str, object]], payload["releases"])[0]
+    assert payload["dry_run"] is False
+    assert payload["status"] == "generated"
     assert release["manifest_path"] == ("processed_v2/manifests/language_splits.json")
+    assert all(
+        set(item)
+        == {
+            "configuration",
+            "language",
+            "path",
+            "row_count",
+            "sha256",
+            "source_file",
+            "split",
+            "table",
+        }
+        for item in cast(list[dict[str, object]], release["files"])
+    )
     assert all(
         "_" not in cast(str, item["split"]) and cast(str, item["split"]).startswith("lang-")
         for item in cast(list[dict[str, object]], release["files"])
