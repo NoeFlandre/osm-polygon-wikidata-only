@@ -352,7 +352,10 @@ def _authenticate_for_push(
 
 
 def _release_apply_requested(args: argparse.Namespace) -> bool:
-    return getattr(args, "command", None) == "release-stats" and getattr(args, "apply", False)
+    return getattr(args, "command", None) in {
+        "release-stats",
+        "publish-language-splits",
+    } and getattr(args, "apply", False)
 
 
 def _push_authentication_required(args: argparse.Namespace, release_apply: bool) -> bool:
@@ -739,6 +742,34 @@ def _run_language_splits(
     return 0
 
 
+def _run_publish_language_splits(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+) -> int:
+    """Generate and publish exact-target language partitions."""
+    from osm_polygon_wikidata_only.hf.language_split_publication import (
+        LanguagePublicationError,
+        run_language_split_publication,
+    )
+
+    try:
+        result = run_language_split_publication(
+            data_root,
+            dataset_version=args.dataset_version,
+            batch_size=args.batch_size,
+            confirm_repos=tuple(args.confirm_repo or ()),
+            apply=args.apply,
+            dry_run=args.dry_run,
+            token=args.hf_token,
+        )
+    except LanguagePublicationError as error:
+        parser.error(str(error))
+    print(result.to_json())
+    return 0
+
+
 def _dispatch_command(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -749,6 +780,8 @@ def _dispatch_command(
     """Run the language-split facade or delegate to an existing command."""
     if args.command == "language-splits":
         return _run_language_splits(parser, args, data_root=data_root)
+    if args.command == "publish-language-splits":
+        return _run_publish_language_splits(parser, args, data_root=data_root)
     return _dispatch_existing_command(parser, args, data_root=data_root, settings=settings)
 
 

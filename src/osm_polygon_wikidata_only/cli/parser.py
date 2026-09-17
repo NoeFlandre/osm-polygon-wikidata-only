@@ -130,6 +130,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     p_language.set_defaults(push=False)
+    p_publish_language = sub.add_parser(
+        "publish-language-splits",
+        help="Generate and publish exact-target V1/V2 language partitions",
+    )
+    p_publish_language.add_argument(
+        "--data-root", type=Path, default=None, help="Data root directory"
+    )
+    p_publish_language.add_argument(
+        "--dataset-version",
+        choices=("v1", "v2", "both"),
+        default="both",
+        help="Select language-split contracts to publish (default: both)",
+    )
+    p_publish_language.add_argument(
+        "--batch-size",
+        type=int,
+        default=65_536,
+        help="Rows to stream per input batch (default: 65536)",
+    )
+    p_publish_language.add_argument(
+        "--confirm-repo",
+        action="append",
+        default=None,
+        metavar="REPO_ID",
+        help="Exact target repo id; repeat once per selected dataset",
+    )
+    publish_mode = p_publish_language.add_mutually_exclusive_group()
+    publish_mode.add_argument("--apply", action="store_true", help="Publish and verify")
+    publish_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inventories and print the publication plan without writing or uploading",
+    )
+    p_publish_language.add_argument("--hf-token", default=None)
+    p_publish_language.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
+    p_publish_language.set_defaults(push=False)
     _add_release_stats_parser(sub)
     return parser
 
