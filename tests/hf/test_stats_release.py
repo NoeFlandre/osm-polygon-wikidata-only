@@ -345,7 +345,7 @@ def test_v2_release_rejects_noncanonical_repo_id(tmp_path: Path) -> None:
         pytest.param(_COMMIT_HASH, _COMMIT_HASH, id="bare-commit-hash"),
     ],
 )
-def test_default_remote_verifier_normalizes_paths_info_revision_only(
+def test_default_remote_verifier_normalizes_all_hub_revision_arguments(
     tmp_path: Path,
     revision: str,
     paths_info_revision: str,
@@ -398,4 +398,4 @@ def test_default_remote_verifier_normalizes_paths_info_revision_only(
 
     assert default_remote_verifier(_REPO, files, revision=revision, hub=hub) == revision
     assert hub.paths_info_revisions == [paths_info_revision] * 2
-    assert hub.download_revisions == [revision] * 2
+    assert hub.download_revisions == [paths_info_revision] * 2
