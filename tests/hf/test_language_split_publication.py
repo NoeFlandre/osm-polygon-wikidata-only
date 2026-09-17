@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -9,7 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import osm_polygon_wikidata_only.cli.commands as commands
 from osm_polygon_wikidata_only.cli.parser import build_parser
+from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.language_split_publication import (
     LanguagePublicationError,
@@ -213,6 +216,44 @@ def test_dry_run_returns_only_the_planned_release(
     )
     assert result.reports[0].dry_run is True
     assert result.reports[0].published is False
+
+
+def test_cli_publication_handler_forwards_release_arguments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    received: dict[str, object] = {}
+    data_root = DataRoot(tmp_path)
+
+    def fake_publish(*args: object, **kwargs: object) -> SimpleNamespace:
+        received["data_root"] = args[0]
+        received.update(kwargs)
+        return SimpleNamespace(to_json=lambda: "{}")
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_publication",
+        fake_publish,
+    )
+    args = argparse.Namespace(
+        dataset_version="v1",
+        batch_size=17,
+        confirm_repo=[V1_REPO],
+        apply=False,
+        dry_run=True,
+        hf_token="test-token",
+    )
+
+    assert (
+        commands._run_publish_language_splits(argparse.ArgumentParser(), args, data_root=data_root)
+        == 0
+    )
+    assert received["data_root"] is data_root
+    assert received["dataset_version"] == "v1"
+    assert received["batch_size"] == 17
+    assert received["confirm_repos"] == (V1_REPO,)
+    assert received["apply"] is False
+    assert received["dry_run"] is True
+    assert received["token"] == "test-token"
+    assert capsys.readouterr().out == "{}\n"
 
 
 def test_remote_matches_lfs_blob_and_size_paths(tmp_path: Path) -> None:
