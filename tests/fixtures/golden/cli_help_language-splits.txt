@@ -1,0 +1,13 @@
+usage: PROG language-splits [-h] [--data-root DATA_ROOT]
+ [--dataset-version {v1,v2,both}]
+ [--batch-size BATCH_SIZE] [--dry-run]
+ [--log-level {DEBUG,INFO,WARNING,ERROR}]
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT Data root directory
+ --dataset-version {v1,v2,both}
+ Select language-split contracts to generate (default: both)
+ --batch-size BATCH_SIZE Rows to stream per input batch (default: 65536)
+ --dry-run Validate inventories and print the deterministic plan without writing
+ --log-level {DEBUG,INFO,WARNING,ERROR}

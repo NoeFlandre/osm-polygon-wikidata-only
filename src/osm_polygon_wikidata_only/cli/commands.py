@@ -714,6 +714,31 @@ def _run_release_stats(
     return 0
 
 
+def _run_language_splits(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+) -> int:
+    """Plan or generate both language-split contracts without publication."""
+    from osm_polygon_wikidata_only.hf.language_split_release import (
+        LanguageSplitReleaseError,
+        run_language_split_release,
+    )
+
+    try:
+        result = run_language_split_release(
+            data_root,
+            dataset_version=args.dataset_version,
+            batch_size=args.batch_size,
+            dry_run=args.dry_run,
+        )
+    except LanguageSplitReleaseError as error:
+        parser.error(str(error))
+    print(result.to_json())
+    return 0
+
+
 def _dispatch_command(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -721,7 +746,20 @@ def _dispatch_command(
     data_root: DataRoot,
     settings: Settings,
 ) -> int:
-    """Run the handler for the parsed command."""
+    """Run the language-split facade or delegate to an existing command."""
+    if args.command == "language-splits":
+        return _run_language_splits(parser, args, data_root=data_root)
+    return _dispatch_existing_command(parser, args, data_root=data_root, settings=settings)
+
+
+def _dispatch_existing_command(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+) -> int:
+    """Run the handler for the established processing and release commands."""
     if args.command == "split-v2-sentences":
         return _run_v2_sentence_split(parser, args, data_root=data_root, settings=settings)
     if args.command == "release-stats":
