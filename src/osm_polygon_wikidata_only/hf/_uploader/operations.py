@@ -271,12 +271,7 @@ def upload_files(
     ``allow_noop=True`` returns an empty string when idempotent delete
     filtering removes every operation, without calling ``create_commit``.
     """
-    if (files is None) == (ops is None):
-        raise UploadError("upload_files requires exactly one of `files=` or `ops=`")
-    operations_obj, add_paths, delete_paths = _build_operations(
-        files=list(files) if files is not None else None,
-        ops=list(ops) if ops is not None else None,
-    )
+    operations_obj, add_paths, delete_paths = _prepare_upload_operations(files, ops)
     _validate_upload_safety(add_paths, delete_paths)
     _validate_upload_operations(operations_obj)
     client = hub or _build_hf_api(_resolve_token(token), api_factory=_api_factory)
@@ -290,6 +285,18 @@ def upload_files(
         operations_obj,
         commit_message=commit_message,
         num_threads=num_threads,
+    )
+
+
+def _prepare_upload_operations(
+    files: Iterable[tuple[Path, str]] | None,
+    ops: Sequence[PublicationOp] | None,
+) -> tuple[list[Any], set[str], set[str]]:
+    if (files is None) == (ops is None):
+        raise UploadError("upload_files requires exactly one of `files=` or `ops=`")
+    return _build_operations(
+        files=list(files) if files is not None else None,
+        ops=list(ops) if ops is not None else None,
     )
 
 
