@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pyarrow as pa
@@ -501,6 +502,35 @@ def test_v1_partition_restores_a_partial_backup_when_the_next_backup_fails(
     assert final_b.read_bytes() == b"old-b"
     assert not temporary_a.exists()
     assert not temporary_b.exists()
+
+
+def test_v1_partition_removes_new_files_after_a_partial_install_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processed = tmp_path / "processed"
+    output = tmp_path / "release"
+    _write_fixture(processed, row_group_size=8)
+
+    def fail_after_first_install(
+        staged: dict[Path, Path],
+        installed: list[Path] | None = None,
+    ) -> list[Path]:
+        installed = [] if installed is None else installed
+        for final, temporary in sorted(staged.items(), key=lambda item: item[0].as_posix()):
+            final.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(temporary, final)
+            installed.append(final)
+            if len(installed) == 1:
+                raise OSError("fixture install failure")
+        return installed
+
+    monkeypatch.setattr(v1_language_splits, "_install_files", fail_after_first_install)
+    with pytest.raises(OSError, match="fixture install failure"):
+        generate_v1_language_splits(processed, output, batch_size=1)
+
+    assert not [path for path in output.rglob("*") if path.is_file()]
+    assert not list(output.parent.glob(f".{output.name}-*"))
 
 
 def test_v1_partition_is_readable_by_standard_hugging_face_loader(tmp_path: Path) -> None:
