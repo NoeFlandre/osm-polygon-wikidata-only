@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,8 +13,17 @@ from osm_polygon_wikidata_only.cli.parser import build_parser
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.language_split_publication import (
     LanguagePublicationError,
+    LanguagePublicationPlan,
+    LanguagePublicationReport,
+    LanguagePublicationResult,
+    LanguagePublishedFile,
+    _git_blob_sha1,
     _merge_language_card,
+    _plan_from_version_plan,
+    _remote_matches,
     _remote_path_for_local,
+    _verify_remote_release,
+    plan_language_split_publication,
     run_language_split_publication,
 )
 from osm_polygon_wikidata_only.hf.language_split_release import LanguageSplitVersion
@@ -94,6 +104,188 @@ def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:
             dataset_version="v1",
             confirm_repos=(V2_REPO,),
             dry_run=True,
+        )
+
+
+def test_plan_and_evidence_serialization_are_stable(tmp_path: Path) -> None:
+    processed_root = tmp_path / "processed"
+    output_root = processed_root / "language_splits"
+    manifest = output_root / "manifests/language_splits_v1.json"
+    version_plan = SimpleNamespace(
+        version=LanguageSplitVersion.V1,
+        processed_root=processed_root,
+        output_root=output_root,
+        manifest_path=manifest,
+        inventory=SimpleNamespace(
+            languages=("en", "unknown"),
+            tables=(SimpleNamespace(configuration="polygon_articles_by_language"),),
+        ),
+    )
+
+    def as_dict(_root: Path) -> dict[str, object]:
+        return {
+            "expected_files": [
+                {
+                    "path": "processed/language_splits/data/polygon_articles_by_language/"
+                    "lang-en-00000-of-00001.parquet"
+                }
+            ]
+        }
+
+    version_plan.to_dict = as_dict
+    plan = _plan_from_version_plan(version_plan)
+    assert plan.manifest_remote_path == "manifests/language_splits_v1.json"
+    assert plan.to_dict()["files"][0]["path_in_repo"].startswith("data/")
+
+    report = LanguagePublicationReport(
+        version=LanguageSplitVersion.V1,
+        repo_id=V1_REPO,
+        dry_run=True,
+        published=False,
+        committed=False,
+        no_op=False,
+        revision=None,
+        files=plan.files,
+    )
+    result = LanguagePublicationResult(reports=(report,))
+    assert result.to_payload()["command"] == "publish-language-splits"
+    assert json.loads(result.to_json())["reports"][0]["dry_run"] is True
+
+
+def test_publication_plan_facade_maps_validated_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    processed_root = tmp_path / "processed"
+    output_root = processed_root / "language_splits"
+    version_plan = SimpleNamespace(
+        version=LanguageSplitVersion.V1,
+        processed_root=processed_root,
+        output_root=output_root,
+        manifest_path=output_root / "manifests/language_splits_v1.json",
+        inventory=SimpleNamespace(
+            languages=("en", "unknown"),
+            tables=(SimpleNamespace(configuration="polygon_articles_by_language"),),
+        ),
+    )
+    version_plan.to_dict = lambda _root: {
+        "expected_files": [
+            {"path": "processed/language_splits/data/polygon_articles_by_language/lang-en.parquet"}
+        ]
+    }
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.plan_language_split_release",
+        lambda *args, **kwargs: SimpleNamespace(releases=(version_plan,)),
+    )
+
+    result = plan_language_split_publication(
+        tmp_path,
+        dataset_version="v1",
+        confirm_repos=(V1_REPO,),
+    )
+    assert result[0].repo_id == V1_REPO
+    assert result[0].files[0].path_in_repo == "data/polygon_articles_by_language/lang-en.parquet"
+
+
+def test_dry_run_returns_only_the_planned_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = LanguagePublicationPlan(
+        version=LanguageSplitVersion.V1,
+        repo_id=V1_REPO,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "processed/language_splits",
+        manifest_path=tmp_path / "manifest.json",
+        manifest_remote_path="manifests/language_splits_v1.json",
+        languages=("unknown",),
+        configurations=(),
+        files=(),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.plan_language_split_publication",
+        lambda *args, **kwargs: (plan,),
+    )
+
+    result = run_language_split_publication(
+        tmp_path,
+        dataset_version="v1",
+        confirm_repos=(V1_REPO,),
+        dry_run=True,
+    )
+    assert result.reports[0].dry_run is True
+    assert result.reports[0].published is False
+
+
+def test_remote_matches_lfs_blob_and_size_paths(tmp_path: Path) -> None:
+    local_path = tmp_path / "part.parquet"
+    local_path.write_bytes(b"fixture")
+    local = LanguagePublishedFile(
+        local_path=local_path,
+        path_in_repo="part.parquet",
+        size_bytes=local_path.stat().st_size,
+        sha256=hashlib.sha256(b"fixture").hexdigest(),
+    )
+    lfs_remote = SimpleNamespace(
+        size=local.size_bytes,
+        lfs=SimpleNamespace(sha256=local.sha256),
+    )
+    blob_remote = SimpleNamespace(
+        size=local.size_bytes,
+        lfs=None,
+        blob_id=_git_blob_sha1(local_path),
+    )
+    wrong_size = SimpleNamespace(size=local.size_bytes + 1, lfs=None, blob_id=None)
+
+    assert _remote_matches(local, lfs_remote, StubHfHub(), V1_REPO, "rev", tmp_path)
+    assert _remote_matches(local, blob_remote, StubHfHub(), V1_REPO, "rev", tmp_path)
+    assert not _remote_matches(local, wrong_size, StubHfHub(), V1_REPO, "rev", tmp_path)
+
+
+def test_remote_verification_rejects_missing_and_stale_files(tmp_path: Path) -> None:
+    missing_plan = LanguagePublicationPlan(
+        version=LanguageSplitVersion.V1,
+        repo_id=V1_REPO,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "processed/language_splits",
+        manifest_path=tmp_path / "manifest.json",
+        manifest_remote_path="manifests/language_splits_v1.json",
+        languages=("en",),
+        configurations=("polygon_articles_by_language",),
+        files=(
+            LanguagePublishedFile(
+                local_path=tmp_path / "missing.parquet",
+                path_in_repo="missing.parquet",
+                size_bytes=1,
+                sha256="0" * 64,
+            ),
+        ),
+    )
+    with pytest.raises(LanguagePublicationError, match="remote verification failed"):
+        _verify_remote_release(
+            StubHfHub(remote_files=set()),
+            missing_plan,
+            revision="rev",
+            stale_files=(),
+            data_root=tmp_path,
+        )
+
+    stale_plan = LanguagePublicationPlan(
+        version=LanguageSplitVersion.V1,
+        repo_id=V1_REPO,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "processed/language_splits",
+        manifest_path=tmp_path / "manifest.json",
+        manifest_remote_path="manifests/language_splits_v1.json",
+        languages=("en",),
+        configurations=(),
+        files=(),
+    )
+    with pytest.raises(LanguagePublicationError, match="stale language file remains"):
+        _verify_remote_release(
+            StubHfHub(remote_files={"old.parquet"}),
+            stale_plan,
+            revision="rev",
+            stale_files=("old.parquet",),
+            data_root=tmp_path,
         )
 
 

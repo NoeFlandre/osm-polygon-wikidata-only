@@ -185,27 +185,12 @@ def run_language_split_publication(
     versions = _selected_versions(dataset_version)
     _validate_confirmations(versions, confirm_repos)
     if dry_run or not apply:
-        plans = plan_language_split_publication(
+        return _plan_only_publication(
             root,
             dataset_version=dataset_version,
             batch_size=batch_size,
             confirm_repos=confirm_repos,
         )
-        reports = tuple(
-            LanguagePublicationReport(
-                version=plan.version,
-                repo_id=plan.repo_id,
-                dry_run=True,
-                published=False,
-                committed=False,
-                no_op=False,
-                revision=None,
-                files=plan.files,
-            )
-            for plan in plans
-        )
-        return LanguagePublicationResult(reports=reports)
-
     generated = run_language_split_release(
         root,
         dataset_version=dataset_version,
@@ -213,19 +198,63 @@ def run_language_split_publication(
         dry_run=False,
     )
     client = hub or _build_hf_api(resolve_hf_token(token))
+    reports = _publish_generated_versions(
+        root,
+        generated,
+        hub=client,
+        token=token,
+    )
+    return LanguagePublicationResult(reports=reports)
+
+
+def _plan_only_publication(
+    data_root: Path,
+    *,
+    dataset_version: str,
+    batch_size: int,
+    confirm_repos: Sequence[str],
+) -> LanguagePublicationResult:
+    plans = plan_language_split_publication(
+        data_root,
+        dataset_version=dataset_version,
+        batch_size=batch_size,
+        confirm_repos=confirm_repos,
+    )
     reports = tuple(
+        LanguagePublicationReport(
+            version=plan.version,
+            repo_id=plan.repo_id,
+            dry_run=True,
+            published=False,
+            committed=False,
+            no_op=False,
+            revision=None,
+            files=plan.files,
+        )
+        for plan in plans
+    )
+    return LanguagePublicationResult(reports=reports)
+
+
+def _publish_generated_versions(
+    data_root: Path,
+    generated: Any,
+    *,
+    hub: HfHub,
+    token: str | None,
+) -> tuple[LanguagePublicationReport, ...]:
+    return tuple(
         _publish_one_version(
-            root,
+            data_root,
             version_plan,
             generated_release,
-            hub=client,
+            hub=hub,
             token=token,
         )
         for version_plan, generated_release in zip(
             generated.plan.releases, generated.generated, strict=True
         )
     )
-    return LanguagePublicationResult(reports=reports)
 
 
 def _publish_one_version(
@@ -430,18 +459,30 @@ def _remote_matches(
     revision: str,
     data_root: Path,
 ) -> bool:
+    if not _remote_size_matches(local, remote):
+        return False
+    return _remote_digest_matches(local, remote, hub, repo_id, revision, data_root)
+
+
+def _remote_size_matches(local: LanguagePublishedFile, remote: Any | None) -> bool:
     if remote is None or local.size_bytes is None or local.sha256 is None:
         return False
     remote_size = getattr(remote, "size", None)
-    if isinstance(remote_size, int) and remote_size != local.size_bytes:
-        return False
-    lfs = getattr(remote, "lfs", None)
-    lfs_sha = getattr(lfs, "sha256", None) if lfs is not None else None
-    if isinstance(lfs_sha, str) and len(lfs_sha) == 64:
-        return lfs_sha == local.sha256
-    blob_id = getattr(remote, "blob_id", None)
-    if isinstance(blob_id, str) and len(blob_id) == 40:
-        return blob_id == _git_blob_sha1(local.local_path)
+    return not isinstance(remote_size, int) or remote_size == local.size_bytes
+
+
+def _remote_digest_matches(
+    local: LanguagePublishedFile,
+    remote: Any,
+    hub: HfHub,
+    repo_id: str,
+    revision: str,
+    data_root: Path,
+) -> bool:
+    for matcher in (_remote_lfs_match, _remote_blob_match):
+        matched = matcher(local, remote)
+        if matched is not None:
+            return matched
     downloaded = _remote_bytes(
         hub,
         repo_id,
@@ -451,6 +492,19 @@ def _remote_matches(
         required=False,
     )
     return downloaded is not None and hashlib.sha256(downloaded).hexdigest() == local.sha256
+
+
+def _remote_lfs_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
+    lfs = getattr(remote, "lfs", None)
+    lfs_sha = getattr(lfs, "sha256", None) if lfs is not None else None
+    if isinstance(lfs_sha, str) and len(lfs_sha) == 64:
+        return lfs_sha == local.sha256
+
+
+def _remote_blob_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
+    blob_id = getattr(remote, "blob_id", None)
+    if isinstance(blob_id, str) and len(blob_id) == 40:
+        return blob_id == _git_blob_sha1(local.local_path)
 
 
 def _remote_entries(
@@ -636,14 +690,22 @@ def _manifest_owned_paths(raw: bytes | None) -> set[str]:
 
 def _collect_manifest_paths(value: object, paths: set[str]) -> None:
     if isinstance(value, dict):
-        raw_path = value.get("path")
-        if isinstance(raw_path, str) and raw_path.endswith(".parquet"):
-            paths.add(raw_path)
-        for child in value.values():
-            _collect_manifest_paths(child, paths)
+        _collect_manifest_mapping(value, paths)
     elif isinstance(value, list):
-        for child in value:
-            _collect_manifest_paths(child, paths)
+        _collect_manifest_list(value, paths)
+
+
+def _collect_manifest_mapping(value: dict[object, object], paths: set[str]) -> None:
+    raw_path = value.get("path")
+    if isinstance(raw_path, str) and raw_path.endswith(".parquet"):
+        paths.add(raw_path)
+    for child in value.values():
+        _collect_manifest_paths(child, paths)
+
+
+def _collect_manifest_list(value: list[object], paths: set[str]) -> None:
+    for child in value:
+        _collect_manifest_paths(child, paths)
 
 
 def _verify_remote_release(
