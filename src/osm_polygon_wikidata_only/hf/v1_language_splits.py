@@ -538,7 +538,7 @@ def _install_staged_files(release_root: Path, staged: dict[Path, Path]) -> None:
     installed: list[Path] = []
     try:
         _backup_targets(targets, backups)
-        installed = _install_files(staged)
+        _install_files(staged, installed)
     except BaseException:
         _restore_files(installed, backups)
         raise
@@ -552,8 +552,7 @@ def _backup_targets(targets: list[Path], backups: dict[Path, Path]) -> None:
             backups[target] = _backup_existing(target)
 
 
-def _install_files(staged: dict[Path, Path]) -> list[Path]:
-    installed: list[Path] = []
+def _install_files(staged: dict[Path, Path], installed: list[Path]) -> list[Path]:
     for final, temporary in sorted(staged.items(), key=lambda item: item[0].as_posix()):
         final.parent.mkdir(parents=True, exist_ok=True)
         os.replace(temporary, final)
