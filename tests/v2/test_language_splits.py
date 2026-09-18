@@ -28,6 +28,7 @@ from osm_polygon_wikidata_only.v2 import language_splits
 from osm_polygon_wikidata_only.v2.language_splits import (
     DEFAULT_BATCH_SIZE,
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+    V2_LANGUAGE_SPLIT_CONTRACT_VERSION,
     V2LanguageSplitError,
     V2LanguageSplitFile,
     V2LanguageSplitResult,
@@ -267,6 +268,42 @@ def test_v2_split_keeps_each_multilingual_row_in_its_own_partition(tmp_path: Pat
         ("polygon-1", "doc-de-a")
     ]
     assert (root / "language_splits" / "polygons").exists() is False
+
+
+def test_v2_split_aggregates_rows_into_deterministic_bounded_shards(
+    tmp_path: Path,
+) -> None:
+    root = _write_v2_fixture(tmp_path)
+
+    result = build_v2_language_splits(root, batch_size=1, max_rows_per_shard=1)
+
+    french_dir = root / "language_splits/wikipedia_documents_by_language/lang-fr"
+    assert sorted(path.name for path in french_dir.glob("*.parquet")) == [
+        "part-00000-of-00002.parquet",
+        "part-00001-of-00002.parquet",
+    ]
+    assert [
+        row["document_id"]
+        for path in sorted(french_dir.glob("*.parquet"))
+        for row in pq.read_table(path).to_pylist()
+    ] == ["doc-fr-a", "doc-fr-z"]
+
+    french_files = [
+        file for file in result.files if file.table is LanguageTable.WIKIPEDIA_DOCUMENTS and file.language == "fr"
+    ]
+    assert [file.source_files for file in french_files] == [
+        ("wikipedia/documents/a-latest.parquet",),
+        ("wikipedia/documents/z-latest.parquet",),
+    ]
+    manifest_files = [
+        file
+        for table in cast(list[dict[str, object]], _manifest(root)["tables"])
+        for bucket in cast(list[dict[str, object]], table["buckets"])
+        for file in cast(list[dict[str, object]], bucket["files"])
+        if file["table"] == "wikipedia_documents" and file["language"] == "fr"
+    ]
+    assert all("source_files" in file and "source_file" not in file for file in manifest_files)
+    assert _manifest(root)["language_split_contract_version"] == V2_LANGUAGE_SPLIT_CONTRACT_VERSION
 
 
 def test_v2_split_routes_unusable_values_to_lang_unknown(tmp_path: Path) -> None:

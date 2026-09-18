@@ -424,6 +424,43 @@ def test_release_defaults_and_expected_file_payloads_are_explicit(tmp_path: Path
         plan_language_split_release(tmp_path, dataset_version="v1", batch_size=0)
 
 
+def test_v2_dry_run_plans_bounded_shards_from_inventory_counts(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+
+    plan = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1)
+    release = cast(list[dict[str, object]], plan.to_payload()["releases"])[0]
+    documents = [
+        record
+        for record in cast(list[dict[str, object]], release["expected_files"])
+        if record["table"] == "wikipedia_documents"
+    ]
+
+    assert {
+        (record["language"], record["row_count"], record["path"])
+        for record in documents
+    } == {
+        (
+            "de",
+            1,
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-de/part-00000-of-00001.parquet",
+        ),
+        (
+            "fr",
+            2,
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00000-of-00001.parquet",
+        ),
+        (
+            "unknown",
+            1,
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-unknown/part-00000-of-00001.parquet",
+        ),
+    }
+    assert all("source_file" not in record for record in documents)
+
+
 def test_v2_dry_run_reports_source_specific_candidate_files_and_rows(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     _write_table(
