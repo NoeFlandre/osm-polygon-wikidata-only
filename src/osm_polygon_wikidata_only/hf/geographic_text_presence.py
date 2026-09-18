@@ -51,10 +51,6 @@ _PRESENCE_CACHE: dict[tuple[Path, Path | None], tuple[tuple[Any, ...], TextPrese
 _PRESENCE_CACHE_LOCK = threading.Lock()
 
 
-def _non_blank(value: object) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
 def _document_identity_column(names: set[str] | list[str] | tuple[str, ...]) -> str:
     return "document_id" if "document_id" in names else "article_id"
 
@@ -230,40 +226,6 @@ def _presence_snapshot(
 
 def _identity_sort_key(identity: PolygonIdentity) -> tuple[str, str]:
     return identity[0], str(identity[1])
-
-
-def _successful_text_row(
-    identity: object,
-    full_text: object,
-    fetch_status: object,
-    *,
-    has_fetch_status: bool,
-) -> bool:
-    return bool(
-        identity and _non_blank(full_text) and (not has_fetch_status or fetch_status == "ok")
-    )
-
-
-def _document_columns(path: Path, identifier_column: str) -> tuple[str, ...]:
-    names = set(pq.read_schema(path).names)
-    columns = [identifier_column, "full_text"]
-    if "fetch_status" in names:
-        columns.append("fetch_status")
-    return tuple(columns)
-
-
-def _successful_document_row(
-    row: dict[str, Any],
-    identifier_column: str,
-    *,
-    has_fetch_status: bool,
-) -> bool:
-    return _successful_text_row(
-        row.get(identifier_column),
-        row.get("full_text"),
-        row.get("fetch_status"),
-        has_fetch_status=has_fetch_status,
-    )
 
 
 def _wikipedia_text_ids(wikipedia_dir: Path) -> set[str]:

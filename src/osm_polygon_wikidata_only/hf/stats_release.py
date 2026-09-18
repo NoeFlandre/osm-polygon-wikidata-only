@@ -485,17 +485,6 @@ def _join_card_sections(prefix: str, sections: Sequence[str]) -> str:
     return "\n\n".join(parts) + "\n"
 
 
-def _citation_insertion_index(
-    existing_sections: Sequence[tuple[str, str]],
-    *,
-    default: int,
-) -> int:
-    return next(
-        (index for index, (heading, _) in enumerate(existing_sections) if heading == "## Citation"),
-        default,
-    )
-
-
 def _remote_revision(client: Any, repo_id: str) -> str | None:
     repo_info = getattr(client, "repo_info", None)
     if not callable(repo_info):

@@ -20,9 +20,13 @@ from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.stats_release import (
+    RELEASE_ASSET_FILES,
     REMOTE_CARD_FILE,
     ReleasedFile,
     StatsReleaseError,
+    _merge_release_card,
+    _require_consistent_text_coverage,
+    _stage_release_assets,
     default_remote_verifier,
     release_polygon_stats,
     release_v1_polygon_stats,
@@ -466,3 +470,138 @@ def test_default_remote_verifier_normalizes_all_hub_revision_arguments(
     assert default_remote_verifier(_REPO, files, revision=revision, hub=hub) == revision
     assert hub.paths_info_revisions == [paths_info_revision] * 2
     assert hub.download_revisions == [paths_info_revision] * 2
+
+
+# ---------------------------------------------------------------------------
+# Card consistency guard and asset staging
+# ---------------------------------------------------------------------------
+
+
+def _card_with(headline: str, continent_rows: str) -> str:
+    return (
+        "# Card\n\n"
+        "## Dataset snapshot\n\n"
+        "| Metric | Value |\n| --- | ---: |\n"
+        f"| Polygons with successful non-empty text (unique OSM identities) | {headline} |\n\n"
+        "## Geographic distribution by continent\n\n"
+        "| Continent | Polygons | Wikipedia documents | Wikivoyage documents | "
+        "Polygons with Wikipedia text | Polygons with Wikipedia or Wikivoyage text | "
+        "Text coverage |\n"
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+        f"{continent_rows}\n"
+        "## Citation\n\nCite me.\n"
+    )
+
+
+def test_consistency_guard_accepts_a_card_whose_continent_rows_sum_to_the_headline(
+    tmp_path: Path,
+) -> None:
+    card = tmp_path / "README.md"
+    card.write_text(
+        _card_with(
+            "1,500",
+            "| Europe | 10 | 10 | 0 | 900 | 900 | 50.0% |\n"
+            "| Asia | 10 | 10 | 0 | 600 | 600 | 50.0% |",
+        ),
+        encoding="utf-8",
+    )
+
+    _require_consistent_text_coverage(card)
+
+
+def test_consistency_guard_rejects_a_card_that_states_two_text_coverage_totals(
+    tmp_path: Path,
+) -> None:
+    card = tmp_path / "README.md"
+    card.write_text(
+        _card_with(
+            "1,500",
+            "| Europe | 10 | 10 | 0 | 900 | 900 | 50.0% |\n"
+            "| Asia | 10 | 10 | 0 | 700 | 700 | 50.0% |",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StatsReleaseError, match=r"1,500 but the continent table sums to 1,600"):
+        _require_consistent_text_coverage(card)
+
+
+def test_consistency_guard_ignores_a_card_without_a_continent_table(tmp_path: Path) -> None:
+    card = tmp_path / "README.md"
+    card.write_text(
+        "# Card\n\n## Dataset snapshot\n\n"
+        "| Polygons with successful non-empty text (unique OSM identities) | 42 |\n",
+        encoding="utf-8",
+    )
+
+    _require_consistent_text_coverage(card)
+
+
+def test_consistency_guard_reads_the_v2_headline_bullet(tmp_path: Path) -> None:
+    card = tmp_path / "README.md"
+    card.write_text(
+        "# Card\n\n"
+        "- **Polygons with non-empty Wikipedia or Wikivoyage text:** 30\n\n"
+        "## Geographic distribution by continent\n\n"
+        "| Continent | A | B | C | D | E | F |\n"
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+        "| Europe | 1 | 1 | 1 | 1 | 31 | 9.9% |\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StatsReleaseError, match=r"sums to 31"):
+        _require_consistent_text_coverage(card)
+
+
+def test_staging_rejects_an_asset_writer_that_omits_a_required_map(tmp_path: Path) -> None:
+    def incomplete(destination: Path) -> dict[str, Path]:
+        destination.mkdir(parents=True, exist_ok=True)
+        only = destination / "coverage_map.png"
+        only.write_bytes(b"png")
+        return {RELEASE_ASSET_FILES[0]: only}
+
+    with pytest.raises(StatsReleaseError, match="did not produce"):
+        _stage_release_assets(tmp_path, incomplete)
+
+
+def test_staging_rejects_an_asset_writer_that_returns_a_missing_file(tmp_path: Path) -> None:
+    def absent(destination: Path) -> dict[str, Path]:
+        return {
+            path: destination / f"{index}.png" for index, path in enumerate(RELEASE_ASSET_FILES)
+        }
+
+    with pytest.raises(StatsReleaseError, match="was not rendered"):
+        _stage_release_assets(tmp_path, absent)
+
+
+def test_staging_without_an_asset_writer_releases_no_assets(tmp_path: Path) -> None:
+    assert _stage_release_assets(tmp_path, None) == {}
+
+
+def test_merge_preserves_front_matter_and_drops_sections_the_card_no_longer_renders() -> None:
+    existing = (
+        "---\nconfigs:\n  - config_name: kept\n---\n"
+        "# Old\n\n## Dataset snapshot\n\nOLD\n\n## Gone\n\nstale\n\n## Citation\n\nCite me.\n"
+    )
+    generated = (
+        "---\nconfigs:\n  - config_name: regenerated\n---\n# New\n\n## Dataset snapshot\n\nNEW\n"
+    )
+
+    merged = _merge_release_card(existing, generated)
+
+    assert "config_name: kept" in merged
+    assert "config_name: regenerated" not in merged
+    assert "NEW" in merged
+    assert "OLD" not in merged
+    assert "## Gone" not in merged
+    assert "Cite me." in merged
+
+
+def test_merge_returns_the_generated_card_when_there_is_no_remote_card() -> None:
+    assert _merge_release_card("", "# Only\n") == "# Only\n"
+
+
+def test_merge_returns_the_generated_card_when_it_renders_no_sections() -> None:
+    existing = "# Old\n\n## Dataset snapshot\n\nOLD\n"
+
+    assert _merge_release_card(existing, "# New body only\n") == "# New body only\n"
