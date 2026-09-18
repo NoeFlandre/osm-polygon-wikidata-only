@@ -105,6 +105,24 @@ def test_language_card_merge_preserves_unmanaged_content() -> None:
     assert "Keep this citation." in merged
 
 
+def test_language_card_merge_is_idempotent_at_section_boundary() -> None:
+    existing = (
+        "# Existing card\n\n"
+        "## Language partitions\n\nOld release.\n\n"
+        "## Data sources & licenses\n\nKeep this section.\n"
+    )
+    kwargs = {
+        "version": LanguageSplitVersion.V1,
+        "configurations": ("polygon_articles_by_language",),
+        "languages": ("en", "unknown"),
+    }
+
+    merged = _merge_language_card(existing, **kwargs)
+
+    assert "\n\n## Data sources & licenses" in merged
+    assert _merge_language_card(merged, **kwargs) == merged
+
+
 def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:
     with pytest.raises(LanguagePublicationError, match="confirm-repo"):
         run_language_split_publication(
