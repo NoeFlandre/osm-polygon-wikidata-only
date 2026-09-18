@@ -471,14 +471,19 @@ def _released_sections(
     existing_body: str,
 ) -> list[str]:
     """Return the generated sections followed by any preserved prose."""
-    _prefix, existing_sections = _split_h2_sections(existing_body)
     rendered = {heading for heading, _section in generated_sections}
-    preserved = [
+    generated = [section for _heading, section in generated_sections]
+    return generated + _preserved_sections(existing_body, rendered)
+
+
+def _preserved_sections(existing_body: str, rendered: set[str]) -> list[str]:
+    """Return remote sections this release must not drop or regenerate."""
+    _prefix, existing_sections = _split_h2_sections(existing_body)
+    return [
         section
         for heading, section in existing_sections
         if heading in _PRESERVED_SECTION_HEADINGS and heading not in rendered
     ]
-    return [section for _heading, section in generated_sections] + preserved
 
 
 def _split_front_matter(card: str) -> tuple[str, str]:
