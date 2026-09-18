@@ -332,11 +332,11 @@ def _create_upload_commit(
 
 def _commit_identity(result: Any, *, repo_id: str) -> str:
     """Return the immutable commit OID from Hub ``CommitInfo`` results."""
-    if isinstance(result, str) and result:
-        return result
     for candidate in _commit_identity_candidates(result):
         if candidate:
             return str(candidate)
+    if isinstance(result, str) and result:
+        return result
     raise UploadError(f"Hugging Face upload to {repo_id} returned no commit OID")
 
 
