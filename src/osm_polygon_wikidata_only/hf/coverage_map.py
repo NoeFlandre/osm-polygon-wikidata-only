@@ -25,6 +25,8 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+
 from ._geographic.polygon_identities import load_unique_polygon_records
 
 LOGGER = logging.getLogger(__name__)
@@ -150,9 +152,10 @@ def _load_centroid_file(
     lons: list[float] = []
     lats: list[float] = []
     try:
-        with pq.ParquetFile(parquet_path) as parquet_file:
+        with open_parquet(parquet_path) as parquet_file:
             columns = ["lon", "lat"] if polygon_ids is None else ["polygon_id", "lon", "lat"]
-            for batch in parquet_file.iter_batches(
+            for batch in iter_record_batches(
+                parquet_file,
                 batch_size=_CENTROID_BATCH_SIZE,
                 columns=columns,
             ):

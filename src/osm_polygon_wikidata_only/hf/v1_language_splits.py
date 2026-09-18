@@ -42,6 +42,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 
@@ -360,7 +361,7 @@ def _stream_source_file(
     written_counts: dict[str, int],
 ) -> int:
     try:
-        with pq.ParquetFile(source_path) as parquet_file:
+        with open_parquet(source_path) as parquet_file:
             _validate_source_schema(parquet_file, schema, source_path)
             return _stream_batches(
                 parquet_file,
@@ -400,7 +401,7 @@ def _stream_batches(
     written_counts: dict[str, int],
 ) -> int:
     observed_rows = 0
-    for batch in parquet_file.iter_batches(batch_size=batch_size):
+    for batch in iter_record_batches(parquet_file, batch_size=batch_size):
         observed_rows += _stream_batch(
             batch,
             spec,

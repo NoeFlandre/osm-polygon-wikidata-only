@@ -12,6 +12,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+
 from ._geographic.models import CoverageMapError, RenderResult
 from ._geographic.parquet_inputs import require_directory, sorted_parquets
 from ._geographic.polygon_identities import (
@@ -304,8 +306,8 @@ def _scan_text_batches(
     closed early if the caller stops consuming, which can deadlock.
     """
     try:
-        with pq.ParquetFile(path) as parquet_file:
-            for batch in parquet_file.iter_batches(batch_size=65_536, columns=columns):
+        with open_parquet(path) as parquet_file:
+            for batch in iter_record_batches(parquet_file, batch_size=65_536, columns=columns):
                 consume(batch)
     except OSError as error:
         raise CoverageMapError(f"Could not read {label} parquet {path}: {error}") from error

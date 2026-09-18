@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
 )
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import render_polygon_stats_section
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.comparison import (
     select_v2_added_wikipedia_tag_document_polygon_ids_from_files,
@@ -734,10 +735,10 @@ def _sentence_document_ids(paths: Iterable[Path]) -> set[str]:
 
 
 def _update_sentence_document_ids(path: Path, values: set[str]) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if "document_id" not in parquet_file.schema_arrow.names:
             return
-        for batch in parquet_file.iter_batches(columns=["document_id"], batch_size=65_536):
+        for batch in iter_record_batches(parquet_file, columns=["document_id"], batch_size=65_536):
             values.update(_sentence_document_ids_batch(batch))
 
 
@@ -770,11 +771,12 @@ def _collect_sentence_polygon_ids(
     polygon_index: PolygonIndex,
     polygon_ids: set[PolygonIdentity],
 ) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         columns = {"polygon_id", "document_id", "project"}
         if not columns.issubset(parquet_file.schema_arrow.names):
             return
-        for batch in parquet_file.iter_batches(
+        for batch in iter_record_batches(
+            parquet_file,
             columns=["polygon_id", "document_id", "project"],
             batch_size=65_536,
         ):
@@ -936,10 +938,10 @@ def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
 
 def _unique_values_file(path: Path, column: str) -> set[str]:
     values: set[str] = set()
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if column not in parquet_file.schema_arrow.names:
             return values
-        for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536):
+        for batch in iter_record_batches(parquet_file, columns=[column], batch_size=65_536):
             values.update(_non_empty_strings(batch.column(0).to_pylist()))
     return values
 
@@ -949,13 +951,13 @@ def _sum_first_available(paths: Iterable[Path], columns: tuple[str, ...]) -> int
 
 
 def _sum_first_available_file(path: Path, columns: tuple[str, ...]) -> int:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         column = _first_present_column(set(parquet_file.schema_arrow.names), columns)
         if column is None:
             return 0
         return sum(
             sum(int(value or 0) for value in batch.column(0).to_pylist())
-            for batch in parquet_file.iter_batches(columns=[column], batch_size=65_536)
+            for batch in iter_record_batches(parquet_file, columns=[column], batch_size=65_536)
         )
 
 
@@ -979,7 +981,7 @@ def _merge_numeric_file(
     key_column: str,
     value_columns: tuple[str, ...],
 ) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         names = set(parquet_file.schema_arrow.names)
         value_column = _first_present_column(names, value_columns)
         if key_column not in names or value_column is None:
@@ -993,7 +995,9 @@ def _merge_numeric_batches(
     key_column: str,
     value_column: str,
 ) -> None:
-    for batch in parquet_file.iter_batches(columns=[key_column, value_column], batch_size=65_536):
+    for batch in iter_record_batches(
+        parquet_file, columns=[key_column, value_column], batch_size=65_536
+    ):
         _merge_numeric_batch(values, batch, value_column)
 
 
@@ -1041,11 +1045,11 @@ def _merge_field_values_file(
     value_column: str,
     identities: set[str],
 ) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if not {key_column, value_column}.issubset(parquet_file.schema_arrow.names):
             return
-        for batch in parquet_file.iter_batches(
-            columns=[key_column, value_column], batch_size=65_536
+        for batch in iter_record_batches(
+            parquet_file, columns=[key_column, value_column], batch_size=65_536
         ):
             _merge_field_values_batch(values, batch, identities)
 
@@ -1071,11 +1075,11 @@ def _polygon_source_sets(paths: Iterable[Path], identities: set[str]) -> dict[st
 
 def _polygon_source_file(path: Path, identities: set[str]) -> dict[str, set[str]]:
     values: dict[str, set[str]] = {}
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if not {"polygon_id", "discovery_sources"}.issubset(parquet_file.schema_arrow.names):
             return values
-        for batch in parquet_file.iter_batches(
-            columns=["polygon_id", "discovery_sources"], batch_size=65_536
+        for batch in iter_record_batches(
+            parquet_file, columns=["polygon_id", "discovery_sources"], batch_size=65_536
         ):
             _merge_polygon_sources(values, batch, identities, path)
     return values
@@ -1126,11 +1130,11 @@ def _polygon_ids_with_link_source(paths: Iterable[Path], source: str) -> set[str
 
 def _link_source_file(path: Path, source: str) -> set[str]:
     values: set[str] = set()
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if not {"polygon_id", "link_sources"}.issubset(parquet_file.schema_arrow.names):
             return values
-        for batch in parquet_file.iter_batches(
-            columns=["polygon_id", "link_sources"], batch_size=65_536
+        for batch in iter_record_batches(
+            parquet_file, columns=["polygon_id", "link_sources"], batch_size=65_536
         ):
             _merge_link_sources(values, batch, source, path)
     return values
@@ -1172,7 +1176,7 @@ def _scan_document_metrics(
 
 
 def _scan_document_file(path: Path, *, is_wikipedia: bool, metrics: _DocumentMetrics) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         metadata = parquet_file.metadata
         row_count = 0 if metadata is None else int(metadata.num_rows)
         if is_wikipedia:
@@ -1251,7 +1255,7 @@ def _scan_document_batches(
     metrics: _DocumentMetrics,
 ) -> None:
     positions = {column: index for index, column in enumerate(columns)}
-    for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+    for batch in iter_record_batches(parquet_file, columns=columns, batch_size=65_536):
         _scan_document_batch(
             batch,
             positions=positions,
@@ -1472,11 +1476,12 @@ def _collect_linked_non_empty_text_polygons(
     polygon_index: PolygonIndex,
     polygon_identities: set[PolygonIdentity],
 ) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         columns = {"polygon_id", "document_id", "project"}
         if not columns.issubset(parquet_file.schema_arrow.names):
             return
-        for batch in parquet_file.iter_batches(
+        for batch in iter_record_batches(
+            parquet_file,
             columns=["polygon_id", "document_id", "project"],
             batch_size=65_536,
         ):
@@ -1526,7 +1531,7 @@ def _scan_polygon_metrics(paths: Iterable[Path]) -> _PolygonMetrics:
 
 
 def _scan_polygon_file(path: Path, metrics: _PolygonMetrics) -> None:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         metadata = parquet_file.metadata
         metrics.polygon_row_count += 0 if metadata is None else int(metadata.num_rows)
         names = set(parquet_file.schema_arrow.names)
@@ -1547,7 +1552,7 @@ def _scan_polygon_batches(
     metrics: _PolygonMetrics,
 ) -> None:
     positions = {column: index for index, column in enumerate(columns)}
-    for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+    for batch in iter_record_batches(parquet_file, columns=columns, batch_size=65_536):
         _scan_polygon_batch(batch, positions=positions, metrics=metrics)
 
 
@@ -1628,14 +1633,14 @@ def _polygon_languages_file(
     polygon_index: PolygonIndex,
 ) -> dict[PolygonIdentity, set[str]]:
     values: defaultdict[PolygonIdentity, set[str]] = defaultdict(set)
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if not {"polygon_id", "document_id"}.issubset(parquet_file.schema_arrow.names):
             return values
         columns = ["polygon_id", "document_id"]
         has_project = "project" in parquet_file.schema_arrow.names
         if has_project:
             columns.append("project")
-        for batch in parquet_file.iter_batches(columns=columns, batch_size=65_536):
+        for batch in iter_record_batches(parquet_file, columns=columns, batch_size=65_536):
             _merge_polygon_languages(
                 values,
                 batch,

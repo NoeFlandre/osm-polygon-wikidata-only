@@ -107,14 +107,14 @@ def test_rows_consumes_ordered_batches_without_reading_the_whole_file(
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def iter_batches(self, *, batch_size: int):
+        def iter_batches(self, *, batch_size: int, **kwargs: object):
             batch_sizes.append(batch_size)
             yield from batches
 
         def read(self):
             raise AssertionError("_rows must not materialize the complete Parquet table")
 
-    monkeypatch.setattr(reuse.pq, "ParquetFile", BatchOnlyParquetFile)
+    monkeypatch.setattr(reuse, "open_parquet", BatchOnlyParquetFile)
 
     assert list(_rows(path)) == [
         {"row_id": "first", "value": 1},
@@ -141,7 +141,7 @@ def test_rows_closes_parquet_file_after_iteration(
 
     import osm_polygon_wikidata_only.v2.reuse as reuse
 
-    original = reuse.pq.ParquetFile
+    original = reuse.open_parquet
     opened: list[object] = []
     closed: list[object] = []
 
@@ -161,13 +161,13 @@ def test_rows_closes_parquet_file_after_iteration(
                 self._inner.close()
                 closed.append(self)
 
-        def iter_batches(self, *, batch_size: int):
+        def iter_batches(self, *, batch_size: int, **kwargs: object):
             yield from self._inner.iter_batches(batch_size=batch_size)
 
         def read(self):
             return self._inner.read()
 
-    monkeypatch.setattr(reuse.pq, "ParquetFile", TrackedParquetFile)
+    monkeypatch.setattr(reuse, "open_parquet", TrackedParquetFile)
     assert list(_rows(path))
     assert opened
     assert closed == opened

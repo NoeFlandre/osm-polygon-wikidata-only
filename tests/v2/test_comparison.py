@@ -60,7 +60,7 @@ def test_unique_values_reuses_the_open_parquet_file_for_schema_and_rows(
     def fail_if_opened_separately(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("schema inspection must reuse the row-reading handle")
 
-    monkeypatch.setattr(comparison.pq, "read_schema", fail_if_opened_separately)
+    monkeypatch.setattr(pq, "read_schema", fail_if_opened_separately)
 
     assert comparison._unique_values((path,), "language") == {"en", "fr"}
 
@@ -174,7 +174,7 @@ def test_selection_contains_only_v2_added_wikipedia_tag_document_polygons(
     def fail_if_opened_separately(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("schema inspection must reuse the row-reading handle")
 
-    monkeypatch.setattr(comparison.pq, "read_schema", fail_if_opened_separately)
+    monkeypatch.setattr(pq, "read_schema", fail_if_opened_separately)
 
     document = _row(wikipedia_document_v2_schema(), document_id="new-doc")
     write_v2_region(
