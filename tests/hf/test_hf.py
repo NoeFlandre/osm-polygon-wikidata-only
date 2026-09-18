@@ -384,7 +384,9 @@ def test_upload_files_prefers_oid_on_string_like_commit_info(tmp_path: Path) -> 
             return repo_id
 
         def create_commit(self, **_kwargs: object) -> _CommitInfo:
-            return _CommitInfo("https://huggingface.co/datasets/org/name/commit/uploaded-commit-oid")
+            return _CommitInfo(
+                "https://huggingface.co/datasets/org/name/commit/uploaded-commit-oid"
+            )
 
     polygon = _small_parquet(tmp_path)
     result = upload_files(
