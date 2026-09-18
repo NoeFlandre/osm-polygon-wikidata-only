@@ -156,11 +156,12 @@ def test_v2_release_targets_the_wikidata_and_wikipedia_dataset(tmp_path: Path) -
     card = (data_root.cache / "stats_release_snapshots" / "v2" / "README.md").read_text(
         encoding="utf-8"
     )
-    assert "## Polygon surface and geometry" in card
+    assert "<summary>Polygon surface and geometry</summary>" in card
+    assert "### Polygon surface and geometry" in card
     assert "[`stats.json`](stats.json)" in card
 
 
-def test_v1_release_includes_the_polygon_surface_report_in_card_and_stats(
+def test_v1_release_moves_the_polygon_surface_report_from_the_card_into_stats(
     tmp_path: Path,
 ) -> None:
     data_root = DataRoot(tmp_path)
@@ -209,7 +210,11 @@ def test_v1_release_includes_the_polygon_surface_report_in_card_and_stats(
     staging = data_root.cache / "stats_release_snapshots" / "v1"
     card = (staging / "README.md").read_text(encoding="utf-8")
     payload = json.loads((staging / "stats.json").read_text(encoding="utf-8"))
-    assert "## Polygon surface and geometry" in card
+    # The geometry histogram stays in the card but collapsed, so the public
+    # card reads as a summary without losing any published figure.
+    assert "<summary>Polygon surface and geometry</summary>" in card
+    assert "### Polygon surface and geometry" in card
+    assert "[`stats.json`](stats.json)" in card
     assert payload["area_m2"]["total"] == 2500.0
 
 
@@ -264,7 +269,7 @@ def test_apply_verification_is_bound_to_upload_returned_revision(
     assert report.revision == hub.commits[0]["commit_id"]
 
 
-def test_apply_merges_stats_into_existing_card_without_dropping_sections(
+def test_apply_regenerates_data_sections_and_preserves_front_matter_and_prose(
     processed: Path, tmp_path: Path
 ) -> None:
     existing = (
@@ -274,7 +279,7 @@ def test_apply_merges_stats_into_existing_card_without_dropping_sections(
         "    data_files: []\n"
         "---\n\n"
         "# Existing card\n\n"
-        "## Maintainer notes\n\nKeep this section.\n\n"
+        "## Maintainer notes\n\nStale generated section.\n\n"
         "## Polygon surface and geometry\n\nOld statistics.\n\n"
         "## Citation\n\nKeep this citation.\n"
     )
@@ -297,19 +302,25 @@ def test_apply_merges_stats_into_existing_card_without_dropping_sections(
     )
 
     merged = hub.remote_content[REMOTE_CARD_FILE].decode("utf-8")
+    # The Viewer configs block is owned by the publication and language-split
+    # paths; a statistics release must never drop it.
     assert "configs:" in merged
-    assert "## Maintainer notes" in merged
-    assert "Keep this section." in merged
+    assert "config_name: polygons" in merged
+    # Data sections are regenerated, and sections the generated card no longer
+    # renders are dropped instead of surviving with stale numbers.
     assert "New statistics." in merged
     assert "Old statistics." not in merged
+    assert "## Maintainer notes" not in merged
+    assert "Stale generated section." not in merged
+    # Author-owned prose is preserved.
     assert "## Citation" in merged
     assert "Keep this citation." in merged
 
 
-def test_apply_inserts_new_release_sections_before_existing_citation(
+def test_apply_orders_generated_sections_before_preserved_citation(
     processed: Path, tmp_path: Path
 ) -> None:
-    existing = "# Existing card\n\n## Maintainer notes\n\nKeep this section.\n\n## Citation\n"
+    existing = "# Existing card\n\n## Citation\n\nKeep this citation.\n"
 
     def write_generated_card(destination: Path) -> None:
         destination.write_text(
@@ -333,7 +344,7 @@ def test_apply_inserts_new_release_sections_before_existing_citation(
     merged = hub.remote_content[REMOTE_CARD_FILE].decode("utf-8")
     assert merged.index("New geometry.") < merged.index("New snapshot.")
     assert merged.index("New snapshot.") < merged.index("## Citation")
-    assert "Keep this section." in merged
+    assert "Keep this citation." in merged
 
 
 def test_release_report_contains_complete_manifest_inventory_and_provenance(

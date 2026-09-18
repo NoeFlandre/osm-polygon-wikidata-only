@@ -39,7 +39,12 @@ from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
     load_polygon_geometry_stats,
     stats_payload,
 )
-from osm_polygon_wikidata_only.hf.repo_layout import REMOTE_POLYGON_STATS_FILE
+from osm_polygon_wikidata_only.hf.repo_layout import (
+    REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
+    REMOTE_POLYGON_STATS_FILE,
+)
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json, atomic_write_text
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
@@ -52,22 +57,30 @@ _REMOTE_CACHE_DIRNAME = "remote_verification"
 _HF_DATASET_COMMIT_URL = re.compile(
     r"https://huggingface\.co/datasets/[^/]+/[^/]+/commit/(?P<revision>[0-9a-f]{40})"
 )
-_RELEASE_SECTION_HEADINGS = frozenset(
+RELEASE_ASSET_FILES = (
+    REMOTE_COVERAGE_MAP_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
+    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
+)
+# Narrative sections are author-owned prose and are preserved verbatim from the
+# remote card. Every other section is data-derived and is always regenerated, so
+# a released card can never carry a stale statistic next to a fresh one.
+_PRESERVED_SECTION_HEADINGS = frozenset(
     {
-        "## Dataset snapshot",
-        "## Wikipedia coverage funnel",
-        "## Language distribution",
-        "## Storage accounting",
-        "## Wikipedia text corpus",
-        "## Wikivoyage text corpus",
-        "## Wikidata facts",
-        "## Polygon surface and geometry",
-        "## Snapshot",
-        "## V2 compared with V1",
+        "## Citation",
+        "## License",
+        "## Licensing",
+        "## Reproducibility",
+        "## Data sources & licenses",
+        "## How to load",
     }
 )
 
+
 CardWriter = Callable[[Path], None]
+# Renders the public coverage assets into a staging directory and returns the
+# mapping of remote ``assets/*.png`` path to the freshly rendered local file.
+AssetWriter = Callable[[Path], Mapping[str, Path]]
 
 
 class StatsReleaseError(RuntimeError):
@@ -420,74 +433,56 @@ def _split_h2_sections(markdown: str) -> tuple[str, list[tuple[str, str]]]:
 
 
 def _merge_release_card(existing: str, generated: str) -> str:
+    """Return the released card: regenerated data, preserved prose and header.
+
+    The generated body is authoritative. Every section it renders is
+    data-derived and replaces whatever the remote card held, and any
+    section the generated card no longer renders is dropped rather than
+    carried forward -- that carry-forward is what previously let a stale
+    statistic survive beside a freshly computed one.
+
+    Two things are preserved from the remote card. Author-owned prose
+    sections listed in :data:`_PRESERVED_SECTION_HEADINGS` are appended
+    when the generated card omits them. The YAML front matter is kept
+    verbatim, because the Dataset Viewer ``configs:`` block there is
+    owned by the publication and language-split paths -- a statistics
+    release must never drop the published language partitions from the
+    Viewer.
+    """
     if not existing:
         return generated
-    generated_sections = _generated_card_sections(generated)
-    updates = _release_card_updates(generated_sections)
-    if not updates:
-        return existing
-    prefix, existing_sections = _split_h2_sections(existing)
-    if not existing_sections:
-        return _append_release_sections(existing, updates)
-    merged, replaced = _replace_release_sections(existing_sections, updates)
-    missing = _missing_release_sections(generated_sections, updates, replaced)
-    return _insert_missing_release_sections(prefix, existing_sections, merged, missing)
-
-
-def _generated_card_sections(generated: str) -> list[tuple[str, str]]:
-    _prefix, sections = _split_h2_sections(generated)
-    return sections
-
-
-def _release_card_updates(sections: Sequence[tuple[str, str]]) -> dict[str, str]:
-    return {
-        heading: section for heading, section in sections if heading in _RELEASE_SECTION_HEADINGS
-    }
-
-
-def _append_release_sections(existing: str, updates: Mapping[str, str]) -> str:
-    suffix = "\n\n".join(updates.values()).rstrip("\n") + "\n"
-    return existing.rstrip("\n") + "\n\n" + suffix
-
-
-def _replace_release_sections(
-    existing_sections: Sequence[tuple[str, str]],
-    updates: Mapping[str, str],
-) -> tuple[list[str], set[str]]:
-    replaced: set[str] = set()
-    merged: list[str] = []
-    for heading, section in existing_sections:
-        if heading in updates:
-            merged.append(updates[heading])
-            replaced.add(heading)
-        else:
-            merged.append(section)
-    return merged, replaced
-
-
-def _missing_release_sections(
-    generated_sections: Sequence[tuple[str, str]],
-    updates: Mapping[str, str],
-    replaced: set[str],
-) -> list[str]:
-    return [
+    existing_front_matter, existing_body = _split_front_matter(existing)
+    generated_front_matter, generated_body = _split_front_matter(generated)
+    prefix, generated_sections = _split_h2_sections(generated_body)
+    if not generated_sections:
+        return generated
+    _existing_prefix, existing_sections = _split_h2_sections(existing_body)
+    rendered = {heading for heading, _section in generated_sections}
+    preserved = [
         section
-        for heading, section in generated_sections
-        if heading in updates and heading not in replaced
+        for heading, section in existing_sections
+        if heading in _PRESERVED_SECTION_HEADINGS and heading not in rendered
     ]
+    body = [section for _heading, section in generated_sections]
+    front_matter = existing_front_matter or generated_front_matter
+    return front_matter + _join_card_sections(prefix, [*body, *preserved])
 
 
-def _insert_missing_release_sections(
-    prefix: str,
-    existing_sections: Sequence[tuple[str, str]],
-    merged: list[str],
-    missing: Sequence[str],
-) -> str:
-    if not missing:
-        return prefix + "".join(merged)
-    citation_index = _citation_insertion_index(existing_sections, default=len(merged))
-    merged[citation_index:citation_index] = missing
-    return prefix + "".join(merged)
+def _split_front_matter(card: str) -> tuple[str, str]:
+    """Split a card into its YAML front matter and the markdown body."""
+    if not card.startswith("---\n"):
+        return "", card
+    end = card.find("\n---\n", 4)
+    if end < 0:
+        return "", card
+    boundary = end + len("\n---\n")
+    return card[:boundary], card[boundary:]
+
+
+def _join_card_sections(prefix: str, sections: Sequence[str]) -> str:
+    parts = [prefix.strip("\n")] if prefix.strip() else []
+    parts.extend(section.rstrip("\n") for section in sections)
+    return "\n\n".join(parts) + "\n"
 
 
 def _citation_insertion_index(
@@ -771,6 +766,7 @@ def release_polygon_stats(
     repo_id: str,
     confirm_repo: str,
     card_writer: CardWriter,
+    asset_writer: AssetWriter | None = None,
     apply: bool = False,
     hub: HfHub | None = None,
     verifier: RemoteVerifier | None = None,
@@ -778,7 +774,7 @@ def release_polygon_stats(
     source_revision: str | None = None,
     data_revision: str | None = None,
 ) -> StatsReleaseReport:
-    """Recompute, publish, and verify the card and report for one dataset."""
+    """Recompute, publish, and verify the card, report, and coverage assets."""
     _require_exact_repo(confirm_repo, repo_id)
     _require_published_polygons(processed_dir)
     provenance = _build_provenance(
@@ -793,12 +789,14 @@ def release_polygon_stats(
         token=token,
         repo_id=repo_id,
         staging_dir=staging_dir,
+        asset_writer=asset_writer,
     )
-    files = _prepare_release_files(
+    files, local_paths = _prepare_release_files(
         stats,
         provenance,
         staging_dir=staging_dir,
         card_writer=card_writer,
+        asset_writer=asset_writer,
         remote=remote,
     )
     if not apply:
@@ -818,6 +816,7 @@ def release_polygon_stats(
         token=token,
         verifier=verifier,
         staging_dir=staging_dir,
+        local_paths=local_paths,
     )
     return _release_report(
         repo_id=repo_id,
@@ -847,14 +846,18 @@ def _release_remote_state(
     token: str | None,
     repo_id: str,
     staging_dir: Path,
+    asset_writer: AssetWriter | None = None,
 ) -> tuple[Any, _RemoteState]:
     if not apply:
         return None, _RemoteState(None, {})
     client = _client_for_release(hub, token)
+    tracked = (REMOTE_CARD_FILE, REMOTE_POLYGON_STATS_FILE)
+    if asset_writer is not None:
+        tracked = (*tracked, *RELEASE_ASSET_FILES)
     remote = _load_remote_state(
         client,
         repo_id,
-        (REMOTE_CARD_FILE, REMOTE_POLYGON_STATS_FILE),
+        tracked,
         cache_dir=staging_dir / _REMOTE_CACHE_DIRNAME,
     )
     return client, remote
@@ -866,18 +869,49 @@ def _prepare_release_files(
     *,
     staging_dir: Path,
     card_writer: CardWriter,
+    asset_writer: AssetWriter | None,
     remote: _RemoteState,
-) -> tuple[ReleasedFile, ...]:
+) -> tuple[tuple[ReleasedFile, ...], dict[str, Path]]:
     staging_dir.mkdir(parents=True, exist_ok=True)
     report_path = staging_dir / "stats.json"
     card_path = staging_dir / "README.md"
     _stage_report(stats, report_path, provenance)
     card_writer(card_path)
     _merge_remote_card(card_path, remote)
+    local_paths = {
+        REMOTE_CARD_FILE: card_path,
+        REMOTE_POLYGON_STATS_FILE: report_path,
+    }
+    local_paths.update(_stage_release_assets(staging_dir, asset_writer))
+    _require_consistent_text_coverage(card_path)
     return (
-        _released_file(card_path, REMOTE_CARD_FILE),
-        _released_file(report_path, REMOTE_POLYGON_STATS_FILE),
+        tuple(_released_file(local_paths[path], path) for path in local_paths),
+        local_paths,
     )
+
+
+def _stage_release_assets(
+    staging_dir: Path,
+    asset_writer: AssetWriter | None,
+) -> dict[str, Path]:
+    """Render the public coverage assets that accompany this card.
+
+    The card numbers and the map captions are produced from the same local
+    Parquet tables in the same run, so a release can never ship a refreshed
+    statistic beside a map rendered from an older snapshot.
+    """
+    if asset_writer is None:
+        return {}
+    rendered = dict(asset_writer(staging_dir / "assets"))
+    missing = [path for path in RELEASE_ASSET_FILES if path not in rendered]
+    if missing:
+        raise StatsReleaseError(
+            "coverage asset writer did not produce: " + ", ".join(sorted(missing))
+        )
+    for path_in_repo, local_path in rendered.items():
+        if not local_path.is_file():
+            raise StatsReleaseError(f"coverage asset {path_in_repo} was not rendered")
+    return rendered
 
 
 def _merge_remote_card(card_path: Path, remote: _RemoteState) -> None:
@@ -900,8 +934,8 @@ def _apply_release(
     token: str | None,
     verifier: RemoteVerifier | None,
     staging_dir: Path,
+    local_paths: Mapping[str, Path],
 ) -> tuple[str | None, bool, bool, tuple[str, ...]]:
-    local_paths = _release_local_paths(staging_dir)
     changed_files = _changed_paths(remote, files, local_paths)
     if remote.revision and not changed_files:
         return remote.revision, False, True, changed_files
@@ -929,11 +963,74 @@ def _apply_release(
     return revision, True, False, changed_files
 
 
-def _release_local_paths(staging_dir: Path) -> dict[str, Path]:
-    return {
-        REMOTE_CARD_FILE: staging_dir / "README.md",
-        REMOTE_POLYGON_STATS_FILE: staging_dir / "stats.json",
-    }
+_HEADLINE_TEXT_COVERAGE = re.compile(
+    r"(?:\|\s*Polygons with successful non-empty text \(unique OSM identities\)\s*\|"
+    r"|-\s*\*\*Polygons with non-empty Wikipedia or Wikivoyage text:\*\*)"
+    r"\s*([\d,]+)"
+)
+_CONTINENT_TABLE_ROW = re.compile(r"^\|([^|\n]+)\|([^\n]*)\|\s*$", re.MULTILINE)
+
+
+def _require_consistent_text_coverage(card_path: Path) -> None:
+    """Fail closed when the card states two different text-coverage totals.
+
+    The headline figure and the per-continent breakdown are computed by
+    separate renderers. They must agree, otherwise the published card
+    contradicts itself -- and so does the map caption rendered from the
+    same snapshot as the headline.
+    """
+    card = card_path.read_text(encoding="utf-8")
+    headline = _headline_text_coverage(card)
+    continent_total = _continent_text_coverage_total(card)
+    if headline is None or continent_total is None:
+        return
+    if headline != continent_total:
+        raise StatsReleaseError(
+            "dataset card states inconsistent text-coverage totals: headline "
+            f"{headline:,} but the continent table sums to {continent_total:,}; "
+            "no release was published"
+        )
+
+
+def _headline_text_coverage(card: str) -> int | None:
+    match = _HEADLINE_TEXT_COVERAGE.search(card)
+    return int(match.group(1).replace(",", "")) if match else None
+
+
+def _continent_text_coverage_total(card: str) -> int | None:
+    section = _continent_section(card)
+    if section is None:
+        return None
+    total = 0
+    counted = False
+    for line in section.splitlines():
+        value = _continent_row_combined(line)
+        if value is not None:
+            total += value
+            counted = True
+    return total if counted else None
+
+
+def _continent_section(card: str) -> str | None:
+    heading = "## Geographic distribution by continent"
+    start = card.find(heading)
+    if start < 0:
+        return None
+    end = card.find("\n## ", start + len(heading))
+    return card[start:] if end < 0 else card[start:end]
+
+
+def _continent_row_combined(line: str) -> int | None:
+    """Return the combined text-covered count from one continent data row."""
+    if not line.startswith("|"):
+        return None
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if len(cells) != 7 or not cells[-1].endswith("%"):
+        return None
+    try:
+        return int(cells[5].replace(",", ""))
+    except ValueError:
+        return None
 
 
 def _release_report(
@@ -979,7 +1076,10 @@ def release_v1_polygon_stats(
 ) -> StatsReleaseReport:
     """Release the V1 Wikidata-only card and statistics report."""
     _require_canonical_repo(repo_id, DEFAULT_REPO_ID)
-    from osm_polygon_wikidata_only.hf.publication import _write_readme_snapshot
+    from osm_polygon_wikidata_only.hf.publication import (
+        _write_readme_snapshot,
+        refresh_coverage_assets,
+    )
 
     def write_card(destination: Path) -> None:
         _write_readme_snapshot(
@@ -989,12 +1089,26 @@ def release_v1_polygon_stats(
             generated_on=generated_on,
         )
 
+    def write_assets(destination: Path) -> Mapping[str, Path]:
+        coverage, presence, density = refresh_coverage_assets(
+            data_root=data_root,
+            snapshot_stem="release",
+            snapshots_dir=destination,
+            world_land_warning=None,
+        )
+        return {
+            REMOTE_COVERAGE_MAP_FILE: coverage,
+            REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE: presence,
+            REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE: density,
+        }
+
     return release_polygon_stats(
         processed_dir=data_root.processed,
         staging_dir=data_root.cache / _STAGING_DIRNAME / "v1",
         repo_id=repo_id,
         confirm_repo=confirm_repo,
         card_writer=write_card,
+        asset_writer=write_assets,
         apply=apply,
         hub=hub,
         verifier=verifier,
@@ -1020,6 +1134,7 @@ def release_v2_polygon_stats(
     """Release the V2 Wikidata + Wikipedia card and statistics report."""
     _require_canonical_repo(repo_id, V2_REPO_ID)
     from osm_polygon_wikidata_only.v2.card import render_v2_card
+    from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
 
     processed_v2 = data_root.processed_v2
 
@@ -1033,12 +1148,26 @@ def release_v2_polygon_stats(
             ),
         )
 
+    def write_assets(destination: Path) -> Mapping[str, Path]:
+        coverage, presence, density = generate_v2_map_assets(
+            processed_v2,
+            destination,
+            v1_processed=data_root.processed,
+            land_cache_dir=data_root.cache,
+        )
+        return {
+            REMOTE_COVERAGE_MAP_FILE: coverage,
+            REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE: presence,
+            REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE: density,
+        }
+
     return release_polygon_stats(
         processed_dir=processed_v2,
         staging_dir=data_root.cache / _STAGING_DIRNAME / "v2",
         repo_id=repo_id,
         confirm_repo=confirm_repo,
         card_writer=write_card,
+        asset_writer=write_assets,
         apply=apply,
         hub=hub,
         verifier=verifier,

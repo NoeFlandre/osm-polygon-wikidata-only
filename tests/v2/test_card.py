@@ -185,7 +185,7 @@ def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path)
     assert stats.non_empty_text_polygons == 2
 
     card_text = render_v2_card(tmp_path, stats=stats)
-    assert "**Polygons with non-empty Wikipedia or Wikivoyage text:** 2" in card_text
+    assert "| Polygons with successful non-empty text (unique OSM identities) | 2 |" in card_text
     assert (
         "73,322,752 split sentence rows" not in card_text
         and (
@@ -399,14 +399,13 @@ def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity
 
     assert stats.non_empty_text_polygons == 2
     card_text = render_v2_card(tmp_path, stats=stats)
-    assert "**Polygons with non-empty Wikipedia or Wikivoyage text:** 2" in card_text
+    assert "| Polygons with successful non-empty text (unique OSM identities) | 2 |" in card_text
     assert (
-        "Counted once per unique `(osm_type, osm_id)` represented in the polygon table and linked"
+        "Identity metrics use one deterministic representative per `(osm_type, osm_id)`"
         in card_text
     )
     assert "`fetch_status=ok`" in card_text
     assert "trimmed non-empty `full_text`" in card_text
-    assert "`text_available` are not used" in card_text
 
 
 def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:

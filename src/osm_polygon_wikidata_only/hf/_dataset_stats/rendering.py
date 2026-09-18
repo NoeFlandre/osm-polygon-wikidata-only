@@ -16,6 +16,7 @@ just renders whatever it is given.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from .models import (
@@ -33,14 +34,22 @@ def render_stats_section(
     stats: DatasetStats,
     *,
     augmentation_stats: AugmentationStats | None = None,
+    public: bool = False,
 ) -> str:
     """Render the factual README stats sections as markdown.
+
+    ``public=True`` renders the minimal public card: one headline table
+    and a pointer to ``stats.json``. Every omitted figure remains
+    published in that report, so nothing is lost -- only the card stops
+    duplicating it.
 
     Existing callers that pass only ``stats`` receive the legacy
     three sections unchanged. When ``augmentation_stats`` is supplied,
     the headline table is extended with concise augmentation totals
     and additional sections are appended after the legacy three.
     """
+    if public:
+        return _render_public_stats_section(stats, augmentation_stats)
     parts = ["## Dataset snapshot\n", _render_headline_table(stats, augmentation_stats)]
     if augmentation_stats is None:
         parts.extend(["\n## Wikipedia coverage funnel\n", _render_funnel_table(stats)])
@@ -50,6 +59,77 @@ def render_stats_section(
     if augmentation_stats is not None:
         parts.extend(_render_augmentation_sections(augmentation_stats))
     return "\n".join(parts) + "\n"
+
+
+_PUBLIC_HEADLINE_LABELS = (
+    "Polygon rows across regional extracts",
+    "Unique polygon identities (osm_type, osm_id)",
+    "Polygons with successful non-empty text (unique OSM identities)",
+    "Wikipedia documents",
+    "Wikipedia sections",
+    "Wikipedia + Wikivoyage languages",
+    "Geographic regions",
+    "Total Parquet size",
+)
+
+
+def _render_public_stats_section(
+    stats: DatasetStats,
+    augmentation_stats: AugmentationStats | None,
+) -> str:
+    """Render one compact headline table with the detail behind a disclosure.
+
+    The public card leads with at most eight figures. Every other
+    statistic the card has always published stays in the same document,
+    collapsed into a ``<details>`` block that the Hub renders closed by
+    default, so the card reads as a summary without losing anything.
+    """
+    available = dict(_headline_rows(stats, augmentation_stats))
+    rows = [(label, available[label]) for label in _PUBLIC_HEADLINE_LABELS if label in available]
+    lines = ["## Dataset snapshot\n", "| Metric | Value |", "| --- | ---: |"]
+    lines.extend(f"| {label} | {value} |" for label, value in rows)
+    lines.extend(
+        [
+            "",
+            "Polygon rows retain regional copies. Identity metrics use one deterministic "
+            "representative per `(osm_type, osm_id)`; successful text additionally requires "
+            "`fetch_status=ok` and trimmed non-empty `full_text`.",
+            "",
+        ]
+    )
+    return "\n".join(lines) + _render_detailed_statistics(stats, augmentation_stats)
+
+
+def _render_detailed_statistics(
+    stats: DatasetStats,
+    augmentation_stats: AugmentationStats | None,
+) -> str:
+    """Wrap the full statistics tables in a collapsed disclosure block."""
+    parts: list[str] = []
+    if augmentation_stats is None:
+        parts.extend(["\n## Wikipedia coverage funnel\n", _render_funnel_table(stats)])
+    parts.extend(
+        ["\n## Language distribution\n", _render_language_distribution(stats, augmentation_stats)]
+    )
+    if augmentation_stats is not None:
+        parts.extend(_render_augmentation_sections(augmentation_stats))
+    detail = demote_headings("\n".join(parts).strip("\n"))
+    return (
+        "\n<details>\n<summary>Full statistics — languages, corpora, storage</summary>\n\n"
+        + detail
+        + "\n\n</details>\n"
+    )
+
+
+def demote_headings(markdown: str) -> str:
+    """Demote every ``##`` heading one level for use inside a disclosure block.
+
+    A collapsed block must not contain ``##`` headings: the release card
+    merge splits a card into ``##`` sections, so a heading nested inside
+    ``<details>`` would be lifted out of its block and the disclosure
+    markup would be torn apart.
+    """
+    return re.sub(r"^## ", "### ", markdown, flags=re.MULTILINE)
 
 
 def _render_language_distribution(
