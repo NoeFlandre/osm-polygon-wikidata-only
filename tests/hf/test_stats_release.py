@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
+from osm_polygon_wikidata_only.hf.language_split_publication import LANGUAGE_CARD_HEADING
 from osm_polygon_wikidata_only.hf.stats_release import (
     RELEASE_ASSET_FILES,
     REMOTE_CARD_FILE,
@@ -605,3 +606,24 @@ def test_merge_returns_the_generated_card_when_it_renders_no_sections() -> None:
     existing = "# Old\n\n## Dataset snapshot\n\nOLD\n"
 
     assert _merge_release_card(existing, "# New body only\n") == "# New body only\n"
+
+
+def test_merge_preserves_the_language_partitions_section_owned_by_another_release() -> None:
+    """The language-split release owns this section; a stats release must keep it.
+
+    Regression: dropping it removed the published documentation of the 348
+    V1 language partitions from the live card while the data files stayed.
+    """
+    existing = (
+        "# Old\n\n## Dataset snapshot\n\nOLD\n\n"
+        f"{LANGUAGE_CARD_HEADING}\n\nValidated languages: **348**.\n\n"
+        "## Citation\n\nCite me.\n"
+    )
+    generated = "# New\n\n## Dataset snapshot\n\nNEW\n"
+
+    merged = _merge_release_card(existing, generated)
+
+    assert LANGUAGE_CARD_HEADING in merged
+    assert "Validated languages: **348**." in merged
+    assert "NEW" in merged
+    assert "OLD" not in merged

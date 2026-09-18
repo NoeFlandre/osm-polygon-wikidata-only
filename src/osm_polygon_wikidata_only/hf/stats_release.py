@@ -35,6 +35,7 @@ from osm_polygon_wikidata_only.hf._uploader.operations import _build_hf_api
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.token import resolve_hf_token
+from osm_polygon_wikidata_only.hf.language_split_publication import LANGUAGE_CARD_HEADING
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
     load_polygon_geometry_stats,
     stats_payload,
@@ -62,12 +63,16 @@ RELEASE_ASSET_FILES = (
     REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
     REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
 )
-# Narrative sections are author-owned prose and are preserved verbatim from the
-# remote card. Every other section is data-derived and is always regenerated, so
-# a released card can never carry a stale statistic next to a fresh one.
+# Sections preserved verbatim from the remote card: author-owned prose, plus
+# sections owned by another publication path. "## Language partitions" is
+# written by the language-split release and describes artifacts this release
+# knows nothing about, so regenerating the card must not drop it. Every other
+# section is data-derived and is always regenerated, so a released card can
+# never carry a stale statistic next to a fresh one.
 _PRESERVED_SECTION_HEADINGS = frozenset(
     {
         "## Citation",
+        LANGUAGE_CARD_HEADING,
         "## License",
         "## Licensing",
         "## Reproducibility",
