@@ -177,6 +177,16 @@ def test_language_card_declares_viewer_language_configs_and_splits(
             "path": expected_path.replace("lang-en", "lang-unknown"),
         },
     ]
+    assert (
+        _merge_language_card(
+            merged,
+            version=version,
+            configurations=(configuration,),
+            languages=("en", "unknown"),
+            configuration_languages=((configuration, ("en", "unknown")),),
+        )
+        == merged
+    )
 
 
 def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:

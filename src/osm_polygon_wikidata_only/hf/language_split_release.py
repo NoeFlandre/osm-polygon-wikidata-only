@@ -15,10 +15,10 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageInventory,
     LanguageInventoryError,
     build_language_inventory,
-    language_split_name,
     normalize_language,
 )
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
+from osm_polygon_wikidata_only.v2.language_splits import DEFAULT_MAX_ROWS_PER_SHARD
 
 DEFAULT_BATCH_SIZE = 65_536
 V1_LANGUAGE_SPLITS_DIRNAME = "language_splits"
@@ -255,29 +255,37 @@ def _expected_v2_files(
 ) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for table in inventory.tables:
-        for source_file in table.source_files:
-            source_path = plan.processed_root / source_file
-            counts = _source_language_counts(source_path, table.language_column)
-            for language, row_count in counts.items():
+        for bucket in table.buckets:
+            if bucket.row_count == 0:
+                continue
+            shard_count = _shard_count(bucket.row_count, DEFAULT_MAX_ROWS_PER_SHARD)
+            for shard_index in range(shard_count):
+                row_count = min(
+                    DEFAULT_MAX_ROWS_PER_SHARD,
+                    bucket.row_count - shard_index * DEFAULT_MAX_ROWS_PER_SHARD,
+                )
                 path = (
                     plan.output_root
                     / table.configuration
-                    / language_split_name(language)
-                    / f"{source_path.stem}.parquet"
+                    / bucket.split
+                    / f"part-{shard_index:05d}-of-{shard_count:05d}.parquet"
                 )
                 records.append(
                     {
                         "table": table.table.value,
                         "configuration": table.configuration,
-                        "language": language,
-                        "split": language_split_name(language),
+                        "language": bucket.language,
+                        "split": bucket.split,
                         "path": _relative_path(path, plan.processed_root.parent),
-                        "source_file": source_file,
                         "row_count": row_count,
                         "status": "candidate",
                     }
                 )
     return records
+
+
+def _shard_count(row_count: int, max_rows_per_shard: int) -> int:
+    return (row_count + max_rows_per_shard - 1) // max_rows_per_shard
 
 
 def _source_language_counts(source_path: Path, language_column: str) -> dict[str, int]:
