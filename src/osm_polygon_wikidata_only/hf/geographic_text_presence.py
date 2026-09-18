@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -260,8 +260,12 @@ def _successful_text_ids(
     columns = _scan_columns(identifier_column, names, with_wikidata=with_wikidata)
     identifiers: set[str] = set()
     qids: set[str] = set()
-    for batch in _iter_text_batches(path, label, columns):
-        _collect_successful_batch(batch, identifier_column, identifiers, qids)
+    _scan_text_batches(
+        path,
+        label,
+        columns,
+        lambda batch: _collect_successful_batch(batch, identifier_column, identifiers, qids),
+    )
     return identifiers, qids
 
 
@@ -286,10 +290,23 @@ def _scan_columns(
     return [identifier_column, "full_text", *sorted(optional & names)]
 
 
-def _iter_text_batches(path: Path, label: str, columns: list[str]) -> Iterator[pa.RecordBatch]:
+def _scan_text_batches(
+    path: Path,
+    label: str,
+    columns: list[str],
+    consume: Callable[[pa.RecordBatch], None],
+) -> None:
+    """Feed every record batch of ``path`` to ``consume``.
+
+    The reader is driven inside one frame rather than exposed as a
+    generator. A generator that holds ``ParquetFile`` open across a yield
+    leaves Arrow's prefetch threads queued against a reader that may be
+    closed early if the caller stops consuming, which can deadlock.
+    """
     try:
         with pq.ParquetFile(path) as parquet_file:
-            yield from parquet_file.iter_batches(batch_size=65_536, columns=columns)
+            for batch in parquet_file.iter_batches(batch_size=65_536, columns=columns):
+                consume(batch)
     except OSError as error:
         raise CoverageMapError(f"Could not read {label} parquet {path}: {error}") from error
     except pa.ArrowInvalid as error:
