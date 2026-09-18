@@ -2,10 +2,11 @@
 
 ## Goal
 
-Publish the V2 row-level language partitions in one Hugging Face commit. The
-current V2 layout creates 179,847 data files, which exceeds the Hub
-`create_commit` limit of 25,000 files. V1 and all existing undifferentiated
-dataset paths remain unchanged.
+Publish row-level language partitions for both V1 and V2 as selectable
+Hugging Face Dataset Viewer configurations/splits. The current V2 layout
+creates 179,847 data files, which exceeds the Hub `create_commit` limit of
+25,000 files. V1 data files remain unchanged; only its dataset-card metadata
+needs to expose the already-published language files to the Viewer.
 
 ## Chosen design
 
@@ -28,6 +29,23 @@ language, split, and the ordered source-file list that contributed rows to the
 shard. The V2 language-split contract version will be incremented to identify
 the aggregated layout. Row order within each language remains the source
 inventory order; no rows are deduplicated or dropped.
+
+## Dataset Viewer contract
+
+The dataset-card YAML front matter is the Viewer configuration contract. For
+each language-bearing table, the release will add a distinct
+`<configuration>_by_language` config and one `data_files` entry per non-empty
+language split, including `lang-unknown` when present:
+
+- V1: `data/<configuration>/lang-<language>-00000-of-00001.parquet`
+- V2: `language_splits/<configuration>/lang-<language>/*.parquet`
+
+The existing default configurations and all unrelated front matter remain
+unchanged. The managed language-config block is replaced deterministically on
+reruns, so both cards expose language values as Viewer-selectable splits and
+the update is idempotent. The release acceptance check calls the Dataset
+Viewer `/splits` and `/first-rows` APIs at the final revision for representative
+language splits in both datasets.
 
 ## Atomicity and publication
 
@@ -60,7 +78,7 @@ manifest. Unmanaged files are preserved.
 - Publication tests cover the new V2 plan count, the under-limit preflight,
   stale aggregated-shard cleanup, card wording, and exact atomic operations.
 - Existing V1 tests and publication behavior remain green.
-- The release run will verify the V2 Hub revision, complete remote inventory,
-  manifest/card contents, representative shard hashes, Dataset Viewer/API
-  visibility, and a second no-op.
-
+- The release run will update and verify both cards' Viewer config metadata,
+  verify the V2 Hub revision, complete remote inventory, manifest/card
+  contents, representative shard hashes, Dataset Viewer/API visibility, and a
+  second no-op for each target.
