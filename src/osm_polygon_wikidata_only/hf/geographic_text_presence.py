@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from ._geographic.models import CoverageMapError, RenderResult
-from ._geographic.parquet_inputs import read_required_columns, require_directory, sorted_parquets
+from ._geographic.parquet_inputs import require_directory, sorted_parquets
 from ._geographic.polygon_identities import (
     PolygonIdentity,
     PolygonIndex,
@@ -41,6 +43,9 @@ class TextPresenceSnapshot:
     combined_polygon_identities: frozenset[PolygonIdentity] = frozenset()
 
 
+_PRESENCE_CACHE: dict[tuple[Path, Path | None], tuple[tuple[Any, ...], TextPresenceSnapshot]] = {}
+
+
 def _non_blank(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
@@ -50,6 +55,59 @@ def _document_identity_column(names: set[str] | list[str] | tuple[str, ...]) -> 
 
 
 def load_text_presence(
+    processed_root: Path,
+    *,
+    links_dir: Path | None = None,
+) -> TextPresenceSnapshot:
+    """Return the text-presence snapshot, reusing an identical recent scan.
+
+    One publication asks for this snapshot several times -- the card
+    headline, the continent table, and each coverage map all need it --
+    and every call would otherwise re-read the whole document corpus.
+    The result is memoised against a fingerprint of the input
+    directories, so repeated calls within a run are free while any
+    change on disk produces a fresh scan. Sharing one snapshot also
+    guarantees the figures those callers publish cannot disagree.
+    """
+    key = (
+        processed_root.resolve(),
+        links_dir.resolve() if links_dir is not None else None,
+    )
+    fingerprint = _presence_fingerprint(key[0], key[1])
+    cached = _PRESENCE_CACHE.get(key)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    snapshot = _load_text_presence_uncached(processed_root, links_dir=links_dir)
+    _PRESENCE_CACHE[key] = (fingerprint, snapshot)
+    return snapshot
+
+
+def _presence_fingerprint(processed_root: Path, links_dir: Path | None) -> tuple[Any, ...]:
+    """Summarise the inputs cheaply enough to validate a cached scan."""
+    directories = [
+        processed_root / "polygons",
+        _wikipedia_documents_directory(processed_root),
+        links_dir or processed_root / "polygon_articles",
+        processed_root / "wikivoyage" / "documents",
+    ]
+    return tuple(_directory_fingerprint(directory) for directory in directories)
+
+
+def _directory_fingerprint(directory: Path) -> tuple[int, int, int]:
+    if not directory.is_dir():
+        return (0, 0, 0)
+    count = 0
+    total = 0
+    newest = 0
+    for path in directory.glob("*.parquet"):
+        stat = path.stat()
+        count += 1
+        total += stat.st_size
+        newest = max(newest, stat.st_mtime_ns)
+    return (count, total, newest)
+
+
+def _load_text_presence_uncached(
     processed_root: Path,
     *,
     links_dir: Path | None = None,
@@ -209,22 +267,91 @@ def _wikipedia_text_ids(wikipedia_dir: Path) -> set[str]:
 
 
 def _wikipedia_file_text_ids(path: Path) -> set[str]:
+    return _successful_text_ids(path, label="wikipedia")[0]
+
+
+def _successful_text_ids(
+    path: Path,
+    *,
+    label: str,
+    with_wikidata: bool = False,
+) -> tuple[set[str], set[str]]:
+    """Return identifiers (and optionally QIDs) of successful non-empty rows.
+
+    The filter runs as Arrow compute kernels over each record batch rather
+    than as a Python loop over materialized rows. ``full_text`` is by far
+    the largest column in these tables and is needed only to test whether
+    the trimmed value is non-empty, so it is never decoded into Python
+    objects -- only the surviving identifiers are.
+    """
     names = set(pq.read_schema(path).names)
     identifier_column = _document_identity_column(names)
-    has_fetch_status = "fetch_status" in names
-    values: set[str] = set()
-    for row in read_required_columns(
-        path,
-        _document_columns(path, identifier_column),
-        label="wikipedia",
-    ):
-        if _successful_document_row(
-            row,
-            identifier_column,
-            has_fetch_status=has_fetch_status,
-        ):
-            values.add(str(row[identifier_column]))
-    return values
+    missing = sorted({identifier_column, "full_text"} - names)
+    if missing:
+        raise CoverageMapError(f"{label} parquet {path} is missing required columns: {missing}")
+    columns = [identifier_column, "full_text"]
+    if "fetch_status" in names:
+        columns.append("fetch_status")
+    if with_wikidata and "wikidata" in names:
+        columns.append("wikidata")
+    identifiers: set[str] = set()
+    qids: set[str] = set()
+    try:
+        with pq.ParquetFile(path) as parquet_file:
+            for batch in parquet_file.iter_batches(batch_size=65_536, columns=columns):
+                _collect_successful_batch(
+                    batch,
+                    identifier_column,
+                    identifiers,
+                    qids,
+                )
+    except OSError as error:
+        raise CoverageMapError(f"Could not read {label} parquet {path}: {error}") from error
+    except pa.ArrowInvalid as error:
+        raise CoverageMapError(
+            f"{label} parquet {path} is missing required columns: {sorted(set(columns) - names)}"
+        ) from error
+    return identifiers, qids
+
+
+def _collect_successful_batch(
+    batch: pa.RecordBatch,
+    identifier_column: str,
+    identifiers: set[str],
+    qids: set[str],
+) -> None:
+    mask = _successful_row_mask(batch)
+    selected = batch.filter(mask)
+    if selected.num_rows == 0:
+        return
+    identifiers.update(
+        str(value) for value in selected.column(identifier_column).to_pylist() if value
+    )
+    if "wikidata" in selected.schema.names:
+        qids.update(str(value) for value in selected.column("wikidata").to_pylist() if value)
+
+
+def _successful_row_mask(batch: pa.RecordBatch) -> Any:
+    """Build the non-empty-text (and fetch_status=ok) mask for one batch.
+
+    The emptiness test trims ``full_text`` itself rather than reading the
+    cheaper ``article_length_chars`` column. That column records
+    ``len(text)`` on the untrimmed string, so a whitespace-only document
+    would report a positive length; the two agree on every row published
+    today only because no such row exists, which is an accident of the
+    current corpus and not a contract worth depending on.
+
+    Generated PyArrow kernels are reached through ``call_function`` so the
+    module stays statically checkable, matching the existing convention.
+    """
+    trimmed = pc.call_function("utf8_trim_whitespace", [batch.column("full_text")])
+    lengths = pc.call_function("utf8_length", [trimmed])
+    non_empty = pc.call_function("greater", [lengths, pa.scalar(0, type=pa.int32())])
+    mask = pc.fill_null(non_empty, False)
+    if "fetch_status" in batch.schema.names:
+        is_ok = pc.call_function("equal", [batch.column("fetch_status"), pa.scalar("ok")])
+        mask = pc.call_function("and_kleene", [mask, pc.fill_null(is_ok, False)])
+    return mask
 
 
 def _wikivoyage_text_ids(directory: Path) -> tuple[set[str], set[str]]:
@@ -238,35 +365,7 @@ def _wikivoyage_text_ids(directory: Path) -> tuple[set[str], set[str]]:
 
 
 def _wikivoyage_file_text_ids(path: Path) -> tuple[set[str], set[str]]:
-    names = set(pq.read_schema(path).names)
-    has_fetch_status = "fetch_status" in names
-    document_ids: set[str] = set()
-    qids: set[str] = set()
-    columns = _wikivoyage_columns(path, names)
-    for row in read_required_columns(path, columns, label="wikivoyage"):
-        document_id, wikidata = _wikivoyage_row_ids(row, has_fetch_status=has_fetch_status)
-        if document_id:
-            document_ids.add(document_id)
-        if wikidata:
-            qids.add(wikidata)
-    return document_ids, qids
-
-
-def _wikivoyage_columns(path: Path, names: set[str]) -> tuple[str, ...]:
-    columns = _document_columns(path, "document_id")
-    return (*columns, "wikidata") if "wikidata" in names else columns
-
-
-def _wikivoyage_row_ids(
-    row: dict[str, Any],
-    *,
-    has_fetch_status: bool,
-) -> tuple[str | None, str | None]:
-    if not _successful_document_row(row, "document_id", has_fetch_status=has_fetch_status):
-        return None, None
-    document_id = str(row["document_id"]) if row.get("document_id") else None
-    wikidata = str(row["wikidata"]) if row.get("wikidata") else None
-    return document_id, wikidata
+    return _successful_text_ids(path, label="wikivoyage", with_wikidata=True)
 
 
 def _has_canonical_links(source_links_dir: Path) -> bool:
