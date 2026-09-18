@@ -497,6 +497,43 @@ def test_v2_dry_run_calculates_multiple_shards_without_source_scans(tmp_path: Pa
     ]
 
 
+def test_v2_dry_run_keeps_a_boundary_sized_bucket_in_one_shard(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+    planned = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1).releases[0]
+    original = cast(LanguageTableInventory, planned.inventory.table("wikipedia_documents"))
+    original_fr = original.bucket("fr")
+    boundary_fr = replace(original_fr, row_count=100_000)
+    inventory = replace(
+        planned.inventory,
+        tables=tuple(
+            replace(
+                table,
+                row_count=table.row_count - original_fr.row_count + boundary_fr.row_count,
+                buckets=tuple(
+                    boundary_fr if bucket.language == "fr" else bucket for bucket in table.buckets
+                ),
+            )
+            if table.table.value == "wikipedia_documents"
+            else table
+            for table in planned.inventory.tables
+        ),
+    )
+
+    documents = [
+        record
+        for record in _expected_files(planned, inventory)
+        if record["table"] == "wikipedia_documents" and record["language"] == "fr"
+    ]
+
+    assert [(record["path"], record["row_count"]) for record in documents] == [
+        (
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00000-of-00001.parquet",
+            100_000,
+        )
+    ]
+
+
 def test_v2_dry_run_reports_bounded_candidate_shards_and_rows(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     _write_table(

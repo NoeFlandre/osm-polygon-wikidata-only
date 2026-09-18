@@ -280,36 +280,101 @@ def _write_table(
     max_rows_per_shard: int,
 ) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
     expected_schema = spec.schema_factory()
-    shard_counts = {
-        bucket.language: _shard_count(bucket.row_count, max_rows_per_shard)
-        for bucket in table_inventory.buckets
-        if bucket.row_count > 0
-    }
+    shard_counts = _table_shard_counts(table_inventory, max_rows_per_shard)
     state = _TableWriteState({}, defaultdict(int), [], {})
-    with ExitStack() as stack:
-        try:
-            for source_file in table_inventory.source_files:
-                source_path = (root / source_file).resolve()
-                _ensure_source_is_under_root(source_path, root)
-                _stream_source_file(
-                    source_path,
-                    destination,
-                    stage_root,
-                    spec,
-                    source_file,
-                    batch_size,
-                    max_rows_per_shard,
-                    shard_counts,
-                    expected_schema,
-                    state,
-                    stack,
-                )
-        finally:
-            for shard in state.current.values():
-                shard.writer.close()
+    _stream_table_sources(
+        root,
+        destination,
+        stage_root,
+        spec,
+        table_inventory,
+        batch_size,
+        max_rows_per_shard,
+        shard_counts,
+        expected_schema,
+        state,
+    )
 
     files = [_validated_output_file(root, spec, shard, expected_schema) for shard in state.shards]
     return files, state.staged_paths
+
+
+def _table_shard_counts(
+    table_inventory: LanguageTableInventory, max_rows_per_shard: int
+) -> dict[str, int]:
+    shard_counts: dict[str, int] = {}
+    for bucket in table_inventory.buckets:
+        if bucket.row_count > 0:
+            shard_counts[bucket.language] = _shard_count(bucket.row_count, max_rows_per_shard)
+    return shard_counts
+
+
+def _stream_table_sources(
+    root: Path,
+    destination: Path,
+    stage_root: Path,
+    spec: LanguageTableSpec,
+    table_inventory: LanguageTableInventory,
+    batch_size: int,
+    max_rows_per_shard: int,
+    shard_counts: dict[str, int],
+    expected_schema: pa.Schema,
+    state: _TableWriteState,
+) -> None:
+    """Stream all source files for one language-bearing table."""
+    with ExitStack() as stack:
+        try:
+            _stream_source_files(
+                root,
+                destination,
+                stage_root,
+                spec,
+                table_inventory,
+                batch_size,
+                max_rows_per_shard,
+                shard_counts,
+                expected_schema,
+                state,
+                stack,
+            )
+        finally:
+            _close_current_writers(state)
+
+
+def _stream_source_files(
+    root: Path,
+    destination: Path,
+    stage_root: Path,
+    spec: LanguageTableSpec,
+    table_inventory: LanguageTableInventory,
+    batch_size: int,
+    max_rows_per_shard: int,
+    shard_counts: dict[str, int],
+    expected_schema: pa.Schema,
+    state: _TableWriteState,
+    stack: ExitStack,
+) -> None:
+    for source_file in table_inventory.source_files:
+        source_path = (root / source_file).resolve()
+        _ensure_source_is_under_root(source_path, root)
+        _stream_source_file(
+            source_path,
+            destination,
+            stage_root,
+            spec,
+            source_file,
+            batch_size,
+            max_rows_per_shard,
+            shard_counts,
+            expected_schema,
+            state,
+            stack,
+        )
+
+
+def _close_current_writers(state: _TableWriteState) -> None:
+    for shard in state.current.values():
+        shard.writer.close()
 
 
 def _stream_source_file(
@@ -358,30 +423,73 @@ def _write_batch(
     stack: ExitStack,
 ) -> None:
     for language, indices in _partition_batch(batch, language_index).items():
-        offset = 0
-        while offset < len(indices):
-            shard = _writer_for_language(
-                language,
-                destination,
-                stage_root,
-                spec,
-                max_rows_per_shard,
-                shard_counts,
-                expected_schema,
-                state,
-                stack,
-            )
-            if not shard.source_files or shard.source_files[-1] != source_file:
-                shard.source_files.append(source_file)
-            available = max_rows_per_shard - shard.row_count
-            count = min(available, len(indices) - offset)
-            selected_indices = indices[offset : offset + count]
-            shard.writer.write_batch(batch.take(pa.array(selected_indices, type=pa.int64())))
-            shard.row_count += count
-            offset += count
-            if shard.row_count == max_rows_per_shard:
-                shard.writer.close()
-                state.current.pop(language)
+        _write_language_indices(
+            language,
+            indices,
+            batch,
+            destination,
+            stage_root,
+            spec,
+            source_file,
+            max_rows_per_shard,
+            shard_counts,
+            expected_schema,
+            state,
+            stack,
+        )
+
+
+def _write_language_indices(
+    language: str,
+    indices: list[int],
+    batch: pa.RecordBatch,
+    destination: Path,
+    stage_root: Path,
+    spec: LanguageTableSpec,
+    source_file: str,
+    max_rows_per_shard: int,
+    shard_counts: dict[str, int],
+    expected_schema: pa.Schema,
+    state: _TableWriteState,
+    stack: ExitStack,
+) -> None:
+    offset = 0
+    while offset < len(indices):
+        shard = _writer_for_language(
+            language,
+            destination,
+            stage_root,
+            spec,
+            max_rows_per_shard,
+            shard_counts,
+            expected_schema,
+            state,
+            stack,
+        )
+        _record_source_file(shard, source_file)
+        available = max_rows_per_shard - shard.row_count
+        count = min(available, len(indices) - offset)
+        selected_indices = indices[offset : offset + count]
+        shard.writer.write_batch(batch.take(pa.array(selected_indices, type=pa.int64())))
+        shard.row_count += count
+        offset += count
+        _close_full_shard(shard, language, max_rows_per_shard, state)
+
+
+def _record_source_file(shard: _ShardWriteState, source_file: str) -> None:
+    if not shard.source_files or shard.source_files[-1] != source_file:
+        shard.source_files.append(source_file)
+
+
+def _close_full_shard(
+    shard: _ShardWriteState,
+    language: str,
+    max_rows_per_shard: int,
+    state: _TableWriteState,
+) -> None:
+    if shard.row_count == max_rows_per_shard:
+        shard.writer.close()
+        state.current.pop(language)
 
 
 def _writer_for_language(

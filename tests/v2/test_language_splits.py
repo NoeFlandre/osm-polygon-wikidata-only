@@ -19,6 +19,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
+    LanguageBucket,
     LanguageInventory,
     LanguageTable,
     LanguageTableInventory,
@@ -600,7 +601,12 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
     shard = SimpleNamespace(source_files=[], row_count=0, writer=writer)
     state.current["en"] = shard
     state.shards.append(shard)
-    monkeypatch.setattr(language_splits, "_writer_for_language", lambda *args: shard)
+
+    def fake_writer_for_language(*args: object) -> SimpleNamespace:
+        observed["max_rows_per_shard"] = args[4]
+        return shard
+
+    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
     monkeypatch.setattr(language_splits.pa, "array", fake_array)
 
     with ExitStack() as stack:
@@ -620,6 +626,143 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
 
     assert observed["type"] == pa.int64()
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
+    assert observed["max_rows_per_shard"] == 10
+
+
+def test_v2_table_shard_counts_omit_empty_buckets() -> None:
+    bucket = LanguageBucket(
+        language="en",
+        row_count=0,
+        canonical_rows=0,
+        legacy_alias_rows=0,
+        missing_rows=0,
+        blank_rows=0,
+        malformed_rows=0,
+        legacy_unusable_rows=0,
+    )
+    nonempty = LanguageBucket(
+        language="fr",
+        row_count=1,
+        canonical_rows=1,
+        legacy_alias_rows=0,
+        missing_rows=0,
+        blank_rows=0,
+        malformed_rows=0,
+        legacy_unusable_rows=0,
+    )
+    inventory = LanguageTableInventory(
+        table=LanguageTable.WIKIPEDIA_DOCUMENTS,
+        configuration="wikipedia_documents_by_language",
+        language_column="language",
+        identity_columns=("document_id",),
+        source_files=(),
+        row_count=1,
+        buckets=(bucket, nonempty),
+    )
+
+    assert language_splits._table_shard_counts(inventory, 100_000) == {"fr": 1}
+
+
+def test_v2_write_language_indices_respects_existing_shard_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    batch = pa.record_batch([pa.array(["en"] * 8)], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+
+    class FakeWriter:
+        def __init__(self) -> None:
+            self.rows: list[list[dict[str, object]]] = []
+
+        def write_batch(self, selected: pa.RecordBatch) -> None:
+            self.rows.append(selected.to_pylist())
+
+        def close(self) -> None:
+            return None
+
+    first = SimpleNamespace(source_files=[], row_count=3, writer=FakeWriter())
+    second = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    state.current["en"] = first
+    writers = iter((first, second))
+    monkeypatch.setattr(language_splits, "_writer_for_language", lambda *args: next(writers))
+
+    with ExitStack() as stack:
+        language_splits._write_language_indices(
+            "en",
+            list(range(8)),
+            batch,
+            tmp_path / "destination",
+            tmp_path / "stage",
+            spec,
+            "source",
+            10,
+            {"en": 2},
+            batch.schema,
+            state,
+            stack,
+        )
+
+    assert [len(rows) for rows in first.writer.rows] == [7]
+    assert [len(rows) for rows in second.writer.rows] == [1]
+    assert first.row_count == 10
+    assert second.row_count == 1
+    assert "en" not in state.current
+
+
+def test_v2_write_language_indices_advances_offset_across_shards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+
+    class FakeWriter:
+        def write_batch(self, selected: pa.RecordBatch) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    first = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    second = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    state.current["en"] = first
+    writers = iter((first, second))
+
+    def fake_writer_for_language(*args: object) -> SimpleNamespace:
+        try:
+            return next(writers)
+        except StopIteration as error:
+            raise AssertionError("offset did not advance across shards") from error
+
+    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
+
+    with ExitStack() as stack:
+        language_splits._write_language_indices(
+            "en",
+            list(range(3)),
+            batch,
+            tmp_path / "destination",
+            tmp_path / "stage",
+            spec,
+            "source",
+            2,
+            {"en": 2},
+            batch.schema,
+            state,
+            stack,
+        )
+
+    assert first.row_count == 2
+    assert second.row_count == 1
+
+
+def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
+    shard = SimpleNamespace(source_files=["source-a.parquet"])
+
+    language_splits._record_source_file(shard, "source-a.parquet")
+    language_splits._record_source_file(shard, "source-b.parquet")
+
+    assert shard.source_files == ["source-a.parquet", "source-b.parquet"]
 
 
 def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -653,11 +796,56 @@ def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.M
         )
 
     assert writer is state.current["en"]
+    assert writer.shard_index == 0
     assert observed["writer"] == (
         tmp_path / "stage" / spec.configuration / "lang-en" / "part-00000-of-00001.parquet",
         spec.schema_factory(),
         "snappy",
     )
+
+
+def test_v2_writer_increments_shard_indices_after_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    created: list[Path] = []
+
+    @contextmanager
+    def fake_atomic(path: Path):
+        yield path
+
+    class FakeWriter:
+        def __init__(self, path: Path, schema: pa.Schema, *, compression: str) -> None:
+            created.append(path)
+
+    monkeypatch.setattr(language_splits, "atomic_replacement", fake_atomic)
+    monkeypatch.setattr(language_splits.pq, "ParquetWriter", FakeWriter)
+
+    with ExitStack() as stack:
+        shards = []
+        for _ in range(3):
+            shards.append(
+                language_splits._writer_for_language(
+                    "en",
+                    tmp_path / "destination",
+                    tmp_path / "stage",
+                    spec,
+                    10,
+                    {"en": 3},
+                    spec.schema_factory(),
+                    state,
+                    stack,
+                )
+            )
+            state.current.pop("en")
+
+    assert [shard.shard_index for shard in shards] == [0, 1, 2]
+    assert [path.name for path in created] == [
+        "part-00000-of-00003.parquet",
+        "part-00001-of-00003.parquet",
+        "part-00002-of-00003.parquet",
+    ]
 
 
 def test_v2_validated_output_checks_schema_and_records_all_metadata(
