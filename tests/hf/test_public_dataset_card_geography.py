@@ -552,3 +552,22 @@ def test_snapshot_is_reused_until_the_inputs_change(tmp_path: Path) -> None:
 
     assert second is not first
     assert second.wikipedia_document_ids == frozenset({"a1", "a2"})
+
+
+def test_batch_scan_reports_an_unreadable_file(tmp_path: Path) -> None:
+    missing = tmp_path / "absent.parquet"
+
+    with pytest.raises(CoverageMapError, match="Could not read wikipedia parquet"):
+        text_presence_module._scan_text_batches(
+            missing, "wikipedia", ["article_id", "full_text"], lambda batch: None
+        )
+
+
+def test_batch_scan_reports_a_file_that_is_not_parquet(tmp_path: Path) -> None:
+    corrupt = tmp_path / "corrupt.parquet"
+    corrupt.write_text("this is not parquet", encoding="utf-8")
+
+    with pytest.raises(CoverageMapError, match="could not be read as columns"):
+        text_presence_module._scan_text_batches(
+            corrupt, "wikipedia", ["article_id", "full_text"], lambda batch: None
+        )
