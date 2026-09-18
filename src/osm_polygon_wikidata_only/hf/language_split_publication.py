@@ -783,8 +783,13 @@ def _merge_language_card(
         rf"^{re.escape(LANGUAGE_CARD_HEADING)}\n.*?(?=^## |\Z)",
         re.MULTILINE | re.DOTALL,
     )
-    if pattern.search(existing):
-        return pattern.sub(section, existing, count=1)
+    match = pattern.search(existing)
+    if match:
+        matched = match.group(0)
+        trailing_newlines = len(matched) - len(matched.rstrip("\n"))
+        separator = "\n" * trailing_newlines
+        replacement = section.rstrip("\n") + separator
+        return existing[: match.start()] + replacement + existing[match.end() :]
     marker = re.search(r"^## Data sources & licenses\n", existing, re.MULTILINE)
     if marker:
         return existing[: marker.start()] + section + "\n" + existing[marker.start() :]
