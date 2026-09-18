@@ -456,16 +456,24 @@ def _merge_release_card(existing: str, generated: str) -> str:
     prefix, generated_sections = _split_h2_sections(generated_body)
     if not generated_sections:
         return generated
-    _existing_prefix, existing_sections = _split_h2_sections(existing_body)
+    sections = _released_sections(generated_sections, existing_body)
+    front_matter = existing_front_matter or generated_front_matter
+    return front_matter + _join_card_sections(prefix, sections)
+
+
+def _released_sections(
+    generated_sections: Sequence[tuple[str, str]],
+    existing_body: str,
+) -> list[str]:
+    """Return the generated sections followed by any preserved prose."""
+    _prefix, existing_sections = _split_h2_sections(existing_body)
     rendered = {heading for heading, _section in generated_sections}
     preserved = [
         section
         for heading, section in existing_sections
         if heading in _PRESERVED_SECTION_HEADINGS and heading not in rendered
     ]
-    body = [section for _heading, section in generated_sections]
-    front_matter = existing_front_matter or generated_front_matter
-    return front_matter + _join_card_sections(prefix, [*body, *preserved])
+    return [section for _heading, section in generated_sections] + preserved
 
 
 def _split_front_matter(card: str) -> tuple[str, str]:
@@ -892,15 +900,25 @@ def _stage_release_assets(
     if asset_writer is None:
         return {}
     rendered = dict(asset_writer(staging_dir / "assets"))
-    missing = [path for path in RELEASE_ASSET_FILES if path not in rendered]
-    if missing:
-        raise StatsReleaseError(
-            "coverage asset writer did not produce: " + ", ".join(sorted(missing))
-        )
-    for path_in_repo, local_path in rendered.items():
-        if not local_path.is_file():
-            raise StatsReleaseError(f"coverage asset {path_in_repo} was not rendered")
+    _require_complete_assets(rendered)
     return rendered
+
+
+def _require_complete_assets(rendered: Mapping[str, Path]) -> None:
+    _require_every_asset_planned(rendered)
+    _require_every_asset_written(rendered)
+
+
+def _require_every_asset_planned(rendered: Mapping[str, Path]) -> None:
+    missing = sorted(path for path in RELEASE_ASSET_FILES if path not in rendered)
+    if missing:
+        raise StatsReleaseError("coverage asset writer did not produce: " + ", ".join(missing))
+
+
+def _require_every_asset_written(rendered: Mapping[str, Path]) -> None:
+    unrendered = sorted(path for path, local in rendered.items() if not local.is_file())
+    if unrendered:
+        raise StatsReleaseError(f"coverage asset {unrendered[0]} was not rendered")
 
 
 def _merge_remote_card(card_path: Path, remote: _RemoteState) -> None:
@@ -1011,13 +1029,23 @@ def _continent_section(card: str) -> str | None:
 
 def _continent_row_combined(line: str) -> int | None:
     """Return the combined text-covered count from one continent data row."""
+    cells = _continent_data_cells(line)
+    return _parse_grouped_int(cells[5]) if cells else None
+
+
+def _continent_data_cells(line: str) -> list[str] | None:
+    """Return the cells of a continent data row, or None for any other line."""
     if not line.startswith("|"):
         return None
     cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
     if len(cells) != 7 or not cells[-1].endswith("%"):
         return None
+    return cells
+
+
+def _parse_grouped_int(value: str) -> int | None:
     try:
-        return int(cells[5].replace(",", ""))
+        return int(value.replace(",", ""))
     except ValueError:
         return None
 

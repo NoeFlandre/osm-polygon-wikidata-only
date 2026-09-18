@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -255,32 +256,46 @@ def _successful_text_ids(
     """
     names = set(pq.read_schema(path).names)
     identifier_column = _document_identity_column(names)
+    _require_text_columns(path, label, identifier_column, names)
+    columns = _scan_columns(identifier_column, names, with_wikidata=with_wikidata)
+    identifiers: set[str] = set()
+    qids: set[str] = set()
+    for batch in _iter_text_batches(path, label, columns):
+        _collect_successful_batch(batch, identifier_column, identifiers, qids)
+    return identifiers, qids
+
+
+def _require_text_columns(
+    path: Path,
+    label: str,
+    identifier_column: str,
+    names: set[str],
+) -> None:
     missing = sorted({identifier_column, "full_text"} - names)
     if missing:
         raise CoverageMapError(f"{label} parquet {path} is missing required columns: {missing}")
-    columns = [identifier_column, "full_text"]
-    if "fetch_status" in names:
-        columns.append("fetch_status")
-    if with_wikidata and "wikidata" in names:
-        columns.append("wikidata")
-    identifiers: set[str] = set()
-    qids: set[str] = set()
+
+
+def _scan_columns(
+    identifier_column: str,
+    names: set[str],
+    *,
+    with_wikidata: bool,
+) -> list[str]:
+    optional = {"fetch_status"} | ({"wikidata"} if with_wikidata else set())
+    return [identifier_column, "full_text", *sorted(optional & names)]
+
+
+def _iter_text_batches(path: Path, label: str, columns: list[str]) -> Iterator[pa.RecordBatch]:
     try:
         with pq.ParquetFile(path) as parquet_file:
-            for batch in parquet_file.iter_batches(batch_size=65_536, columns=columns):
-                _collect_successful_batch(
-                    batch,
-                    identifier_column,
-                    identifiers,
-                    qids,
-                )
+            yield from parquet_file.iter_batches(batch_size=65_536, columns=columns)
     except OSError as error:
         raise CoverageMapError(f"Could not read {label} parquet {path}: {error}") from error
     except pa.ArrowInvalid as error:
         raise CoverageMapError(
-            f"{label} parquet {path} is missing required columns: {sorted(set(columns) - names)}"
+            f"{label} parquet {path} could not be read as columns {columns}"
         ) from error
-    return identifiers, qids
 
 
 def _collect_successful_batch(
@@ -289,15 +304,11 @@ def _collect_successful_batch(
     identifiers: set[str],
     qids: set[str],
 ) -> None:
-    mask = _successful_row_mask(batch)
-    selected = batch.filter(mask)
+    selected = batch.filter(_successful_row_mask(batch))
     if selected.num_rows == 0:
         return
-    identifiers.update(
-        str(value) for value in selected.column(identifier_column).to_pylist() if value
-    )
-    if "wikidata" in selected.schema.names:
-        qids.update(str(value) for value in selected.column("wikidata").to_pylist() if value)
+    identifiers.update(_column_values(selected, identifier_column))
+    qids.update(_column_values(selected, "wikidata"))
 
 
 def _successful_row_mask(batch: pa.RecordBatch) -> Any:
@@ -321,6 +332,13 @@ def _successful_row_mask(batch: pa.RecordBatch) -> Any:
         is_ok = pc.call_function("equal", [batch.column("fetch_status"), pa.scalar("ok")])
         mask = pc.call_function("and_kleene", [mask, pc.fill_null(is_ok, False)])
     return mask
+
+
+def _column_values(batch: pa.RecordBatch, column: str) -> set[str]:
+    """Return the non-empty string values of ``column`` when it is present."""
+    if column not in batch.schema.names:
+        return set()
+    return {str(value) for value in batch.column(column).to_pylist() if value}
 
 
 def _wikivoyage_text_ids(directory: Path) -> tuple[set[str], set[str]]:
