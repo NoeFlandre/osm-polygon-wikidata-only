@@ -373,6 +373,31 @@ def test_upload_files_returns_the_upload_commit_oid(tmp_path: Path) -> None:
     assert result == "uploaded-commit-oid"
 
 
+def test_upload_files_prefers_oid_on_string_like_commit_info(tmp_path: Path) -> None:
+    class _CommitInfo(str):
+        oid = "uploaded-commit-oid"
+
+    class _FakeApi:
+        token = "my-token"
+
+        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
+            return repo_id
+
+        def create_commit(self, **_kwargs: object) -> _CommitInfo:
+            return _CommitInfo("https://huggingface.co/datasets/org/name/commit/uploaded-commit-oid")
+
+    polygon = _small_parquet(tmp_path)
+    result = upload_files(
+        "org/name",
+        [(polygon, "polygons/x.parquet")],
+        commit_message="x",
+        token="my-token",
+        _api_factory=lambda *, token: _FakeApi(),
+    )
+
+    assert result == "uploaded-commit-oid"
+
+
 def test_upload_files_can_report_noop_after_absent_delete_filtering() -> None:
     from osm_polygon_wikidata_only.hf._uploader.plan import delete_op
 
