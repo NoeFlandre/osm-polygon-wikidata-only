@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,10 @@ class TextPresenceSnapshot:
 
 
 _PRESENCE_CACHE: dict[tuple[Path, Path | None], tuple[tuple[Any, ...], TextPresenceSnapshot]] = {}
+# The sync runner drives publication from worker threads, so the cache is
+# guarded. The lock covers only the dictionary access and never the scan, so
+# callers for different roots are not serialized behind one another.
+_PRESENCE_CACHE_LOCK = threading.Lock()
 
 
 def _non_blank(value: object) -> bool:
@@ -74,11 +79,13 @@ def load_text_presence(
         links_dir.resolve() if links_dir is not None else None,
     )
     fingerprint = _presence_fingerprint(key[0], key[1])
-    cached = _PRESENCE_CACHE.get(key)
+    with _PRESENCE_CACHE_LOCK:
+        cached = _PRESENCE_CACHE.get(key)
     if cached is not None and cached[0] == fingerprint:
         return cached[1]
     snapshot = _load_text_presence_uncached(processed_root, links_dir=links_dir)
-    _PRESENCE_CACHE[key] = (fingerprint, snapshot)
+    with _PRESENCE_CACHE_LOCK:
+        _PRESENCE_CACHE[key] = (fingerprint, snapshot)
     return snapshot
 
 
