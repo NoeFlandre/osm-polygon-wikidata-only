@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 import osm_polygon_wikidata_only.cli.commands as commands
 from osm_polygon_wikidata_only.cli.parser import build_parser
@@ -121,6 +122,71 @@ def test_language_card_merge_is_idempotent_at_section_boundary() -> None:
 
     assert "\n\n## Data sources & licenses" in merged
     assert _merge_language_card(merged, **kwargs) == merged
+
+
+@pytest.mark.parametrize(
+    ("version", "configuration", "expected_path"),
+    [
+        (
+            LanguageSplitVersion.V1,
+            "polygon_articles_by_language",
+            "data/polygon_articles_by_language/lang-en-00000-of-00001.parquet",
+        ),
+        (
+            LanguageSplitVersion.V2,
+            "wikipedia_documents_by_language",
+            "language_splits/wikipedia_documents_by_language/lang-en/part-*.parquet",
+        ),
+    ],
+)
+def test_language_card_declares_viewer_language_configs_and_splits(
+    version: LanguageSplitVersion,
+    configuration: str,
+    expected_path: str,
+) -> None:
+    existing = (
+        "---\n"
+        "configs:\n"
+        "  - config_name: polygons\n"
+        "    data_files:\n"
+        "      - split: polygons\n"
+        "        path: polygons/*.parquet\n"
+        "dataset_info:\n"
+        "  config_name: polygons\n"
+        "---\n"
+        "# Existing card\n"
+    )
+
+    merged = _merge_language_card(
+        existing,
+        version=version,
+        configurations=(configuration,),
+        languages=("en", "unknown"),
+        configuration_languages=((configuration, ("en", "unknown")),),
+    )
+    front_matter = merged.split("---", 2)[1]
+    payload = yaml.safe_load(front_matter)
+    configs = {config["config_name"]: config for config in payload["configs"]}
+
+    assert "polygons" in configs
+    language_config = configs[configuration]
+    assert language_config["data_files"] == [
+        {"split": "lang-en", "path": expected_path},
+        {
+            "split": "lang-unknown",
+            "path": expected_path.replace("lang-en", "lang-unknown"),
+        },
+    ]
+    assert (
+        _merge_language_card(
+            merged,
+            version=version,
+            configurations=(configuration,),
+            languages=("en", "unknown"),
+            configuration_languages=((configuration, ("en", "unknown")),),
+        )
+        == merged
+    )
 
 
 def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:

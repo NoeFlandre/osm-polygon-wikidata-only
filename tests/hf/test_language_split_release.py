@@ -310,7 +310,7 @@ def _v2_partition(data_root: Path, table: str, language: str) -> Path:
         / "processed_v2/language_splits"
         / f"{table}_by_language"
         / f"lang-{language}"
-        / "a-latest.parquet"
+        / "part-00000-of-00001.parquet"
     )
 
 
@@ -408,7 +408,6 @@ def test_release_defaults_and_expected_file_payloads_are_explicit(tmp_path: Path
             "language",
             "split",
             "path",
-            "source_file",
             "row_count",
             "status",
         }
@@ -424,7 +423,118 @@ def test_release_defaults_and_expected_file_payloads_are_explicit(tmp_path: Path
         plan_language_split_release(tmp_path, dataset_version="v1", batch_size=0)
 
 
-def test_v2_dry_run_reports_source_specific_candidate_files_and_rows(tmp_path: Path) -> None:
+def test_v2_dry_run_plans_bounded_shards_from_inventory_counts(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+
+    plan = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1)
+    release = cast(list[dict[str, object]], plan.to_payload()["releases"])[0]
+    documents = [
+        record
+        for record in cast(list[dict[str, object]], release["expected_files"])
+        if record["table"] == "wikipedia_documents"
+    ]
+
+    assert {(record["language"], record["row_count"], record["path"]) for record in documents} == {
+        (
+            "fr",
+            1,
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00000-of-00001.parquet",
+        ),
+        (
+            "unknown",
+            1,
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-unknown/part-00000-of-00001.parquet",
+        ),
+    }
+    assert all("source_file" not in record for record in documents)
+
+
+def test_v2_dry_run_calculates_multiple_shards_without_source_scans(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+    planned = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1).releases[0]
+    original = cast(LanguageTableInventory, planned.inventory.table("wikipedia_documents"))
+    original_fr = original.bucket("fr")
+    large_fr = replace(original_fr, row_count=200_001)
+    replacement = replace(
+        original,
+        row_count=original.row_count - original_fr.row_count + large_fr.row_count,
+        buckets=tuple(
+            large_fr if bucket.language == "fr" else bucket for bucket in original.buckets
+        ),
+    )
+    inventory = replace(
+        planned.inventory,
+        tables=tuple(
+            replacement if table.table.value == "wikipedia_documents" else table
+            for table in planned.inventory.tables
+        ),
+    )
+
+    documents = [
+        record
+        for record in _expected_files(planned, inventory)
+        if record["table"] == "wikipedia_documents" and record["language"] == "fr"
+    ]
+
+    assert [(record["path"], record["row_count"]) for record in documents] == [
+        (
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00000-of-00003.parquet",
+            100_000,
+        ),
+        (
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00001-of-00003.parquet",
+            100_000,
+        ),
+        (
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00002-of-00003.parquet",
+            1,
+        ),
+    ]
+
+
+def test_v2_dry_run_keeps_a_boundary_sized_bucket_in_one_shard(tmp_path: Path) -> None:
+    _write_v2_fixture(tmp_path)
+    planned = plan_language_split_release(tmp_path, dataset_version="v2", batch_size=1).releases[0]
+    original = cast(LanguageTableInventory, planned.inventory.table("wikipedia_documents"))
+    original_fr = original.bucket("fr")
+    boundary_fr = replace(original_fr, row_count=100_000)
+    inventory = replace(
+        planned.inventory,
+        tables=tuple(
+            replace(
+                table,
+                row_count=table.row_count - original_fr.row_count + boundary_fr.row_count,
+                buckets=tuple(
+                    boundary_fr if bucket.language == "fr" else bucket for bucket in table.buckets
+                ),
+            )
+            if table.table.value == "wikipedia_documents"
+            else table
+            for table in planned.inventory.tables
+        ),
+    )
+
+    documents = [
+        record
+        for record in _expected_files(planned, inventory)
+        if record["table"] == "wikipedia_documents" and record["language"] == "fr"
+    ]
+
+    assert [(record["path"], record["row_count"]) for record in documents] == [
+        (
+            "processed_v2/language_splits/wikipedia_documents_by_language/"
+            "lang-fr/part-00000-of-00001.parquet",
+            100_000,
+        )
+    ]
+
+
+def test_v2_dry_run_reports_bounded_candidate_shards_and_rows(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     _write_table(
         root / "polygons/z-latest.parquet",
@@ -512,38 +622,31 @@ def test_v2_dry_run_reports_source_specific_candidate_files_and_rows(tmp_path: P
     ]
 
     assert sorted(
-        (
-            record["source_file"],
-            record["language"],
-            record["split"],
-            record["path"],
-            record["row_count"],
-            record["status"],
-        )
+        (record["language"], record["split"], record["path"], record["row_count"], record["status"])
         for record in documents
     ) == sorted(
         [
             (
-                "wikipedia/documents/z-latest.parquet",
                 "en",
                 "lang-en",
-                "processed_v2/language_splits/wikipedia_documents_by_language/lang-en/z-latest.parquet",
+                "processed_v2/language_splits/wikipedia_documents_by_language/"
+                "lang-en/part-00000-of-00001.parquet",
                 1,
                 "candidate",
             ),
             (
-                "wikipedia/documents/a-latest.parquet",
                 "fr",
                 "lang-fr",
-                "processed_v2/language_splits/wikipedia_documents_by_language/lang-fr/a-latest.parquet",
+                "processed_v2/language_splits/wikipedia_documents_by_language/"
+                "lang-fr/part-00000-of-00001.parquet",
                 1,
                 "candidate",
             ),
             (
-                "wikipedia/documents/a-latest.parquet",
                 "unknown",
                 "lang-unknown",
-                "processed_v2/language_splits/wikipedia_documents_by_language/lang-unknown/a-latest.parquet",
+                "processed_v2/language_splits/wikipedia_documents_by_language/"
+                "lang-unknown/part-00000-of-00001.parquet",
                 1,
                 "candidate",
             ),
@@ -551,6 +654,7 @@ def test_v2_dry_run_reports_source_specific_candidate_files_and_rows(tmp_path: P
     )
     assert all("path" in record for record in documents)
     assert all("path_template" not in record for record in documents)
+    assert all("source_file" not in record for record in documents)
 
 
 @pytest.mark.parametrize(
@@ -942,7 +1046,7 @@ def test_v2_generation_preserves_rows_and_uses_hugging_face_compatible_names(
             "path",
             "row_count",
             "sha256",
-            "source_file",
+            "source_files",
             "split",
             "table",
         }

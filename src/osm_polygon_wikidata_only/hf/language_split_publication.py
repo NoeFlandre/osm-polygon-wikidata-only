@@ -40,6 +40,8 @@ LANGUAGE_PUBLICATION_COMMIT_MESSAGE = "Publish row-level language partitions"
 V1_LANGUAGE_MANIFEST_REMOTE = "manifests/language_splits_v1.json"
 V2_LANGUAGE_MANIFEST_REMOTE = "manifests/language_splits.json"
 LANGUAGE_CARD_HEADING = "## Language partitions"
+_LANGUAGE_CONFIG_BEGIN = "  # BEGIN LANGUAGE SPLIT CONFIGS"
+_LANGUAGE_CONFIG_END = "  # END LANGUAGE SPLIT CONFIGS"
 _REMOTE_README = "README.md"
 _REMOTE_CACHE_DIR = "language_split_publication"
 MAX_ATOMIC_PUBLICATION_FILES = 25_000
@@ -81,6 +83,7 @@ class LanguagePublicationPlan:
     languages: tuple[str, ...]
     configurations: tuple[str, ...]
     files: tuple[LanguagePublishedFile, ...]
+    configuration_languages: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         """Return stable JSON-compatible plan evidence."""
@@ -93,6 +96,10 @@ class LanguagePublicationPlan:
             "manifest_remote_path": self.manifest_remote_path,
             "languages": list(self.languages),
             "configurations": list(self.configurations),
+            "configuration_languages": [
+                {"configuration": configuration, "languages": list(languages)}
+                for configuration, languages in self.configuration_languages
+            ],
             "files": [item.to_dict() for item in self.files],
         }
 
@@ -495,7 +502,28 @@ def _plan_from_version_plan(version_plan: Any) -> LanguagePublicationPlan:
             sorted(table.configuration for table in version_plan.inventory.tables)
         ),
         files=tuple(sorted(files, key=lambda item: item.path_in_repo)),
+        configuration_languages=_configuration_languages(version_plan.inventory),
     )
+
+
+def _configuration_languages(inventory: Any) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return non-empty language buckets grouped by Viewer configuration."""
+    grouped: list[tuple[str, tuple[str, ...]]] = []
+    for table in getattr(inventory, "tables", ()):
+        buckets = getattr(table, "buckets", ())
+        languages = tuple(
+            sorted(
+                {str(bucket.language) for bucket in buckets if getattr(bucket, "row_count", 0) > 0},
+                key=_language_sort_key,
+            )
+        )
+        if languages:
+            grouped.append((str(table.configuration), languages))
+    return tuple(sorted(grouped, key=lambda item: item[0]))
+
+
+def _language_sort_key(language: str) -> tuple[bool, str]:
+    return language == "unknown", language
 
 
 def _plan_from_generated(version_plan: Any, generated: Any) -> LanguagePublicationPlan:
@@ -529,6 +557,7 @@ def _plan_from_generated(version_plan: Any, generated: Any) -> LanguagePublicati
             sorted(table.configuration for table in version_plan.inventory.tables)
         ),
         files=tuple(sorted((*files, manifest), key=lambda item: item.path_in_repo)),
+        configuration_languages=_configuration_languages(version_plan.inventory),
     )
 
 
@@ -765,6 +794,7 @@ def _write_card_snapshot(data_root: Path, plan: LanguagePublicationPlan, existin
         version=plan.version,
         configurations=plan.configurations,
         languages=plan.languages,
+        configuration_languages=plan.configuration_languages,
     )
     atomic_write_text(path, updated)
     return path
@@ -776,8 +806,11 @@ def _merge_language_card(
     version: LanguageSplitVersion,
     configurations: Sequence[str],
     languages: Sequence[str],
+    configuration_languages: Sequence[tuple[str, Sequence[str]]] = (),
 ) -> str:
     """Replace only the managed language section and preserve other card text."""
+    if configuration_languages:
+        existing = _merge_language_front_matter(existing, version, configuration_languages)
     section = _render_language_card_section(version, configurations, languages)
     pattern = re.compile(
         rf"^{re.escape(LANGUAGE_CARD_HEADING)}\n.*?(?=^## |\Z)",
@@ -794,6 +827,64 @@ def _merge_language_card(
     if marker:
         return existing[: marker.start()] + section + "\n" + existing[marker.start() :]
     return existing.rstrip() + "\n\n" + section
+
+
+def _merge_language_front_matter(
+    existing: str,
+    version: LanguageSplitVersion,
+    configuration_languages: Sequence[tuple[str, Sequence[str]]],
+) -> str:
+    """Replace the managed language config block without reserializing YAML."""
+    if not existing.startswith("---\n"):
+        raise LanguagePublicationError(
+            "dataset card has no YAML front matter; refusing to add Viewer language configs"
+        )
+    closing = existing.find("\n---", 4)
+    if closing < 0:
+        raise LanguagePublicationError(
+            "dataset card YAML front matter is unterminated; refusing to add Viewer language configs"
+        )
+    front_matter = existing[4:closing]
+    block = _render_language_front_matter_block(version, configuration_languages)
+    marker_pattern = re.compile(
+        rf"^{re.escape(_LANGUAGE_CONFIG_BEGIN)}\n.*?^{re.escape(_LANGUAGE_CONFIG_END)}\n?",
+        re.MULTILINE | re.DOTALL,
+    )
+    marked = marker_pattern.search(front_matter)
+    if marked:
+        updated_front_matter = front_matter[: marked.start()] + block + front_matter[marked.end() :]
+    else:
+        configs = re.search(r"^configs:\s*$", front_matter, re.MULTILINE)
+        if configs is None:
+            raise LanguagePublicationError(
+                "dataset card YAML front matter has no configs field; "
+                "refusing to add Viewer language configs"
+            )
+        insertion = configs.end()
+        updated_front_matter = (
+            front_matter[:insertion] + "\n" + block.rstrip("\n") + front_matter[insertion:]
+        )
+    return "---\n" + updated_front_matter + existing[closing:]
+
+
+def _render_language_front_matter_block(
+    version: LanguageSplitVersion,
+    configuration_languages: Sequence[tuple[str, Sequence[str]]],
+) -> str:
+    lines = [_LANGUAGE_CONFIG_BEGIN]
+    for configuration, languages in sorted(configuration_languages, key=lambda item: item[0]):
+        lines.append(f"  - config_name: {configuration}")
+        lines.append("    data_files:")
+        for language in sorted(set(languages), key=_language_sort_key):
+            split = f"lang-{language}"
+            if version is LanguageSplitVersion.V1:
+                path = f"data/{configuration}/{split}-00000-of-00001.parquet"
+            else:
+                path = f"language_splits/{configuration}/{split}/part-*.parquet"
+            lines.append(f"      - split: {split}")
+            lines.append(f"        path: {path}")
+    lines.append(_LANGUAGE_CONFIG_END)
+    return "\n".join(lines) + "\n"
 
 
 def _render_language_card_section(
@@ -818,7 +909,7 @@ def _render_language_card_section(
         if version is LanguageSplitVersion.V1:
             path = f"data/{configuration}/lang-<language>-00000-of-00001.parquet"
         else:
-            path = f"language_splits/{configuration}/lang-<language>/*.parquet"
+            path = f"language_splits/{configuration}/lang-<language>/part-*.parquet"
         lines.append(f"| `{configuration}` | `lang-<language>` and `lang-unknown` | `{path}` |")
     lines.extend(
         [

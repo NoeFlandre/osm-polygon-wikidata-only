@@ -9,6 +9,7 @@ import sys
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pyarrow as pa
@@ -18,6 +19,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
+    LanguageBucket,
     LanguageInventory,
     LanguageTable,
     LanguageTableInventory,
@@ -28,6 +30,7 @@ from osm_polygon_wikidata_only.v2 import language_splits
 from osm_polygon_wikidata_only.v2.language_splits import (
     DEFAULT_BATCH_SIZE,
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+    V2_LANGUAGE_SPLIT_CONTRACT_VERSION,
     V2LanguageSplitError,
     V2LanguageSplitFile,
     V2LanguageSplitResult,
@@ -269,6 +272,44 @@ def test_v2_split_keeps_each_multilingual_row_in_its_own_partition(tmp_path: Pat
     assert (root / "language_splits" / "polygons").exists() is False
 
 
+def test_v2_split_aggregates_rows_into_deterministic_bounded_shards(
+    tmp_path: Path,
+) -> None:
+    root = _write_v2_fixture(tmp_path)
+
+    result = build_v2_language_splits(root, batch_size=1, max_rows_per_shard=1)
+
+    french_dir = root / "language_splits/wikipedia_documents_by_language/lang-fr"
+    assert sorted(path.name for path in french_dir.glob("*.parquet")) == [
+        "part-00000-of-00002.parquet",
+        "part-00001-of-00002.parquet",
+    ]
+    assert [
+        row["document_id"]
+        for path in sorted(french_dir.glob("*.parquet"))
+        for row in pq.read_table(path).to_pylist()
+    ] == ["doc-fr-a", "doc-fr-z"]
+
+    french_files = [
+        file
+        for file in result.files
+        if file.table is LanguageTable.WIKIPEDIA_DOCUMENTS and file.language == "fr"
+    ]
+    assert [file.source_files for file in french_files] == [
+        ("wikipedia/documents/a-latest.parquet",),
+        ("wikipedia/documents/z-latest.parquet",),
+    ]
+    manifest_files = [
+        file
+        for table in cast(list[dict[str, object]], _manifest(root)["tables"])
+        for bucket in cast(list[dict[str, object]], table["buckets"])
+        for file in cast(list[dict[str, object]], bucket["files"])
+        if file["table"] == "wikipedia_documents" and file["language"] == "fr"
+    ]
+    assert all("source_files" in file and "source_file" not in file for file in manifest_files)
+    assert _manifest(root)["contract_version"] == V2_LANGUAGE_SPLIT_CONTRACT_VERSION
+
+
 def test_v2_split_routes_unusable_values_to_lang_unknown(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -355,7 +396,7 @@ def test_v2_split_conserves_rows_and_preserves_schema(tmp_path: Path) -> None:
                     "path",
                     "row_count",
                     "sha256",
-                    "source_file",
+                    "source_files",
                     "split",
                     "table",
                 }
@@ -415,7 +456,7 @@ def test_v2_sort_keys_put_unknown_after_known_languages() -> None:
         configuration="polygon_articles_by_language",
         language="en",
         split="lang-en",
-        source_file="z.parquet",
+        source_files=("z.parquet",),
         path="",
         row_count=1,
         sha256="",
@@ -425,7 +466,7 @@ def test_v2_sort_keys_put_unknown_after_known_languages() -> None:
         configuration=known.configuration,
         language="unknown",
         split="lang-unknown",
-        source_file="a.parquet",
+        source_files=("a.parquet",),
         path="",
         row_count=1,
         sha256="",
@@ -481,6 +522,7 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
         destination,
         inventory,
         1,
+        100_000,
         root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
     )
 
@@ -495,80 +537,6 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
             / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
         },
     )
-
-
-def test_v2_write_source_file_keeps_source_file_and_unknown_last(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "processed_v2"
-    root.mkdir()
-    destination = root / "language_splits"
-    stage_root = tmp_path / "stage"
-    spec = language_table_specs(DatasetContract.V2)[0]
-    captured: list[tuple[str, str]] = []
-
-    def fake_stream(
-        source_path: Path,
-        destination_arg: Path,
-        stage_root_arg: Path,
-        spec_arg: object,
-        batch_size: int,
-        expected_schema: pa.Schema,
-        state: object,
-        stack: ExitStack,
-    ) -> None:
-        del (
-            source_path,
-            destination_arg,
-            stage_root_arg,
-            spec_arg,
-            batch_size,
-            expected_schema,
-            stack,
-        )
-        state.row_counts.update({"unknown": 1, "zzz": 1})  # type: ignore[attr-defined]
-        state.staged_paths.update(  # type: ignore[attr-defined]
-            {"unknown": stage_root / "unknown.parquet", "zzz": stage_root / "zzz.parquet"}
-        )
-        state.final_paths.update(  # type: ignore[attr-defined]
-            {
-                "unknown": destination / "unknown.parquet",
-                "zzz": destination / "zzz.parquet",
-            }
-        )
-
-    def fake_validate(
-        root_arg: Path,
-        spec_arg: object,
-        language: str,
-        source_file: str,
-        staged_path: Path,
-        final_path: Path,
-        expected_rows: int,
-        expected_schema: pa.Schema,
-    ) -> V2LanguageSplitFile:
-        del root_arg, spec_arg, staged_path, final_path, expected_rows, expected_schema
-        captured.append((language, source_file))
-        return V2LanguageSplitFile(
-            table=spec.table,
-            configuration=spec.configuration,
-            language=language,
-            split=f"lang-{language}",
-            source_file=source_file,
-            path=f"language_splits/{language}.parquet",
-            row_count=1,
-            sha256="digest",
-        )
-
-    monkeypatch.setattr(language_splits, "_stream_source_file", fake_stream)
-    monkeypatch.setattr(language_splits, "_validated_output_file", fake_validate)
-
-    files, _ = language_splits._write_source_file(
-        root, destination, stage_root, spec, "source.parquet", 1
-    )
-
-    assert captured == [("zzz", "source.parquet"), ("unknown", "source.parquet")]
-    assert [file.language for file in files] == ["zzz", "unknown"]
 
 
 def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
@@ -597,7 +565,7 @@ def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
         return value
 
     monkeypatch.setattr(language_splits, "language_table_specs", lambda dataset: (spec,))
-    monkeypatch.setattr(language_splits, "_write_source_file", lambda *args: ([], {}))
+    monkeypatch.setattr(language_splits, "_write_table", lambda *args: ([], {}))
     monkeypatch.setattr(language_splits, "cast", fake_cast)
 
     assert language_splits._stage_v2_files(
@@ -606,6 +574,7 @@ def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
         tmp_path / "stage",
         FakeInventory(),
         1,
+        100_000,
     ) == ([], {})
     assert observed == [(LanguageTableInventory, table_inventory)]
 
@@ -615,7 +584,7 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
 ) -> None:
     batch = pa.record_batch([pa.array(["en", "en"])], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._SourceWriteState({}, {}, {}, defaultdict(int))
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
     observed: dict[str, object] = {}
 
     class FakeWriter:
@@ -629,7 +598,15 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
         observed["type"] = type
         return real_array(values, type=type)
 
-    monkeypatch.setattr(language_splits, "_writer_for_language", lambda *args: writer)
+    shard = SimpleNamespace(source_files=[], row_count=0, writer=writer)
+    state.current["en"] = shard
+    state.shards.append(shard)
+
+    def fake_writer_for_language(*args: object) -> SimpleNamespace:
+        observed["max_rows_per_shard"] = args[4]
+        return shard
+
+    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
     monkeypatch.setattr(language_splits.pa, "array", fake_array)
 
     with ExitStack() as stack:
@@ -640,6 +617,8 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
             tmp_path / "stage",
             spec,
             "source",
+            10,
+            {"en": 1},
             batch.schema,
             state,
             stack,
@@ -647,11 +626,148 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
 
     assert observed["type"] == pa.int64()
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
+    assert observed["max_rows_per_shard"] == 10
+
+
+def test_v2_table_shard_counts_omit_empty_buckets() -> None:
+    bucket = LanguageBucket(
+        language="en",
+        row_count=0,
+        canonical_rows=0,
+        legacy_alias_rows=0,
+        missing_rows=0,
+        blank_rows=0,
+        malformed_rows=0,
+        legacy_unusable_rows=0,
+    )
+    nonempty = LanguageBucket(
+        language="fr",
+        row_count=1,
+        canonical_rows=1,
+        legacy_alias_rows=0,
+        missing_rows=0,
+        blank_rows=0,
+        malformed_rows=0,
+        legacy_unusable_rows=0,
+    )
+    inventory = LanguageTableInventory(
+        table=LanguageTable.WIKIPEDIA_DOCUMENTS,
+        configuration="wikipedia_documents_by_language",
+        language_column="language",
+        identity_columns=("document_id",),
+        source_files=(),
+        row_count=1,
+        buckets=(bucket, nonempty),
+    )
+
+    assert language_splits._table_shard_counts(inventory, 100_000) == {"fr": 1}
+
+
+def test_v2_write_language_indices_respects_existing_shard_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    batch = pa.record_batch([pa.array(["en"] * 8)], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+
+    class FakeWriter:
+        def __init__(self) -> None:
+            self.rows: list[list[dict[str, object]]] = []
+
+        def write_batch(self, selected: pa.RecordBatch) -> None:
+            self.rows.append(selected.to_pylist())
+
+        def close(self) -> None:
+            return None
+
+    first = SimpleNamespace(source_files=[], row_count=3, writer=FakeWriter())
+    second = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    state.current["en"] = first
+    writers = iter((first, second))
+    monkeypatch.setattr(language_splits, "_writer_for_language", lambda *args: next(writers))
+
+    with ExitStack() as stack:
+        language_splits._write_language_indices(
+            "en",
+            list(range(8)),
+            batch,
+            tmp_path / "destination",
+            tmp_path / "stage",
+            spec,
+            "source",
+            10,
+            {"en": 2},
+            batch.schema,
+            state,
+            stack,
+        )
+
+    assert [len(rows) for rows in first.writer.rows] == [7]
+    assert [len(rows) for rows in second.writer.rows] == [1]
+    assert first.row_count == 10
+    assert second.row_count == 1
+    assert "en" not in state.current
+
+
+def test_v2_write_language_indices_advances_offset_across_shards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+
+    class FakeWriter:
+        def write_batch(self, selected: pa.RecordBatch) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    first = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    second = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    state.current["en"] = first
+    writers = iter((first, second))
+
+    def fake_writer_for_language(*args: object) -> SimpleNamespace:
+        try:
+            return next(writers)
+        except StopIteration as error:
+            raise AssertionError("offset did not advance across shards") from error
+
+    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
+
+    with ExitStack() as stack:
+        language_splits._write_language_indices(
+            "en",
+            list(range(3)),
+            batch,
+            tmp_path / "destination",
+            tmp_path / "stage",
+            spec,
+            "source",
+            2,
+            {"en": 2},
+            batch.schema,
+            state,
+            stack,
+        )
+
+    assert first.row_count == 2
+    assert second.row_count == 1
+
+
+def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
+    shard = SimpleNamespace(source_files=["source-a.parquet"])
+
+    language_splits._record_source_file(shard, "source-a.parquet")
+    language_splits._record_source_file(shard, "source-b.parquet")
+
+    assert shard.source_files == ["source-a.parquet", "source-b.parquet"]
 
 
 def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._SourceWriteState({}, {}, {}, defaultdict(int))
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
     observed: dict[str, object] = {}
 
     @contextmanager
@@ -672,18 +788,64 @@ def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.M
             tmp_path / "destination",
             tmp_path / "stage",
             spec,
-            "source",
+            10,
+            {"en": 1},
             spec.schema_factory(),
             state,
             stack,
         )
 
-    assert writer is state.writers["en"]
+    assert writer is state.current["en"]
+    assert writer.shard_index == 0
     assert observed["writer"] == (
-        tmp_path / "stage" / spec.configuration / "lang-en" / "source.parquet",
+        tmp_path / "stage" / spec.configuration / "lang-en" / "part-00000-of-00001.parquet",
         spec.schema_factory(),
         "snappy",
     )
+
+
+def test_v2_writer_increments_shard_indices_after_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    created: list[Path] = []
+
+    @contextmanager
+    def fake_atomic(path: Path):
+        yield path
+
+    class FakeWriter:
+        def __init__(self, path: Path, schema: pa.Schema, *, compression: str) -> None:
+            created.append(path)
+
+    monkeypatch.setattr(language_splits, "atomic_replacement", fake_atomic)
+    monkeypatch.setattr(language_splits.pq, "ParquetWriter", FakeWriter)
+
+    with ExitStack() as stack:
+        shards = []
+        for _ in range(3):
+            shards.append(
+                language_splits._writer_for_language(
+                    "en",
+                    tmp_path / "destination",
+                    tmp_path / "stage",
+                    spec,
+                    10,
+                    {"en": 3},
+                    spec.schema_factory(),
+                    state,
+                    stack,
+                )
+            )
+            state.current.pop("en")
+
+    assert [shard.shard_index for shard in shards] == [0, 1, 2]
+    assert [path.name for path in created] == [
+        "part-00000-of-00003.parquet",
+        "part-00001-of-00003.parquet",
+        "part-00002-of-00003.parquet",
+    ]
 
 
 def test_v2_validated_output_checks_schema_and_records_all_metadata(
@@ -718,16 +880,16 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
     staged = root / "stage/file.parquet"
     final = root / "language_splits/table/lang-fr/file.parquet"
 
-    result = language_splits._validated_output_file(
-        root,
-        spec,
-        "fr",
-        "source.parquet",
-        staged,
-        final,
-        0,
-        schema,
+    shard = language_splits._ShardWriteState(
+        language="fr",
+        shard_index=0,
+        writer=cast(pq.ParquetWriter, object()),
+        final_path=final,
+        staged_path=staged,
+        row_count=0,
+        source_files=["source.parquet"],
     )
+    result = language_splits._validated_output_file(root, spec, shard, schema)
 
     assert checks == [True]
     assert result == V2LanguageSplitFile(
@@ -735,7 +897,7 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
         configuration=spec.configuration,
         language="fr",
         split="lang-fr",
-        source_file="source.parquet",
+        source_files=("source.parquet",),
         path="language_splits/table/lang-fr/file.parquet",
         row_count=0,
         sha256="digest",
@@ -788,10 +950,7 @@ def test_v2_split_preserves_sorted_source_and_row_order(tmp_path: Path) -> None:
         for path in sorted(
             (root / "language_splits/wikipedia_documents_by_language/lang-fr").glob("*.parquet")
         )
-    ] == [
-        "a-latest.parquet",
-        "z-latest.parquet",
-    ]
+    ] == ["part-00000-of-00001.parquet"]
     assert [row["document_id"] for row in _rows(root, "wikipedia_documents", "fr")] == [
         "doc-fr-a",
         "doc-fr-z",
@@ -824,7 +983,7 @@ def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: 
     root = _write_v2_fixture(tmp_path)
 
     build_v2_language_splits(root)
-    stale = _shard(root, "wikipedia_documents", "de", "a-latest")
+    stale = _shard(root, "wikipedia_documents", "de", "part-00000-of-00001")
     assert stale.is_file()
     unmanaged = root / "language_splits/operator-data/operator-owned.parquet"
     unmanaged.parent.mkdir(parents=True)
@@ -846,7 +1005,8 @@ def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: 
     assert operator_empty.is_dir()
     manifest = _manifest(root)
     assert all(
-        file["path"] != "language_splits/wikipedia_documents_by_language/lang-de/a-latest.parquet"
+        file["path"]
+        != "language_splits/wikipedia_documents_by_language/lang-de/part-00000-of-00001.parquet"
         for table in cast(list[dict[str, object]], manifest["tables"])
         for bucket in cast(list[dict[str, object]], table["buckets"])
         for file in cast(list[dict[str, object]], bucket["files"])

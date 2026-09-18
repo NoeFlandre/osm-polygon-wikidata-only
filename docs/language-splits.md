@@ -31,7 +31,9 @@ The JSON result reports the selected contract, validated source-manifest
 fingerprints, expected files, row counts, and generated manifest paths. The
 command streams source Parquet batches, preserves row-level language
 semantics, maps unusable language values to the accepted `unknown` bucket,
-and uses Hugging Face-compatible names such as `lang-be-tarask`.
+and uses Hugging Face-compatible names such as `lang-be-tarask`. Both
+published dataset cards declare one additive Hugging Face Dataset Viewer
+configuration per language-bearing table, with selectable `lang-*` splits.
 
 The plain `language-splits` command is local generation only. It does not read
 raw PBF files, sample or truncate rows, upload to Hugging Face, or modify
@@ -42,8 +44,9 @@ commands and the `release-stats` card/statistics path remain separate.
 
 After reviewing the dry-run plan, publish with the separate exact-target
 command. It creates one atomic Hub commit per selected dataset, updates only
-the managed language section of the existing card, verifies the uploaded files
-at the returned revision, and makes an unchanged second run a no-op:
+the managed language metadata and section of the existing card, verifies the
+uploaded files at the returned revision, and makes an unchanged second run a
+no-op:
 
 ```console
 uv run osm-polygon-wikidata-only publish-language-splits \
@@ -54,13 +57,14 @@ uv run osm-polygon-wikidata-only publish-language-splits \
 ```
 
 Use the V2 repository confirmation for `--dataset-version v2`, or repeat both
-exact confirmations for `both`. V1 publishes `data/<configuration>/lang-*`
-files; V2 publishes `language_splits/<configuration>/lang-*` files. The
+exact confirmations for `both`. V1 publishes
+`data/<configuration>/lang-<language>-00000-of-00001.parquet` files; V2
+publishes deterministic bounded
+`language_splits/<configuration>/lang-<language>/part-*.parquet` shards. The
 generated manifests remain under `manifests/` and are the ownership record
 used to remove only obsolete generated shards on later releases.
 
-The command refuses an apply before local generation or Hub mutation when the
-selected output cannot fit one atomic Hub commit. The current V2 dry-run plans
-179,847 files, above Hugging Face's 25,000-file atomic limit; publishing V2
-therefore needs an explicit shard-aggregation or non-atomic publication design
-change.
+V2 shard planning uses the validated row inventory, keeps each shard at most
+100,000 rows, and records the contributing source files. The command still
+refuses an apply before local generation or Hub mutation when any selected
+release exceeds Hugging Face's 25,000-file atomic-commit limit.
