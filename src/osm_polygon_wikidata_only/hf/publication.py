@@ -145,6 +145,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
     compute_augmentation_stats,
 )
+from osm_polygon_wikidata_only.hf._dataset_stats.rendering import demote_headings
 from osm_polygon_wikidata_only.hf._publication import artifacts as _publication_artifacts
 from osm_polygon_wikidata_only.hf._publication.artifacts import (
     load_existing_core_artifacts,
@@ -309,6 +310,12 @@ def write_readme_snapshot(
     _write_readme_snapshot(data_root, repo_id, destination, generated_on=None)
 
 
+def _collapsed_section(summary: str, body: str) -> str:
+    """Return ``body`` behind a Hub-rendered collapsed disclosure block."""
+    nested = demote_headings(body.strip())
+    return f"<details>\n<summary>{summary}</summary>\n\n{nested}\n\n</details>\n"
+
+
 def _write_readme_snapshot(
     data_root: DataRoot,
     repo_id: str,
@@ -353,8 +360,12 @@ def _write_readme_snapshot(
     stats_section = render_stats_section(
         core_stats,
         augmentation_stats=augmentation_stats,
+        public=True,
     )
-    stats_section += "\n" + render_polygon_stats_section(data_root.processed)
+    stats_section += "\n" + _collapsed_section(
+        "Polygon surface and geometry",
+        render_polygon_stats_section(data_root.processed),
+    )
     if any(data_root.processed_polygons.glob("*.parquet")):
         countries_path = ensure_world_countries(data_root.cache)
         stats_section += "\n" + render_continent_stats(

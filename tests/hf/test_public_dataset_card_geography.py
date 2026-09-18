@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.hf import geographic_text_presence as text_presence_module
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import split_antimeridian
+from osm_polygon_wikidata_only.hf._geographic.models import CoverageMapError
 from osm_polygon_wikidata_only.hf._links.reader import is_canonical_link_schema
 from osm_polygon_wikidata_only.hf.continent_stats import (
     assign_continents,
@@ -477,3 +478,96 @@ def test_text_reporting_deduplicates_overlapping_regions_by_typed_identity(
         (("way", 7), "north:way:7"),
     ]
     assert sum(cell.polygon_count for cell in cells) == 2
+
+
+# ---------------------------------------------------------------------------
+# Vectorized document scanning and snapshot reuse
+# ---------------------------------------------------------------------------
+
+
+def _presence_root(tmp_path: Path, documents: list[dict[str, Any]]) -> Path:
+    processed = tmp_path / "processed"
+    _write(
+        processed / "polygons" / "x.parquet",
+        [{"polygon_id": "p1", "wikidata": "Q1", "lon": 2.0, "lat": 48.0}],
+    )
+    _write(processed / "wikipedia" / "documents" / "x.parquet", documents)
+    _write(processed / "polygon_articles" / "x.parquet", [{"polygon_id": "p1", "article_id": "a1"}])
+    return processed
+
+
+def test_document_scan_rejects_rows_whose_fetch_status_is_not_ok(tmp_path: Path) -> None:
+    processed = _presence_root(
+        tmp_path,
+        [{"article_id": "a1", "wikidata": "Q1", "full_text": "text", "fetch_status": "error"}],
+    )
+
+    snapshot = load_text_presence(processed)
+
+    assert snapshot.wikipedia_document_ids == frozenset()
+    assert snapshot.combined_covered_polygon_ids == frozenset()
+
+
+def test_document_scan_keeps_rows_whose_fetch_status_is_ok(tmp_path: Path) -> None:
+    processed = _presence_root(
+        tmp_path,
+        [{"article_id": "a1", "wikidata": "Q1", "full_text": "text", "fetch_status": "ok"}],
+    )
+
+    assert load_text_presence(processed).wikipedia_document_ids == frozenset({"a1"})
+
+
+def test_document_scan_treats_whitespace_only_and_null_text_as_empty(tmp_path: Path) -> None:
+    processed = _presence_root(
+        tmp_path,
+        [
+            {"article_id": "a1", "wikidata": "Q1", "full_text": " \t\n "},
+            {"article_id": "a2", "wikidata": "Q1", "full_text": None},
+        ],
+    )
+
+    assert load_text_presence(processed).wikipedia_document_ids == frozenset()
+
+
+def test_document_scan_reports_a_table_without_full_text(tmp_path: Path) -> None:
+    processed = _presence_root(tmp_path, [{"article_id": "a1", "wikidata": "Q1"}])
+
+    with pytest.raises(CoverageMapError, match="full_text"):
+        load_text_presence(processed)
+
+
+def test_snapshot_is_reused_until_the_inputs_change(tmp_path: Path) -> None:
+    processed = _presence_root(
+        tmp_path, [{"article_id": "a1", "wikidata": "Q1", "full_text": "text"}]
+    )
+
+    first = load_text_presence(processed)
+    assert load_text_presence(processed) is first, "an unchanged root must not be rescanned"
+
+    _write(
+        processed / "wikipedia" / "documents" / "y.parquet",
+        [{"article_id": "a2", "wikidata": "Q1", "full_text": "more"}],
+    )
+    second = load_text_presence(processed)
+
+    assert second is not first
+    assert second.wikipedia_document_ids == frozenset({"a1", "a2"})
+
+
+def test_batch_scan_reports_an_unreadable_file(tmp_path: Path) -> None:
+    missing = tmp_path / "absent.parquet"
+
+    with pytest.raises(CoverageMapError, match="Could not read wikipedia parquet"):
+        text_presence_module._scan_text_batches(
+            missing, "wikipedia", ["article_id", "full_text"], lambda batch: None
+        )
+
+
+def test_batch_scan_reports_a_file_that_is_not_parquet(tmp_path: Path) -> None:
+    corrupt = tmp_path / "corrupt.parquet"
+    corrupt.write_text("this is not parquet", encoding="utf-8")
+
+    with pytest.raises(CoverageMapError, match="could not be read as columns"):
+        text_presence_module._scan_text_batches(
+            corrupt, "wikipedia", ["article_id", "full_text"], lambda batch: None
+        )

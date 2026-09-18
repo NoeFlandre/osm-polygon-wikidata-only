@@ -42,7 +42,7 @@ sync: quality-runtime
 
 baseline: quality-runtime
     uv sync --frozen
-    uv run python -m pytest --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/baseline-pytest" -q
+    uv run python -m pytest --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/baseline-pytest" -q -n auto --dist loadfile
     @git status --short --branch
 
 test: quality-runtime
@@ -56,13 +56,13 @@ coverage: quality-runtime
     COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-coverage" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/coverage-pytest" -q
 
 tests: quality-runtime
-    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q
+    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile
 
 property-tests: quality-runtime
-    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" tests/property
+    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property
 
 acceptance-tests: quality-runtime
-    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/acceptance-pytest" tests/acceptance tests/pipeline/test_end_to_end.py tests/pipeline/test_sync_recovery_integration.py
+    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/acceptance-pytest" -n auto --dist loadfile tests/acceptance tests/pipeline/test_end_to_end.py tests/pipeline/test_sync_recovery_integration.py
 
 architecture-checks: quality-runtime
     just build

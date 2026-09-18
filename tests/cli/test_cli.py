@@ -1281,7 +1281,15 @@ def test_release_stats_dry_run_reports_the_v2_plan(
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["repo_id"] == "NoeFlandre/osm-polygon-wikidata-and-wikipedia"
     assert payload["published"] is False
-    assert [item["path_in_repo"] for item in payload["files"]] == ["README.md", "stats.json"]
+    # The coverage assets are released with the card so their captions can
+    # never drift from the statistics the card reports.
+    assert [item["path_in_repo"] for item in payload["files"]] == [
+        "README.md",
+        "stats.json",
+        "assets/coverage_map.png",
+        "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
+    ]
 
 
 def test_release_stats_rejects_apply_and_dry_run_together() -> None:
