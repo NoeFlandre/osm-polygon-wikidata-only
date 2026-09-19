@@ -1,4 +1,11 @@
-"""Resumable local controller for Grid5000 sentence-splitting jobs."""
+"""Resumable local controller for Grid5000 sentence-splitting jobs.
+
+The imported private helpers intentionally remain available as compatibility
+seams for callers and tests while their implementations live in focused
+modules.
+"""
+
+# ruff: noqa: F401
 
 from __future__ import annotations
 
@@ -10,18 +17,14 @@ import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
 from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.run_lock import exclusive_run_lock
-from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import (
     V2_ADDED_WIKIPEDIA_TAG_MAP_PATH,
     V2_REPO_ID,
@@ -31,6 +34,106 @@ from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION
 from osm_polygon_wikidata_only.v2.sentence_logic import SAT_MODEL_ID
 from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
 
+from .sentence_controller_policy import (
+    ACTIVE_STATES as _ACTIVE_STATES,
+)
+from .sentence_controller_policy import (
+    EXOTIC_GRID5000_GPU_MODELS as _EXOTIC_GRID5000_GPU_MODELS,
+)
+from .sentence_controller_policy import (
+    GRID5000_UV_VERSION as _GRID5000_UV_VERSION,
+)
+from .sentence_controller_policy import (
+    REMOTE_NAMESPACE as _REMOTE_NAMESPACE,
+)
+from .sentence_controller_policy import (
+    RETRYABLE_ARTIFACT_FAILURES as _RETRYABLE_ARTIFACT_FAILURES,
+)
+from .sentence_controller_policy import (
+    SEGMENTER_VERSION as _SEGMENTER_VERSION,
+)
+from .sentence_controller_policy import (
+    SUCCESS_STATES as _SUCCESS_STATES,
+)
+from .sentence_controller_policy import (
+    TERMINAL_STATES as _TERMINAL_STATES,
+)
+from .sentence_controller_policy import (
+    ControllerLimits,
+    ControllerRunError,
+)
+from .sentence_controller_policy import (
+    baseline_hashes as _baseline_hashes,
+)
+from .sentence_controller_policy import (
+    batch_stems as _batch_stems,
+)
+from .sentence_controller_policy import (
+    copy_required as _copy_required,
+)
+from .sentence_controller_policy import (
+    git_source_commit as _git_source_commit_impl,
+)
+from .sentence_controller_policy import (
+    infer_job_state as _infer_job_state,
+)
+from .sentence_controller_policy import (
+    is_safe_run_id as _is_safe_run_id,
+)
+from .sentence_controller_policy import (
+    is_source_commit_migration_safe as _is_source_commit_migration_safe,
+)
+from .sentence_controller_policy import (
+    load_json_mapping as _load_json_mapping,
+)
+from .sentence_controller_policy import (
+    new_run_id as _new_run_id,
+)
+from .sentence_controller_policy import (
+    normalized_receipt_value as _normalized_receipt_value,
+)
+from .sentence_controller_policy import (
+    parse_job_id as _parse_job_id,
+)
+from .sentence_controller_policy import (
+    parse_job_status as _parse_job_status,
+)
+from .sentence_controller_policy import (
+    publication_message as _publication_message,
+)
+from .sentence_controller_policy import (
+    read_json_mapping as _read_json_mapping,
+)
+from .sentence_controller_policy import (
+    receipt_artifact as _receipt_artifact,
+)
+from .sentence_controller_policy import (
+    receipt_artifacts as _receipt_artifacts,
+)
+from .sentence_controller_policy import (
+    receipt_digest as _receipt_digest,
+)
+from .sentence_controller_policy import (
+    remote_batch_succeeded as _remote_batch_succeeded,
+)
+from .sentence_controller_policy import (
+    remote_job_root as _remote_job_root,
+)
+from .sentence_controller_policy import (
+    source_commit_batch_is_safe as _source_commit_batch_is_safe,
+)
+from .sentence_controller_policy import (
+    source_projects as _source_projects,
+)
+from .sentence_controller_policy import (
+    timestamp as _timestamp,
+)
+from .sentence_controller_policy import (
+    validate_ledger_baselines as _validate_ledger_baselines,
+)
+from .sentence_controller_policy import (
+    verified_incoming_artifact as _verified_incoming_artifact,
+)
 from .sentence_protocol import (
     DEFAULT_MAX_INPUT_BYTES,
     DEFAULT_MAX_STEMS,
@@ -43,74 +146,51 @@ from .sentence_protocol import (
     validate_manifest_extension,
     validate_sentence_output,
 )
+from .sentence_publication import (
+    HfHubSentencePublisher as _HfHubSentencePublisher,
+)
+from .sentence_publication import (
+    HubPublisher,
+)
+from .sentence_publication import (
+    download_hf_file as _download_hf_file_impl,
+)
+from .sentence_publication import (
+    expected_sentence_files as _expected_sentence_files,
+)
+from .sentence_publication import (
+    missing_remote_files as _missing_remote_files,
+)
+from .sentence_publication import (
+    validate_expected_sentence_files as _validate_expected_sentence_files,
+)
+from .sentence_publication import (
+    verify_expected_sentence_files as _verify_expected_sentence_files,
+)
+from .sentence_publication import (
+    verify_known_sentence_file as _verify_known_sentence_file,
+)
+from .sentence_publication import (
+    verify_sentence_file as _verify_sentence_file,
+)
+from .sentence_transport import (
+    Grid5000Transport,
+)
+from .sentence_transport import (
+    SubprocessGrid5000Transport as _SubprocessGrid5000Transport,
+)
+from .sentence_transport import (
+    validate_remote_home as _validate_remote_home,
+)
+from .sentence_transport import (
+    validated_remote_home as _validated_remote_home,
+)
 
 _LEDGER_FILENAME = "grid5000_sentence_run.json"
-_REMOTE_NAMESPACE = "$HOME/osm-polygon-wikidata-only-grid5000"
-_SEGMENTER_VERSION = "2.2.1"
-_GRID5000_UV_VERSION = "0.11.16"
 DEFAULT_GRID5000_QUEUE = "besteffort"
 DEFAULT_GRID5000_GPU_MODEL = "A40"
-_EXOTIC_GRID5000_GPU_MODELS = frozenset({"A100-PCIE-40GB", "A100-SXM4-40GB", "H100 NVL"})
-_ACTIVE_STATES = frozenset({"submitted", "running"})
-_TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
-_SUCCESS_STATES = frozenset({"terminated", "finishing"})
-_JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECASE)
-_STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
-_EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
 _QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _GPU_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
-_RETRYABLE_ARTIFACT_FAILURES = frozenset({"missing_receipt", "invalid_receipt"})
-_MAX_SENTENCE_UPLOAD_THREADS = 4
-
-
-class Grid5000Transport(Protocol):
-    """Frontend and file-transfer operations owned by the local controller."""
-
-    def run_frontend(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        """Run one lightweight command on the configured site frontend."""
-
-    def upload_tree(self, local_root: Path, remote_root: str) -> None:
-        """Upload a local staging tree into a remote run-owned directory."""
-
-    def download_tree(self, remote_root: str, local_root: Path) -> None:
-        """Download a remote result tree into a local temporary directory."""
-
-    def remove_tree(self, remote_root: str) -> None:
-        """Remove one exact run-owned remote directory."""
-
-
-class HubPublisher(Protocol):
-    """Local Hugging Face publication and verification boundary."""
-
-    def publish_sentence_batch(self, processed_v2: Path, stems: Sequence[str], message: str) -> str:
-        """Publish one atomic sentence batch and return its commit reference."""
-
-    def verify_sentence_batch(self, processed_v2: Path, stems: Sequence[str]) -> None:
-        """Verify the uploaded sentence files and protected card assets."""
-
-
-class ControllerRunError(RuntimeError):
-    """Raised when a batch needs operator-visible resume or retry handling."""
-
-
-@dataclass(frozen=True, slots=True)
-class ControllerLimits:
-    """Immutable limits recorded in every controller ledger."""
-
-    max_stems: int = DEFAULT_MAX_STEMS
-    max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES
-    batch_size: int = 256
-    inference_batch_size: int = 16
-    walltime: str = DEFAULT_WALLTIME
-
-    def as_payload(self) -> dict[str, object]:
-        return {
-            "max_stems": self.max_stems,
-            "max_input_bytes": self.max_input_bytes,
-            "batch_size": self.batch_size,
-            "inference_batch_size": self.inference_batch_size,
-            "walltime": self.walltime,
-        }
 
 
 class Grid5000SentenceController:
@@ -708,197 +788,26 @@ class Grid5000SentenceController:
         self._write_ledger()
 
 
-class SubprocessGrid5000Transport:
-    """SSH/rsync transport restricted to frontend and run-owned paths."""
+class SubprocessGrid5000Transport(_SubprocessGrid5000Transport):
+    """Compatibility wrapper that preserves the façade's executable seam."""
 
     def __init__(self, site: str) -> None:
-        self.site = site
-        self._remote_home: str | None = None
-
-    def run_frontend(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        remote_args = tuple(args)
-        if remote_args and remote_args[0] == "oarsub":
-            remote_args = (" ".join(shlex.quote(argument) for argument in remote_args),)
-        return subprocess.run(  # noqa: S603 - args are controller-generated frontend commands
-            [_required_executable("ssh"), self.site, *remote_args],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-    def upload_tree(self, local_root: Path, remote_root: str) -> None:
-        resolved_root = self._resolve_remote_path(remote_root)
-        result = subprocess.run(  # noqa: S603 - remote_root is a validated run namespace
-            [
-                _required_executable("rsync"),
-                "-a",
-                f"{local_root}/",
-                f"{self.site}:{resolved_root}/",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise ControllerRunError(f"Grid5000 upload failed: {(result.stderr or '').strip()}")
-
-    def download_tree(self, remote_root: str, local_root: Path) -> None:
-        local_root.mkdir(parents=True, exist_ok=True)
-        resolved_root = self._resolve_remote_path(remote_root)
-        result = subprocess.run(  # noqa: S603 - remote_root is a validated run namespace
-            [
-                _required_executable("rsync"),
-                "-a",
-                f"{self.site}:{resolved_root}/",
-                f"{local_root}/",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise ControllerRunError(f"Grid5000 download failed: {(result.stderr or '').strip()}")
-
-    def remove_tree(self, remote_root: str) -> None:
-        if not remote_root.startswith(_REMOTE_NAMESPACE + "/"):
-            raise ControllerRunError("Refusing to remove an outside Grid5000 namespace")
-        result = self.run_frontend(("rm", "-rf", self._resolve_remote_path(remote_root)))
-        if result.returncode != 0:
-            raise ControllerRunError("Grid5000 cleanup failed")
-
-    def _resolve_remote_path(self, remote_path: str) -> str:
-        if not remote_path.startswith("$HOME/"):
-            raise ControllerRunError("Refusing a Grid5000 path outside the remote home")
-        remote_home = self._resolve_remote_home()
-        return f"{remote_home}{remote_path[len('$HOME') :]}"
-
-    def _resolve_remote_home(self) -> str:
-        if self._remote_home is not None:
-            return self._remote_home
-        result = self.run_frontend(("printf", "%s", "$HOME"))
-        remote_home = _validated_remote_home(result)
-        self._remote_home = remote_home
-        return self._remote_home
+        super().__init__(site, executable_resolver=_required_executable)
 
 
-def _validated_remote_home(result: subprocess.CompletedProcess[str]) -> str:
-    if result.returncode != 0:
-        raise ControllerRunError("Could not resolve the Grid5000 remote home")
-    remote_home = (result.stdout or "").strip()
-    return _validate_remote_home(remote_home)
-
-
-def _validate_remote_home(remote_home: str) -> str:
-    if not remote_home.startswith("/") or any(char.isspace() for char in remote_home):
-        raise ControllerRunError("Grid5000 remote home is invalid")
-    return remote_home
-
-
-class HfHubSentencePublisher:
-    """Publish sentence artifacts locally and verify exact remote bytes."""
+class HfHubSentencePublisher(_HfHubSentencePublisher):
+    """Compatibility wrapper that preserves the façade's patch seams."""
 
     def __init__(self, repo_id: str, *, token: str | None, cache_dir: Path) -> None:
-        self.repo_id = repo_id
-        self.token = token
-        self.cache_dir = Path(cache_dir)
-
-    def publish_sentence_batch(self, processed_v2: Path, stems: Sequence[str], message: str) -> str:
-        operations = sentence_publication_ops(processed_v2, stems)
-        return upload_files(
-            self.repo_id,
-            ops=operations,
-            token=self.token,
-            commit_message=message,
-            num_threads=min(_MAX_SENTENCE_UPLOAD_THREADS, len(operations)),
+        super().__init__(
+            repo_id,
+            token=token,
+            cache_dir=cache_dir,
+            # Resolve these names when the operation runs so the historical
+            # controller-level monkeypatch seams remain usable after init.
+            upload_function=lambda *args, **kwargs: upload_files(*args, **kwargs),
+            download_function=lambda *args, **kwargs: _download_hf_file(*args, **kwargs),
         )
-
-    def verify_sentence_batch(self, processed_v2: Path, stems: Sequence[str]) -> None:
-        expected = _expected_sentence_files(processed_v2, stems)
-        _validate_expected_sentence_files(expected)
-        inventory = RemoteInventory.fetch_paths(
-            self.repo_id,
-            paths=[remote for _, remote in expected],
-            token=self.token,
-        )
-        missing = _missing_remote_files(expected, inventory)
-        if missing:
-            raise ControllerRunError(f"HF sentence publication is missing files: {missing}")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        _verify_expected_sentence_files(
-            self.repo_id,
-            expected,
-            inventory=inventory,
-            token=self.token,
-            cache_dir=self.cache_dir,
-        )
-
-
-def _expected_sentence_files(
-    processed_v2: Path,
-    stems: Sequence[str],
-) -> list[tuple[Path | None, str]]:
-    operations = sentence_publication_ops(processed_v2, stems)
-    expected = [(operation.local_path, operation.path_in_repo) for operation in operations]
-    expected.append(
-        (processed_v2 / V2_ADDED_WIKIPEDIA_TAG_MAP_PATH, V2_ADDED_WIKIPEDIA_TAG_MAP_PATH)
-    )
-    return expected
-
-
-def _validate_expected_sentence_files(expected: Sequence[tuple[Path | None, str]]) -> None:
-    if any(local is None for local, _ in expected):
-        raise ControllerRunError("HF verification received an incomplete publication plan")
-
-
-def _missing_remote_files(
-    expected: Sequence[tuple[Path | None, str]],
-    inventory: RemoteInventory,
-) -> list[str]:
-    return [remote for _, remote in expected if not inventory.contains(remote)]
-
-
-def _verify_expected_sentence_files(
-    repo_id: str,
-    expected: Sequence[tuple[Path | None, str]],
-    *,
-    inventory: RemoteInventory,
-    token: str | None,
-    cache_dir: Path,
-) -> None:
-    with tempfile.TemporaryDirectory(prefix="hf-sentence-verify-", dir=cache_dir) as temporary:
-        for local, remote in expected:
-            assert local is not None
-            _verify_sentence_file(
-                repo_id,
-                local,
-                remote,
-                inventory=inventory,
-                token=token,
-                local_dir=Path(temporary),
-            )
-
-
-def _verify_sentence_file(
-    repo_id: str,
-    local: Path,
-    remote: str,
-    *,
-    inventory: RemoteInventory,
-    token: str | None,
-    local_dir: Path,
-) -> None:
-    info = inventory.metadata(remote)
-    if info is not None and info.sha256 is not None:
-        _verify_known_sentence_file(local, remote, info)
-        return
-    downloaded = _download_hf_file(repo_id, remote, token=token, local_dir=local_dir)
-    if sha256_file(downloaded) != sha256_file(local):
-        raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
-
-
-def _verify_known_sentence_file(local: Path, remote: str, info: RemoteFileInfo) -> None:
-    if info.size != local.stat().st_size or info.sha256 != sha256_file(local):
-        raise ControllerRunError(f"HF sentence publication hash mismatch: {remote}")
 
 
 def run_grid5000_sentence_controller(
@@ -944,222 +853,15 @@ def run_grid5000_sentence_controller(
         return controller.run()
 
 
-def _baseline_hashes(data_root: DataRoot) -> tuple[str, str]:
-    readme = data_root.processed_v2 / "README.md"
-    map_path = data_root.processed_v2 / V2_ADDED_WIKIPEDIA_TAG_MAP_PATH
-    if not readme.is_file() or not map_path.is_file():
-        raise ControllerRunError("Protected V2 README or comparison map is missing")
-    return sha256_file(readme), sha256_file(map_path)
-
-
-def _load_json_mapping(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
-        return None
-    return _read_json_mapping(path)
-
-
-def _read_json_mapping(path: Path) -> dict[str, Any]:
-    try:
-        raw = json_loads(path.read_text(encoding="utf-8"))
-    except (OSError, TypeError, UnicodeError, ValueError) as error:
-        raise ControllerRunError(f"Invalid JSON artifact: {path}") from error
-    if not isinstance(raw, dict):
-        raise ControllerRunError(f"JSON artifact is not an object: {path}")
-    return cast(dict[str, Any], raw)
-
-
-def _validate_ledger_baselines(ledger: Mapping[str, object]) -> None:
-    if not isinstance(ledger.get("baseline_readme_sha256"), str):
-        raise ControllerRunError("Sentence ledger has no README baseline hash")
-    if not isinstance(ledger.get("baseline_map_sha256"), str):
-        raise ControllerRunError("Sentence ledger has no comparison-map baseline hash")
-    if not isinstance(ledger.get("batches"), list):
-        raise ControllerRunError("Sentence ledger batches must be a list")
-
-
-def _remote_batch_succeeded(
-    state: str,
-    exit_code: int | None,
-    receipt: Mapping[str, object],
-) -> bool:
-    return (
-        state in _SUCCESS_STATES and exit_code in {None, 0} and receipt.get("status") == "succeeded"
-    )
-
-
-def _receipt_artifacts(receipt: Mapping[str, object]) -> dict[str, FileDigest]:
-    raw = receipt.get("artifacts")
-    if not isinstance(raw, list):
-        raise ControllerRunError("Grid5000 receipt artifacts must be a list")
-    artifacts: dict[str, FileDigest] = {}
-    for raw_artifact in raw:
-        artifact = _receipt_artifact(raw_artifact)
-        if artifact.relative_path in artifacts:
-            raise ControllerRunError(
-                f"Grid5000 receipt has duplicate artifact: {artifact.relative_path}"
-            )
-        artifacts[artifact.relative_path] = artifact
-    return artifacts
-
-
-def _receipt_artifact(raw_artifact: object) -> FileDigest:
-    if not isinstance(raw_artifact, Mapping):
-        raise ControllerRunError("Grid5000 receipt artifact must be an object")
-    typed_artifact = cast(Mapping[str, object], raw_artifact)
-    relative = typed_artifact.get("relative_path")
-    size = typed_artifact.get("size")
-    digest = typed_artifact.get("sha256")
-    if not isinstance(relative, str) or not isinstance(size, int) or not isinstance(digest, str):
-        raise ControllerRunError("Grid5000 receipt artifact has invalid fields")
-    return FileDigest(relative_path=relative, size=size, sha256=digest)
-
-
-def _normalized_receipt_value(key: str, actual: object) -> object:
-    if key == "stems" and isinstance(actual, list):
-        return tuple(str(stem) for stem in actual)
-    return actual
-
-
-def _receipt_digest(artifacts: Mapping[str, FileDigest], relative: str) -> FileDigest:
-    try:
-        return artifacts[relative]
-    except KeyError as error:
-        raise ControllerRunError(f"Grid5000 receipt is missing artifact: {relative}") from error
-
-
-def _verified_incoming_artifact(
-    root: Path,
-    artifacts: Mapping[str, FileDigest],
-    relative: str,
-) -> Path:
-    digest = _receipt_digest(artifacts, relative)
-    path = root / relative
-    try:
-        path.resolve().relative_to(root.resolve())
-    except ValueError as error:
-        raise ControllerRunError(f"Grid5000 artifact escapes result root: {relative}") from error
-    if not path.is_file():
-        raise ControllerRunError(f"Grid5000 artifact is missing from result: {relative}")
-    if path.stat().st_size != digest.size or sha256_file(path) != digest.sha256:
-        raise ControllerRunError(f"Grid5000 artifact hash mismatch: {relative}")
-    return path
-
-
-def _copy_required(source: Path, target: Path) -> None:
-    if not source.is_file():
-        raise ControllerRunError(f"Required staging file is missing: {source}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-
-
-def _batch_stems(batch: Mapping[str, object]) -> tuple[str, ...]:
-    raw = batch.get("stems")
-    if not isinstance(raw, list) or not all(isinstance(stem, str) for stem in raw):
-        raise ControllerRunError("Sentence ledger batch stems are invalid")
-    return tuple(str(stem) for stem in raw)
-
-
-def _is_source_commit_migration_safe(ledger: Mapping[str, object]) -> bool:
-    raw_batches = ledger.get("batches")
-    if not isinstance(raw_batches, list) or not raw_batches:
-        return False
-    return all(_source_commit_batch_is_safe(raw_batch) for raw_batch in raw_batches)
-
-
-def _source_commit_batch_is_safe(batch: object) -> bool:
-    if not isinstance(batch, Mapping):
-        return False
-    typed_batch = cast(Mapping[str, object], batch)
-    state = typed_batch.get("state")
-    if state not in {"planned", "failed"}:
-        return False
-    if not _source_commit_job_is_safe(typed_batch, state):
-        return False
-    return typed_batch.get("hf_commit") in (None, "")
-
-
-def _source_commit_job_is_safe(batch: Mapping[str, object], state: object) -> bool:
-    if state == "planned":
-        return batch.get("oar_job_id") in (None, "")
-    if state == "failed":
-        return (
-            batch.get("oar_job_id") in (None, "")
-            or batch.get("error") in _RETRYABLE_ARTIFACT_FAILURES
-        )
-    return True
-
-
-def _source_projects(processed_v2: Path, stem: str) -> tuple[str, ...]:
-    return tuple(
-        "wikivoyage" if "wikivoyage" in path.parts else "wikipedia"
-        for path in sentence_source_paths(processed_v2, stem)
-    )
-
-
-def _publication_message(batch: Mapping[str, object]) -> str:
-    stems = _batch_stems(batch)
-    if len(stems) == 1:
-        return f"Add Grid5000 sentence split {stems[0]}"
-    return f"Add Grid5000 sentence splits {stems[0]} through {stems[-1]} ({len(stems)} regions)"
-
-
-def _parse_job_id(output: str) -> str:
-    match = _JOB_ID_PATTERN.search(output)
-    if match is None:
-        raise ControllerRunError("oarsub did not return a job ID")
-    return match.group(1)
-
-
-def _parse_job_status(result: subprocess.CompletedProcess[str]) -> tuple[str, int | None]:
-    text = f"{result.stdout or ''}\n{result.stderr or ''}"
-    match = _STATE_PATTERN.search(text)
-    state = match.group(1).lower() if match else _infer_job_state(text)
-    exit_match = _EXIT_CODE_PATTERN.search(text)
-    exit_code = int(exit_match.group(1)) if exit_match else None
-    return state, exit_code
-
-
-def _infer_job_state(text: str) -> str:
-    lowered = text.lower()
-    for state in (*_TERMINAL_STATES, "waiting", "launching", "running"):
-        if state in lowered:
-            return state
-    return "unknown"
-
-
-def _remote_job_root(remote_run_root: str, index: int, attempt: int) -> str:
-    return f"{remote_run_root}/jobs/batch-{index:08d}-attempt-{attempt:02d}"
-
-
-def _git_source_commit(repo_root: Path) -> str:
-    result = subprocess.run(  # noqa: S603 - fixed git revision query
-        [_required_executable("git"), "-C", str(repo_root), "rev-parse", "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ControllerRunError("Could not determine the controller source commit")
-    return result.stdout.strip()
-
-
-def _new_run_id() -> str:
-    return datetime.now(UTC).strftime("run-%Y%m%d-%H%M%S")
-
-
-def _is_safe_run_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[a-z0-9_-]+", value))
-
-
-def _timestamp() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _required_executable(name: str) -> str:
     executable = shutil.which(name)
     if executable is None:
         raise ControllerRunError(f"Required executable is unavailable: {name}")
     return executable
+
+
+def _git_source_commit(repo_root: Path) -> str:
+    return _git_source_commit_impl(repo_root, executable_resolver=_required_executable)
 
 
 def _download_hf_file(
@@ -1169,18 +871,11 @@ def _download_hf_file(
     token: str | None,
     local_dir: Path,
 ) -> Path:
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as error:  # pragma: no cover - package is a runtime dependency
-        raise ControllerRunError("huggingface_hub is required for HF verification") from error
-    return Path(
-        hf_hub_download(
-            repo_id=repo_id,
-            filename=filename,
-            repo_type="dataset",
-            token=token,
-            local_dir=str(local_dir),
-        )
+    return _download_hf_file_impl(
+        repo_id,
+        filename,
+        token=token,
+        local_dir=local_dir,
     )
 
 
