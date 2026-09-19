@@ -707,7 +707,7 @@ def test_source_language_counts_are_bounded_exact_and_stably_ordered(
         ],
         schema,
     )
-    original_parquet_file = language_split_release.pq.ParquetFile
+    original_parquet_file = language_split_release.open_parquet
     batch_calls: list[dict[str, object]] = []
 
     class RecordingParquetFile:
@@ -725,7 +725,7 @@ def test_source_language_counts_are_bounded_exact_and_stably_ordered(
             batch_calls.append(kwargs)
             return self._inner.iter_batches(**kwargs)
 
-    monkeypatch.setattr(language_split_release.pq, "ParquetFile", RecordingParquetFile)
+    monkeypatch.setattr(language_split_release, "open_parquet", RecordingParquetFile)
 
     counts = _source_language_counts(source, "language")
     assert counts == {
@@ -734,8 +734,14 @@ def test_source_language_counts_are_bounded_exact_and_stably_ordered(
         "unknown": 1,
     }
     assert list(counts) == ["en", "zz", "unknown"]
+    # The scan stays column-pruned and bounded, and reads on the calling
+    # thread so Arrow's prefetch pool cannot stall it.
     assert batch_calls == [
-        {"columns": ["language"], "batch_size": language_split_release.DEFAULT_BATCH_SIZE}
+        {
+            "batch_size": language_split_release.DEFAULT_BATCH_SIZE,
+            "use_threads": False,
+            "columns": ["language"],
+        }
     ]
 
 

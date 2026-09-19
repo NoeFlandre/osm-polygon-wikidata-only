@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import cast
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
@@ -32,6 +31,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_schema
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
@@ -639,7 +639,7 @@ def _artifact_paths(root: Path, spec: _ArtifactSpec) -> tuple[Path, ...]:
 
 def _validate_schema_and_count(path: Path, expected: pa.Schema) -> int:
     try:
-        with pq.ParquetFile(path) as parquet_file:
+        with open_parquet(path) as parquet_file:
             actual = parquet_file.schema_arrow
             metadata = parquet_file.metadata
             row_count = 0 if metadata is None else metadata.num_rows
@@ -658,8 +658,9 @@ def _scan_language_file(
 ) -> None:
     observed_rows = 0
     try:
-        with pq.ParquetFile(path) as parquet_file:
-            for batch in parquet_file.iter_batches(
+        with open_parquet(path) as parquet_file:
+            for batch in iter_record_batches(
+                parquet_file,
                 columns=[spec.language_column],
                 batch_size=_BATCH_SIZE,
             ):

@@ -8,6 +8,8 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+
 from .models import CoverageMapError
 
 # PyArrow metadata columns that are not part of the user schema.
@@ -89,13 +91,14 @@ def _iter_required_rows(
     actual: set[str],
     metadata_read: bool,
 ) -> Iterator[dict[str, Any]]:
-    with pq.ParquetFile(parquet_path) as parquet_file:
+    with open_parquet(parquet_path) as parquet_file:
         if not metadata_read:
             actual.update(set(parquet_file.schema.names) - PYARROW_INTERNAL_COLUMNS)
         missing = sorted(set(columns) - actual)
         if missing:
             raise _missing_columns_error(label, parquet_path, missing)
-        for batch in parquet_file.iter_batches(
+        for batch in iter_record_batches(
+            parquet_file,
             batch_size=batch_size,
             columns=list(columns),
         ):

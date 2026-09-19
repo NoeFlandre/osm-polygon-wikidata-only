@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pyarrow.parquet as pq
-
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_from_article_row,
 )
@@ -27,6 +25,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import CANONICAL_COLUMNS
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.v2.checkpoints import (
     RegionFetchCheckpoint,
     region_input_fingerprint,
@@ -90,8 +89,8 @@ class _MergeInputs:
 def _rows(path: Path) -> Iterator[dict[str, Any]]:
     if not path.is_file():
         return
-    with pq.ParquetFile(path) as parquet_file:
-        for batch in parquet_file.iter_batches(batch_size=_PARQUET_BATCH_SIZE):
+    with open_parquet(path) as parquet_file:
+        for batch in iter_record_batches(parquet_file, batch_size=_PARQUET_BATCH_SIZE):
             yield from batch.to_pylist()
 
 

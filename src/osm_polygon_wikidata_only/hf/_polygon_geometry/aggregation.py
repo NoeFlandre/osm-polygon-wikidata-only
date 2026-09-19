@@ -25,7 +25,8 @@ from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
-import pyarrow.parquet as pq
+
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 
 from .decoding import BboxSample, GeometrySample, decode_bbox, decode_geometry
 from .models import (
@@ -122,10 +123,10 @@ def compute_polygon_geometry_stats(processed_dir: Path) -> PolygonGeometryStats:
 def _accumulate_file(accumulator: _Accumulator, path: Path) -> int:
     """Scan one polygon file batch by batch and return its row count."""
     rows = 0
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         validate_polygon_schema(path, parquet_file.schema_arrow)
-        for batch in parquet_file.iter_batches(
-            batch_size=BATCH_ROWS, columns=list(REQUIRED_COLUMNS)
+        for batch in iter_record_batches(
+            parquet_file, batch_size=BATCH_ROWS, columns=list(REQUIRED_COLUMNS)
         ):
             _accumulate_batch(accumulator, batch, source_name=path.name)
             rows += batch.num_rows

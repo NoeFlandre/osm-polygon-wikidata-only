@@ -7,8 +7,7 @@ from collections.abc import Iterable, Iterator, MutableMapping
 from pathlib import Path
 from typing import Any, cast
 
-import pyarrow.parquet as pq
-
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
@@ -82,10 +81,12 @@ def _v1_document_files(processed: Path) -> tuple[Path, ...]:
 def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
     values: set[str] = set()
     for path in paths:
-        with pq.ParquetFile(path) as parquet_file:
+        with open_parquet(path) as parquet_file:
             if column not in parquet_file.schema_arrow.names:
                 continue
-            for batch in parquet_file.iter_batches(columns=[column], batch_size=_BATCH_SIZE):
+            for batch in iter_record_batches(
+                parquet_file, columns=[column], batch_size=_BATCH_SIZE
+            ):
                 values.update(_values_from_batch(batch))
     return values
 
@@ -108,11 +109,11 @@ def _polygon_sources(paths: Iterable[Path], identities: set[str]) -> dict[str, s
 
 
 def _iter_polygon_source_batches(path: Path) -> Iterator[Any]:
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if not {"polygon_id", "discovery_sources"}.issubset(parquet_file.schema_arrow.names):
             return
-        yield from parquet_file.iter_batches(
-            columns=["polygon_id", "discovery_sources"], batch_size=_BATCH_SIZE
+        yield from iter_record_batches(
+            parquet_file, columns=["polygon_id", "discovery_sources"], batch_size=_BATCH_SIZE
         )
 
 
@@ -150,10 +151,11 @@ def _direct_documents_by_polygon(paths: Iterable[Path]) -> dict[str, set[str]]:
 
 def _iter_direct_document_batches(path: Path) -> Iterator[Any]:
     required = {"polygon_id", "document_id", "project", "link_sources"}
-    with pq.ParquetFile(path) as parquet_file:
+    with open_parquet(path) as parquet_file:
         if not required.issubset(parquet_file.schema_arrow.names):
             return
-        yield from parquet_file.iter_batches(
+        yield from iter_record_batches(
+            parquet_file,
             columns=["polygon_id", "document_id", "project", "link_sources"],
             batch_size=_BATCH_SIZE,
         )

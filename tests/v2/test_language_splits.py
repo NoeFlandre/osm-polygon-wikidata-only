@@ -874,7 +874,7 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
         def __exit__(self, *args: object) -> None:
             return None
 
-    monkeypatch.setattr(language_splits.pq, "ParquetFile", FakeParquetFile)
+    monkeypatch.setattr(language_splits, "open_parquet", FakeParquetFile)
     monkeypatch.setattr(language_splits, "sha256_file", lambda path: "digest")
     root = tmp_path / "processed_v2"
     staged = root / "stage/file.parquet"

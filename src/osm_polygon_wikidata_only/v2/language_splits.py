@@ -38,6 +38,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 
@@ -391,9 +392,9 @@ def _stream_source_file(
     stack: ExitStack,
 ) -> None:
     """Stream one validated source file into its language writers."""
-    with pq.ParquetFile(source_path) as parquet_file:
+    with open_parquet(source_path) as parquet_file:
         language_index = parquet_file.schema_arrow.get_field_index(spec.language_column)
-        for batch in parquet_file.iter_batches(batch_size=batch_size):
+        for batch in iter_record_batches(parquet_file, batch_size=batch_size):
             _write_batch(
                 batch,
                 language_index,
@@ -555,7 +556,7 @@ def _validated_output_file(
     expected_schema: pa.Schema,
 ) -> V2LanguageSplitFile:
     try:
-        with pq.ParquetFile(shard.staged_path) as parquet_file:
+        with open_parquet(shard.staged_path) as parquet_file:
             actual_schema = parquet_file.schema_arrow
             metadata = parquet_file.metadata
             actual_rows = 0 if metadata is None else metadata.num_rows

@@ -7,8 +7,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-import pyarrow.parquet as pq
-
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
@@ -17,6 +15,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     build_language_inventory,
     normalize_language,
 )
+from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.v2.language_splits import DEFAULT_MAX_ROWS_PER_SHARD
 
@@ -291,9 +290,9 @@ def _shard_count(row_count: int, max_rows_per_shard: int) -> int:
 def _source_language_counts(source_path: Path, language_column: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     try:
-        with pq.ParquetFile(source_path) as parquet_file:
-            for batch in parquet_file.iter_batches(
-                columns=[language_column], batch_size=DEFAULT_BATCH_SIZE
+        with open_parquet(source_path) as parquet_file:
+            for batch in iter_record_batches(
+                parquet_file, columns=[language_column], batch_size=DEFAULT_BATCH_SIZE
             ):
                 for value in batch.column(0).to_pylist():
                     language = normalize_language(value).partition
