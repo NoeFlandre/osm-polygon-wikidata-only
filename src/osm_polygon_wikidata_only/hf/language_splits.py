@@ -31,6 +31,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_schema
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.schema import (
@@ -844,14 +845,10 @@ def _relative_path(path: Path, root: Path) -> str:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = sha256()
     try:
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
+        return sha256_file(path)
     except OSError as error:
         raise LanguageInventoryError(f"Could not hash artifact {path}: {error}") from error
-    return digest.hexdigest()
 
 
 def _artifact_fingerprint(paths: list[Path], root: Path) -> str:

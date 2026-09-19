@@ -32,7 +32,11 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 )
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
-from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.hashing import (
+    enable_hash_cache,
+    flush_hash_cache,
+    sha256_file,
+)
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 
@@ -162,6 +166,9 @@ def plan_language_split_publication(
 ) -> tuple[LanguagePublicationPlan, ...]:
     """Validate source inventories and return a no-write publication plan."""
     root = _resolve_data_root(data_root)
+    # Digests of unchanged artifacts survive between runs, so a repeated
+    # release does not re-read the whole corpus just to re-derive them.
+    enable_hash_cache(root / "cache" / "hash_cache")
     versions = _selected_versions(dataset_version)
     _validate_confirmations(versions, confirm_repos)
     release_plan = plan_language_split_release(
@@ -219,6 +226,7 @@ def run_language_split_publication(
         hub=client,
         token=token,
     )
+    flush_hash_cache()
     return LanguagePublicationResult(reports=reports)
 
 
