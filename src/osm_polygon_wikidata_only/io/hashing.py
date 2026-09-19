@@ -67,31 +67,48 @@ def enable_hash_cache(cache_dir: Path) -> None:
     """Load a persisted digest index and keep writing to ``cache_dir``."""
     global _CACHE_DIR
     _CACHE_DIR = cache_dir
-    index_path = cache_dir / _CACHE_FILENAME
-    try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(payload, dict) or payload.get("contract") != _CACHE_CONTRACT_VERSION:
-        return
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        return
-    for key, value in entries.items():
-        restored = _restored_entry(value)
+    for key, entry in _persisted_entries(cache_dir / _CACHE_FILENAME).items():
+        restored = _restored_entry(entry)
         if restored is not None:
             _CACHE[key] = restored
 
 
+def _persisted_entries(index_path: Path) -> dict[str, object]:
+    """Return the stored entries, or nothing when the index is unusable."""
+    payload = _read_index(index_path)
+    if payload.get("contract") != _CACHE_CONTRACT_VERSION:
+        return {}
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        return {}
+    return {str(key): value for key, value in entries.items()}
+
+
+def _read_index(index_path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): value for key, value in payload.items()}
+
+
 def _restored_entry(value: object) -> tuple[_Fingerprint, str] | None:
+    """Return one validated (fingerprint, digest) pair from stored JSON."""
     if not isinstance(value, list) or len(value) != 4:
         return None
     size, inode, mtime, digest = value
-    if not (isinstance(size, int) and isinstance(inode, int) and isinstance(mtime, int)):
-        return None
     if not isinstance(digest, str):
         return None
-    return ((size, inode, mtime), digest)
+    fingerprint = _restored_fingerprint(size, inode, mtime)
+    return None if fingerprint is None else (fingerprint, digest)
+
+
+def _restored_fingerprint(size: object, inode: object, mtime: object) -> _Fingerprint | None:
+    if not isinstance(size, int) or not isinstance(inode, int) or not isinstance(mtime, int):
+        return None
+    return (size, inode, mtime)
 
 
 def flush_hash_cache() -> None:
