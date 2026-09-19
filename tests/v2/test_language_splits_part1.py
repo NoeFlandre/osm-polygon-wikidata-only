@@ -493,7 +493,7 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
     with ExitStack() as stack:
         language_splits._write_language_indices(
             "en",
-            list(range(8)),
+            pa.array(range(8), type=pa.int64()),
             batch,
             tmp_path / "destination",
             tmp_path / "stage",
@@ -554,7 +554,7 @@ def test_v2_write_language_indices_advances_offset_across_shards(
     with ExitStack() as stack:
         language_splits._write_language_indices(
             "en",
-            list(range(3)),
+            pa.array(range(3), type=pa.int64()),
             batch,
             tmp_path / "destination",
             tmp_path / "stage",

@@ -16,7 +16,6 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
-from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -500,7 +499,7 @@ def _write_batch(
 
 def _write_language_indices(
     language: str,
-    indices: Sequence[int] | pa.Array,
+    indices: pa.Array,
     batch: pa.RecordBatch,
     destination: Path,
     stage_root: Path,
@@ -512,9 +511,8 @@ def _write_language_indices(
     state: _TableWriteState,
     stack: ExitStack,
 ) -> None:
-    index_array = indices if isinstance(indices, pa.Array) else pa.array(indices, type=pa.int64())
     offset = 0
-    while offset < len(index_array):
+    while offset < len(indices):
         shard = _writer_for_language(
             language,
             destination,
@@ -528,8 +526,8 @@ def _write_language_indices(
         )
         _record_source_file(shard, source_file)
         available = max_rows_per_shard - shard.row_count
-        count = min(available, len(index_array) - offset)
-        _buffer_rows(state, shard, batch.take(index_array.slice(offset, count)))
+        count = min(available, len(indices) - offset)
+        _buffer_rows(state, shard, batch.take(indices.slice(offset, count)))
         shard.row_count += count
         offset += count
         _close_full_shard(shard, language, max_rows_per_shard, state)

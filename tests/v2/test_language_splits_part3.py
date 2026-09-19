@@ -450,3 +450,40 @@ def test_v2_resume_is_rejected_when_the_marker_is_corrupt(tmp_path: Path) -> Non
     marker.write_text("{not json", encoding="utf-8")
 
     assert language_splits._resume_completed_table(stage_root, spec, _resume_inventory()) is None
+
+
+def test_v2_partition_ids_are_int32_for_compactness() -> None:
+    """Partition ids stay int32: one value per row, and int32 addresses any batch."""
+    batch = pa.record_batch([pa.array(["fr", "en", "fr", None])], names=["language"])
+    names_by_code, codes = hf_language_splits._partition_names_by_code(batch.column(0))
+    ids_by_name: dict[str, int] = {}
+    id_of_code = [ids_by_name.setdefault(name, len(ids_by_name)) for name in names_by_code]
+
+    assert hf_language_splits._partition_ids(id_of_code, codes).type == pa.int32()
+
+
+def test_v2_partition_row_indices_groups_in_first_occurrence_order() -> None:
+    """Partitions come back by first appearance with ascending indices."""
+    batch = pa.record_batch([pa.array(["fr", "en", "fr", "en", "fr"])], names=["language"])
+    partitions = hf_language_splits.partition_row_indices(batch, 0)
+
+    assert list(partitions) == ["fr", "en"]
+    assert partitions["fr"].to_pylist() == [0, 2, 4]
+    assert partitions["en"].to_pylist() == [1, 3]
+
+
+def test_v2_partition_row_indices_folds_null_languages_into_one_partition() -> None:
+    """Null language values resolve like any other value, keeping row order."""
+    batch = pa.record_batch([pa.array([None, "fr", None, "fr"])], names=["language"])
+    partitions = hf_language_splits.partition_row_indices(batch, 0)
+    unknown = normalize_language(None).partition
+
+    assert partitions[unknown].to_pylist() == [0, 2]
+    assert partitions["fr"].to_pylist() == [1, 3]
+
+
+def test_v2_partition_row_indices_returns_nothing_for_an_empty_batch() -> None:
+    """An empty batch has no partitions at all."""
+    batch = pa.record_batch([pa.array([], type=pa.string())], names=["language"])
+
+    assert hf_language_splits.partition_row_indices(batch, 0) == {}

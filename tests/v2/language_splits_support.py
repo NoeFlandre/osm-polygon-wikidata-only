@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
+from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
     LanguageBucket,
@@ -26,6 +27,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageTableInventory,
     build_language_inventory,
     language_table_specs,
+    normalize_language,
 )
 from osm_polygon_wikidata_only.v2 import language_splits
 from osm_polygon_wikidata_only.v2.language_splits import (

@@ -698,7 +698,7 @@ def partition_row_indices(batch: pa.RecordBatch, language_index: int) -> dict[st
     names_by_code, codes = _partition_names_by_code(column)
     ids_by_name: dict[str, int] = {}
     id_of_code = [ids_by_name.setdefault(name, len(ids_by_name)) for name in names_by_code]
-    partition_ids = pc.call_function("take", [pa.array(id_of_code, type=pa.int32()), codes])
+    partition_ids = _partition_ids(id_of_code, codes)
     grouped = _grouped_row_indices(partition_ids, ids_by_name)
     return dict(sorted(grouped.items(), key=lambda item: item[1][0].as_py()))
 
@@ -730,19 +730,24 @@ def _grouped_row_indices(
     order = pc.call_function("array_sort_indices", [partition_ids])
     counts = pc.call_function("value_counts", [partition_ids])
     name_by_id = {identifier: name for name, identifier in ids_by_name.items()}
-    runs = sorted(
-        zip(
-            counts.field("values").to_pylist(),
-            counts.field("counts").to_pylist(),
-            strict=True,
-        )
-    )
+    runs = sorted((entry["values"], entry["counts"]) for entry in counts.to_pylist())
     grouped: dict[str, pa.Array] = {}
     offset = 0
     for identifier, count in runs:
         grouped[name_by_id[identifier]] = order.slice(offset, count)
         offset += count
     return grouped
+
+
+def _partition_ids(id_of_code: list[int], codes: pa.Array) -> pa.Array:
+    """Map each row's dictionary code to its dense partition id.
+
+    The ids are held as ``int32``: one value per row, and a batch never carries
+    more partitions than an ``int32`` can address.
+    """
+    lookup = pa.array(id_of_code, type=pa.int32())
+    ids: pa.Array = pc.call_function("take", [lookup, codes])
+    return ids
 
 
 def _observe_language_batch(column: pa.Array, buckets: dict[str, _BucketCounter]) -> None:
