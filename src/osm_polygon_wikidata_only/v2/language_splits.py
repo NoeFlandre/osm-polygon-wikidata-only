@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import errno
+import hashlib
+import logging
 import os
 import shutil
 import tempfile
@@ -41,11 +43,14 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 
 # One shard is written once it holds this many bytes, turning a burst of tiny
 # per-language writes into a single sequential one.
+LOGGER = logging.getLogger(__name__)
+
 _SHARD_FLUSH_BYTES = 16 * 1024 * 1024
 # Hard ceiling across every open shard, so fanning out over hundreds of
 # languages cannot grow unbounded in memory.
@@ -187,7 +192,10 @@ def _stage_and_install_v2_release(
     manifest_path: Path,
 ) -> tuple[LanguageInventory, tuple[V2LanguageSplitFile, ...]]:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    stage_root = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent))
+    # A deterministic staging root lets an interrupted run resume: tables that
+    # already finished are recorded under ``.resume`` and are not rebuilt.
+    stage_root = destination.parent / f".{destination.name}-staging"
+    stage_root.mkdir(parents=True, exist_ok=True)
     try:
         files, staged_paths = _stage_v2_files(
             root, destination, stage_root, inventory, batch_size, max_rows_per_shard
@@ -201,9 +209,12 @@ def _stage_and_install_v2_release(
         )
         staged_paths[manifest_path] = manifest_stage
         _install_staged_files(root, destination, staged_paths)
-        return actual_inventory, ordered_files
-    finally:
+    except BaseException:
+        # Keep the staging tree so the next run resumes instead of restarting.
+        raise
+    else:
         shutil.rmtree(stage_root, ignore_errors=True)
+        return actual_inventory, ordered_files
 
 
 def _verify_source_inventory(root: Path, expected: LanguageInventory) -> LanguageInventory:
@@ -232,7 +243,7 @@ def _stage_v2_files(
             raise V2LanguageSplitError(
                 f"V2 inventory entry is not a language table: {spec.table.value}"
             )
-        generated, table_staged_paths = _write_table(
+        generated, table_staged_paths = _staged_table(
             root,
             destination,
             stage_root,
@@ -1019,3 +1030,137 @@ __all__ = [
     "build_v2_language_splits",
     "main",
 ]
+
+
+def _staged_table(
+    root: Path,
+    destination: Path,
+    stage_root: Path,
+    spec: LanguageTableSpec,
+    table_inventory: LanguageTableInventory,
+    batch_size: int,
+    max_rows_per_shard: int,
+) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
+    """Stage one table, reusing a completed staging run when one is present."""
+    completed = _resume_completed_table(stage_root, spec, table_inventory)
+    if completed is not None:
+        LOGGER.info(
+            "Resuming: reusing %d staged shards for %s", len(completed[0]), spec.table.value
+        )
+        return completed
+    generated, staged_paths = _write_table(
+        root, destination, stage_root, spec, table_inventory, batch_size, max_rows_per_shard
+    )
+    _record_completed_table(stage_root, spec, table_inventory, generated, staged_paths)
+    return generated, staged_paths
+
+
+def _resume_marker_path(stage_root: Path, spec: LanguageTableSpec) -> Path:
+    return stage_root / ".resume" / f"{spec.table.value}.json"
+
+
+def _table_fingerprint(table_inventory: LanguageTableInventory) -> str:
+    """Bind a staged table to the exact sources that produced it."""
+    return hashlib.sha256(json_dumps(table_inventory.to_dict()).encode("utf-8")).hexdigest()
+
+
+def _record_completed_table(
+    stage_root: Path,
+    spec: LanguageTableSpec,
+    table_inventory: LanguageTableInventory,
+    files: list[V2LanguageSplitFile],
+    staged_paths: dict[Path, Path],
+) -> None:
+    """Record a finished table so an interrupted run does not rebuild it."""
+    atomic_write_json(
+        _resume_marker_path(stage_root, spec),
+        {
+            "fingerprint": _table_fingerprint(table_inventory),
+            "files": [file.to_dict() for file in files],
+            "staged_paths": {
+                str(final): str(staged) for final, staged in sorted(staged_paths.items())
+            },
+        },
+    )
+
+
+def _resume_completed_table(
+    stage_root: Path,
+    spec: LanguageTableSpec,
+    table_inventory: LanguageTableInventory,
+) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]] | None:
+    """Return a previously staged table, or ``None`` when it must be rebuilt.
+
+    The marker is honoured only when it was written from exactly these sources
+    and every staged file it names is still on disk.
+    """
+    marker = _resume_marker_path(stage_root, spec)
+    if not marker.is_file():
+        return None
+    try:
+        payload = json_loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("fingerprint") != _table_fingerprint(table_inventory):
+        return None
+    staged_paths = _resume_staged_paths(payload.get("staged_paths"))
+    files = _resume_files(payload.get("files"), spec)
+    if staged_paths is None or files is None:
+        return None
+    return files, staged_paths
+
+
+def _resume_staged_paths(raw: object) -> dict[Path, Path] | None:
+    """Rebuild the staged-path map, rejecting it if any staged file is gone."""
+    if not isinstance(raw, dict):
+        return None
+    staged_paths: dict[Path, Path] = {}
+    for final, staged in raw.items():
+        if not isinstance(final, str) or not isinstance(staged, str):
+            return None
+        staged_path = Path(staged)
+        if not staged_path.is_file():
+            return None
+        staged_paths[Path(final)] = staged_path
+    return staged_paths
+
+
+def _resume_files(raw: object, spec: LanguageTableSpec) -> list[V2LanguageSplitFile] | None:
+    """Rebuild every shard record a completed table published."""
+    if not isinstance(raw, list):
+        return None
+    files: list[V2LanguageSplitFile] = []
+    for entry in raw:
+        file = _resume_file(entry, spec)
+        if file is None:
+            return None
+        files.append(file)
+    return files
+
+
+def _resume_file(entry: object, spec: LanguageTableSpec) -> V2LanguageSplitFile | None:
+    """Rebuild one shard record, rejecting anything not shaped as written."""
+    if not isinstance(entry, dict):
+        return None
+    values = {str(key): value for key, value in entry.items()}
+    sources = values.get("source_files")
+    row_count = values.get("row_count")
+    if not isinstance(sources, list) or not isinstance(row_count, int):
+        return None
+    names = ("configuration", "language", "split", "path", "sha256")
+    texts = [values.get(name) for name in names]
+    if not all(isinstance(text, str) for text in texts):
+        return None
+    configuration, language, split, path, sha256 = (str(text) for text in texts)
+    return V2LanguageSplitFile(
+        table=spec.table,
+        configuration=configuration,
+        language=language,
+        split=split,
+        source_files=tuple(str(name) for name in sources),
+        path=path,
+        row_count=row_count,
+        sha256=sha256,
+    )

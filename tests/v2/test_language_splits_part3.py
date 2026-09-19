@@ -348,3 +348,105 @@ def test_v2_split_module_runs_as_a_local_command(
 
     captured = capsys.readouterr()
     assert str(root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH) in captured.out
+
+
+def _resume_inventory(row_count: int = 4) -> LanguageTableInventory:
+    """Minimal table inventory whose fingerprint depends on ``row_count``."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    return LanguageTableInventory(
+        table=spec.table,
+        configuration=spec.configuration,
+        language_column=spec.language_column,
+        identity_columns=spec.identity_columns,
+        source_files=("polygon_document_links/a.parquet",),
+        row_count=row_count,
+        buckets=(),
+    )
+
+
+def _resume_file_record(path: str) -> V2LanguageSplitFile:
+    spec = language_table_specs(DatasetContract.V2)[0]
+    return V2LanguageSplitFile(
+        table=spec.table,
+        configuration=spec.configuration,
+        language="fr",
+        split="lang-fr",
+        source_files=("polygon_document_links/a.parquet",),
+        path=path,
+        row_count=4,
+        sha256="digest",
+    )
+
+
+def test_v2_completed_table_is_reused_instead_of_rebuilt(tmp_path: Path) -> None:
+    """A table recorded as complete is resumed rather than staged again."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    stage_root = tmp_path / "stage"
+    inventory = _resume_inventory()
+    staged = stage_root / "lang-fr.parquet"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(b"staged")
+    final = tmp_path / "language_splits/lang-fr.parquet"
+    record = _resume_file_record("language_splits/lang-fr.parquet")
+
+    language_splits._record_completed_table(stage_root, spec, inventory, [record], {final: staged})
+
+    resumed = language_splits._resume_completed_table(stage_root, spec, inventory)
+    assert resumed is not None
+    files, staged_paths = resumed
+    assert [file.to_dict() for file in files] == [record.to_dict()]
+    assert staged_paths == {final: staged}
+
+
+def test_v2_resume_is_rejected_when_the_sources_changed(tmp_path: Path) -> None:
+    """A marker written from different sources must not be trusted."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    stage_root = tmp_path / "stage"
+    staged = stage_root / "lang-fr.parquet"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(b"staged")
+    final = tmp_path / "language_splits/lang-fr.parquet"
+    language_splits._record_completed_table(
+        stage_root,
+        spec,
+        _resume_inventory(row_count=4),
+        [_resume_file_record("language_splits/lang-fr.parquet")],
+        {final: staged},
+    )
+
+    assert (
+        language_splits._resume_completed_table(stage_root, spec, _resume_inventory(row_count=5))
+        is None
+    )
+
+
+def test_v2_resume_is_rejected_when_a_staged_file_disappeared(tmp_path: Path) -> None:
+    """Resuming must not trust a marker whose staged output is gone."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    stage_root = tmp_path / "stage"
+    inventory = _resume_inventory()
+    staged = stage_root / "lang-fr.parquet"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(b"staged")
+    final = tmp_path / "language_splits/lang-fr.parquet"
+    language_splits._record_completed_table(
+        stage_root,
+        spec,
+        inventory,
+        [_resume_file_record("language_splits/lang-fr.parquet")],
+        {final: staged},
+    )
+    staged.unlink()
+
+    assert language_splits._resume_completed_table(stage_root, spec, inventory) is None
+
+
+def test_v2_resume_is_rejected_when_the_marker_is_corrupt(tmp_path: Path) -> None:
+    """A truncated or non-JSON marker falls back to rebuilding the table."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    stage_root = tmp_path / "stage"
+    marker = language_splits._resume_marker_path(stage_root, spec)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("{not json", encoding="utf-8")
+
+    assert language_splits._resume_completed_table(stage_root, spec, _resume_inventory()) is None

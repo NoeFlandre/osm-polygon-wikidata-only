@@ -353,7 +353,10 @@ def test_v2_split_rolls_back_after_install_failure(
         build_v2_language_splits(root)
 
     assert _release_snapshot(root) == before
-    assert not list(root.glob(".language_splits-*"))
+    # The staging tree is deliberately retained after a failure so the next
+    # run resumes from the tables that already completed. Installed output
+    # is still rolled back, which the snapshot assertion above covers.
+    assert [p.name for p in root.glob(".language_splits-*")] == [".language_splits-staging"]
 
 
 def test_v2_split_rolls_back_if_backup_phase_fails(
@@ -373,7 +376,10 @@ def test_v2_split_rolls_back_if_backup_phase_fails(
         build_v2_language_splits(root)
 
     assert _release_snapshot(root) == before
-    assert not list(root.glob(".language_splits-*"))
+    # The staging tree is deliberately retained after a failure so the next
+    # run resumes from the tables that already completed. Installed output
+    # is still rolled back, which the snapshot assertion above covers.
+    assert [p.name for p in root.glob(".language_splits-*")] == [".language_splits-staging"]
 
 
 def test_v2_install_files_sorts_by_final_path_and_records_every_install(
@@ -466,7 +472,10 @@ def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
         "V2 language split publication cannot cross filesystems (EXDEV): "
     )
     assert _release_snapshot(root) == before
-    assert not list(root.glob(".language_splits-*"))
+    # The staging tree is deliberately retained after a failure so the next
+    # run resumes from the tables that already completed. Installed output
+    # is still rolled back, which the snapshot assertion above covers.
+    assert [p.name for p in root.glob(".language_splits-*")] == [".language_splits-staging"]
 
 
 def test_v2_install_files_requires_explicit_final_path_order(

@@ -235,25 +235,19 @@ def test_v2_sort_keys_put_unknown_after_known_languages() -> None:
     ]
 
 
-def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
+def test_v2_staging_uses_deterministic_destination_local_stage_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Staging is destination-local and deterministic, and is cleared on success."""
     root = tmp_path / "processed_v2"
     root.mkdir()
     destination = root / "nested/language_splits"
-    stage_root = destination.parent / ".language_splits-stage"
+    stage_root = destination.parent / ".language_splits-staging"
     calls: dict[str, object] = {}
 
-    def fake_mkdtemp(*, prefix: str, dir: Path) -> str:
-        calls["mkdtemp"] = (prefix, dir)
-        stage_root.mkdir(parents=True, exist_ok=True)
-        return str(stage_root)
-
     def fake_stage(*args: object) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
+        calls["stage_root"] = args[2]
         return [], {}
-
-    def fake_manifest(*args: object) -> dict[str, object]:
-        return {}
 
     def fake_install(root_arg: Path, destination_arg: Path, staged: dict[Path, Path]) -> None:
         calls["install"] = (root_arg, destination_arg, staged)
@@ -261,10 +255,9 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
     def fake_rmtree(path: Path, *, ignore_errors: bool) -> None:
         calls["rmtree"] = (path, ignore_errors)
 
-    monkeypatch.setattr(language_splits.tempfile, "mkdtemp", fake_mkdtemp)
     monkeypatch.setattr(language_splits, "_stage_v2_files", fake_stage)
     monkeypatch.setattr(language_splits, "_validate_conservation", lambda *args: None)
-    monkeypatch.setattr(language_splits, "_manifest_payload", fake_manifest)
+    monkeypatch.setattr(language_splits, "_manifest_payload", lambda *args: {})
     monkeypatch.setattr(language_splits, "atomic_write_json", lambda *args: None)
     monkeypatch.setattr(language_splits, "_install_staged_files", fake_install)
     inventory = cast(LanguageInventory, object())
@@ -283,7 +276,8 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
     )
 
     assert result == (inventory, ())
-    assert calls["mkdtemp"] == (".language_splits-", destination.parent)
+    assert calls["stage_root"] == stage_root
+    assert stage_root.is_dir() or calls["rmtree"] == (stage_root, True)
     assert calls["rmtree"] == (stage_root, True)
     assert calls["install"] == (
         root,
@@ -293,6 +287,36 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
             / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
         },
     )
+
+
+def test_v2_staging_survives_failure_so_the_next_run_can_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed release keeps its staging tree; resuming depends on it."""
+    root = tmp_path / "processed_v2"
+    root.mkdir()
+    destination = root / "nested/language_splits"
+    stage_root = destination.parent / ".language_splits-staging"
+    removed: list[Path] = []
+
+    def boom(*args: object) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
+        raise V2LanguageSplitError("staging failed")
+
+    monkeypatch.setattr(language_splits, "_stage_v2_files", boom)
+    monkeypatch.setattr(language_splits.shutil, "rmtree", lambda path, **_kw: removed.append(path))
+
+    with pytest.raises(V2LanguageSplitError, match="staging failed"):
+        language_splits._stage_and_install_v2_release(
+            root,
+            destination,
+            cast(LanguageInventory, object()),
+            1,
+            100_000,
+            root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+        )
+
+    assert removed == []
+    assert stage_root.is_dir()
 
 
 def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
