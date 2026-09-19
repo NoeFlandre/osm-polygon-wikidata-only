@@ -22,7 +22,7 @@ import argparse
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageTableSpec,
     build_language_inventory,
     language_table_specs,
-    normalize_language,
+    partition_row_indices,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
@@ -51,6 +51,9 @@ V1_LANGUAGE_DATA_DIR = "data"
 V1_LANGUAGE_FILE_SUFFIX = "-00000-of-00001.parquet"
 DEFAULT_BATCH_SIZE = 65_536
 _PARQUET_COMPRESSION = "snappy"
+# One shard is written once it holds this many bytes, turning a burst of tiny
+# per-language writes into a single sequential one.
+_SHARD_FLUSH_BYTES = 16 * 1024 * 1024
 
 
 class V1LanguageSplitError(ValueError):
@@ -426,7 +429,7 @@ def _stream_batch(
     language_index = batch.schema.get_field_index(spec.language_column)
     if language_index < 0:
         raise V1LanguageSplitError(f"source batch has no {spec.language_column!r} column")
-    groups = _row_indices_by_language(batch.column(language_index).to_pylist())
+    groups = partition_row_indices(batch, language_index)
     for language in sorted(groups):
         writer = _writer_for_language(
             language,
@@ -436,9 +439,9 @@ def _stream_batch(
             writers,
             staged_paths,
         )
-        selected = batch.take(pa.array(groups[language], type=pa.int64()))
-        writer.write_batch(selected)
-        written_counts[language] = written_counts.get(language, 0) + len(groups[language])
+        indices = groups[language]
+        _buffer_rows(writer, batch.take(indices))
+        written_counts[language] = written_counts.get(language, 0) + len(indices)
     return batch.num_rows
 
 
@@ -455,18 +458,46 @@ def _writer_for_language(
         return writer
     staged_path = stage_root / _relative_partition_path(spec.configuration, f"lang-{language}")
     staged_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = _new_writer(staged_path, schema)
+    writer = _BufferedWriter(_new_writer(staged_path, schema))
     writers[language] = writer
     staged_paths[language] = staged_path
     return writer
 
 
-def _row_indices_by_language(values: list[object]) -> dict[str, list[int]]:
-    groups: dict[str, list[int]] = {}
-    for index, value in enumerate(values):
-        language = normalize_language(value).partition
-        groups.setdefault(language, []).append(index)
-    return groups
+@dataclass(slots=True)
+class _BufferedWriter:
+    """Hold batches until one shard has enough rows to justify a seek.
+
+    A source batch fans out across every language it mentions, so writing each
+    slice straight through produced one tiny row group per language per batch,
+    interleaved across hundreds of open files. That is seek-bound on an
+    external drive.
+    """
+
+    writer: Any
+    pending: list[pa.RecordBatch] = field(default_factory=list)
+    pending_bytes: int = 0
+
+    def flush(self) -> None:
+        """Write the buffered batches as a single row group."""
+        if not self.pending:
+            return
+        self.writer.write_table(pa.Table.from_batches(self.pending))
+        self.pending = []
+        self.pending_bytes = 0
+
+    def close(self) -> None:
+        """Flush anything buffered, then close the underlying writer."""
+        self.flush()
+        self.writer.close()
+
+
+def _buffer_rows(writer: _BufferedWriter, rows: pa.RecordBatch) -> None:
+    """Buffer ``rows``, writing once the shard is worth a seek."""
+    writer.pending.append(rows)
+    writer.pending_bytes += rows.nbytes
+    if writer.pending_bytes >= _SHARD_FLUSH_BYTES:
+        writer.flush()
 
 
 def _new_writer(path: Path, schema: pa.Schema) -> Any:
