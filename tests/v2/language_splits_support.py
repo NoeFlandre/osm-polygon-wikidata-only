@@ -63,6 +63,7 @@ def _row_for_schema(schema: pa.Schema, **values: object) -> dict[str, object]:
     row.update(values)
     return row
 
+
 def _write_table(path: Path, rows: list[dict[str, object]], schema: pa.Schema) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(
@@ -71,6 +72,7 @@ def _write_table(path: Path, rows: list[dict[str, object]], schema: pa.Schema) -
         compression="snappy",
         row_group_size=1,
     )
+
 
 def _polygon(polygon_id: str, *, best_language: str) -> dict[str, object]:
     return _row_for_schema(
@@ -83,6 +85,7 @@ def _polygon(polygon_id: str, *, best_language: str) -> dict[str, object]:
         wikidata="Q1",
         best_language=best_language,
     )
+
 
 def _document(document_id: str, language: object, title: str) -> dict[str, object]:
     return _row_for_schema(
@@ -100,6 +103,7 @@ def _document(document_id: str, language: object, title: str) -> dict[str, objec
         fetch_status="ok",
     )
 
+
 def _section(section_id: str, language: object) -> dict[str, object]:
     return _row_for_schema(
         section_schema(),
@@ -113,6 +117,7 @@ def _section(section_id: str, language: object) -> dict[str, object]:
         section_index=0,
         text=f"text-{section_id}",
     )
+
 
 def _link(
     document_id: str, language: object, *, polygon_id: str = "polygon-1"
@@ -133,6 +138,7 @@ def _link(
         link_sources='["wikidata"]',
     )
 
+
 def _write_v2_manifest(root: Path, stems: tuple[str, ...]) -> None:
     regions = {
         stem: {
@@ -149,6 +155,7 @@ def _write_v2_manifest(root: Path, stems: tuple[str, ...]) -> None:
     path = root / "manifests" / "processed_pbfs.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+
 
 def _write_v2_fixture(tmp_path: Path) -> Path:
     root = tmp_path / "processed_v2"
@@ -213,12 +220,15 @@ def _write_v2_fixture(tmp_path: Path) -> Path:
     _write_v2_manifest(root, stems)
     return root
 
+
 def _manifest(root: Path) -> dict[str, object]:
     return json.loads((root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH).read_text(encoding="utf-8"))
+
 
 def _shard(root: Path, table: str, language: str, stem: str) -> Path:
     configuration = f"{table}_by_language"
     return root / "language_splits" / configuration / f"lang-{language}" / f"{stem}.parquet"
+
 
 def _rows(root: Path, table: str, language: str) -> list[dict[str, object]]:
     configuration = f"{table}_by_language"
@@ -226,6 +236,7 @@ def _rows(root: Path, table: str, language: str) -> list[dict[str, object]]:
         (root / "language_splits" / configuration / f"lang-{language}").glob("*.parquet")
     )
     return [row for path in paths for row in pq.read_table(path).to_pylist()]
+
 
 def _release_snapshot(root: Path) -> dict[str, bytes]:
     paths = [
@@ -239,5 +250,5 @@ def _release_snapshot(root: Path) -> dict[str, bytes]:
         paths.append(manifest)
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(paths)}
 
-__all__ = [name for name in globals() if not name.startswith("__")]
 
+__all__ = [name for name in globals() if not name.startswith("__")]

@@ -237,7 +237,9 @@ def _fetch_missing_documents_parallel(
     """Fetch affected QIDs concurrently while retaining input order."""
     if not affected_qids:
         return []
-    with ThreadPoolExecutor(max_workers=min(RECOVERY_NETWORK_WORKERS, len(affected_qids))) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(RECOVERY_NETWORK_WORKERS, len(affected_qids))
+    ) as executor:
         per_qid = executor.map(
             lambda qid: _fetch_qid_documents(
                 qid,

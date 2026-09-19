@@ -46,6 +46,7 @@ def test_assemble_core_upload_invokes_warning_callback(
     )
     assert any("Could not fetch world land data; map will omit continents" in w for w in warnings)
 
+
 def test_assemble_region_upload_swallows_world_land_failure(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -86,6 +87,7 @@ def test_assemble_region_upload_swallows_world_land_failure(
     assert files, "region upload should still produce files"
     assert not any("Could not fetch world land data" in r.getMessage() for r in caplog.records)
 
+
 def test_assemble_region_upload_invokes_world_land_warning_callback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -125,6 +127,7 @@ def test_assemble_region_upload_invokes_world_land_warning_callback(
 
     assert warnings == ["Could not fetch world land data; map will omit continents"]
 
+
 def test_assemble_core_upload_raises_when_core_artifact_missing(
     tmp_path: Path,
 ) -> None:
@@ -137,6 +140,7 @@ def test_assemble_core_upload_raises_when_core_artifact_missing(
             core=core,
             world_land_warning=lambda msg: None,
         )
+
 
 def test_assemble_region_upload_raises_when_augmentation_artifact_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -155,6 +159,7 @@ def test_assemble_region_upload_raises_when_augmentation_artifact_missing(
             world_land_warning=None,
         )
 
+
 def test_assemble_augmentation_upload_raises_when_artifact_missing(
     tmp_path: Path,
 ) -> None:
@@ -168,6 +173,7 @@ def test_assemble_augmentation_upload_raises_when_artifact_missing(
             repo_id=REPO_ID,
             augmentation=aug,
         )
+
 
 def test_assemble_core_upload_propagates_snapshot_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -206,6 +212,7 @@ def test_assemble_core_upload_propagates_snapshot_failure(
             core=core,
             world_land_warning=lambda msg: None,
         )
+
 
 def test_assemble_region_upload_propagates_snapshot_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -248,6 +255,7 @@ def test_assemble_region_upload_propagates_snapshot_failure(
             world_land_warning=None,
         )
 
+
 def test_legacy_core_command_submits_exactly_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,6 +283,7 @@ def test_legacy_core_command_submits_exactly_once(
     ops, message = submissions[0]
     assert message == "core msg"
     assert len(ops) == 14
+
 
 def test_augmentation_command_submits_exactly_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -336,6 +345,7 @@ def test_augmentation_command_submits_exactly_once(
     assert uploads[0][1] == "aug msg"
     # Sidecars + manifest migration + combined map + statistics + README.
     assert len(uploads[0][0]) == 15
+
 
 def test_unified_sync_submits_exactly_one_commit_per_region(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -455,11 +465,14 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
     # AUGMENT state (no core): sidecars, manifest migration, combined map, statistics, README.
     assert len(by_message["Sync complete region andorra-latest"]) == 15
 
+
 def test_coverage_refresh_required_returns_false_when_no_core() -> None:
     assert coverage_refresh_required(None) is False
 
+
 def test_coverage_refresh_required_returns_true_when_core_present() -> None:
     assert coverage_refresh_required(object()) is True
+
 
 def test_snapshot_upload_manifests_writes_processed_manifest_snapshot(
     tmp_path: Path,
@@ -469,6 +482,7 @@ def test_snapshot_upload_manifests_writes_processed_manifest_snapshot(
     assert snapshot.exists()
     assert snapshot.read_text(encoding="utf-8") == core.manifest_path.read_text(encoding="utf-8")
     assert not readme.exists()
+
 
 def test_refresh_coverage_assets_writes_three_pngs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -504,6 +518,7 @@ def test_refresh_coverage_assets_writes_three_pngs(
     assert map_path.exists()
     assert presence_path.exists()
     assert density_path.exists()
+
 
 def test_refresh_coverage_assets_loads_combined_text_inputs_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

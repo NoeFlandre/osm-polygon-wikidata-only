@@ -39,6 +39,7 @@ def test_fully_augmented_classified_when_all_five_sidecars_present(tmp_path: Pat
     assert stats.not_augmented_count == 0
     assert stats.orphan_sidecar_stems == ()
 
+
 def test_partial_augmented_classified_when_some_sidecars_present(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     _write_parquet(
@@ -56,6 +57,7 @@ def test_partial_augmented_classified_when_some_sidecars_present(tmp_path: Path)
     assert stats.partial_augmented_count == 1
     assert stats.not_augmented_count == 0
 
+
 def test_not_augmented_classified_when_no_sidecars_present(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     _write_parquet(
@@ -69,6 +71,7 @@ def test_not_augmented_classified_when_no_sidecars_present(tmp_path: Path) -> No
     assert stats.partial_augmented_count == 0
     assert stats.not_augmented_count == 1
 
+
 def test_orphan_sidecar_stems_classified_when_no_core_polygon(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     _write_documents(
@@ -78,6 +81,7 @@ def test_orphan_sidecar_stems_classified_when_no_core_polygon(tmp_path: Path) ->
     stats = _stats(processed, tmp_path)
     assert stats.core_region_count == 0
     assert stats.orphan_sidecar_stems == ("ghost-latest",)
+
 
 def test_wikipedia_documents_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -122,6 +126,7 @@ def test_wikipedia_documents_basic_counts(tmp_path: Path) -> None:
     assert stats.wikipedia_documents.unique_qids == 1
     assert stats.wikipedia_documents.language_count == 2
     assert stats.wikipedia_documents.region_count == 1
+
 
 def test_wikipedia_documents_non_empty_and_empty_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -177,6 +182,7 @@ def test_wikipedia_documents_non_empty_and_empty_counts(tmp_path: Path) -> None:
     # non_empty_rate is rows=4 + non_empty=1 → 25.0%.
     assert abs(stats.wikipedia_documents.non_empty_rate - 0.25) < 1e-9
 
+
 def test_wikipedia_documents_top_languages_deterministic_ties(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     rows = []
@@ -202,6 +208,7 @@ def test_wikipedia_documents_top_languages_deterministic_ties(tmp_path: Path) ->
     languages = [lang for lang, _ in stats.wikipedia_documents.top_languages]
     assert languages[0] == "cc"
     assert languages.index("aa") < languages.index("bb")
+
 
 def test_wikipedia_documents_total_words_and_tokens(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -234,6 +241,7 @@ def test_wikipedia_documents_total_words_and_tokens(tmp_path: Path) -> None:
     assert stats.wikipedia_documents.total_words == 300
     assert stats.wikipedia_documents.total_tokens_estimate == 75
     assert stats.wikipedia_documents.total_chars == 2
+
 
 def test_wikipedia_sections_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -285,6 +293,7 @@ def test_wikipedia_sections_basic_counts(tmp_path: Path) -> None:
     assert stats.wikipedia_sections.total_words == 4
     assert stats.wikipedia_sections.total_tokens_estimate == 4
 
+
 def test_wikipedia_sections_avg_per_represented_doc(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     rows = [
@@ -312,6 +321,7 @@ def test_wikipedia_sections_avg_per_represented_doc(tmp_path: Path) -> None:
     assert stats.wikipedia_sections.unique_section_ids == 4
     # Two distinct documents.
     assert stats.wikipedia_sections.unique_documents == 2
+
 
 def test_wikivoyage_documents_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -347,6 +357,7 @@ def test_wikivoyage_documents_basic_counts(tmp_path: Path) -> None:
     assert stats.wikivoyage_documents.empty_or_null == 1
     assert stats.wikivoyage_documents.total_words == 2
 
+
 def test_wikivoyage_sections_basic_counts(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     _write_sections(
@@ -369,6 +380,7 @@ def test_wikivoyage_sections_basic_counts(tmp_path: Path) -> None:
     assert stats.wikivoyage_sections.rows == 1
     assert stats.wikivoyage_sections.unique_section_ids == 1
     assert stats.wikivoyage_sections.unique_documents == 1
+
 
 def test_wikivoyage_language_distribution(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -393,6 +405,7 @@ def test_wikivoyage_language_distribution(tmp_path: Path) -> None:
     )
     stats = _stats(processed, tmp_path)
     assert [lang for lang, _ in stats.wikivoyage_documents.top_languages] == ["en", "fr", "de"]
+
 
 def test_wikidata_facts_unique_subjects_and_properties(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -448,6 +461,7 @@ def test_wikidata_facts_unique_subjects_and_properties(tmp_path: Path) -> None:
     assert stats.wikidata_facts.unique_facts == 3
     assert stats.wikidata_facts.unique_subjects == 2
     assert stats.wikidata_facts.distinct_property_ids == 2
+
 
 def test_wikidata_facts_english_label_coverage(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)

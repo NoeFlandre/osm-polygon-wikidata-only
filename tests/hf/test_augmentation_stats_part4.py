@@ -42,6 +42,7 @@ def test_cache_index_written_atomically(tmp_path: Path, monkeypatch) -> None:
         "write_cache_index must call atomic_write_text on the index path"
     )
 
+
 def test_cache_index_filters_contract_and_non_mapping_entries() -> None:
     from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
 
@@ -53,6 +54,7 @@ def test_cache_index_filters_contract_and_non_mapping_entries() -> None:
             "invalid-null": None,
         }
     ) == {"documents.parquet": {"rows": 2}}
+
 
 def test_scan_paths_skips_missing_subdirectories_and_sorts_files(tmp_path: Path) -> None:
     from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
@@ -71,6 +73,7 @@ def test_scan_paths_skips_missing_subdirectories_and_sorts_files(tmp_path: Path)
         "documents/z.parquet",
         "sections/only.parquet",
     ]
+
 
 def test_cache_write_cleanups_sibling_on_interruption(tmp_path: Path, monkeypatch) -> None:
     """A failed replacement preserves the old index and removes the written temporary."""
@@ -92,6 +95,7 @@ def test_cache_write_cleanups_sibling_on_interruption(tmp_path: Path, monkeypatc
     assert list(index_path.parent.iterdir()) == [index_path]
     assert index_path.read_bytes() == original
 
+
 def test_cache_index_has_contract_version(tmp_path: Path) -> None:
     """The cache index must declare an explicit contract version.
 
@@ -105,6 +109,7 @@ def test_cache_index_has_contract_version(tmp_path: Path) -> None:
     cachemod.write_cache_index(tmp_path / "cache", {"a": {"v": 1}})
     raw = json.loads(cachemod.index_path(tmp_path / "cache").read_text())
     assert "__contract_version__" in raw
+
 
 def test_cache_load_rejects_missing_version_and_rebuilds(tmp_path: Path) -> None:
     """An index whose contract version is unknown must trigger a full
@@ -201,6 +206,7 @@ def test_cache_load_rejects_missing_version_and_rebuilds(tmp_path: Path) -> None
         "Missing version must trigger a full rebuild; live fingerprint alone is not enough"
     )
 
+
 def test_scan_failed_entry_is_retried_on_next_refresh(tmp_path: Path) -> None:
     """A cached ``scan_failed=True`` entry must be retried on the next
     refresh. The current code reuses it forever while the fingerprint
@@ -264,6 +270,7 @@ def test_scan_failed_entry_is_retried_on_next_refresh(tmp_path: Path) -> None:
         "A previously-failed sidecar must no longer be counted unreadable"
     )
 
+
 def test_fingerprint_detects_same_size_replacement_preserving_mtime(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -313,6 +320,7 @@ def test_fingerprint_detects_same_size_replacement_preserving_mtime(
     assert stats.wikipedia_documents == first.wikipedia_documents
     assert calls == [docs_path]
 
+
 def test_subdir_present_requires_at_least_one_readable_parquet(tmp_path: Path) -> None:
     """``subdir_present`` must reflect whether a readable valid Parquet
     sidecar exists, not just whether the directory is on disk.
@@ -337,6 +345,7 @@ def test_subdir_present_requires_at_least_one_readable_parquet(tmp_path: Path) -
     assert stats.wikipedia_sections.subdir_present is False
     assert stats.wikivoyage_documents.subdir_present is False
     assert stats.wikidata_facts.subdir_present is False
+
 
 def test_headline_document_corpus_words_excludes_sections() -> None:
     """The headline ``Wikipedia + Wikivoyage document words`` must
@@ -370,6 +379,7 @@ def test_headline_document_corpus_words_excludes_sections() -> None:
     )
     assert "168,900,000" in row, f"document corpus words must exclude sections, got {row!r}"
 
+
 def test_cache_module_does_not_export_make_cache_key() -> None:
     """The unused ``make_cache_key`` helper must be removed from the
     cache module so the surface reflects reality.
@@ -378,6 +388,7 @@ def test_cache_module_does_not_export_make_cache_key() -> None:
 
     assert "make_cache_key" not in getattr(cachemod, "__all__", ())
     assert not hasattr(cachemod, "make_cache_key")
+
 
 def test_avg_sections_docstring_does_not_claim_trailing_pipe() -> None:
     """``_avg_sections`` returns the float string; the caller adds the
@@ -391,6 +402,7 @@ def test_avg_sections_docstring_does_not_claim_trailing_pipe() -> None:
     assert "trailing" not in doc.lower(), (
         f"_avg_sections docstring must not claim it returns the trailing '|': {doc!r}"
     )
+
 
 def test_cache_module_docstring_matches_storage_path() -> None:
     """The cache module docstring must reflect the actual storage path

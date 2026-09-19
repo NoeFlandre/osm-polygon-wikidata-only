@@ -49,6 +49,7 @@ def test_v2_writer_increments_shard_indices_after_rotation(
         "part-00002-of-00003.parquet",
     ]
 
+
 def test_v2_validated_output_checks_schema_and_records_all_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -104,6 +105,7 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
         sha256="digest",
     )
 
+
 def test_v2_main_parses_a_path_and_default_batch_size(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -132,11 +134,13 @@ def test_v2_main_parses_a_path_and_default_batch_size(
     assert calls == [(tmp_path, DEFAULT_BATCH_SIZE)]
     assert capsys.readouterr().out.strip() == str(tmp_path / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH)
 
+
 def test_v2_main_help_describes_the_generator(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         main(["--help"])
 
     assert "Bounded, deterministic row-level language partitions" in capsys.readouterr().out
+
 
 def test_v2_split_preserves_sorted_source_and_row_order(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -154,6 +158,7 @@ def test_v2_split_preserves_sorted_source_and_row_order(tmp_path: Path) -> None:
         "doc-fr-z",
     ]
     assert [row["document_id"] for row in _rows(root, "wikipedia_documents", "de")] == ["doc-de-a"]
+
 
 def test_v2_split_is_byte_stable_on_repeated_runs(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -174,6 +179,7 @@ def test_v2_split_is_byte_stable_on_repeated_runs(tmp_path: Path) -> None:
     assert second == first
     assert (root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH).read_bytes() == first_manifest
     assert not list((root / "language_splits").rglob("*.tmp"))
+
 
 def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -208,6 +214,7 @@ def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: 
         for file in cast(list[dict[str, object]], bucket["files"])
     )
 
+
 def test_v2_manifest_path_helper_ignores_unowned_records(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     build_v2_language_splits(root)
@@ -234,6 +241,7 @@ def test_v2_manifest_path_helper_ignores_unowned_records(tmp_path: Path) -> None
     }
     assert actual == expected
 
+
 def test_v2_manifest_records_preserves_the_typed_mapping_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -250,6 +258,7 @@ def test_v2_manifest_records_preserves_the_typed_mapping_contract(
     )
     assert observed == [(dict[str, object], {"path": "language_splits/file.parquet"})]
 
+
 def test_v2_split_does_not_route_or_copy_the_polygon_table(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     source = (root / "polygons/a-latest.parquet").read_bytes()
@@ -261,6 +270,7 @@ def test_v2_split_does_not_route_or_copy_the_polygon_table(tmp_path: Path) -> No
     assert all(
         "polygons" not in path.parts for path in (root / "language_splits").rglob("*.parquet")
     )
+
 
 def test_v2_split_rejects_a_v1_processed_root_without_writing_output(tmp_path: Path) -> None:
     root = tmp_path / "processed"
@@ -284,6 +294,7 @@ def test_v2_split_rejects_a_v1_processed_root_without_writing_output(tmp_path: P
 
     assert not (root / "language_splits").exists()
 
+
 def test_v2_split_rejects_a_nonpositive_batch_size_without_writing_output(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -292,6 +303,7 @@ def test_v2_split_rejects_a_nonpositive_batch_size_without_writing_output(tmp_pa
 
     assert not (root / "language_splits").exists()
 
+
 def test_v2_split_rejects_output_outside_processed_root(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -299,6 +311,7 @@ def test_v2_split_rejects_output_outside_processed_root(tmp_path: Path) -> None:
         build_v2_language_splits(root, output_root=tmp_path / "outside")
 
     assert not (root / "language_splits").exists()
+
 
 def test_v2_split_rejects_output_root_that_overlaps_source_artifacts(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -309,6 +322,7 @@ def test_v2_split_rejects_output_root_that_overlaps_source_artifacts(tmp_path: P
 
     assert (root / "polygons/a-latest.parquet").read_bytes() == source
     assert not (root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH).exists()
+
 
 def test_v2_split_rolls_back_after_install_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -341,6 +355,7 @@ def test_v2_split_rolls_back_after_install_failure(
     assert _release_snapshot(root) == before
     assert not list(root.glob(".language_splits-*"))
 
+
 def test_v2_split_rolls_back_if_backup_phase_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -359,6 +374,7 @@ def test_v2_split_rolls_back_if_backup_phase_fails(
 
     assert _release_snapshot(root) == before
     assert not list(root.glob(".language_splits-*"))
+
 
 def test_v2_install_files_sorts_by_final_path_and_records_every_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -389,6 +405,7 @@ def test_v2_install_files_sorts_by_final_path_and_records_every_install(
     assert installed == [final_a, final_z]
     assert final_a.read_bytes() == b"a"
     assert final_z.read_bytes() == b"z"
+
 
 def test_v2_nested_output_files_are_installed_before_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -422,6 +439,7 @@ def test_v2_nested_output_files_are_installed_before_manifest(
     assert data_final.read_bytes() == b"data"
     assert manifest_final.read_bytes() == b"manifest"
 
+
 def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -449,6 +467,7 @@ def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
     )
     assert _release_snapshot(root) == before
     assert not list(root.glob(".language_splits-*"))
+
 
 def test_v2_install_files_requires_explicit_final_path_order(
     monkeypatch: pytest.MonkeyPatch,

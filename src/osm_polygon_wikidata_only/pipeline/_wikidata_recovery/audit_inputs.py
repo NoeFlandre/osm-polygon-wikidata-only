@@ -192,7 +192,11 @@ def resolve_link_target(
     orphan_document_ids: list[str],
 ) -> tuple[str, str, str] | None:
     polygon_id, reference_key, reference_id, qid = identity
-    document = documents_by_id.get(reference_id) if canonical_links else documents_by_article.get(reference_id)
+    document = (
+        documents_by_id.get(reference_id)
+        if canonical_links
+        else documents_by_article.get(reference_id)
+    )
     if document is not None and str(document["document_id"]) in orphan_document_ids:
         return None
     validate_polygon_qid(polygon_id, qid, polygons)

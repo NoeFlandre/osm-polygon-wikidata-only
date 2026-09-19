@@ -86,6 +86,7 @@ def _stub_combined_text_map(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _cache: None,
     )
 
+
 def _stub_process_result(tmp_path: Path) -> tuple[ProcessResult, DataRoot]:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -113,6 +114,7 @@ def _stub_process_result(tmp_path: Path) -> tuple[ProcessResult, DataRoot]:
         data_root,
     )
 
+
 def _stub_augmentation_result(processed_root: Path) -> AugmentationResult:
     """Build an :class:`AugmentationResult` whose paths live under ``processed_root``.
 
@@ -136,6 +138,7 @@ def _stub_augmentation_result(processed_root: Path) -> AugmentationResult:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("{}", encoding="utf-8")
     return AugmentationResult(**paths, counts={"wikipedia_documents": 1})
+
 
 def _stub_generators(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the geographic/coverage generators so tests don't depend on
@@ -172,5 +175,6 @@ def _stub_generators(monkeypatch: pytest.MonkeyPatch) -> None:
         "osm_polygon_wikidata_only.hf.publication.write_readme_snapshot",
         lambda *a, **kw: None,
     )
+
 
 __all__ = [name for name in globals() if not name.startswith("__")]

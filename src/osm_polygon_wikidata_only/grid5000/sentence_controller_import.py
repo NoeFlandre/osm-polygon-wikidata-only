@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION
 from osm_polygon_wikidata_only.v2.sentence_logic import SAT_MODEL_ID
 from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
 
+from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
     ControllerRunError,
     batch_stems,
@@ -32,7 +33,7 @@ from .sentence_protocol import (
 )
 
 
-class SentenceControllerImportMixin:
+class SentenceControllerImportMixin(SentenceControllerContext):
     """Verify remote receipts before installing data and checkpoints."""
 
     def _read_valid_receipt(
@@ -91,9 +92,7 @@ class SentenceControllerImportMixin:
     ) -> None:
         artifacts = receipt_artifacts(receipt)
         manifest_relative = (Path("processed_v2") / SENTENCE_MANIFEST_RELATIVE_PATH).as_posix()
-        manifest_path = verified_incoming_artifact(
-            received_data.path, artifacts, manifest_relative
-        )
+        manifest_path = verified_incoming_artifact(received_data.path, artifacts, manifest_relative)
         incoming_payload = read_json_mapping(manifest_path)
         local_manifest_path = self.data_root.processed_v2 / SENTENCE_MANIFEST_RELATIVE_PATH
         local_payload = load_json_mapping(local_manifest_path)
@@ -151,5 +150,6 @@ class SentenceControllerImportMixin:
             self.data_root.v2_cache / "sentence-checkpoints" / stem / project,
             expected_identity=identity,
         )
+
 
 __all__ = ["SentenceControllerImportMixin"]

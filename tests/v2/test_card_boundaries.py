@@ -12,4 +12,3 @@ def test_card_facade_delegates_metrics_and_rendering_to_focused_modules() -> Non
     assert card._CardFiles is card_models._CardFiles
     assert inspect.getmodule(card.compute_v2_card_stats) is card_metrics
     assert inspect.getmodule(card.render_v2_card) is card_rendering
-

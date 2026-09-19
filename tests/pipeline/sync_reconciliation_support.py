@@ -31,6 +31,7 @@ def compute_sha256(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+
 def _setup_mock_region(
     data_root: DataRoot, stem: str, augmented: bool = True, invalid_core: bool = False
 ) -> None:
@@ -172,11 +173,13 @@ def _setup_mock_region(
             aug_manifest = existing
         aug_manifest_path.write_text(json.dumps(aug_manifest, indent=2))
 
+
 @pytest.fixture
 def mock_hf_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "fake-token")
     monkeypatch.setattr(commands, "verify_hf_token", lambda value: "noeflandre")
     monkeypatch.setattr(commands, "verify_repo_authorization", lambda token, repo_id: "noeflandre")
+
 
 class _LoggerSpy:
     """In-process recorder for ``LOGGER`` info/error calls.
@@ -212,6 +215,7 @@ class _LoggerSpy:
     def critical(self, message: str, *args: Any, **kwargs: Any) -> None:
         del args, kwargs
 
+
 def _install_logger_spy(monkeypatch: pytest.MonkeyPatch) -> _LoggerSpy:
     """Replace ``cli.LOGGER`` methods with a deterministic spy.
 
@@ -229,6 +233,7 @@ def _install_logger_spy(monkeypatch: pytest.MonkeyPatch) -> _LoggerSpy:
     monkeypatch.setattr(run_sync.LOGGER, "critical", spy.critical)
     return spy
 
+
 class _NetworkBoundaryRecorder:
     """Tracks invocations of the stubbed ``ensure_world_land``.
 
@@ -242,6 +247,7 @@ class _NetworkBoundaryRecorder:
     def __init__(self) -> None:
         self.calls: list[Path] = []
         self.urlretrieve_calls: list[tuple[Any, ...]] = []
+
 
 def _block_network(monkeypatch: pytest.MonkeyPatch) -> _NetworkBoundaryRecorder:
     """Replace the real network boundary with a deterministic stub.
@@ -296,6 +302,7 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> _NetworkBoundaryRecorder:
     monkeypatch.setattr("urllib.request.urlretrieve", _no_urlretrieve, raising=False)
     return recorder
 
+
 class _ReconciliationNetworkRecorder:
     """Records any guarded network-boundary invocation.
 
@@ -307,6 +314,7 @@ class _ReconciliationNetworkRecorder:
     def __init__(self) -> None:
         self.wikimedia_calls: list[tuple[Any, ...]] = []
         self.urlretrieve_calls: list[tuple[Any, ...]] = []
+
 
 def _block_reconciliation_network(
     monkeypatch: pytest.MonkeyPatch,
@@ -379,6 +387,7 @@ def _block_reconciliation_network(
     monkeypatch.setattr("urllib.request.urlretrieve", _no_urlretrieve, raising=False)
     return recorder
 
+
 def _refresh_augmentation_manifest(data_root: DataRoot, stem: str) -> None:
     """Recompute and persist the canonical core-hash entry for *stem*.
 
@@ -411,6 +420,7 @@ def _refresh_augmentation_manifest(data_root: DataRoot, stem: str) -> None:
     manifest[stem] = entry
     aug_manifest_path.write_text(json.dumps(manifest, indent=2))
 
+
 def setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
     # 1. Mock RemoteInventory.fetch to return files from the stub
     from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
@@ -430,5 +440,5 @@ def setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
 
     monkeypatch.setattr(run_sync, "_build_upload_queue", mock_build_queue)
 
-__all__ = [name for name in globals() if not name.startswith("__")]
 
+__all__ = [name for name in globals() if not name.startswith("__")]

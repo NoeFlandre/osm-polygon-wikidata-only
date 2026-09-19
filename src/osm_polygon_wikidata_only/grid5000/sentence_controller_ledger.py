@@ -10,6 +10,7 @@ from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION
 from osm_polygon_wikidata_only.v2.sentence_logic import SAT_MODEL_ID
 from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
 
+from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
     SEGMENTER_VERSION,
     ControllerRunError,
@@ -27,7 +28,7 @@ from .sentence_protocol import GRID5000_SENTENCE_CONTRACT_VERSION, plan_sentence
 _LEDGER_FILENAME = "grid5000_sentence_run.json"
 
 
-class SentenceControllerLedgerMixin:
+class SentenceControllerLedgerMixin(SentenceControllerContext):
     """Create, validate, update, and persist the durable run ledger."""
 
     def initialize(self) -> dict[str, Any]:

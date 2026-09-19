@@ -90,6 +90,7 @@ def compute_v2_card_stats(
     sentence_stats = _compute_sentence_stats(processed_v2)
     return _build_card_stats(files, metrics, comparison, sentence_stats=sentence_stats)
 
+
 def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
     document_files = files.wikipedia_document_files + files.wikivoyage_document_files
     document_metrics = _scan_document_metrics(
@@ -133,6 +134,7 @@ def _compute_card_metrics(files: _CardFiles) -> _CardMetrics:
         unique_polygon_count=len(polygon_index.records),
     )
 
+
 def _load_v1_baseline(processed: Path) -> _V1Baseline:
     polygon_ids = set(
         _unique_values(sorted(processed.joinpath("polygons").glob("*.parquet")), "polygon_id")
@@ -153,6 +155,7 @@ def _load_v1_baseline(processed: Path) -> _V1Baseline:
         ),
         section_count=_sum_metadata(_v1_section_files(processed)),
     )
+
 
 def _compute_v1_comparison(
     v1_processed: Path | None,
@@ -193,6 +196,7 @@ def _compute_v1_comparison(
         wikipedia_tag_document_polygons=wikipedia_tag_document_polygons,
     )
 
+
 def _compare_polygon_sources(
     files: _CardFiles,
     metrics: _CardMetrics,
@@ -210,6 +214,7 @@ def _compare_polygon_sources(
         for polygon_id, sources in source_sets.items()
     )
     return wikipedia_tag, wikidata_only, without_document
+
 
 def _compare_document_content(
     files: _CardFiles,
@@ -234,6 +239,7 @@ def _compare_document_content(
     sharing_content = _shared_content_count(v2_new_hashes, v1_content_hashes)
     return new_identity_words, sharing_content
 
+
 def _v1_document_words_by_id(paths: list[Path]) -> dict[str, int]:
     words = _unique_numeric_values(
         paths,
@@ -248,14 +254,17 @@ def _v1_document_words_by_id(paths: list[Path]) -> dict[str, int]:
         ("article_length_words", "text_length_words"),
     )
 
+
 def _new_identity_words(v2_words: dict[str, int], v1_words: dict[str, int]) -> int:
     return sum(value for identity, value in v2_words.items() if identity not in v1_words)
+
 
 def _shared_content_count(
     new_hashes: dict[str, str],
     v1_hashes: set[str],
 ) -> int:
     return sum(content_hash in v1_hashes for content_hash in new_hashes.values() if content_hash)
+
 
 def _compare_unique_sections(files: _CardFiles, v1_processed: Path) -> int:
     v2_section_ids = _unique_values(
@@ -264,6 +273,7 @@ def _compare_unique_sections(files: _CardFiles, v1_processed: Path) -> int:
     )
     v1_section_ids = _unique_values(_v1_section_files(v1_processed), "section_id")
     return len(v2_section_ids - v1_section_ids)
+
 
 def _build_card_stats(
     files: _CardFiles,

@@ -51,6 +51,7 @@ def test_log_remote_reconciliation_summary_unit() -> None:
     assert spy.messages[2] == "Remote reconciliation complete: 2 regions repaired"
     assert spy.messages[3] == "Remote reconciliation complete: converged"
 
+
 def test_no_real_network_during_logging_core_repair(
     tmp_path: Path,
     mock_hf_auth: None,

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from typing import Any
 
+from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
     ACTIVE_STATES,
     ControllerRunError,
@@ -17,7 +18,7 @@ from .sentence_controller_policy import (
 )
 
 
-class SentenceControllerLifecycleMixin:
+class SentenceControllerLifecycleMixin(SentenceControllerContext):
     """Coordinate batches and keep remote cleanup resumable and safe."""
 
     def run(self) -> dict[str, Any]:
@@ -119,5 +120,6 @@ class SentenceControllerLifecycleMixin:
         batch["state"] = "cancelled"
         batch["error"] = "cancelled_by_interrupt"
         self._write_ledger()
+
 
 __all__ = ["SentenceControllerLifecycleMixin"]

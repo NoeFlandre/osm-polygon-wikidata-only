@@ -100,7 +100,9 @@ def remote_batch_succeeded(
     exit_code: int | None,
     receipt: Mapping[str, object],
 ) -> bool:
-    return state in SUCCESS_STATES and exit_code in {None, 0} and receipt.get("status") == "succeeded"
+    return (
+        state in SUCCESS_STATES and exit_code in {None, 0} and receipt.get("status") == "succeeded"
+    )
 
 
 def receipt_artifacts(receipt: Mapping[str, object]) -> dict[str, FileDigest]:

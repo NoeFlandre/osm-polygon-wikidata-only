@@ -64,6 +64,7 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
     assert observed["owned"] == {final_a, final_z, stale}
     assert observed["cleanup"] is True
 
+
 def test_v2_restore_files_is_missing_safe_and_sorts_backups_by_final_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -93,6 +94,7 @@ def test_v2_restore_files_is_missing_safe_and_sorts_backups_by_final_path(
     assert final_a.read_bytes() == b"a"
     assert final_z.read_bytes() == b"z"
     assert not missing_final.exists()
+
 
 def test_v2_restore_files_requires_final_path_order_and_recursive_parent_creation(
     monkeypatch: pytest.MonkeyPatch,
@@ -157,6 +159,7 @@ def test_v2_restore_files_requires_final_path_order_and_recursive_parent_creatio
         (backup_z_existing, final_z),
     ]
 
+
 def test_v2_backup_existing_keeps_hidden_backup_next_to_original(tmp_path: Path) -> None:
     path = tmp_path / "output/artifact.parquet"
     path.parent.mkdir()
@@ -174,6 +177,7 @@ def test_v2_backup_existing_keeps_hidden_backup_next_to_original(tmp_path: Path)
         if backup is not None:
             backup.unlink(missing_ok=True)
 
+
 def test_v2_previous_manifest_reader_requires_utf8(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -190,6 +194,7 @@ def test_v2_previous_manifest_reader_requires_utf8(
     assert language_splits._read_previous_manifest(path) == {}
     assert encodings == ["utf-8"]
 
+
 def test_v2_output_directories_are_derived_only_from_owned_paths(tmp_path: Path) -> None:
     destination = tmp_path / "language_splits"
     owned_path = destination / "configuration/lang-en/source.parquet"
@@ -198,6 +203,7 @@ def test_v2_output_directories_are_derived_only_from_owned_paths(tmp_path: Path)
         destination / "configuration",
         destination / "configuration/lang-en",
     }
+
 
 def test_v2_output_directories_continue_after_unowned_paths(tmp_path: Path) -> None:
     destination = tmp_path / "language_splits"
@@ -214,6 +220,7 @@ def test_v2_output_directories_continue_after_unowned_paths(tmp_path: Path) -> N
         destination / "configuration/lang-en",
     }
 
+
 def test_v2_remove_empty_output_directories_prunes_deepest_first(tmp_path: Path) -> None:
     destination = tmp_path / "language_splits"
     owned_path = destination / "configuration/lang-en/source.parquet"
@@ -223,6 +230,7 @@ def test_v2_remove_empty_output_directories_prunes_deepest_first(tmp_path: Path)
 
     assert not (destination / "configuration/lang-en").exists()
     assert not (destination / "configuration").exists()
+
 
 def test_v2_remove_empty_output_directories_requires_depth_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -248,6 +256,7 @@ def test_v2_remove_empty_output_directories_requires_depth_order(
     language_splits._remove_empty_output_directories(tmp_path, set())
 
     assert events == ["inner", "outer"]
+
 
 def test_v2_remove_empty_output_directories_continues_after_nonempty_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -276,12 +285,14 @@ def test_v2_remove_empty_output_directories_continues_after_nonempty_directory(
 
     assert events == ["inner", "outer"]
 
+
 def test_v2_split_conservation_guard_rejects_missing_output(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     inventory = build_language_inventory(root, DatasetContract.V2)
 
     with pytest.raises(V2LanguageSplitError, match="row conservation failed"):
         _validate_conservation(inventory, ())
+
 
 def test_v2_split_can_be_loaded_with_standard_datasets(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -326,6 +337,7 @@ def test_v2_split_can_be_loaded_with_standard_datasets(tmp_path: Path) -> None:
         "column_names": [field.name for field in wikipedia_document_v2_schema()],
         "document_id": ["doc-fr-a", "doc-fr-z"],
     }
+
 
 def test_v2_split_module_runs_as_a_local_command(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

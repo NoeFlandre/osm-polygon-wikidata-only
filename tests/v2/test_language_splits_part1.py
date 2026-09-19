@@ -27,6 +27,7 @@ def test_v2_split_keeps_each_multilingual_row_in_its_own_partition(tmp_path: Pat
     ]
     assert (root / "language_splits" / "polygons").exists() is False
 
+
 def test_v2_split_aggregates_rows_into_deterministic_bounded_shards(
     tmp_path: Path,
 ) -> None:
@@ -64,6 +65,7 @@ def test_v2_split_aggregates_rows_into_deterministic_bounded_shards(
     assert all("source_files" in file and "source_file" not in file for file in manifest_files)
     assert _manifest(root)["contract_version"] == V2_LANGUAGE_SPLIT_CONTRACT_VERSION
 
+
 def test_v2_split_routes_unusable_values_to_lang_unknown(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -80,6 +82,7 @@ def test_v2_split_routes_unusable_values_to_lang_unknown(tmp_path: Path) -> None
     ]
     assert [row["language"] for row in unknown] == [None, "  ", "en/fr", "simple"]
     assert [row["language"] for row in aliases] == ["be_x_old"]
+
 
 def test_v2_split_conserves_rows_and_preserves_schema(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -154,6 +157,7 @@ def test_v2_split_conserves_rows_and_preserves_schema(tmp_path: Path) -> None:
                     "table",
                 }
 
+
 def test_v2_split_result_and_nested_output_parent_are_explicit(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
     output_root = root / "nested/releases/language_splits"
@@ -170,6 +174,7 @@ def test_v2_split_result_and_nested_output_parent_are_explicit(tmp_path: Path) -
         for bucket in cast(list[dict[str, object]], table["buckets"])
         for file in cast(list[dict[str, object]], bucket["files"])
     }
+
 
 def test_v2_alternating_output_roots_remove_previous_owned_shards(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
@@ -190,6 +195,7 @@ def test_v2_alternating_output_roots_remove_previous_owned_shards(tmp_path: Path
     assert not list(custom.rglob("*.parquet"))
     assert list((root / "language_splits").rglob("*.parquet"))
 
+
 def test_v2_split_overlap_rejection_checks_each_source_location(tmp_path: Path) -> None:
     root = _write_v2_fixture(tmp_path)
 
@@ -198,6 +204,7 @@ def test_v2_split_overlap_rejection_checks_each_source_location(tmp_path: Path) 
     assert str(error.value).startswith(
         "V2 language split output must not overlap source artifacts:"
     )
+
 
 def test_v2_sort_keys_put_unknown_after_known_languages() -> None:
     known = V2LanguageSplitFile(
@@ -226,6 +233,7 @@ def test_v2_sort_keys_put_unknown_after_known_languages() -> None:
         "en",
         "unknown",
     ]
+
 
 def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -286,6 +294,7 @@ def test_v2_staging_uses_destination_local_temp_and_best_effort_cleanup(
         },
     )
 
+
 def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -324,6 +333,7 @@ def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
         100_000,
     ) == ([], {})
     assert observed == [(LanguageTableInventory, table_inventory)]
+
 
 def test_v2_write_batch_uses_explicit_int64_row_indices(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -374,6 +384,7 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
     assert observed["max_rows_per_shard"] == 10
 
+
 def test_v2_table_shard_counts_omit_empty_buckets() -> None:
     bucket = LanguageBucket(
         language="en",
@@ -406,6 +417,7 @@ def test_v2_table_shard_counts_omit_empty_buckets() -> None:
     )
 
     assert language_splits._table_shard_counts(inventory, 100_000) == {"fr": 1}
+
 
 def test_v2_write_language_indices_respects_existing_shard_capacity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -451,6 +463,7 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
     assert first.row_count == 10
     assert second.row_count == 1
     assert "en" not in state.current
+
 
 def test_v2_write_language_indices_advances_offset_across_shards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -498,6 +511,7 @@ def test_v2_write_language_indices_advances_offset_across_shards(
     assert first.row_count == 2
     assert second.row_count == 1
 
+
 def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
     shard = SimpleNamespace(source_files=["source-a.parquet"])
 
@@ -505,6 +519,7 @@ def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
     language_splits._record_source_file(shard, "source-b.parquet")
 
     assert shard.source_files == ["source-a.parquet", "source-b.parquet"]
+
 
 def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = language_table_specs(DatasetContract.V2)[0]

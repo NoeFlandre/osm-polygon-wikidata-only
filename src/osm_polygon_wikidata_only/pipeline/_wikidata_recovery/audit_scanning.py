@@ -20,7 +20,7 @@ class ScanHooks:
         *,
         region_fingerprints: Callable[[DataRoot, str], tuple[tuple[str, str], ...]],
         scan_region: Callable[[DataRoot, str, tuple[tuple[str, str], ...]], RegionScan],
-        progress_checkpoint: Callable[[int, int], bool],
+        progress_checkpoint: Callable[..., bool],
     ) -> None:
         self.region_fingerprints = region_fingerprints
         self.scan_region = scan_region
@@ -92,7 +92,7 @@ def emit_scan_progress(
     total: int,
     started_at: float,
     *,
-    progress_checkpoint: Callable[[int, int], bool],
+    progress_checkpoint: Callable[..., bool],
 ) -> None:
     if progress_checkpoint(completed, total, every=25):
         emit(

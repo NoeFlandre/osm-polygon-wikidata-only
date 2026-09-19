@@ -49,6 +49,7 @@ def test_upload_failure_remains_retryable(
     # No success log should be printed
     assert not any("Remote reconciliation complete" in message for message in spy.messages)
 
+
 def test_dry_run_causes_no_mutation_or_retirement(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -87,6 +88,7 @@ def test_dry_run_causes_no_mutation_or_retirement(
 
     # Local retirement is untouched (still pending)
     assert stem in load_pending_publications(data_root)
+
 
 def test_existing_paired_legacy_retirement_remains_intact(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
@@ -220,6 +222,7 @@ def test_existing_paired_legacy_retirement_remains_intact(
         "time(s); the coverage-map download was not stubbed."
     )
 
+
 def test_reconciliation_network_guard_intercepts_augmentation_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -254,6 +257,7 @@ def test_reconciliation_network_guard_intercepts_augmentation_transport(
 
     assert len(recorder.wikimedia_calls) == 1
     assert recorder.urlretrieve_calls == []
+
 
 def test_augmentation_is_current_called_exactly_once_per_stem(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
@@ -295,6 +299,7 @@ def test_augmentation_is_current_called_exactly_once_per_stem(
     rc = commands.main(args)
     assert rc == 0
     assert call_count == 1  # Verified exactly once!
+
 
 def test_token_resolver_failure_but_injected_hub_works(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -350,6 +355,7 @@ def test_token_resolver_failure_but_injected_hub_works(
     )
     assert rc == 0
 
+
 def test_logging_core_repair(
     tmp_path: Path,
     mock_hf_auth: None,
@@ -386,6 +392,7 @@ def test_logging_core_repair(
         "Remote reconciliation complete: 1 regions repaired; README and maps refreshed" in message
         for message in spy.messages
     )
+
 
 def test_logging_sidecar_only_repair(
     tmp_path: Path,
@@ -441,6 +448,7 @@ def test_logging_sidecar_only_repair(
     )
     assert any("README and maps refreshed" in message for message in spy.messages)
 
+
 def test_logging_metadata_only_repair(
     tmp_path: Path,
     mock_hf_auth: None,
@@ -490,6 +498,7 @@ def test_logging_metadata_only_repair(
         for message in spy.messages
     )
     assert not any("regions repaired" in message for message in spy.messages)
+
 
 def test_logging_upload_failure(
     tmp_path: Path,

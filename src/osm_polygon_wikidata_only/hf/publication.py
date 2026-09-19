@@ -380,12 +380,9 @@ def build_minimal_v1_release_snapshot(
         + augmentation_stats.wikivoyage_documents.rows
     )
     sections = (
-        augmentation_stats.wikipedia_sections.rows
-        + augmentation_stats.wikivoyage_sections.rows
+        augmentation_stats.wikipedia_sections.rows + augmentation_stats.wikivoyage_sections.rows
     )
-    languages = (
-        augmentation_stats.combined_languages.language_count or core_stats.language_count
-    )
+    languages = augmentation_stats.combined_languages.language_count or core_stats.language_count
     snapshot = MinimalCardSnapshot(
         front_matter=front_matter,
         repo_id=repo_id,

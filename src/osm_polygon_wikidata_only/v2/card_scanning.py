@@ -29,6 +29,7 @@ _METADATA_READ_WORKERS = 4
 _SUCCESSFUL_FETCH_STATUS = "ok"
 _TEXT_DOCUMENT_PROJECTS = frozenset({"wikipedia", "wikivoyage"})
 
+
 def _collect_card_files(processed_v2: Path) -> _CardFiles:
     stems = tuple(sorted(load_v2_manifest(processed_v2)))
     polygon_files = _manifest_files(processed_v2 / "polygons", stems)
@@ -59,6 +60,7 @@ def _collect_card_files(processed_v2: Path) -> _CardFiles:
         parquet_files=parquet_files,
     )
 
+
 def _load_polygon_index(paths: Iterable[Path]) -> PolygonIndex:
     """Load canonical polygon identities while retaining incomplete-test compatibility."""
     materialized = tuple(paths)
@@ -68,24 +70,29 @@ def _load_polygon_index(paths: Iterable[Path]) -> PolygonIndex:
         return PolygonIndex(records={}, by_polygon_id={})
     return load_unique_polygon_records(materialized)
 
+
 def _v1_wikipedia_document_files(processed: Path) -> list[Path]:
     wikipedia = sorted((processed / "wikipedia/documents").glob("*.parquet"))
     if not wikipedia:
         wikipedia = sorted((processed / "articles").glob("*.parquet"))
     return wikipedia
 
+
 def _v1_document_files(processed: Path) -> list[Path]:
     return _v1_wikipedia_document_files(processed) + sorted(
         (processed / "wikivoyage/documents").glob("*.parquet")
     )
+
 
 def _v1_section_files(processed: Path) -> list[Path]:
     return sorted((processed / "wikipedia/sections").glob("*.parquet")) + sorted(
         (processed / "wikivoyage/sections").glob("*.parquet")
     )
 
+
 def _manifest_files(directory: Path, stems: Iterable[str]) -> list[Path]:
     return [path for stem in stems if (path := directory / f"{stem}.parquet").is_file()]
+
 
 def _sum_metadata(paths: Iterable[Path], *, executor_factory=ThreadPoolExecutor) -> int:
     materialized = tuple(paths)
@@ -98,14 +105,17 @@ def _sum_metadata(paths: Iterable[Path], *, executor_factory=ThreadPoolExecutor)
     ) as executor:
         return sum(executor.map(_metadata_row_count, materialized))
 
+
 def _metadata_row_count(path: Path) -> int:
     return int(pq.read_metadata(path).num_rows)
+
 
 def _unique_values(paths: Iterable[Path], column: str) -> set[str]:
     values: set[str] = set()
     for path in paths:
         values.update(_unique_values_file(path, column))
     return values
+
 
 def _unique_values_file(path: Path, column: str) -> set[str]:
     values: set[str] = set()
@@ -116,8 +126,10 @@ def _unique_values_file(path: Path, column: str) -> set[str]:
             values.update(_non_empty_strings(batch.column(0).to_pylist()))
     return values
 
+
 def _sum_first_available(paths: Iterable[Path], columns: tuple[str, ...]) -> int:
     return sum(_sum_first_available_file(path, columns) for path in paths)
+
 
 def _sum_first_available_file(path: Path, columns: tuple[str, ...]) -> int:
     with open_parquet(path) as parquet_file:
@@ -129,8 +141,10 @@ def _sum_first_available_file(path: Path, columns: tuple[str, ...]) -> int:
             for batch in iter_record_batches(parquet_file, columns=[column], batch_size=65_536)
         )
 
+
 def _first_present_column(names: set[str], columns: tuple[str, ...]) -> str | None:
     return next((candidate for candidate in columns if candidate in names), None)
+
 
 def _unique_numeric_values(
     paths: Iterable[Path], key_column: str, value_columns: tuple[str, ...]
@@ -140,6 +154,7 @@ def _unique_numeric_values(
     for path in paths:
         _merge_numeric_file(values, path, key_column, value_columns)
     return values
+
 
 def _merge_numeric_file(
     values: dict[str, int],
@@ -154,6 +169,7 @@ def _merge_numeric_file(
             return
         _merge_numeric_batches(values, parquet_file, key_column, value_column)
 
+
 def _merge_numeric_batches(
     values: dict[str, int],
     parquet_file: Any,
@@ -165,11 +181,13 @@ def _merge_numeric_batches(
     ):
         _merge_numeric_batch(values, batch, value_column)
 
+
 def _merge_numeric_batch(values: dict[str, int], batch: Any, value_column: str) -> None:
     for identity, value in zip(
         batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
     ):
         _record_numeric_value(values, identity, value, value_column)
+
 
 def _record_numeric_value(
     values: dict[str, int],
@@ -186,6 +204,7 @@ def _record_numeric_value(
         raise ValueError(f"Inconsistent {value_column} for document {key!r}")
     values[key] = numeric
 
+
 def _field_values_for_ids(
     paths: Iterable[Path],
     key_column: str,
@@ -198,6 +217,7 @@ def _field_values_for_ids(
     for path in paths:
         _merge_field_values_file(values, path, key_column, value_column, identities)
     return values
+
 
 def _merge_field_values_file(
     values: dict[str, str],
@@ -214,6 +234,7 @@ def _merge_field_values_file(
         ):
             _merge_field_values_batch(values, batch, identities)
 
+
 def _merge_field_values_batch(
     values: dict[str, str],
     batch: Any,
@@ -225,11 +246,13 @@ def _merge_field_values_batch(
         if identity in identities and value not in (None, ""):
             values[str(identity)] = str(value)
 
+
 def _polygon_source_sets(paths: Iterable[Path], identities: set[str]) -> dict[str, set[str]]:
     values: dict[str, set[str]] = {}
     for path in paths:
         values.update(_polygon_source_file(path, identities))
     return values
+
 
 def _polygon_source_file(path: Path, identities: set[str]) -> dict[str, set[str]]:
     values: dict[str, set[str]] = {}
@@ -241,6 +264,7 @@ def _polygon_source_file(path: Path, identities: set[str]) -> dict[str, set[str]
         ):
             _merge_polygon_sources(values, batch, identities, path)
     return values
+
 
 def _merge_polygon_sources(
     values: dict[str, set[str]],
@@ -256,6 +280,7 @@ def _merge_polygon_sources(
         parsed = _parse_source_list(raw_sources, identity, path, "discovery_sources")
         values[str(identity)] = set(parsed)
 
+
 def _parse_source_list(
     raw_sources: Any,
     identity: Any,
@@ -268,6 +293,7 @@ def _parse_source_list(
         raise ValueError(f"Invalid {field} for polygon {identity!r} in {path}") from exc
     return _validated_source_list(parsed, identity, field)
 
+
 def _validated_source_list(parsed: Any, identity: Any, field: str) -> list[str]:
     if not isinstance(parsed, list):
         raise ValueError(f"Invalid {field} for polygon {identity!r}")
@@ -275,11 +301,13 @@ def _validated_source_list(parsed: Any, identity: Any, field: str) -> list[str]:
         raise ValueError(f"Invalid {field} for polygon {identity!r}")
     return parsed
 
+
 def _polygon_ids_with_link_source(paths: Iterable[Path], source: str) -> set[str]:
     values: set[str] = set()
     for path in paths:
         values.update(_link_source_file(path, source))
     return values
+
 
 def _link_source_file(path: Path, source: str) -> set[str]:
     values: set[str] = set()
@@ -306,6 +334,7 @@ def _batch_column(
 def _batch_value(values: list[Any] | None, index: int) -> Any:
     return None if values is None else values[index]
 
+
 def _merge_link_sources(values: set[str], batch: Any, source: str, path: Path) -> None:
     for identity, raw_sources in zip(
         batch.column(0).to_pylist(), batch.column(1).to_pylist(), strict=True
@@ -313,6 +342,7 @@ def _merge_link_sources(values: set[str], batch: Any, source: str, path: Path) -
         parsed = _parse_source_list(raw_sources, identity, path, "link_sources")
         if identity and source in parsed:
             values.add(str(identity))
+
 
 def _osm_polygon_identity(osm_type: Any, osm_id: Any) -> tuple[str, int] | None:
     if osm_type in (None, "") or osm_id in (None, ""):
@@ -322,12 +352,14 @@ def _osm_polygon_identity(osm_type: Any, osm_id: Any) -> tuple[str, int] | None:
     except (TypeError, ValueError):
         return None
 
+
 def _scan_polygon_metrics(paths: Iterable[Path]) -> _PolygonMetrics:
     """Collect polygon identities, QIDs, and source counts in one pass."""
     metrics = _PolygonMetrics(set(), set())
     for path in paths:
         _scan_polygon_file(path, metrics)
     return metrics
+
 
 def _scan_polygon_file(path: Path, metrics: _PolygonMetrics) -> None:
     with open_parquet(path) as parquet_file:
@@ -339,8 +371,10 @@ def _scan_polygon_file(path: Path, metrics: _PolygonMetrics) -> None:
             return
         _scan_polygon_batches(parquet_file, columns=columns, metrics=metrics)
 
+
 def _polygon_columns(names: set[str]) -> list[str]:
     return [column for column in ("polygon_id", "wikidata", "has_wikidata") if column in names]
+
 
 def _scan_polygon_batches(
     parquet_file: pq.ParquetFile,
@@ -351,6 +385,7 @@ def _scan_polygon_batches(
     positions = {column: index for index, column in enumerate(columns)}
     for batch in iter_record_batches(parquet_file, columns=columns, batch_size=65_536):
         _scan_polygon_batch(batch, positions=positions, metrics=metrics)
+
 
 def _scan_polygon_batch(
     batch: Any,
@@ -377,6 +412,7 @@ def _scan_polygon_batch(
             has_wikidata=_batch_value(has_wikidata, index),
         )
 
+
 def _record_polygon_row(
     metrics: _PolygonMetrics,
     *,
@@ -392,6 +428,7 @@ def _record_polygon_row(
     if has_wikidata is False:
         metrics.wikipedia_tag_only += 1
 
+
 def _word_column(names: set[str]) -> str | None:
     if "article_length_words" in names:
         return "article_length_words"
@@ -399,8 +436,10 @@ def _word_column(names: set[str]) -> str | None:
         return "text_length_words"
     return None
 
+
 def _has_non_empty_words(identity: Any, word_count: Any) -> bool:
     return bool(identity and int(word_count or 0) > 0)
+
 
 def _non_empty_strings(values: list[Any]) -> list[str]:
     return [str(value) for value in values if value]

@@ -119,7 +119,10 @@ def _body_lines(snapshot: MinimalCardSnapshot) -> list[str]:
         "",
         "| Continent | Polygons | Wikipedia documents | Wikivoyage documents | Polygons with Wikipedia text | Polygons with Wikipedia or Wikivoyage text | Text coverage |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-        *(_continent_line(row) for row in sorted(snapshot.continent_rows, key=lambda row: row.name)),
+        *(
+            _continent_line(row)
+            for row in sorted(snapshot.continent_rows, key=lambda row: row.name)
+        ),
         "",
         "## Polygon area and geometry",
         "",

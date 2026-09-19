@@ -167,7 +167,7 @@ def _execute_recovery_batches(
     emit: Callable[[str], None],
     scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None = None,
     batch_window: int = RECOVERY_BATCH_WINDOW,
-    as_completed_fn: Callable[[object], Any] | None = None,
+    as_completed_fn: Callable[[Any], Any] | None = None,
 ) -> list[RecoveryBatchArtifacts]:
     """Build independent recovery batches concurrently and return input order."""
     if batch_window < 1:

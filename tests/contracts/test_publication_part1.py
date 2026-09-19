@@ -21,6 +21,7 @@ def test_assemblers_have_no_submit_parameter() -> None:
             f"{fn.__name__} must not accept a submit callable; got {list(sig.parameters)}"
         )
 
+
 def test_assemblers_have_no_commit_message_parameter() -> None:
     """Assemblers do not know about commit messages -- CLI owns them."""
     import inspect
@@ -30,6 +31,7 @@ def test_assemblers_have_no_commit_message_parameter() -> None:
         assert "commit_message" not in sig.parameters, (
             f"{fn.__name__} must not accept commit_message; got {list(sig.parameters)}"
         )
+
 
 def test_assemble_augmentation_upload_returns_combined_maps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -79,6 +81,7 @@ def test_assemble_augmentation_upload_returns_combined_maps(
     ]
     assert len(ops) == 15
 
+
 def test_assemble_augmentation_upload_writes_readme_at_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -101,6 +104,7 @@ def test_assemble_augmentation_upload_writes_readme_at_end(
     readme = add_ops[-1].local_path
     assert readme is not None
     assert readme.parent == data_root.cache / "augmentation_upload_snapshots"
+
 
 def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -147,6 +151,7 @@ def test_assemble_augmentation_upload_refreshes_only_combined_visualization(
     )
     assert calls == ["presence", "density"]
 
+
 def test_assemble_augmentation_upload_logs_world_land_fallback(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -172,6 +177,7 @@ def test_assemble_augmentation_upload_logs_world_land_fallback(
 
     assert ops
     assert any("combined text map will omit continents" in r.getMessage() for r in caplog.records)
+
 
 def test_assemble_metadata_only_upload_includes_manifest_migration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -209,6 +215,7 @@ def test_assemble_metadata_only_upload_includes_manifest_migration(
     assert "augmentation/manifests/augmentation_manifest.json" in remotes
     assert remotes[-1] == "README.md"
 
+
 def test_assemble_metadata_only_upload_requires_processed_manifest(tmp_path: Path) -> None:
     """Metadata publication fails closed when its source manifest is absent."""
     data_root = DataRoot(tmp_path)
@@ -216,6 +223,7 @@ def test_assemble_metadata_only_upload_requires_processed_manifest(tmp_path: Pat
 
     with pytest.raises(FileNotFoundError, match="Local processed manifest is missing"):
         assemble_metadata_only_upload(data_root=data_root, repo_id=REPO_ID)
+
 
 def test_assemble_region_upload_without_core_refreshes_combined_map(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -257,6 +265,7 @@ def test_assemble_region_upload_without_core_refreshes_combined_map(
         "README.md",
     ]
 
+
 def test_assemble_region_upload_without_core_logs_world_land_fallback(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -285,6 +294,7 @@ def test_assemble_region_upload_without_core_logs_world_land_fallback(
 
     assert ops
     assert any("combined text map will omit continents" in r.getMessage() for r in caplog.records)
+
 
 def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -328,6 +338,7 @@ def test_assemble_region_upload_with_core_prepends_eight_core_artifacts(
     ]
     assert len(ops) == 20
 
+
 def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -360,6 +371,7 @@ def test_region_upload_skips_coverage_rendering_when_map_inputs_are_unchanged(
     ]
     assert not any(path.startswith("assets/") for path in remotes)
 
+
 def test_region_upload_can_defer_all_dataset_metadata_assets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -390,6 +402,7 @@ def test_region_upload_can_defer_all_dataset_metadata_assets(
     assert not any(path.startswith("assets/") for path in remotes)
     assert "polygons/monaco-latest.parquet" in remotes
     assert "wikipedia/documents/monaco-latest.parquet" in remotes
+
 
 def test_assemble_region_upload_writes_readme_after_other_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -451,6 +464,7 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
     assert call_order.index("density") < call_order.index("README.md")
     assert call_order.index("coverage") < call_order.index("README.md")
 
+
 def test_assemble_core_upload_returns_twelve_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -482,6 +496,7 @@ def test_assemble_core_upload_returns_twelve_entries(
         "coverage_map.png",
     ]
     assert len(ops) == 14
+
 
 def test_assemble_core_upload_writes_readme_after_other_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

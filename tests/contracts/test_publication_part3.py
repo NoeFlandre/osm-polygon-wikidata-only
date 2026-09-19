@@ -22,12 +22,14 @@ def test_cli_commands_no_longer_implements_publication_assembly() -> None:
     ):
         assert not hasattr(commands_mod, name), f"{name} must not live in cli.commands anymore"
 
+
 def test_hf_publication_no_longer_exposes_dead_types() -> None:
     """RegionUploadArtifacts and required_local_artifacts_present are gone."""
     import osm_polygon_wikidata_only.hf.publication as publication_mod
 
     assert not hasattr(publication_mod, "RegionUploadArtifacts")
     assert not hasattr(publication_mod, "required_local_artifacts_present")
+
 
 def test_canonical_augmentation_manifest_path_is_published(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -65,6 +67,7 @@ def test_canonical_augmentation_manifest_path_is_published(
     assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE not in additions
     assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletions
 
+
 def test_region_upload_publishes_augmentation_manifest_to_canonical_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -94,6 +97,7 @@ def test_region_upload_publishes_augmentation_manifest_to_canonical_path(
     assert REMOTE_AUGMENTATION_MANIFEST_FILE in additions
     assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletions
 
+
 def test_legacy_core_publication_does_not_touch_legacy_augmentation_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -120,6 +124,7 @@ def test_legacy_core_publication_does_not_touch_legacy_augmentation_path(
     assert REMOTE_AUGMENTATION_MANIFEST_FILE not in additions
     assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE not in additions
     assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE not in deletions
+
 
 def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -165,6 +170,7 @@ def test_augmentation_publication_includes_legacy_deletion_in_same_commit(
         REMOTE_AUGMENTATION_MANIFEST_FILE,
     }
     assert expected_additions == additions
+
 
 def test_repeated_augmentation_publication_is_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -214,6 +220,7 @@ def test_repeated_augmentation_publication_is_idempotent(
     assert REMOTE_AUGMENTATION_MANIFEST_FILE in adds_one
     assert LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE in deletes_one
 
+
 def test_publication_plan_is_deterministic_and_unique(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -250,6 +257,7 @@ def test_publication_plan_is_deterministic_and_unique(
     # Three current maps are added while the root coverage map and both
     # superseded H3 maps are deleted in the same atomic publication.
     assert len(ops) == 20, f"unexpected plan length: {len(ops)} {ops}"
+
 
 def test_stub_records_add_and_delete_ops(tmp_path: Path) -> None:
     """The HF stub must record both addition and deletion ops in the
@@ -292,6 +300,7 @@ def test_stub_records_add_and_delete_ops(tmp_path: Path) -> None:
         "Stub commit record must expose every op"
     )
 
+
 def test_upload_files_rejects_legacy_path_only_when_canonical_missing() -> None:
     """Safety net: a publication commit that deletes the legacy path
     without uploading the canonical replacement must be refused.
@@ -310,6 +319,7 @@ def test_upload_files_rejects_legacy_path_only_when_canonical_missing() -> None:
             token="stub-token",
             commit_message="dangling delete",
         )
+
 
 def test_upload_files_deletion_is_idempotent_when_remote_missing(tmp_path: Path) -> None:
     """Deleting a remote path that doesn't exist (e.g. on a fresh
@@ -349,6 +359,7 @@ def test_upload_files_deletion_is_idempotent_when_remote_missing(tmp_path: Path)
         }
     ]
 
+
 def test_upload_files_rejects_legacy_coverage_map_only_when_canonical_missing() -> None:
     """Safety net: a publication commit that deletes the legacy coverage map
     without uploading the canonical replacement must be refused.
@@ -367,6 +378,7 @@ def test_upload_files_rejects_legacy_coverage_map_only_when_canonical_missing() 
             token="stub-token",
             commit_message="dangling delete",
         )
+
 
 @pytest.mark.parametrize(
     "legacy_path",
@@ -393,6 +405,7 @@ def test_upload_files_rejects_old_h3_map_delete_without_text_density(
             commit_message="unsafe map retirement",
         )
 
+
 def test_upload_files_rejects_legacy_article_without_lossless_replacement() -> None:
     """A legacy article cannot be deleted without the same-stem document add."""
     from osm_polygon_wikidata_only.hf._uploader import operations as ops_mod
@@ -408,6 +421,7 @@ def test_upload_files_rejects_legacy_article_without_lossless_replacement() -> N
             token="stub-token",
             commit_message="unsafe retirement",
         )
+
 
 def test_upload_files_pairs_article_retirement_by_exact_stem(tmp_path: Path) -> None:
     """A replacement for another stem cannot authorize deletion."""
@@ -432,6 +446,7 @@ def test_upload_files_pairs_article_retirement_by_exact_stem(tmp_path: Path) -> 
             token="stub-token",
             commit_message="wrong replacement",
         )
+
 
 def test_upload_files_coverage_map_deletion_is_idempotent_when_remote_missing(
     tmp_path: Path,
@@ -469,6 +484,7 @@ def test_upload_files_coverage_map_deletion_is_idempotent_when_remote_missing(
             "path_in_repo": "assets/coverage_map.png",
         }
     ]
+
 
 def test_core_upload_defers_repository_wide_assets_on_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

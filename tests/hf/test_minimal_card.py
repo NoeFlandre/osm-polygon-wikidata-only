@@ -35,9 +35,7 @@ def test_minimal_card_has_the_shared_eight_row_snapshot_and_maps() -> None:
     card = render_minimal_card(_snapshot())
 
     assert card.startswith("---\nlicense: odbl\n---\n")
-    snapshot_table = card.split("## Dataset snapshot\n", 1)[1].split(
-        "\n\nPolygon rows", 1
-    )[0]
+    snapshot_table = card.split("## Dataset snapshot\n", 1)[1].split("\n\nPolygon rows", 1)[0]
     assert sum(line.startswith("| ") for line in snapshot_table.splitlines()) == 10
     assert card.count("| Metric | Value |") == 1
     assert "| Unique polygon identities (osm_type, osm_id) | 8 |" in card

@@ -22,6 +22,7 @@ def test_recovered_region_publication_loads_repaired_core(tmp_path: Path) -> Non
     assert core.polygons_path == data_root.processed_polygons / "recovered-latest.parquet"
     assert core.polygon_articles_path == (data_root.processed_links / "recovered-latest.parquet")
 
+
 def test_sync_reconciliation_integration_success(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -92,6 +93,7 @@ def test_sync_reconciliation_integration_success(
     rc_second = commands.main(args)
     assert rc_second == 0
 
+
 def test_metadata_only_gaps_repaired_and_enqueued_last(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -150,6 +152,7 @@ def test_metadata_only_gaps_repaired_and_enqueued_last(
     last_commit = stub.commits[-1]
     assert last_commit["commit_message"] == "Repair remote repository metadata and maps"
 
+
 def test_incomplete_local_augmentation_remains_augment(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -175,6 +178,7 @@ def test_incomplete_local_augmentation_remains_augment(
         pending_stems=all_pending_stems,
     )
     assert states[0].action == SyncAction.AUGMENT
+
 
 def test_reconciliation_limited_to_input_stems(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
@@ -237,6 +241,7 @@ def test_reconciliation_limited_to_input_stems(
         "time(s); the coverage-map download was not stubbed."
     )
 
+
 def test_remote_extras_reported_never_deleted(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -281,6 +286,7 @@ def test_remote_extras_reported_never_deleted(
     assert stub.remote_files is not None
     assert "polygons/extra-remote.parquet" in stub.remote_files
 
+
 def test_remote_inventory_fetched_exactly_once(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -319,6 +325,7 @@ def test_remote_inventory_fetched_exactly_once(
     assert rc == 0
     assert fetch_count == 1  # Inventory fetched exactly once
 
+
 def test_no_remote_inventory_call_without_push(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -356,6 +363,7 @@ def test_no_remote_inventory_call_without_push(
     assert rc == 0
     assert not fetch_called  # No RemoteInventory.fetch calls occurred
 
+
 def test_inventory_auth_failure_raises_upload_error(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -390,6 +398,7 @@ def test_inventory_auth_failure_raises_upload_error(
         commands.main(args)
     assert excinfo.value.code == 2
 
+
 def test_malformed_local_core_fails_closed(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -416,6 +425,7 @@ def test_malformed_local_core_fails_closed(
     ]
     with pytest.raises(ValueError, match="Inconsistent core state"):
         commands.main(args)
+
 
 def test_one_of_polygons_or_links_missing_remotely(
     tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
@@ -458,6 +468,7 @@ def test_one_of_polygons_or_links_missing_remotely(
     # Both polygons and links must be uploaded in a coherent commit
     assert f"polygons/{stem}.parquet" in stub.remote_files
     assert f"polygon_articles/{stem}.parquet" in stub.remote_files
+
 
 @pytest.mark.parametrize(
     "missing_corp",

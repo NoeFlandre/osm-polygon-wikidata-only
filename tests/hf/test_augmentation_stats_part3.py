@@ -38,6 +38,7 @@ def test_render_stats_section_headline_includes_augmentation_totals() -> None:
     ):
         assert label in md, f"headline missing {label!r}"
 
+
 def test_render_stats_headline_drops_redundant_wikipedia_articles_row() -> None:
     """When augmentation stats are present the legacy ``Wikipedia
     articles`` headline row is dropped because it counts the same
@@ -49,6 +50,7 @@ def test_render_stats_headline_drops_redundant_wikipedia_articles_row() -> None:
     md = render_stats_section(stats, augmentation_stats=aug)
     assert "| Wikipedia articles |" not in md
 
+
 def test_render_stats_headline_drops_ambiguous_total_words_row() -> None:
     """When augmentation stats are present the legacy ``Total words``
     headline row is dropped: it is ambiguous once the augmentation
@@ -58,6 +60,7 @@ def test_render_stats_headline_drops_ambiguous_total_words_row() -> None:
     aug = _sample_augmentation_stats()
     md = render_stats_section(stats, augmentation_stats=aug)
     assert "| Total words |" not in md
+
 
 def test_render_stats_headline_renames_document_corpus_words() -> None:
     """The combined word total is renamed to the explicit
@@ -72,6 +75,7 @@ def test_render_stats_headline_renames_document_corpus_words() -> None:
     assert f"| Wikipedia + Wikivoyage document words | {_fmt_int(wiki + voy)} |" in md, (
         f"combined word value wrong; got snippet:\n{md[:600]!r}"
     )
+
 
 def test_render_stats_headline_section_words_excluded_from_corpus_total() -> None:
     """The combined document-word total must equal Wikipedia document
@@ -88,6 +92,7 @@ def test_render_stats_headline_section_words_excluded_from_corpus_total() -> Non
     assert sec > 0, "fixture must include non-zero section words to prove exclusion"
     assert f"| Wikipedia + Wikivoyage document words | {_fmt_int(combined)} |" in md
 
+
 def test_render_stats_headline_includes_exclusion_sentence() -> None:
     """A one-line explanation immediately below the headline table
     states that the total sums full Wikipedia and Wikivoyage documents
@@ -98,6 +103,7 @@ def test_render_stats_headline_includes_exclusion_sentence() -> None:
     md = render_stats_section(stats, augmentation_stats=aug)
     snippet = "sums the full Wikipedia and Wikivoyage documents and excludes section rows"
     assert snippet in md, f"explanatory sentence missing; snippet:\n{md[:600]!r}"
+
 
 def test_render_stats_headline_counts_from_supplied_snapshot() -> None:
     """Every displayed count in the augmentation-aware headline comes
@@ -113,6 +119,7 @@ def test_render_stats_headline_counts_from_supplied_snapshot() -> None:
     assert "Fully augmented regions" not in md
     assert "Augmentation tables size" not in md
 
+
 def test_render_stats_headline_deterministic() -> None:
     """Rendering the same stats + augmentation snapshot twice yields
     byte-identical output (no timestamp, UUID, or clock dependence).
@@ -122,6 +129,7 @@ def test_render_stats_headline_deterministic() -> None:
     first = render_stats_section(stats, augmentation_stats=aug)
     second = render_stats_section(stats, augmentation_stats=aug)
     assert first == second
+
 
 def test_render_stats_language_section_uses_wikipedia_documents_terminology() -> None:
     """The public-facing language-distribution terminology describes
@@ -156,6 +164,7 @@ def test_render_stats_language_section_uses_wikipedia_documents_terminology() ->
     assert "of all articles" not in md
     assert "of all Wikipedia documents" in md
 
+
 def test_render_stats_combined_language_polygons_describe_identity_success_semantics() -> None:
     stats = _empty_dataset_stats()
     aug = replace(
@@ -173,6 +182,7 @@ def test_render_stats_combined_language_polygons_describe_identity_success_seman
     assert "unique `(osm_type, osm_id)` polygon identities" in md
     assert "`fetch_status=ok`" in md
     assert "trimmed non-empty `full_text`" in md
+
 
 def test_stats_rendering_and_cache_helpers_cover_boundary_cases(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -218,6 +228,7 @@ def test_stats_rendering_and_cache_helpers_cover_boundary_cases(
     scanned = replace(summary, fingerprint="rescanned")
     monkeypatch.setattr(augmentation_module, "_scan_one_file", lambda *_args: scanned)
     assert _load_or_scan_summary(tmp_path, parquet_path, None) is scanned
+
 
 def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
     """The per-file cache makes the second refresh a no-op for stable files.
@@ -306,6 +317,7 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
     assert warm_calls == 0
     # Same numbers across the two refreshes.
     assert second == first
+
 
 def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
     """A fingerprint change in one Parquet forces a rescan of that
@@ -414,6 +426,7 @@ def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
     assert call_log[0] == docs_path
     assert third.wikipedia_documents.rows == 2
 
+
 def test_deleted_files_removed_from_aggregates(tmp_path: Path) -> None:
     """A sidecar removed from disk disappears from the next refresh's
     aggregates; the cache key for the missing file is dropped.
@@ -473,6 +486,7 @@ def test_deleted_files_removed_from_aggregates(tmp_path: Path) -> None:
     assert second.fully_augmented_count == 0
     assert second.partial_augmented_count == 1
 
+
 def test_publication_uses_external_cache_dir(tmp_path: Path) -> None:
     """The publication layer points compute_augmentation_stats at
     data_root.cache (an external directory). Sanity-check that path.
@@ -495,6 +509,7 @@ def test_publication_uses_external_cache_dir(tmp_path: Path) -> None:
         tmp_path / "out.md",
     )
     assert (cache_path / "stats_cache" / "index.json").exists()
+
 
 def test_render_stats_section_legacy_headline_label_unchanged() -> None:
     """Without augmentation, the headline's last label MUST stay

@@ -43,6 +43,7 @@ def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
         wikivoyage_sidecars=len(sentence_paths["wikivoyage"]),
     )
 
+
 def _load_sentence_manifest(manifest_path: Path) -> tuple[list[object], list[object]]:
     raw_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(raw_manifest, Mapping):
@@ -52,6 +53,7 @@ def _load_sentence_manifest(manifest_path: Path) -> tuple[list[object], list[obj
     if not isinstance(regions, list) or not isinstance(supported_languages, list):
         raise ValueError(f"Invalid sentence manifest: {manifest_path}")
     return cast(list[object], regions), cast(list[object], supported_languages)
+
 
 def _sentence_manifest_totals(regions: Iterable[object], manifest_path: Path) -> tuple[int, int]:
     total_rows = 0
@@ -64,6 +66,7 @@ def _sentence_manifest_totals(regions: Iterable[object], manifest_path: Path) ->
         raise ValueError(f"Invalid sentence row totals: {manifest_path}")
     return total_rows, unsupported_rows
 
+
 def _sentence_region_totals(region: object, manifest_path: Path) -> tuple[int, int]:
     if not isinstance(region, Mapping):
         raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
@@ -73,11 +76,13 @@ def _sentence_region_totals(region: object, manifest_path: Path) -> tuple[int, i
         cast(Any, values.get("unsplit_sections", 0))
     )
 
+
 def _sentence_document_ids(paths: Iterable[Path]) -> set[str]:
     values: set[str] = set()
     for path in paths:
         _update_sentence_document_ids(path, values)
     return values
+
 
 def _update_sentence_document_ids(path: Path, values: set[str]) -> None:
     with open_parquet(path) as parquet_file:
@@ -86,8 +91,10 @@ def _update_sentence_document_ids(path: Path, values: set[str]) -> None:
         for batch in iter_record_batches(parquet_file, columns=["document_id"], batch_size=65_536):
             values.update(_sentence_document_ids_batch(batch))
 
+
 def _sentence_document_ids_batch(batch: pa.RecordBatch) -> set[str]:
     return {str(value) for value in _compute_array("unique", batch.column(0)).to_pylist() if value}
+
 
 def _sentence_polygon_count(
     processed_v2: Path,
@@ -107,6 +114,7 @@ def _sentence_polygon_count(
         _collect_sentence_polygon_ids(path, value_sets, polygon_index, polygon_ids)
     return len(polygon_ids)
 
+
 def _collect_sentence_polygon_ids(
     path: Path,
     value_sets: Mapping[str, pa.Array],
@@ -123,6 +131,7 @@ def _collect_sentence_polygon_ids(
             batch_size=65_536,
         ):
             polygon_ids.update(_sentence_polygon_ids_from_batch(batch, value_sets, polygon_index))
+
 
 def _sentence_polygon_ids_from_batch(
     batch: pa.RecordBatch,
@@ -148,6 +157,7 @@ def _sentence_polygon_ids_from_batch(
             and (polygon_identity := polygon_index.by_polygon_id.get(str(value))) is not None
         )
     return polygon_ids
+
 
 def _compute_array(function: str, *arguments: Any, options: Any = None) -> Any:
     return pc.call_function(function, list(arguments), options=options)

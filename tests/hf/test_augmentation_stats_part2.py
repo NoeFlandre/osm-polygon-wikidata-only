@@ -73,6 +73,7 @@ def test_wikidata_facts_qualifiers_and_references_detected(tmp_path: Path) -> No
     assert stats.wikidata_facts.with_qualifiers == 1
     assert stats.wikidata_facts.with_references == 1
 
+
 def test_wikidata_facts_top_properties_deterministic(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     rows: list[dict] = []
@@ -100,6 +101,7 @@ def test_wikidata_facts_top_properties_deterministic(tmp_path: Path) -> None:
     top = stats.wikidata_facts.top_properties
     assert [prop for prop, _, _ in top] == ["P131", "P17", "P31"]
 
+
 def test_wikidata_facts_top_properties_falls_back_to_property_id(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     _write_facts(
@@ -123,6 +125,7 @@ def test_wikidata_facts_top_properties_falls_back_to_property_id(tmp_path: Path)
     )
     stats = _stats(processed, tmp_path)
     assert stats.wikidata_facts.top_properties[0][0] == "P9999"
+
 
 def test_wikidata_malformed_qualifiers_count_as_unavailable(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -148,6 +151,7 @@ def test_wikidata_malformed_qualifiers_count_as_unavailable(tmp_path: Path) -> N
     stats = _stats(processed, tmp_path)
     assert stats.wikidata_facts.with_qualifiers == 0
     assert stats.wikidata_facts.unavailable_qualifiers == 1
+
 
 def test_storage_bytes_separate_core_augmentation_total(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
@@ -178,6 +182,7 @@ def test_storage_bytes_separate_core_augmentation_total(tmp_path: Path) -> None:
     assert stats.augmentation_parquet_bytes == expected_aug
     assert stats.total_parquet_bytes == expected_core + expected_aug
 
+
 def test_compute_augmentation_stats_handles_missing_directories(tmp_path: Path) -> None:
     """Missing sidecar sub-directories surface "No data exists yet".
 
@@ -206,6 +211,7 @@ def test_compute_augmentation_stats_handles_missing_directories(tmp_path: Path) 
     assert stats.wikipedia_documents.region_count == 0
     assert stats.wikivoyage_sections.rows == 0
 
+
 def test_compute_augmentation_stats_handles_empty_sidecar_dirs(tmp_path: Path) -> None:
     """Sidecar dirs that exist but contain no parquet must not crash."""
     processed = _setup_processed_dir(tmp_path)
@@ -217,6 +223,7 @@ def test_compute_augmentation_stats_handles_empty_sidecar_dirs(tmp_path: Path) -
     stats = _stats(processed, tmp_path)
     assert stats.wikipedia_documents.rows == 0
     assert stats.wikidata_facts.rows == 0
+
 
 def test_compute_augmentation_stats_skips_unreadable_sidecar(
     tmp_path: Path,
@@ -248,6 +255,7 @@ def test_compute_augmentation_stats_skips_unreadable_sidecar(
     # But the rows are not aggregated.
     assert stats.wikipedia_documents.rows == 0
 
+
 def test_compute_augmentation_stats_records_one_region_per_core_stem(tmp_path: Path) -> None:
     processed = _setup_processed_dir(tmp_path)
     _write_parquet(
@@ -264,6 +272,7 @@ def test_compute_augmentation_stats_records_one_region_per_core_stem(tmp_path: P
     assert stats.core_region_count == 2
     assert stats.not_augmented_count == 2
 
+
 def test_render_stats_section_without_augmentation_stats_unchanged() -> None:
     """render_stats_section(stats) (no augmentation kwarg) must produce
     the exact previous output."""
@@ -275,6 +284,7 @@ def test_render_stats_section_without_augmentation_stats_unchanged() -> None:
     assert "## Wikipedia text corpus" not in md
     assert "## Wikidata facts" not in md
     assert "## Augmentation coverage" not in md
+
 
 def test_render_stats_section_with_augmentation_adds_new_sections() -> None:
     """render_stats_section(stats, augmentation_stats=...) MUST append
@@ -309,6 +319,7 @@ def test_render_stats_section_with_augmentation_adds_new_sections() -> None:
         < md.index("## Wikivoyage text corpus")
         < md.index("## Wikidata facts")
     )
+
 
 def test_render_stats_section_legacy_three_sections_byte_identical() -> None:
     """The legacy three sections must remain byte-identical when
@@ -383,6 +394,7 @@ def test_render_stats_section_legacy_three_sections_byte_identical() -> None:
     # The legacy label must NOT appear in the augmentation render.
     assert legacy_label_row not in with_aug
 
+
 def test_render_stats_section_storage_bytes_labels() -> None:
     """The rendered sections must label storage bytes with the new wording
     pinned by the task."""
@@ -410,6 +422,7 @@ def test_render_stats_section_storage_bytes_labels() -> None:
     # table (not the headline row). It must appear there.
     assert "Polygon and link tables size |" in md
 
+
 def test_render_stats_section_legacy_storage_bytes_label() -> None:
     """Without augmentation, the storage-bytes wording is NOT rendered.
 
@@ -420,6 +433,7 @@ def test_render_stats_section_legacy_storage_bytes_label() -> None:
     assert "Core tables size" not in md
     assert "Augmentation tables size" not in md
     assert "Total Parquet size" not in md
+
 
 def test_render_stats_section_distinguishes_missing_vs_present_empty() -> None:
     """A sub-directory that does not exist OR exists but holds zero
@@ -455,6 +469,7 @@ def test_render_stats_section_distinguishes_missing_vs_present_empty() -> None:
     assert "| Wikipedia documents | 0 |" in md_empty
     assert "| Wikipedia sections | 0 |" in md_empty
 
+
 def test_render_stats_section_present_zero_row_sidecar_distinct(tmp_path: Path) -> None:
     """A readable, valid zero-row parquet sidecar renders "present but empty".
 
@@ -470,6 +485,7 @@ def test_render_stats_section_present_zero_row_sidecar_distinct(tmp_path: Path) 
     md = render_stats_section(_empty_dataset_stats(), augmentation_stats=aug)
     assert md.count("This sidecar is present but empty.") >= 5
     assert md.count("No data exists yet.") == 0
+
 
 def test_render_stats_section_sections_table_row_layout() -> None:
     """The Sections metrics row closes its markdown row with a final `|`.

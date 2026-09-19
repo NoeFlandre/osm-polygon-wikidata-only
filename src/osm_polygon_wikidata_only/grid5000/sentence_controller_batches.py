@@ -12,6 +12,7 @@ from typing import Any
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
 
+from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
     ACTIVE_STATES,
     EXOTIC_GRID5000_GPU_MODELS,
@@ -28,7 +29,7 @@ from .sentence_controller_policy import (
 from .sentence_protocol import sentence_source_paths
 
 
-class SentenceControllerBatchMixin:
+class SentenceControllerBatchMixin(SentenceControllerContext):
     """Run one deterministic batch through remote execution and retrieval."""
 
     def _process_batch(self, batch: dict[str, Any]) -> None:
@@ -70,9 +71,7 @@ class SentenceControllerBatchMixin:
                 self._stage_batch(staging, batch)
                 self.transport.upload_tree(staging, str(batch["remote_job_root"]))
             self._policy_check()
-            job_type_args = (
-                ("-t", "exotic") if self.gpu_model in EXOTIC_GRID5000_GPU_MODELS else ()
-            )
+            job_type_args = ("-t", "exotic") if self.gpu_model in EXOTIC_GRID5000_GPU_MODELS else ()
             submit_command = (
                 "oarsub",
                 "-q",

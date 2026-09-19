@@ -51,6 +51,7 @@ from osm_polygon_wikidata_only.hf.dataset_stats import (
 
 # --- helpers ------------------------------------------------------------
 
+
 def _write_parquet(path: Path, columns: list[str], rows: list[dict]) -> Path:
     """Write a tiny parquet file with the requested columns."""
     data: dict[str, list] = {c: [] for c in columns}
@@ -61,6 +62,7 @@ def _write_parquet(path: Path, columns: list[str], rows: list[dict]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, path)
     return path
+
 
 def _write_documents(
     path: Path,
@@ -80,6 +82,7 @@ def _write_documents(
         ],
         rows,
     )
+
 
 def _write_sections(
     path: Path,
@@ -101,6 +104,7 @@ def _write_sections(
         rows,
     )
 
+
 def _write_facts(path: Path, rows: list[dict]) -> Path:
     return _write_parquet(
         path,
@@ -121,6 +125,7 @@ def _write_facts(path: Path, rows: list[dict]) -> Path:
         rows,
     )
 
+
 def _setup_processed_dir(tmp_path: Path) -> Path:
     """Create the canonical processed/ sub-directory layout used by the
     pipeline and the stats scanner."""
@@ -134,6 +139,7 @@ def _setup_processed_dir(tmp_path: Path) -> Path:
     (processed / "wikivoyage" / "sections").mkdir(parents=True)
     (processed / "wikidata" / "facts").mkdir(parents=True)
     return processed
+
 
 def _empty_dataset_stats() -> DatasetStats:
     return DatasetStats(
@@ -157,8 +163,10 @@ def _empty_dataset_stats() -> DatasetStats:
         polygons_per_language={},
     )
 
+
 def _stats(processed: Path, tmp_path: Path) -> AugmentationStats:
     return compute_augmentation_stats(processed, cache_index_dir=tmp_path / "cache")
+
 
 def _setup_processed_dir_with_zero_row_parquets(base: Path) -> Path:
     processed = _setup_processed_dir(base)
@@ -181,6 +189,7 @@ def _setup_processed_dir_with_zero_row_parquets(base: Path) -> Path:
     _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
     return processed
 
+
 def _setup_missing_processed(tmp_path: Path) -> Path:
     import shutil
 
@@ -188,6 +197,7 @@ def _setup_missing_processed(tmp_path: Path) -> Path:
     for d in ("wikipedia", "wikivoyage", "wikidata"):
         shutil.rmtree(processed / d)
     return processed
+
 
 def _sample_augmentation_stats() -> AugmentationStats:
     """Deterministic augmentation snapshot for wording-contract tests.
@@ -212,5 +222,5 @@ def _sample_augmentation_stats() -> AugmentationStats:
         unreadable_file_count=0,
     )
 
-__all__ = [name for name in globals() if not name.startswith("__")]
 
+__all__ = [name for name in globals() if not name.startswith("__")]

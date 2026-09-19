@@ -31,7 +31,7 @@ def resolve_entities(
     *,
     batch_size: int,
     progress: Callable[[int, int], None] | None = None,
-    as_completed_fn: Callable[[object], Any] | None = None,
+    as_completed_fn: Callable[[Any], Any] | None = None,
 ) -> tuple[dict[str, WikidataEntity | None], int]:
     if isinstance(client, BatchWikidataClient):
         return _resolve_batch_entities(
@@ -64,7 +64,7 @@ def _resolve_batch_entities(
     *,
     batch_size: int,
     progress: Callable[[int, int], None] | None,
-    as_completed_fn: Callable[[object], Any] | None,
+    as_completed_fn: Callable[[Any], Any] | None,
 ) -> tuple[dict[str, WikidataEntity | None], int]:
     chunks = [qids[start : start + batch_size] for start in range(0, len(qids), batch_size)]
     if not chunks:
@@ -104,7 +104,7 @@ def _run_batch_futures(
     *,
     total: int,
     progress: Callable[[int, int], None] | None,
-    as_completed_fn: Callable[[object], Any] | None,
+    as_completed_fn: Callable[[Any], Any] | None,
 ) -> dict[int, tuple[list[str], list[WikidataEntity | None], int]]:
     completed: dict[int, tuple[list[str], list[WikidataEntity | None], int]] = {}
     completed_qids = 0
@@ -259,8 +259,7 @@ def global_qid_results(
 ) -> list[QidAuditResult]:
     states, region_names, polygon_ids = collect_qid_data(regions)
     return [
-        build_qid_result(qid, states, region_names, polygon_ids, eligible)
-        for qid in sorted(states)
+        build_qid_result(qid, states, region_names, polygon_ids, eligible) for qid in sorted(states)
     ]
 
 

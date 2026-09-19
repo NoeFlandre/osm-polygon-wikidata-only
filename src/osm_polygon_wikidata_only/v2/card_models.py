@@ -53,6 +53,7 @@ class V2CardStats:
             self.wikipedia_documents - sum(value for _, value in self.top_wikipedia_languages),
         )
 
+
 @dataclass(frozen=True, slots=True)
 class _CardFiles:
     stems: tuple[str, ...]
@@ -64,6 +65,7 @@ class _CardFiles:
     wikidata_fact_files: list[Path]
     link_files: list[Path]
     parquet_files: tuple[Path, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class _CardMetrics:
@@ -85,6 +87,7 @@ class _CardMetrics:
     link_row_count: int
     unique_polygon_count: int
 
+
 @dataclass(frozen=True, slots=True)
 class _SentenceCardStats:
     """Data-derived counts for the optional sentence sidecars."""
@@ -96,6 +99,7 @@ class _SentenceCardStats:
     supported_language_count: int
     wikipedia_sidecars: int
     wikivoyage_sidecars: int
+
 
 @dataclass(slots=True)
 class _DocumentMetrics:
@@ -111,6 +115,7 @@ class _DocumentMetrics:
     wikivoyage_document_row_count: int = 0
     document_words: int = 0
 
+
 @dataclass(slots=True)
 class _PolygonMetrics:
     """Metrics collected in one columnar pass over polygon files."""
@@ -120,6 +125,7 @@ class _PolygonMetrics:
     polygon_row_count: int = 0
     wikipedia_tag_only: int = 0
 
+
 @dataclass(frozen=True, slots=True)
 class _V1Baseline:
     polygon_ids: set[str]
@@ -128,6 +134,7 @@ class _V1Baseline:
     document_files: list[Path]
     document_words: int
     section_count: int
+
 
 @dataclass(frozen=True, slots=True)
 class _V1Comparison:
