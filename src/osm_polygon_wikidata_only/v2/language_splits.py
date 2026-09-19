@@ -1035,14 +1035,8 @@ def _resume_completed_table(
     The marker is honoured only when it was written from exactly these sources
     and every staged file it names is still on disk.
     """
-    marker = _resume_marker_path(stage_root, spec)
-    if not marker.is_file():
-        return None
-    try:
-        payload = json_loads(marker.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
+    payload = _resume_payload(stage_root, spec)
+    if payload is None:
         return None
     if payload.get("fingerprint") != _table_fingerprint(table_inventory):
         return None
@@ -1053,19 +1047,39 @@ def _resume_completed_table(
     return files, staged_paths
 
 
+def _resume_payload(stage_root: Path, spec: LanguageTableSpec) -> dict[str, object] | None:
+    """Read a resume marker, or ``None`` when it is absent or unreadable."""
+    marker = _resume_marker_path(stage_root, spec)
+    if not marker.is_file():
+        return None
+    try:
+        payload = json_loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _resume_staged_paths(raw: object) -> dict[Path, Path] | None:
     """Rebuild the staged-path map, rejecting it if any staged file is gone."""
     if not isinstance(raw, dict):
         return None
     staged_paths: dict[Path, Path] = {}
     for final, staged in raw.items():
-        if not isinstance(final, str) or not isinstance(staged, str):
+        entry = _resume_staged_entry(final, staged)
+        if entry is None:
             return None
-        staged_path = Path(staged)
-        if not staged_path.is_file():
-            return None
-        staged_paths[Path(final)] = staged_path
+        staged_paths[entry[0]] = entry[1]
     return staged_paths
+
+
+def _resume_staged_entry(final: object, staged: object) -> tuple[Path, Path] | None:
+    """Validate one final/staged pair, requiring the staged file to exist."""
+    if not isinstance(final, str) or not isinstance(staged, str):
+        return None
+    staged_path = Path(staged)
+    if not staged_path.is_file():
+        return None
+    return Path(final), staged_path
 
 
 def _resume_files(raw: object, spec: LanguageTableSpec) -> list[V2LanguageSplitFile] | None:
@@ -1086,22 +1100,38 @@ def _resume_file(entry: object, spec: LanguageTableSpec) -> V2LanguageSplitFile 
     if not isinstance(entry, dict):
         return None
     values = {str(key): value for key, value in entry.items()}
-    sources = values.get("source_files")
-    row_count = values.get("row_count")
-    if not isinstance(sources, list) or not isinstance(row_count, int):
+    rows = _resume_file_rows(values)
+    texts = _resume_file_texts(values)
+    if rows is None or texts is None:
         return None
-    names = ("configuration", "language", "split", "path", "sha256")
-    texts = [values.get(name) for name in names]
-    if not all(isinstance(text, str) for text in texts):
-        return None
-    configuration, language, split, path, sha256 = (str(text) for text in texts)
+    sources, row_count = rows
+    configuration, language, split, path, sha256 = texts
     return V2LanguageSplitFile(
         table=spec.table,
         configuration=configuration,
         language=language,
         split=split,
-        source_files=tuple(str(name) for name in sources),
+        source_files=sources,
         path=path,
         row_count=row_count,
         sha256=sha256,
     )
+
+
+def _resume_file_rows(values: dict[str, object]) -> tuple[tuple[str, ...], int] | None:
+    """Read the source-file list and row count a shard record must carry."""
+    sources = values.get("source_files")
+    row_count = values.get("row_count")
+    if not isinstance(sources, list) or not isinstance(row_count, int):
+        return None
+    return tuple(str(name) for name in sources), row_count
+
+
+def _resume_file_texts(values: dict[str, object]) -> tuple[str, str, str, str, str] | None:
+    """Read the five text fields a shard record must carry."""
+    names = ("configuration", "language", "split", "path", "sha256")
+    texts = [values.get(name) for name in names]
+    if not all(isinstance(text, str) for text in texts):
+        return None
+    configuration, language, split, path, sha256 = (str(text) for text in texts)
+    return configuration, language, split, path, sha256

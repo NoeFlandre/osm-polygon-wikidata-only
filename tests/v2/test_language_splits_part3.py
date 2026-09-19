@@ -692,3 +692,61 @@ def test_v2_resume_rejects_a_staged_path_map_with_a_non_string_key(tmp_path: Pat
     assert language_splits._resume_staged_paths({str(tmp_path / "f.parquet"): str(staged)}) == {
         tmp_path / "f.parquet": staged
     }
+
+
+def test_v2_resume_payload_rejects_a_marker_that_is_not_an_object(tmp_path: Path) -> None:
+    """A marker holding a JSON array is not a payload."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    marker = language_splits._resume_marker_path(tmp_path, spec)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("[1, 2, 3]", encoding="utf-8")
+
+    assert language_splits._resume_payload(tmp_path, spec) is None
+
+
+def test_v2_resume_payload_is_none_when_no_marker_was_written(tmp_path: Path) -> None:
+    """A table that never completed has no marker to resume from."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+
+    assert language_splits._resume_payload(tmp_path, spec) is None
+
+
+def test_v2_resume_file_rows_requires_a_list_and_an_integer() -> None:
+    """The row accounting of a shard record is validated field by field."""
+    assert language_splits._resume_file_rows({"source_files": "a.parquet", "row_count": 1}) is None
+    assert language_splits._resume_file_rows({"source_files": ["a"], "row_count": "1"}) is None
+    assert language_splits._resume_file_rows({"source_files": ["a"], "row_count": 2}) == (("a",), 2)
+
+
+def test_v2_resume_file_texts_requires_every_field_to_be_text() -> None:
+    """A shard record missing any text field is rejected."""
+    complete = {
+        "configuration": "c",
+        "language": "fr",
+        "split": "lang-fr",
+        "path": "p",
+        "sha256": "d",
+    }
+    assert language_splits._resume_file_texts(complete) == ("c", "fr", "lang-fr", "p", "d")
+    assert language_splits._resume_file_texts({**complete, "sha256": None}) is None
+    assert language_splits._resume_file_texts({}) is None
+
+
+def test_v2_resume_staged_entry_validates_one_pair(tmp_path: Path) -> None:
+    """A staged entry needs string paths and a staged file that exists."""
+    staged = tmp_path / "s.parquet"
+    staged.write_bytes(b"x")
+
+    assert language_splits._resume_staged_entry("final", str(staged)) == (Path("final"), staged)
+    assert language_splits._resume_staged_entry(4, str(staged)) is None
+    assert language_splits._resume_staged_entry("final", 4) is None
+    assert language_splits._resume_staged_entry("final", str(tmp_path / "gone")) is None
+
+
+def test_v2_resume_files_rejects_a_non_list_and_a_bad_entry() -> None:
+    """The shard list must be a list of well-formed records."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+
+    assert language_splits._resume_files({"not": "a list"}, spec) is None
+    assert language_splits._resume_files([{"bad": "entry"}], spec) is None
+    assert language_splits._resume_files([], spec) == []
