@@ -124,6 +124,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import pyarrow.parquet as pq
 
@@ -196,8 +197,8 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     load_text_presence as _load_text_presence,
 )
 from osm_polygon_wikidata_only.hf.minimal_card import (
-    ContinentCoverage,
     MinimalCardSnapshot,
+    continent_coverage_rows,
     render_minimal_card,
 )
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
@@ -356,33 +357,8 @@ def build_minimal_v1_release_snapshot(
         article_count=core_stats.article_count,
         unique_wikidata_count=core_stats.unique_wikidata_count,
     )
-    rows = tuple(
-        ContinentCoverage(
-            name=continent,
-            polygons=polygons,
-            wikipedia_documents=wikipedia_documents,
-            wikivoyage_documents=wikivoyage_documents,
-            wikipedia_text_polygons=wikipedia_text_polygons,
-            text_polygons=text_polygons,
-        )
-        for (
-            continent,
-            polygons,
-            wikipedia_documents,
-            wikivoyage_documents,
-            wikipedia_text_polygons,
-            text_polygons,
-        ) in continent_rows
-    )
-    documents = (
-        augmentation_stats.combined_languages.document_count
-        or augmentation_stats.wikipedia_documents.rows
-        + augmentation_stats.wikivoyage_documents.rows
-    )
-    sections = (
-        augmentation_stats.wikipedia_sections.rows + augmentation_stats.wikivoyage_sections.rows
-    )
-    languages = augmentation_stats.combined_languages.language_count or core_stats.language_count
+    rows = continent_coverage_rows(continent_rows)
+    documents, sections, languages = _corpus_totals(augmentation_stats, core_stats)
     snapshot = MinimalCardSnapshot(
         front_matter=front_matter,
         repo_id=repo_id,
@@ -418,6 +394,24 @@ def build_minimal_v1_release_snapshot(
         },
     }
     return MinimalV1ReleaseSnapshot(snapshot, report_extra, presence)
+
+
+def _corpus_totals(augmentation_stats: Any, core_stats: Any) -> tuple[int, int, int]:
+    """Return the document, section, and language totals shown on the V1 card.
+
+    The combined-language index is authoritative when it has been built; the
+    per-corpus row counts are the fallback for roots predating it.
+    """
+    documents = (
+        augmentation_stats.combined_languages.document_count
+        or augmentation_stats.wikipedia_documents.rows
+        + augmentation_stats.wikivoyage_documents.rows
+    )
+    sections = (
+        augmentation_stats.wikipedia_sections.rows + augmentation_stats.wikivoyage_sections.rows
+    )
+    languages = augmentation_stats.combined_languages.language_count or core_stats.language_count
+    return documents, sections, languages
 
 
 def write_minimal_v1_card(

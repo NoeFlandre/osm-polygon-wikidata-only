@@ -7,7 +7,7 @@ how to render the common public presentation and never reads the dataset.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 MAX_CARD_BODY_BYTES = 8 * 1024
@@ -23,6 +23,34 @@ class ContinentCoverage:
     wikivoyage_documents: int
     wikipedia_text_polygons: int
     text_polygons: int
+
+
+def continent_coverage_rows(
+    rows: Iterable[tuple[str, int, int, int, int, int]],
+) -> tuple[ContinentCoverage, ...]:
+    """Adapt raw continent tuples into typed coverage rows.
+
+    Both release cards read the same ``compute_continent_stats`` tuples, so the
+    positional-to-named adaptation lives here rather than being repeated.
+    """
+    return tuple(
+        ContinentCoverage(
+            name=name,
+            polygons=polygons,
+            wikipedia_documents=wikipedia_documents,
+            wikivoyage_documents=wikivoyage_documents,
+            wikipedia_text_polygons=wikipedia_text_polygons,
+            text_polygons=text_polygons,
+        )
+        for (
+            name,
+            polygons,
+            wikipedia_documents,
+            wikivoyage_documents,
+            wikipedia_text_polygons,
+            text_polygons,
+        ) in rows
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,5 +201,6 @@ __all__ = [
     "MAX_CARD_BODY_BYTES",
     "ContinentCoverage",
     "MinimalCardSnapshot",
+    "continent_coverage_rows",
     "render_minimal_card",
 ]

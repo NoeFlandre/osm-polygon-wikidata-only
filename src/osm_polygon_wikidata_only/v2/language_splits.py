@@ -14,12 +14,14 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
+from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.hf.language_splits import (
@@ -442,7 +444,7 @@ def _write_batch(
 
 def _write_language_indices(
     language: str,
-    indices: list[int],
+    indices: Sequence[int] | pa.Array,
     batch: pa.RecordBatch,
     destination: Path,
     stage_root: Path,
@@ -454,8 +456,9 @@ def _write_language_indices(
     state: _TableWriteState,
     stack: ExitStack,
 ) -> None:
+    index_array = indices if isinstance(indices, pa.Array) else pa.array(indices, type=pa.int64())
     offset = 0
-    while offset < len(indices):
+    while offset < len(index_array):
         shard = _writer_for_language(
             language,
             destination,
@@ -469,9 +472,8 @@ def _write_language_indices(
         )
         _record_source_file(shard, source_file)
         available = max_rows_per_shard - shard.row_count
-        count = min(available, len(indices) - offset)
-        selected_indices = indices[offset : offset + count]
-        shard.writer.write_batch(batch.take(pa.array(selected_indices, type=pa.int64())))
+        count = min(available, len(index_array) - offset)
+        shard.writer.write_batch(batch.take(index_array.slice(offset, count)))
         shard.row_count += count
         offset += count
         _close_full_shard(shard, language, max_rows_per_shard, state)
@@ -527,11 +529,69 @@ def _writer_for_language(
     return shard
 
 
-def _partition_batch(batch: pa.RecordBatch, language_index: int) -> dict[str, list[int]]:
-    partitions: dict[str, list[int]] = defaultdict(list)
-    for row_index, value in enumerate(batch.column(language_index).to_pylist()):
-        partitions[normalize_language(value).partition].append(row_index)
-    return dict(partitions)
+def _partition_batch(batch: pa.RecordBatch, language_index: int) -> dict[str, pa.Array]:
+    """Group row indices by language partition without a per-row Python loop.
+
+    ``normalize_language`` depends only on the value, so it runs once per
+    distinct value rather than once per row -- the same insight that
+    ``_observe_language_batch`` already relies on. Rows are then grouped with a
+    single stable sort, so the cost does not grow with the number of languages
+    in the batch, and the index arrays reach ``RecordBatch.take`` without ever
+    becoming Python lists.
+
+    Indices within a partition stay ascending and partitions are returned in
+    order of first occurrence, so the staged shards are byte-for-byte what the
+    previous row-by-row implementation produced.
+    """
+    column = batch.column(language_index)
+    if len(column) == 0:
+        return {}
+    names_by_code, codes = _partition_names_by_code(column)
+    ids_by_name: dict[str, int] = {}
+    id_of_code = [ids_by_name.setdefault(name, len(ids_by_name)) for name in names_by_code]
+    partition_ids = pc.call_function("take", [pa.array(id_of_code, type=pa.int32()), codes])
+    grouped = _grouped_indices(partition_ids, ids_by_name)
+    return dict(sorted(grouped.items(), key=lambda item: item[1][0].as_py()))
+
+
+def _partition_names_by_code(column: pa.Array) -> tuple[list[str], pa.Array]:
+    """Resolve each distinct language value once, keyed by dictionary code.
+
+    Null values are folded in as one extra code so the grouping below never
+    has to special-case them.
+    """
+    encoded = column.dictionary_encode()
+    codes = encoded.indices
+    names = [normalize_language(value).partition for value in encoded.dictionary.to_pylist()]
+    if codes.null_count:
+        names.append(normalize_language(None).partition)
+        codes = pc.fill_null(codes, len(names) - 1)
+    return names, codes
+
+
+def _grouped_indices(partition_ids: pa.Array, ids_by_name: dict[str, int]) -> dict[str, pa.Array]:
+    """Group row indices by partition id using one stable sort.
+
+    Sorting by partition id puts every partition's rows in one contiguous run
+    while preserving their relative order, so each run is already the ascending
+    index array that ``take`` needs.
+    """
+    order = pc.call_function("array_sort_indices", [partition_ids])
+    counts = pc.call_function("value_counts", [partition_ids])
+    name_by_id = {identifier: name for name, identifier in ids_by_name.items()}
+    runs = sorted(
+        zip(
+            counts.field("values").to_pylist(),
+            counts.field("counts").to_pylist(),
+            strict=True,
+        )
+    )
+    grouped: dict[str, pa.Array] = {}
+    offset = 0
+    for identifier, count in runs:
+        grouped[name_by_id[identifier]] = order.slice(offset, count)
+        offset += count
+    return grouped
 
 
 def _output_path(

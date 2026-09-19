@@ -13,7 +13,11 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     TextPresenceSnapshot,
     load_text_presence,
 )
-from osm_polygon_wikidata_only.hf.minimal_card import ContinentCoverage, MinimalCardSnapshot
+from osm_polygon_wikidata_only.hf.minimal_card import (
+    ContinentCoverage,
+    MinimalCardSnapshot,
+    continent_coverage_rows,
+)
 from osm_polygon_wikidata_only.v2.card_metrics import compute_v2_card_stats
 from osm_polygon_wikidata_only.v2.card_rendering import render_front_matter as _render_front_matter
 from osm_polygon_wikidata_only.v2.config import V2_GITHUB_URL, V2_REPO_ID
@@ -41,32 +45,7 @@ def build_minimal_v2_release_snapshot(
     links_dir = processed_v2 / "polygon_document_links"
     presence = text_presence or load_text_presence(processed_v2, links_dir=links_dir)
     countries_path = ensure_world_countries(cache_dir or processed_v2.parent / "cache")
-    try:
-        continent_rows = compute_continent_stats(
-            processed_v2,
-            countries_path,
-            links_dir=links_dir,
-        )
-    except (CoverageMapError, OSError, ValueError):
-        continent_rows = []
-    rows = tuple(
-        ContinentCoverage(
-            name=continent,
-            polygons=polygons,
-            wikipedia_documents=wikipedia_documents,
-            wikivoyage_documents=wikivoyage_documents,
-            wikipedia_text_polygons=wikipedia_text_polygons,
-            text_polygons=text_polygons,
-        )
-        for (
-            continent,
-            polygons,
-            wikipedia_documents,
-            wikivoyage_documents,
-            wikipedia_text_polygons,
-            text_polygons,
-        ) in continent_rows
-    )
+    rows = _continent_rows(processed_v2, countries_path, links_dir)
     front_matter = _render_front_matter(stats, processed_v2=processed_v2)
     snapshot = MinimalCardSnapshot(
         front_matter=front_matter,
@@ -79,9 +58,7 @@ def build_minimal_v2_release_snapshot(
         ),
         polygon_rows=stats.polygons,
         unique_polygon_identities=stats.unique_polygon_identities or presence.polygon_count,
-        polygons_with_text=stats.non_empty_text_polygons
-        if stats.non_empty_text_polygons is not None
-        else len(presence.combined_polygon_identities),
+        polygons_with_text=_polygons_with_text(stats, presence),
         documents=stats.documents,
         sections=stats.wikipedia_sections + stats.wikivoyage_sections,
         languages=stats.languages,
@@ -92,7 +69,36 @@ def build_minimal_v2_release_snapshot(
         source_url=V2_GITHUB_URL,
         viewer_url=f"https://huggingface.co/datasets/{V2_REPO_ID}/viewer",
     )
-    report_extra = {
+    return MinimalV2ReleaseSnapshot(snapshot, _report_extra(stats, rows, presence), presence)
+
+
+def _continent_rows(
+    processed_v2: Path,
+    countries_path: Path,
+    links_dir: Path,
+) -> tuple[ContinentCoverage, ...]:
+    """Return typed continent rows, or none when coverage cannot be computed."""
+    try:
+        rows = compute_continent_stats(processed_v2, countries_path, links_dir=links_dir)
+    except (CoverageMapError, OSError, ValueError):
+        return ()
+    return continent_coverage_rows(rows)
+
+
+def _polygons_with_text(stats: Any, presence: TextPresenceSnapshot) -> int:
+    """Prefer the scanned text-polygon count, falling back to the presence map."""
+    if stats.non_empty_text_polygons is not None:
+        return int(stats.non_empty_text_polygons)
+    return len(presence.combined_polygon_identities)
+
+
+def _report_extra(
+    stats: Any,
+    rows: tuple[ContinentCoverage, ...],
+    presence: TextPresenceSnapshot,
+) -> dict[str, object]:
+    """Assemble the machine-readable report payload for the V2 release."""
+    return {
         "card_contract": "minimal-v2",
         "v2_card_stats": _jsonable(asdict(stats)),
         "continent_stats": [asdict(row) for row in rows],
@@ -104,14 +110,11 @@ def build_minimal_v2_release_snapshot(
             "wikivoyage_documents": len(presence.wikivoyage_document_ids),
         },
     }
-    return MinimalV2ReleaseSnapshot(snapshot, report_extra, presence)
 
 
 def _jsonable(value: Any) -> Any:
     """Convert nested tuple values from dataclasses to JSON-native values."""
-    if isinstance(value, tuple):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, list):
+    if isinstance(value, tuple | list):
         return [_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}

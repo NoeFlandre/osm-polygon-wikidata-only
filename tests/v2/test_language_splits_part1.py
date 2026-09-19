@@ -335,9 +335,10 @@ def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
     assert observed == [(LanguageTableInventory, table_inventory)]
 
 
-def test_v2_write_batch_uses_explicit_int64_row_indices(
+def test_v2_write_batch_routes_rows_to_language_shard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """``_write_batch`` routes selected rows to the language's shard writer."""
     batch = pa.record_batch([pa.array(["en", "en"])], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
     state = language_splits._TableWriteState({}, defaultdict(int), [], {})
@@ -348,12 +349,6 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
             observed["rows"] = selected.to_pylist()
 
     writer = FakeWriter()
-    real_array = pa.array
-
-    def fake_array(values: object, *, type: object) -> pa.Array:
-        observed["type"] = type
-        return real_array(values, type=type)
-
     shard = SimpleNamespace(source_files=[], row_count=0, writer=writer)
     state.current["en"] = shard
     state.shards.append(shard)
@@ -363,7 +358,6 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
         return shard
 
     monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
-    monkeypatch.setattr(language_splits.pa, "array", fake_array)
 
     with ExitStack() as stack:
         language_splits._write_batch(
@@ -380,9 +374,31 @@ def test_v2_write_batch_uses_explicit_int64_row_indices(
             stack,
         )
 
-    assert observed["type"] == pa.int64()
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
     assert observed["max_rows_per_shard"] == 10
+
+
+def test_v2_partition_batch_returns_explicit_wide_row_indices() -> None:
+    """Partition indices carry an explicit 64-bit integer type.
+
+    ``RecordBatch.take`` is driven by these arrays. A narrow or inferred index
+    type would silently truncate on batches larger than that type can address,
+    so the width is part of the contract rather than an accident of inference.
+    """
+    batch = pa.record_batch([pa.array(["en", "fr", "en", None])], names=["language"])
+    partitions = language_splits._partition_batch(batch, 0)
+    assert partitions
+    for indices in partitions.values():
+        assert indices.type in (pa.int64(), pa.uint64())
+
+
+def test_v2_partition_batch_groups_rows_in_first_occurrence_order() -> None:
+    """Partitions are ordered by first appearance and indices stay ascending."""
+    batch = pa.record_batch([pa.array(["fr", "en", "fr", "en", "fr"])], names=["language"])
+    partitions = language_splits._partition_batch(batch, 0)
+    assert list(partitions) == ["fr", "en"]
+    assert partitions["fr"].to_pylist() == [0, 2, 4]
+    assert partitions["en"].to_pylist() == [1, 3]
 
 
 def test_v2_table_shard_counts_omit_empty_buckets() -> None:
