@@ -14,7 +14,7 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.grid5000 import sentence_controller
+from osm_polygon_wikidata_only.grid5000 import sentence_controller, sentence_controller_policy
 from osm_polygon_wikidata_only.grid5000.sentence_job import GpuIdentity, JobReceipt
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
     FileDigest,
@@ -1077,6 +1077,23 @@ def test_required_executable_rejects_missing_path_lookup(monkeypatch: pytest.Mon
 
     with pytest.raises(sentence_controller.ControllerRunError, match="rsync"):
         sentence_controller._required_executable("rsync")
+
+
+def test_policy_required_executable_returns_path_from_path_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sentence_controller_policy.shutil, "which", lambda name: f"/bin/{name}")
+
+    assert sentence_controller_policy.required_executable("rsync") == "/bin/rsync"
+
+
+def test_policy_required_executable_rejects_missing_path_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sentence_controller_policy.shutil, "which", lambda _name: None)
+
+    with pytest.raises(sentence_controller_policy.ControllerRunError, match="rsync"):
+        sentence_controller_policy.required_executable("rsync")
 
 
 def test_download_hf_file_forwards_dataset_request_without_network(

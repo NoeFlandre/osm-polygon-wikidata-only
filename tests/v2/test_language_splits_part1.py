@@ -345,11 +345,13 @@ def test_v2_write_batch_routes_rows_to_language_shard(
     observed: dict[str, object] = {}
 
     class FakeWriter:
-        def write_batch(self, selected: pa.RecordBatch) -> None:
+        def write_table(self, selected: pa.Table) -> None:
             observed["rows"] = selected.to_pylist()
 
     writer = FakeWriter()
-    shard = SimpleNamespace(source_files=[], row_count=0, writer=writer)
+    shard = SimpleNamespace(
+        source_files=[], row_count=0, writer=writer, pending=[], pending_bytes=0
+    )
     state.current["en"] = shard
     state.shards.append(shard)
 
@@ -374,6 +376,8 @@ def test_v2_write_batch_routes_rows_to_language_shard(
             stack,
         )
 
+    # Rows are buffered rather than written per slice, so flush before asserting.
+    language_splits._flush_shard(state, shard)
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
     assert observed["max_rows_per_shard"] == 10
 
@@ -446,14 +450,18 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
         def __init__(self) -> None:
             self.rows: list[list[dict[str, object]]] = []
 
-        def write_batch(self, selected: pa.RecordBatch) -> None:
+        def write_table(self, selected: pa.Table) -> None:
             self.rows.append(selected.to_pylist())
 
         def close(self) -> None:
             return None
 
-    first = SimpleNamespace(source_files=[], row_count=3, writer=FakeWriter())
-    second = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    first = SimpleNamespace(
+        source_files=[], row_count=3, writer=FakeWriter(), pending=[], pending_bytes=0
+    )
+    second = SimpleNamespace(
+        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
+    )
     state.current["en"] = first
     writers = iter((first, second))
     monkeypatch.setattr(language_splits, "_writer_for_language", lambda *args: next(writers))
@@ -474,8 +482,15 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
             stack,
         )
 
+    # The filled shard is flushed when it closes; the partial one stays buffered
+    # until the table finishes, which is what keeps writes large and sequential.
     assert [len(rows) for rows in first.writer.rows] == [7]
+    assert second.writer.rows == []
+    assert [b.num_rows for b in second.pending] == [1]
+    language_splits._flush_shard(state, second)
     assert [len(rows) for rows in second.writer.rows] == [1]
+    assert second.pending == []
+    assert state.pending_bytes == 0
     assert first.row_count == 10
     assert second.row_count == 1
     assert "en" not in state.current
@@ -489,14 +504,18 @@ def test_v2_write_language_indices_advances_offset_across_shards(
     state = language_splits._TableWriteState({}, defaultdict(int), [], {})
 
     class FakeWriter:
-        def write_batch(self, selected: pa.RecordBatch) -> None:
+        def write_table(self, selected: pa.Table) -> None:
             return None
 
         def close(self) -> None:
             return None
 
-    first = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
-    second = SimpleNamespace(source_files=[], row_count=0, writer=FakeWriter())
+    first = SimpleNamespace(
+        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
+    )
+    second = SimpleNamespace(
+        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
+    )
     state.current["en"] = first
     writers = iter((first, second))
 

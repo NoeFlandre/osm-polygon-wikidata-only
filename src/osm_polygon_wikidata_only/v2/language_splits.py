@@ -16,7 +16,7 @@ import tempfile
 from collections import defaultdict
 from collections.abc import Sequence
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -43,6 +43,13 @@ from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
+
+# One shard is written once it holds this many bytes, turning a burst of tiny
+# per-language writes into a single sequential one.
+_SHARD_FLUSH_BYTES = 16 * 1024 * 1024
+# Hard ceiling across every open shard, so fanning out over hundreds of
+# languages cannot grow unbounded in memory.
+_TOTAL_FLUSH_BYTES = 192 * 1024 * 1024
 
 LANGUAGE_SPLITS_DIRNAME = "language_splits"
 LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH = Path("manifests/language_splits.json")
@@ -104,6 +111,8 @@ class _ShardWriteState:
     staged_path: Path
     row_count: int
     source_files: list[str]
+    pending: list[pa.RecordBatch] = field(default_factory=list)
+    pending_bytes: int = 0
 
 
 @dataclass(slots=True)
@@ -114,6 +123,7 @@ class _TableWriteState:
     next_shard_index: dict[str, int]
     shards: list[_ShardWriteState]
     staged_paths: dict[Path, Path]
+    pending_bytes: int = 0
 
 
 def build_v2_language_splits(
@@ -377,7 +387,43 @@ def _stream_source_files(
 
 def _close_current_writers(state: _TableWriteState) -> None:
     for shard in state.current.values():
+        _flush_shard(state, shard)
         shard.writer.close()
+
+
+def _buffer_rows(state: _TableWriteState, shard: _ShardWriteState, rows: pa.RecordBatch) -> None:
+    """Hold ``rows`` until the shard has enough to justify one large write.
+
+    A source batch fans out across every language it mentions, so writing each
+    slice straight through produced one tiny row group per language per batch --
+    hundreds of interleaved small writes across hundreds of open files. Batches
+    are accumulated per shard instead and written once they are worth a seek.
+    """
+    shard.pending.append(rows)
+    shard.pending_bytes += rows.nbytes
+    state.pending_bytes += rows.nbytes
+    if shard.pending_bytes >= _SHARD_FLUSH_BYTES:
+        _flush_shard(state, shard)
+        return
+    if state.pending_bytes >= _TOTAL_FLUSH_BYTES:
+        _flush_all_shards(state)
+
+
+def _flush_shard(state: _TableWriteState, shard: _ShardWriteState) -> None:
+    """Write one shard's buffered batches as a single row group."""
+    if not shard.pending:
+        return
+    table = pa.Table.from_batches(shard.pending)
+    shard.writer.write_table(table)
+    state.pending_bytes -= shard.pending_bytes
+    shard.pending = []
+    shard.pending_bytes = 0
+
+
+def _flush_all_shards(state: _TableWriteState) -> None:
+    """Drain every open shard so buffered rows stay inside a fixed budget."""
+    for shard in list(state.current.values()):
+        _flush_shard(state, shard)
 
 
 def _stream_source_file(
@@ -473,7 +519,7 @@ def _write_language_indices(
         _record_source_file(shard, source_file)
         available = max_rows_per_shard - shard.row_count
         count = min(available, len(index_array) - offset)
-        shard.writer.write_batch(batch.take(index_array.slice(offset, count)))
+        _buffer_rows(state, shard, batch.take(index_array.slice(offset, count)))
         shard.row_count += count
         offset += count
         _close_full_shard(shard, language, max_rows_per_shard, state)
@@ -491,6 +537,7 @@ def _close_full_shard(
     state: _TableWriteState,
 ) -> None:
     if shard.row_count == max_rows_per_shard:
+        _flush_shard(state, shard)
         shard.writer.close()
         state.current.pop(language)
 

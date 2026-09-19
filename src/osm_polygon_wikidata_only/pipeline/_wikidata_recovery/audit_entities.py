@@ -106,30 +106,74 @@ def _run_batch_futures(
     progress: Callable[[int, int], None] | None,
     as_completed_fn: Callable[[Any], Any] | None,
 ) -> dict[int, tuple[list[str], list[WikidataEntity | None], int]]:
-    completed: dict[int, tuple[list[str], list[WikidataEntity | None], int]] = {}
-    completed_qids = 0
     _reset_retry_cancellation()
     try:
-        with ThreadPoolExecutor(max_workers=min(_UPSTREAM_BATCH_WINDOW, len(chunks))) as executor:
-            futures = [
-                executor.submit(_resolve_batch_chunk, client, index, chunk)
-                for index, chunk in enumerate(chunks)
-            ]
-            try:
-                completion = as_completed if as_completed_fn is None else as_completed_fn
-                for future in completion(futures):
-                    index, chunk, results, hits = future.result()
-                    completed[index] = (chunk, results, hits)
-                    completed_qids += len(chunk)
-                    report_batch_progress(progress, completed_qids, total)
-            except BaseException:
-                _cancel_pending_retries()
-                for future in futures:
-                    future.cancel()
-                raise
+        return _collect_batch_futures(
+            client,
+            chunks,
+            total=total,
+            progress=progress,
+            as_completed_fn=as_completed_fn,
+        )
     finally:
         _reset_retry_cancellation()
+
+
+def _collect_batch_futures(
+    client: BatchWikidataClient,
+    chunks: list[list[str]],
+    *,
+    total: int,
+    progress: Callable[[int, int], None] | None,
+    as_completed_fn: Callable[[Any], Any] | None,
+) -> dict[int, tuple[list[str], list[WikidataEntity | None], int]]:
+    with ThreadPoolExecutor(max_workers=min(_UPSTREAM_BATCH_WINDOW, len(chunks))) as executor:
+        futures = _submit_batch_futures(executor, client, chunks)
+        try:
+            return _collect_completed_batch_futures(
+                futures,
+                total=total,
+                progress=progress,
+                as_completed_fn=as_completed_fn,
+            )
+        except BaseException:
+            _cancel_batch_futures(futures)
+            raise
+
+
+def _submit_batch_futures(
+    executor: ThreadPoolExecutor,
+    client: BatchWikidataClient,
+    chunks: list[list[str]],
+) -> list[Any]:
+    return [
+        executor.submit(_resolve_batch_chunk, client, index, chunk)
+        for index, chunk in enumerate(chunks)
+    ]
+
+
+def _collect_completed_batch_futures(
+    futures: list[Any],
+    *,
+    total: int,
+    progress: Callable[[int, int], None] | None,
+    as_completed_fn: Callable[[Any], Any] | None,
+) -> dict[int, tuple[list[str], list[WikidataEntity | None], int]]:
+    completed: dict[int, tuple[list[str], list[WikidataEntity | None], int]] = {}
+    completed_qids = 0
+    completion = as_completed if as_completed_fn is None else as_completed_fn
+    for future in completion(futures):
+        index, chunk, results, hits = future.result()
+        completed[index] = (chunk, results, hits)
+        completed_qids += len(chunk)
+        report_batch_progress(progress, completed_qids, total)
     return completed
+
+
+def _cancel_batch_futures(futures: list[Any]) -> None:
+    _cancel_pending_retries()
+    for future in futures:
+        future.cancel()
 
 
 def report_batch_progress(
