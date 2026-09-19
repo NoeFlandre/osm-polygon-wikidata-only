@@ -193,7 +193,7 @@ def _stage_and_install_v2_release(
     # A deterministic staging root lets an interrupted run resume: tables that
     # already finished are recorded under ``.resume`` and are not rebuilt.
     stage_root = destination.parent / f".{destination.name}-staging"
-    stage_root.mkdir(parents=True, exist_ok=True)
+    stage_root.mkdir(exist_ok=True)
     try:
         files, staged_paths = _stage_v2_files(
             root, destination, stage_root, inventory, batch_size, max_rows_per_shard
