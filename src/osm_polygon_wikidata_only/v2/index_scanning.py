@@ -17,7 +17,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import article_schema
-from osm_polygon_wikidata_only.io.parquet import _open_parquet_file
+from osm_polygon_wikidata_only.io.parquet import open_parquet_file as _open_parquet_file
 
 DocumentRow = dict[str, object]
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")

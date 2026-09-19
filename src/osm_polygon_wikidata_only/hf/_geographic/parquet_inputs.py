@@ -14,11 +14,15 @@ import pyarrow.parquet as pq  # noqa: F401 (preserved private compatibility surf
 from .h3_geometry import assign_h3_cell
 from .models import CoverageMapError
 from .parquet_reader import (
-    _metadata_columns,  # noqa: F401 (preserved private compatibility surface)
-    _missing_columns_error,  # noqa: F401 (preserved private compatibility surface)
     iter_required_columns,
     read_required_columns,  # noqa: F401 (preserved public compatibility surface)
     sorted_parquets,
+)
+from .parquet_reader import (
+    metadata_columns as _metadata_columns,  # noqa: F401 (preserved private compatibility surface)
+)
+from .parquet_reader import (
+    missing_columns_error as _missing_columns_error,  # noqa: F401 (preserved private compatibility surface)
 )
 
 
@@ -89,7 +93,8 @@ def load_polygon_cells(
 
 
 def _load_unique_polygon_cells(paths: list[Path], h3_resolution: int) -> list[tuple[str, str]]:
-    from .polygon_identities import load_unique_polygon_records
+    # Resolve the identity index lazily to keep the input facade cycle-free.
+    from .polygon_identities import load_unique_polygon_records  # noqa: PLC0415
 
     index = load_unique_polygon_records(paths)
     rows: list[tuple[str, str]] = []

@@ -16,7 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.hf._uploader.operations import _build_hf_api
+from osm_polygon_wikidata_only.hf._uploader.operations import build_hf_api as _build_hf_api
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.token import resolve_hf_token

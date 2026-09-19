@@ -316,7 +316,8 @@ def _expected_file_sort_key(record: dict[str, object]) -> tuple[str, str, str, s
 def _generate_version(plan: LanguageSplitVersionPlan, *, batch_size: int) -> Any:
     try:
         if plan.version is LanguageSplitVersion.V1:
-            from osm_polygon_wikidata_only.hf.v1_language_splits import (
+            # Keep the selected generator lazy because each version has different readers.
+            from osm_polygon_wikidata_only.hf.v1_language_splits import (  # noqa: PLC0415
                 generate_v1_language_splits,
             )
 
@@ -326,7 +327,10 @@ def _generate_version(plan: LanguageSplitVersionPlan, *, batch_size: int) -> Any
                 batch_size=batch_size,
             )
 
-        from osm_polygon_wikidata_only.v2.language_splits import build_v2_language_splits
+        # Do not load the V2 generator when the caller selected V1.
+        from osm_polygon_wikidata_only.v2.language_splits import (  # noqa: PLC0415
+            build_v2_language_splits,
+        )
 
         return build_v2_language_splits(
             plan.processed_root,

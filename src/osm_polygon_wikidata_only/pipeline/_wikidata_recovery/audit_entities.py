@@ -13,8 +13,10 @@ from osm_polygon_wikidata_only.enrichment.wikidata.models import (
 )
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import language_from_site
 from osm_polygon_wikidata_only.utils.retry import (
-    _cancel_pending_retries,
-    _reset_retry_cancellation,
+    cancel_pending_retries as _cancel_pending_retries,
+)
+from osm_polygon_wikidata_only.utils.retry import (
+    reset_retry_cancellation as _reset_retry_cancellation,
 )
 
 from .audit_types import RegionScan

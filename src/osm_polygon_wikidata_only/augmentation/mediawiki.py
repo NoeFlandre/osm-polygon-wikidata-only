@@ -20,7 +20,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import is_valid_qid
 from osm_polygon_wikidata_only.enrichment.wikimedia import read_wikimedia_json
 from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
-    _NonObjectJsonError,
+    NonObjectJsonError as _NonObjectJsonError,
 )
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,

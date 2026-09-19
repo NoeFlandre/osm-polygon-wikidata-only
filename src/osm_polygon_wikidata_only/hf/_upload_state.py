@@ -615,6 +615,14 @@ def _snapshot_path(op: PublicationOp) -> Path | None:
     return op.snapshot_path or op.local_path
 
 
+# Public collaborator spellings for the queue facade; private names remain
+# available to preserve the established state-store seams.
+independent_copy = _independent_copy
+sha256_file = _sha256_file
+read_envelope = _read_envelope
+remove_failed_upgrade = _remove_failed_upgrade
+
+
 __all__ = [
     "QUEUE_CONTRACT_VERSION",
     "ResumeResult",

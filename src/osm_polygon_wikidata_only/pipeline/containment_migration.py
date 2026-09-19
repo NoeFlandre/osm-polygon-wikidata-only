@@ -12,6 +12,7 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation import steps as augmentation_steps
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_text
 from osm_polygon_wikidata_only.utils.json import dumps
 
@@ -593,8 +594,6 @@ def _update_augmentation_manifest(processed_dir: Path, staged: StagedRule) -> No
     )
     if not augmentation_manifest.is_file():
         return
-    from osm_polygon_wikidata_only.augmentation.steps import sha256_file
-
     payload = json.loads(augmentation_manifest.read_text(encoding="utf-8"))
     for child in staged.children:
         payload.pop(child, None)
@@ -610,8 +609,10 @@ def _update_augmentation_manifest(processed_dir: Path, staged: StagedRule) -> No
         live_polygons = processed_dir / "polygons" / f"{staged.parent}.parquet"
         live_documents = processed_dir / "wikipedia" / "documents" / f"{staged.parent}.parquet"
         parent_entry["core_hashes"] = {
-            str(live_polygons): sha256_file(staged.artifact("polygons")),
-            str(live_documents): sha256_file(staged.artifact("wikipedia/documents")),
+            str(live_polygons): augmentation_steps.sha256_file(staged.artifact("polygons")),
+            str(live_documents): augmentation_steps.sha256_file(
+                staged.artifact("wikipedia/documents")
+            ),
         }
     atomic_write_text(augmentation_manifest, dumps(payload) + "\n")
 

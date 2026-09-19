@@ -31,7 +31,7 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
 from osm_polygon_wikidata_only.hf._polygon_geometry.validation import PolygonStatsInputError
-from osm_polygon_wikidata_only.hf._uploader.operations import _build_hf_api
+from osm_polygon_wikidata_only.hf._uploader.operations import build_hf_api as _build_hf_api
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.token import resolve_hf_token
@@ -1107,7 +1107,8 @@ def release_v1_polygon_stats(
 ) -> StatsReleaseReport:
     """Release the V1 Wikidata-only card and statistics report."""
     _require_canonical_repo(repo_id, DEFAULT_REPO_ID)
-    from osm_polygon_wikidata_only.hf.publication import (
+    # Release-only helpers stay lazy so normal sync imports avoid card/map scanning.
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
         build_minimal_v1_release_snapshot,
         refresh_coverage_assets,
     )
@@ -1125,7 +1126,10 @@ def release_v1_polygon_stats(
         return prepared
 
     def write_card(destination: Path) -> None:
-        from osm_polygon_wikidata_only.hf.minimal_card import render_minimal_card
+        # Rendering is performed only when the staged card is materialized.
+        from osm_polygon_wikidata_only.hf.minimal_card import (  # noqa: PLC0415
+            render_minimal_card,
+        )
 
         _write_text_if_changed(destination, render_minimal_card(get_prepared().card))
 
@@ -1179,8 +1183,13 @@ def release_v2_polygon_stats(
 ) -> StatsReleaseReport:
     """Release the V2 Wikidata + Wikipedia card and statistics report."""
     _require_canonical_repo(repo_id, V2_REPO_ID)
-    from osm_polygon_wikidata_only.v2.card import build_minimal_v2_release_snapshot
-    from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
+    # V2 card/map scanners are loaded only for this explicit release operation.
+    from osm_polygon_wikidata_only.v2.card import (  # noqa: PLC0415
+        build_minimal_v2_release_snapshot,
+    )
+    from osm_polygon_wikidata_only.v2.maps import (  # noqa: PLC0415
+        generate_v2_map_assets,
+    )
 
     processed_v2 = data_root.processed_v2
     prepared: Any = None
@@ -1197,7 +1206,10 @@ def release_v2_polygon_stats(
         return prepared
 
     def write_card(destination: Path) -> None:
-        from osm_polygon_wikidata_only.hf.minimal_card import render_minimal_card
+        # Rendering is performed only when the staged card is materialized.
+        from osm_polygon_wikidata_only.hf.minimal_card import (  # noqa: PLC0415
+            render_minimal_card,
+        )
 
         _write_text_if_changed(destination, render_minimal_card(get_prepared().card))
 

@@ -34,7 +34,7 @@ from typing import Any
 from osm_polygon_wikidata_only.config.settings import WIKIDATA_API_URL, Settings
 from osm_polygon_wikidata_only.enrichment.wikimedia import read_wikimedia_json
 from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
-    _NonObjectJsonError,
+    NonObjectJsonError as _NonObjectJsonError,
 )
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaHttpSession,

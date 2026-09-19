@@ -70,10 +70,11 @@ def render_snapshot_charts(
 
 
 def _new_figure():
-    import matplotlib
+    # Matplotlib is loaded only when a snapshot actually renders charts.
+    import matplotlib  # noqa: PLC0415
 
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # noqa: PLC0415
 
     return plt.subplots(figsize=(8.4, 4.8), dpi=150)
 

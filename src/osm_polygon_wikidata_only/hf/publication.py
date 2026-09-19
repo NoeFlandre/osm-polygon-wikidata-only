@@ -172,9 +172,11 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     load_centroids_from_parquet,
 )
 from osm_polygon_wikidata_only.hf.dataset_card import (
-    _render_front_matter,
     render_dataset_card,
     render_rejections_section,
+)
+from osm_polygon_wikidata_only.hf.dataset_card import (
+    render_front_matter as _render_front_matter,
 )
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     compute_dataset_stats,
@@ -650,7 +652,9 @@ def assemble_core_upload(
     defer_metadata_assets: bool = False,
 ) -> list[PublicationOp]:
     """Assemble the legacy core publication plan."""
-    from osm_polygon_wikidata_only.hf._publication.core import (
+    # Facade imports stay lazy so callers can use local card/stat helpers without
+    # loading the complete publication graph and its optional map dependencies.
+    from osm_polygon_wikidata_only.hf._publication.core import (  # noqa: PLC0415
         assemble_core_upload as _assemble_core_upload,
     )
 
@@ -681,7 +685,8 @@ def assemble_region_upload(
     data and manifests; the caller must publish repository metadata after the
     region queue drains.
     """
-    from osm_polygon_wikidata_only.hf._publication.region import (
+    # Resolve the focused assembler only when this compatibility entry point is used.
+    from osm_polygon_wikidata_only.hf._publication.region import (  # noqa: PLC0415
         assemble_region_upload as _assemble_region_upload,
     )
 
@@ -705,7 +710,8 @@ def assemble_augmentation_upload(
     augmentation: AugmentationResult,
 ) -> list[PublicationOp]:
     """Assemble one legacy augmentation publication plan."""
-    from osm_polygon_wikidata_only.hf._publication.augmentation import (
+    # Keep the legacy augmentation adapter isolated from core-only imports.
+    from osm_polygon_wikidata_only.hf._publication.augmentation import (  # noqa: PLC0415
         assemble_augmentation_upload as _assemble_augmentation_upload,
     )
 
@@ -724,7 +730,8 @@ def assemble_metadata_only_upload(
     world_land_warning: Callable[[str], None] | None = None,
 ) -> list[PublicationOp]:
     """Assemble repository metadata publication operations."""
-    from osm_polygon_wikidata_only.hf._publication.metadata import (
+    # Metadata assembly is a selected end-of-run operation.
+    from osm_polygon_wikidata_only.hf._publication.metadata import (  # noqa: PLC0415
         assemble_metadata_only_upload as _assemble_metadata_only_upload,
     )
 
@@ -744,7 +751,8 @@ def assemble_containment_retirement_upload(
     world_land_warning: Callable[[str], None] | None = None,
 ) -> list[PublicationOp]:
     """Assemble a contained-region retirement publication plan."""
-    from osm_polygon_wikidata_only.hf._publication.metadata import (
+    # Containment retirement is optional and should not load during normal imports.
+    from osm_polygon_wikidata_only.hf._publication.metadata import (  # noqa: PLC0415
         assemble_containment_retirement_upload as _assemble_containment_retirement_upload,
     )
 

@@ -7,7 +7,12 @@ from pathlib import Path
 from osm_polygon_wikidata_only.hf._dataset_stats.rendering import demote_headings
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import render_polygon_stats_section
 from osm_polygon_wikidata_only.v2.card_metrics import compute_v2_card_stats
-from osm_polygon_wikidata_only.v2.card_models import V2CardStats, _SentenceCardStats
+from osm_polygon_wikidata_only.v2.card_models import (
+    SentenceCardStats as _SentenceCardStats,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
+    V2CardStats,
+)
 from osm_polygon_wikidata_only.v2.config import (
     V1_DATASET_URL,
     V2_ADDED_WIKIPEDIA_TAG_MAP_PATH,
@@ -276,3 +281,12 @@ def _render_comparison(snapshot: V2CardStats) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+# Public collaborator spellings used by release preparation and the facade.
+render_front_matter = _render_front_matter
+has_parquet = _has_parquet
+unique_polygon_count = _unique_polygon_count
+non_empty_text_polygon_count = _non_empty_text_polygon_count
+sentence_section_lines = _sentence_section_lines
+render_comparison = _render_comparison

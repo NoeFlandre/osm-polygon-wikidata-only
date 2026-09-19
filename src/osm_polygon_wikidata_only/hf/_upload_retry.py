@@ -21,3 +21,6 @@ def _run_upload_attempts[OperationInput](
                 raise
         else:
             return
+
+
+run_upload_attempts = _run_upload_attempts

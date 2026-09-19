@@ -9,12 +9,18 @@ from typing import Any
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
-from osm_polygon_wikidata_only.v2.card_models import _DocumentMetrics
+from osm_polygon_wikidata_only.v2.card_models import DocumentMetrics as _DocumentMetrics
 from osm_polygon_wikidata_only.v2.card_scanning import (
-    _batch_column,
-    _batch_value,
-    _has_non_empty_words,
-    _word_column,
+    batch_column as _batch_column,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    batch_value as _batch_value,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    has_non_empty_words as _has_non_empty_words,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    word_column as _word_column,
 )
 
 _SUCCESSFUL_FETCH_STATUS = "ok"
@@ -294,3 +300,19 @@ def _record_document_language(
     if is_wikipedia and has_document_id:
         metrics.wikipedia_language_counts[language_value] += 1
 
+
+# Public collaborator spellings keep the split scanner modules independent of
+# the legacy facade's private compatibility names.
+scan_document_metrics = _scan_document_metrics
+scan_document_file = _scan_document_file
+document_batch_columns = _document_batch_columns
+document_column_names = _document_column_names
+document_columns = _document_columns
+document_metric_columns = _document_metric_columns
+record_document_language = _record_document_language
+record_document_row = _record_document_row
+record_document_text = _record_document_text
+record_document_words = _record_document_words
+record_non_empty_text_document = _record_non_empty_text_document
+scan_document_batch = _scan_document_batch
+scan_document_batches = _scan_document_batches

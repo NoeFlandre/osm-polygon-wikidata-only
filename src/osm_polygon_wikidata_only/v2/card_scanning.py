@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,10 @@ from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.card_models import (
-    _CardFiles,
-    _PolygonMetrics,
+    CardFiles as _CardFiles,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
+    PolygonMetrics as _PolygonMetrics,
 )
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
@@ -403,6 +406,51 @@ def _non_empty_strings(values: list[Any]) -> list[str]:
     return [str(value) for value in values if value]
 
 
+# Public collaborator spellings used by the focused metric and document
+# scanners. The private names remain the compatibility surface of this module.
+collect_card_files = _collect_card_files
+load_polygon_index = _load_polygon_index
+v1_wikipedia_document_files = _v1_wikipedia_document_files
+v1_document_files = _v1_document_files
+v1_section_files = _v1_section_files
+manifest_files = _manifest_files
+sum_metadata = _sum_metadata
+metadata_row_count = _metadata_row_count
+unique_values = _unique_values
+unique_values_file = _unique_values_file
+sum_first_available = _sum_first_available
+sum_first_available_file = _sum_first_available_file
+first_present_column = _first_present_column
+unique_numeric_values = _unique_numeric_values
+merge_numeric_file = _merge_numeric_file
+merge_numeric_batches = _merge_numeric_batches
+merge_numeric_batch = _merge_numeric_batch
+record_numeric_value = _record_numeric_value
+field_values_for_ids = _field_values_for_ids
+merge_field_values_file = _merge_field_values_file
+merge_field_values_batch = _merge_field_values_batch
+polygon_source_sets = _polygon_source_sets
+polygon_source_file = _polygon_source_file
+merge_polygon_sources = _merge_polygon_sources
+parse_source_list = _parse_source_list
+validated_source_list = _validated_source_list
+polygon_ids_with_link_source = _polygon_ids_with_link_source
+link_source_file = _link_source_file
+batch_column = _batch_column
+batch_value = _batch_value
+merge_link_sources = _merge_link_sources
+osm_polygon_identity = _osm_polygon_identity
+scan_polygon_metrics = _scan_polygon_metrics
+scan_polygon_file = _scan_polygon_file
+polygon_columns = _polygon_columns
+scan_polygon_batches = _scan_polygon_batches
+scan_polygon_batch = _scan_polygon_batch
+record_polygon_row = _record_polygon_row
+word_column = _word_column
+has_non_empty_words = _has_non_empty_words
+non_empty_strings = _non_empty_strings
+
+
 _DOCUMENT_EXPORTS = frozenset(
     {
         "_document_batch_columns",
@@ -437,11 +485,11 @@ _LINK_EXPORTS = frozenset(
 def __getattr__(name: str) -> Any:
     """Lazily expose moved scanners for old private import seams."""
     if name in _DOCUMENT_EXPORTS:
-        from osm_polygon_wikidata_only.v2 import card_scanning_documents
-
+        # Compatibility lookup avoids importing both scanner modules at startup.
+        card_scanning_documents = import_module(f"{__package__}.card_scanning_documents")
         return getattr(card_scanning_documents, name)
     if name in _LINK_EXPORTS:
-        from osm_polygon_wikidata_only.v2 import card_scanning_links
-
+        # Compatibility lookup avoids importing both scanner modules at startup.
+        card_scanning_links = import_module(f"{__package__}.card_scanning_links")
         return getattr(card_scanning_links, name)
     raise AttributeError(name)

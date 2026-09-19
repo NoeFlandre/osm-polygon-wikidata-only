@@ -16,8 +16,10 @@ from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataClient
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 from osm_polygon_wikidata_only.utils.retry import (
-    _cancel_pending_retries,
-    _reset_retry_cancellation,
+    cancel_pending_retries as _cancel_pending_retries,
+)
+from osm_polygon_wikidata_only.utils.retry import (
+    reset_retry_cancellation as _reset_retry_cancellation,
 )
 
 from .checkpoints import (
@@ -28,9 +30,13 @@ from .checkpoints import (
 from .models import RecoveryRepairError
 from .progress import RecoveryHeartbeat, RecoveryProgress
 from .repair_fetch import (
-    _fetch_missing_documents,
-    _resolve_entities,
-    _sections_for_new_documents,
+    fetch_missing_documents as _fetch_missing_documents,
+)
+from .repair_fetch import (
+    resolve_entities as _resolve_entities,
+)
+from .repair_fetch import (
+    sections_for_new_documents as _sections_for_new_documents,
 )
 
 RECOVERY_NETWORK_WORKERS = 8
@@ -234,3 +240,12 @@ def _build_batch_artifacts(
         sections=tuple(sections),
         facts=tuple(facts),
     )
+
+
+# Public collaborator spellings used by the recovery facade.
+recovery_qid_batches = _recovery_qid_batches
+build_and_checkpoint = _build_and_checkpoint
+collect_recovery_futures = _collect_recovery_futures
+run_missing_recovery_batches = _run_missing_recovery_batches
+execute_recovery_batches = _execute_recovery_batches
+build_batch_artifacts = _build_batch_artifacts

@@ -44,7 +44,10 @@ def aggregate_geographic_text_coverage(
     if min_polygons_per_cell < 1:
         raise CoverageMapError(f"min_polygons_per_cell must be >= 1; got {min_polygons_per_cell}")
     polygons_dir, _articles_dir, _links_dir = _coverage_input_dirs(processed_root)
-    from osm_polygon_wikidata_only.hf.geographic_text_presence import load_text_presence
+    # Avoid importing the presence scanner while the geographic package is being loaded.
+    from osm_polygon_wikidata_only.hf.geographic_text_presence import (  # noqa: PLC0415
+        load_text_presence,
+    )
 
     presence: TextPresenceSnapshot = load_text_presence(processed_root)
     polygon_index = load_unique_polygon_records(sorted_parquets(polygons_dir))

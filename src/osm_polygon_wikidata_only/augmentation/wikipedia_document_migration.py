@@ -821,3 +821,8 @@ def _record_applied_stem(
         created_stems.append(stem_plan.stem)
     else:
         upgraded_stems.append(stem_plan.stem)
+
+
+# Public collaborator spelling for the retirement adapter; keep the historical
+# private implementation name available for local callers.
+assert_canonical_preserves_legacy = _assert_canonical_preserves_legacy

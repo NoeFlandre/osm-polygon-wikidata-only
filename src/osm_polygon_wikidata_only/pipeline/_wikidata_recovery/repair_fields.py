@@ -128,3 +128,13 @@ __all__ = [
     "_recompute_polygon_rows",
     "_summarize_polygon_links",
 ]
+
+
+# Public collaborator spellings used by the merge stage.
+summarize_polygon_links = _summarize_polygon_links
+preferred_language = _preferred_language
+has_article_text = _has_article_text
+recompute_polygon_row = _recompute_polygon_row
+recompute_polygon_rows = _recompute_polygon_rows
+apply_best_language_links = _apply_best_language_links
+recompute_affected_polygon_fields = _recompute_affected_polygon_fields

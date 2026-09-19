@@ -187,6 +187,12 @@ def _scan_paths(processed_dir: Path, augment_subdirs: Iterable[str]) -> list[Pat
     return out
 
 
+# Public collaborator spellings for the cache-aware scanners.
+file_fingerprint = _file_fingerprint
+relative_path = _relative_path
+scan_paths = _scan_paths
+
+
 __all__ = [
     "CACHE_CONTRACT_VERSION",
     "CACHE_SUBDIR",

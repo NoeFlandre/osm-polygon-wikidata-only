@@ -56,7 +56,8 @@ def generate_geographic_text_density(
         min_polygons_per_cell=min_polygons_per_cell,
         snapshot=snapshot,
     )
-    from ._geographic.basemap import load_land_basemap
+    # Basemap loading is optional and expensive; defer it until rendering is requested.
+    from ._geographic.basemap import load_land_basemap  # noqa: PLC0415
 
     land_features = load_land_basemap(land_cache_dir) if land_cache_dir else None
     total = sum(cell.polygon_count for cell in cells)

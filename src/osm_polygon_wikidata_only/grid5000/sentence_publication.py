@@ -36,7 +36,8 @@ def download_hf_file(
     local_dir: Path,
 ) -> Path:
     try:
-        from huggingface_hub import hf_hub_download
+        # Keep Hub verification optional for local controller construction.
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415
     except ImportError as error:  # pragma: no cover - package is a runtime dependency
         raise ControllerRunError("huggingface_hub is required for HF verification") from error
     return Path(

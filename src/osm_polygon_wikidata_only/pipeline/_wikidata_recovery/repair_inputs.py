@@ -35,7 +35,7 @@ from osm_polygon_wikidata_only.pipeline._wikidata_recovery.validation import (
     validate_existing_rows as _validate_existing_rows,
 )
 
-from .repair_types import _RepairInputs
+from .repair_types import RepairInputs as _RepairInputs
 
 
 def _load_repair_links(
@@ -199,3 +199,15 @@ def _repair_checkpoint_store(
             ),
         ),
     )
+
+
+# Public collaborator spellings used by the recovery facade.
+load_repair_links = _load_repair_links
+retain_repair_rows = _retain_repair_rows
+retain_facts = _retain_facts
+orphan_article_ids = _orphan_article_ids
+retain_documents = _retain_documents
+retain_sections = _retain_sections
+retain_links = _retain_links
+load_repair_inputs = _load_repair_inputs
+repair_checkpoint_store = _repair_checkpoint_store

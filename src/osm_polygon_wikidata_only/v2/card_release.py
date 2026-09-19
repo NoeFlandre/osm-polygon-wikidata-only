@@ -15,7 +15,7 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
 )
 from osm_polygon_wikidata_only.hf.minimal_card import ContinentCoverage, MinimalCardSnapshot
 from osm_polygon_wikidata_only.v2.card_metrics import compute_v2_card_stats
-from osm_polygon_wikidata_only.v2.card_rendering import _render_front_matter
+from osm_polygon_wikidata_only.v2.card_rendering import render_front_matter as _render_front_matter
 from osm_polygon_wikidata_only.v2.config import V2_GITHUB_URL, V2_REPO_ID
 
 
@@ -116,3 +116,6 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
     return value
+
+
+jsonable = _jsonable

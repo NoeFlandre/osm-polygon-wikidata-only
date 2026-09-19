@@ -18,7 +18,9 @@ from osm_polygon_wikidata_only.utils.json import dumps
 from .steps import sha256_file
 from .wikipedia_document_migration import (
     MigrationError,
-    _assert_canonical_preserves_legacy,
+)
+from .wikipedia_document_migration import (
+    assert_canonical_preserves_legacy as _assert_canonical_preserves_legacy,
 )
 
 

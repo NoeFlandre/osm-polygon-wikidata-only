@@ -29,7 +29,9 @@ from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION, V2_CO
 from osm_polygon_wikidata_only.v2.extractor import extract_v2_pbf
 from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
 from osm_polygon_wikidata_only.v2.publication import (
-    _REGION_UPLOAD_BATCH_SIZE,
+    REGION_UPLOAD_BATCH_SIZE as _REGION_UPLOAD_BATCH_SIZE,
+)
+from osm_polygon_wikidata_only.v2.publication import (
     Upload,
     metadata_publication_ops,
     remote_region_complete,

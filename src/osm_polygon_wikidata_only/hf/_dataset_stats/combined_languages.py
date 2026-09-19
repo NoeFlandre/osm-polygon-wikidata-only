@@ -22,7 +22,7 @@ from osm_polygon_wikidata_only.hf._links.reader import (
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 
-from .cache import _file_fingerprint
+from .cache import file_fingerprint as _file_fingerprint
 from .models import CombinedLanguageStats
 
 _CACHE_CONTRACT_VERSION = "combined-languages-v2"

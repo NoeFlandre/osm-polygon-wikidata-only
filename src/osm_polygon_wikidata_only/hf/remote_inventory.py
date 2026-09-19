@@ -6,7 +6,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from osm_polygon_wikidata_only.hf._uploader.operations import _build_hf_api, _translate_hf_error
+from osm_polygon_wikidata_only.hf._uploader.operations import (
+    build_hf_api as _build_hf_api,
+)
+from osm_polygon_wikidata_only.hf._uploader.operations import (
+    translate_hf_error as _translate_hf_error,
+)
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token
 

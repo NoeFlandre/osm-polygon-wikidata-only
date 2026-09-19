@@ -106,6 +106,10 @@ def write_polygon_articles(path: Path, rows: Iterable[dict[str, object]]) -> int
     return write_table(path, rows, columns=POLYGON_ARTICLE_COLUMNS, schema=polygon_article_schema())
 
 
+# Public collaborator spelling for bounded readers in focused modules.
+open_parquet_file = _open_parquet_file
+
+
 __all__ = [
     "read_table",
     "write_articles",

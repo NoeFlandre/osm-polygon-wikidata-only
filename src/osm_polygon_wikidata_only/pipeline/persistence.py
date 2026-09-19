@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from osm_polygon_wikidata_only import __version__
+from osm_polygon_wikidata_only import VERSION
 from osm_polygon_wikidata_only.augmentation.integrity import (
     INTEGRITY_CONTRACT_VERSION,
     PolygonArticlesIntegrityResult,
@@ -169,7 +169,7 @@ def _write_manifest_entry(
         articles_path=_remote_path(PROCESSED_ARTICLES, stem),
         polygon_articles_path=_remote_path(PROCESSED_LINKS, stem),
         stats=stats,
-        extraction_version=__version__,
+        extraction_version=VERSION,
     )
     return path, entry, time.perf_counter() - manifest_started
 

@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELAT
 
 Upload = Callable[[list[PublicationOp], str], None]
 _REGION_UPLOAD_BATCH_SIZE = 16
+REGION_UPLOAD_BATCH_SIZE = _REGION_UPLOAD_BATCH_SIZE
 
 
 def region_publication_ops(processed_v2: Path, stem: str) -> list[PublicationOp]:

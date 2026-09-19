@@ -87,7 +87,8 @@ def _enqueue_core_upload(
     The legacy ``Could not fetch world land data; map will omit
     continents`` WARNING is preserved on the CLI logger.
     """
-    from osm_polygon_wikidata_only.hf.publication import assemble_core_upload
+    # Keep command-only publication imports lazy so parser/help startup stays light.
+    from osm_polygon_wikidata_only.hf.publication import assemble_core_upload  # noqa: PLC0415
 
     ops = assemble_core_upload(
         data_root=data_root,
@@ -257,7 +258,10 @@ def _upload_metadata_refresh(
     the README so the full-dataset scan behind them happens once, not
     once per processed PBF.
     """
-    from osm_polygon_wikidata_only.hf.publication import assemble_metadata_only_upload
+    # Load the publication stack only for the metadata-refresh command path.
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
+        assemble_metadata_only_upload,
+    )
 
     LOGGER.info("Refreshing repository metadata after the processed directory")
     upload_queue.upload_synchronously(
@@ -381,7 +385,8 @@ def _run_v2_sync(
     settings: Settings,
 ) -> int:
     """Run the v2 sync while holding the shared lock."""
-    from osm_polygon_wikidata_only.v2.cli import execute_v2
+    # Keep the selected workflow lazy so the CLI can expose help without V2 dependencies.
+    from osm_polygon_wikidata_only.v2.cli import execute_v2  # noqa: PLC0415
 
     try:
         with exclusive_run_lock(data_root.cache / "sync.lock"):
@@ -398,7 +403,8 @@ def _run_v2_sentence_split(
     settings: Settings,
 ) -> int:
     """Run V2 sentence sidecars while holding their dedicated lock."""
-    from osm_polygon_wikidata_only.v2.cli import execute_v2_sentence_split
+    # Sentence splitting has optional model dependencies and is loaded only when selected.
+    from osm_polygon_wikidata_only.v2.cli import execute_v2_sentence_split  # noqa: PLC0415
 
     try:
         with exclusive_run_lock(data_root.cache / "sentence-splitting.lock"):
@@ -415,7 +421,8 @@ def _run_v1_sync(
     settings: Settings,
 ) -> int:
     """Run the v1 sync while holding the shared lock."""
-    from .run_sync import execute as cli_run_sync
+    # The V1 runner is loaded only after argument dispatch and lock selection.
+    from .run_sync import execute as cli_run_sync  # noqa: PLC0415
 
     try:
         with exclusive_run_lock(data_root.cache / "sync.lock"):
@@ -453,10 +460,12 @@ def _load_augmentation_result(
     augmentation_client: AugmentationWikimediaClient,
 ) -> AugmentationResult | None:
     """Load a current result or perform one region augmentation."""
-    from osm_polygon_wikidata_only.augmentation.orchestrator import (
+    # These imports are command collaborators; keeping them local avoids importing
+    # the full augmentation and migration stacks for unrelated CLI commands.
+    from osm_polygon_wikidata_only.augmentation.orchestrator import (  # noqa: PLC0415
         load_existing_augmentation_result,
     )
-    from osm_polygon_wikidata_only.pipeline.link_migration import (
+    from osm_polygon_wikidata_only.pipeline.link_migration import (  # noqa: PLC0415
         apply_link_migration,
         plan_link_migration,
     )
@@ -488,7 +497,10 @@ def _publish_augmentation(
     """Publish one augmentation result when requested."""
     if not args.push:
         return
-    from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+    # Do not load Hugging Face publication code for local-only augmentation runs.
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
+        assemble_augmentation_upload,
+    )
 
     hub = StubHfHub() if args.dry_run else None
     ops = assemble_augmentation_upload(
@@ -687,7 +699,8 @@ def _run_release_stats(
     data_root: DataRoot,
 ) -> int:
     """Recompute and publish only the card and statistics report."""
-    from osm_polygon_wikidata_only.hf.stats_release import (
+    # Release-only dependencies are intentionally isolated from normal sync startup.
+    from osm_polygon_wikidata_only.hf.stats_release import (  # noqa: PLC0415
         StatsReleaseError,
         release_v1_polygon_stats,
         release_v2_polygon_stats,
@@ -724,7 +737,8 @@ def _run_language_splits(
     data_root: DataRoot,
 ) -> int:
     """Plan or generate both language-split contracts without publication."""
-    from osm_polygon_wikidata_only.hf.language_split_release import (
+    # Language generation is an explicit command and may load large optional readers.
+    from osm_polygon_wikidata_only.hf.language_split_release import (  # noqa: PLC0415
         LanguageSplitReleaseError,
         run_language_split_release,
     )
@@ -749,7 +763,8 @@ def _run_publish_language_splits(
     data_root: DataRoot,
 ) -> int:
     """Generate and publish exact-target language partitions."""
-    from osm_polygon_wikidata_only.hf.language_split_publication import (
+    # Keep publication and its network client out of non-publication CLI paths.
+    from osm_polygon_wikidata_only.hf.language_split_publication import (  # noqa: PLC0415
         LanguagePublicationError,
         run_language_split_publication,
     )

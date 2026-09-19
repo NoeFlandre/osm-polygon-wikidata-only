@@ -31,8 +31,10 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_schema,
 )
 from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataClient
+from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.manifest import load_manifest
+from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 
 from .audit import (
     RECOVERY_CONTRACT_VERSION,
@@ -41,7 +43,8 @@ from .audit import (
 )
 from .checkpoints import RecoveryCheckpointStore
 from .models import RecoveryRepairError, RecoveryRepairResult, RegionAuditResult
-from .repair_types import _RepairInputs, _RepairOutputs
+from .repair_types import RepairInputs as _RepairInputs
+from .repair_types import RepairOutputs as _RepairOutputs
 from .storage import write_table as _write_table
 from .transaction import commit_replacements, transaction_directory
 
@@ -253,8 +256,6 @@ def _processed_manifest_statistics(
 
 
 def _polygon_qids(polygons: list[dict[str, Any]]) -> set[str]:
-    from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
-
     return {qid for row in polygons for qid in qids_from_osm_tag(str(row["wikidata"]))}
 
 
@@ -306,9 +307,7 @@ def _stage_augmentation_manifest(
 
 def _json_dumps(value: object) -> str:
     """Use the project's deterministic JSON encoder without importing its facade."""
-    from osm_polygon_wikidata_only.utils.json import dumps
-
-    return dumps(value)
+    return json_dumps(value)
 
 
 __all__ = [
@@ -320,3 +319,13 @@ __all__ = [
     "_staged_repair_paths",
     "persist_repair_outputs",
 ]
+
+
+# Public collaborator spellings used by the recovery facade.
+staged_repair_paths = _staged_repair_paths
+stage_repair_tables = _stage_repair_tables
+stage_manifests = _stage_manifests
+stage_processed_manifest = _stage_processed_manifest
+processed_manifest_statistics = _processed_manifest_statistics
+polygon_qids = _polygon_qids
+stage_augmentation_manifest = _stage_augmentation_manifest

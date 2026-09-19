@@ -143,3 +143,13 @@ class _V1Comparison:
     unique_sections: int | None = None
     wikipedia_tag_document_polygons: int | None = None
 
+
+# Focused card modules consume these as explicit collaborators. Keep the
+# historical private class names for compatibility with the facade and tests.
+CardFiles = _CardFiles
+CardMetrics = _CardMetrics
+SentenceCardStats = _SentenceCardStats
+DocumentMetrics = _DocumentMetrics
+PolygonMetrics = _PolygonMetrics
+V1Baseline = _V1Baseline
+V1Comparison = _V1Comparison

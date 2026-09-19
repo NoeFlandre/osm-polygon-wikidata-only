@@ -13,8 +13,9 @@ from .link_rows import (
     merge_links as _merge_links,
 )
 from .models import RecoveryClassification, RecoveryRepairError, RegionAuditResult
-from .repair_fields import _recompute_affected_polygon_fields
-from .repair_types import _RepairInputs, _RepairOutputs
+from .repair_fields import recompute_affected_polygon_fields as _recompute_affected_polygon_fields
+from .repair_types import RepairInputs as _RepairInputs
+from .repair_types import RepairOutputs as _RepairOutputs
 from .validation import validate_existing_rows as _validate_existing_rows
 from .validation import validate_preservation as _validate_preservation
 
@@ -360,3 +361,21 @@ def _terminal_classification(
     if all((polygon_id, qid) in linked_polygon_qids for polygon_id in polygon_ids):
         return RecoveryClassification.CURRENT
     return RecoveryClassification.AUTHORITATIVE_NO_ARTICLE
+
+
+# Public collaborator spellings used by the recovery facade.
+flatten_recovery_batches = _flatten_recovery_batches
+flatten_batch_rows = _flatten_batch_rows
+affected_polygon_ids = _affected_polygon_ids
+sort_repair_tables = _sort_repair_tables
+removed_section_ids = _removed_section_ids
+merge_repair_tables = _merge_repair_tables
+validate_merged_repair = _validate_merged_repair
+persisted_repair_links = _persisted_repair_links
+repair_change_flags = _repair_change_flags
+merge_repair_outputs = _merge_repair_outputs
+validate_merge_rows = _validate_merge_rows
+append_merge_rows = _append_merge_rows
+merge_rows = _merge_rows
+terminal_classifications = _terminal_classifications
+terminal_classification = _terminal_classification

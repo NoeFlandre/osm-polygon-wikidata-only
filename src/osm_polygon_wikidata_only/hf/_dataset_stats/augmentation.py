@@ -38,11 +38,17 @@ from pathlib import Path
 from typing import Any
 
 from .cache import (
-    _file_fingerprint,
-    _relative_path,
-    _scan_paths,
+    file_fingerprint as _file_fingerprint,
+)
+from .cache import (
     load_cache_index,
     write_cache_index,
+)
+from .cache import (
+    relative_path as _relative_path,
+)
+from .cache import (
+    scan_paths as _scan_paths,
 )
 from .combined_languages import compute_combined_language_stats
 from .models import (

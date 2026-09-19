@@ -65,6 +65,11 @@ class _NonObjectJsonError(ValueError):
         super().__init__(f"Expected JSON object, got {value_type}")
 
 
+# Public collaborator spelling; keep the historical private name available
+# locally for compatibility with existing callers.
+NonObjectJsonError = _NonObjectJsonError
+
+
 def read_wikimedia_json(
     request: urllib.request.Request,
     session: WikimediaHttpSession,

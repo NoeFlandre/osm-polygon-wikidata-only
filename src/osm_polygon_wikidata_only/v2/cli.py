@@ -77,7 +77,10 @@ def execute_v2_sentence_split(
     )
     write_v2_card(data_root.processed_v2, v1_processed=data_root.processed)
     if args.push:
-        from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
+        # Sentence publication is optional and only applies to a push run.
+        from osm_polygon_wikidata_only.v2.publication import (  # noqa: PLC0415
+            sentence_publication_ops,
+        )
 
         stems = tuple(sorted({summary.stem for summary in result.regions}))
         operations = sentence_publication_ops(data_root.processed_v2, stems)
@@ -146,7 +149,10 @@ def _build_trackio_publisher(args: argparse.Namespace, data_root: DataRoot):
         return None
 
     def publish_snapshot(stats: V2CardStats) -> None:
-        from osm_polygon_wikidata_only.hf.v2_trackio_snapshot import publish_v2_trackio_snapshot
+        # Trackio is an optional remote presentation side effect.
+        from osm_polygon_wikidata_only.hf.v2_trackio_snapshot import (  # noqa: PLC0415
+            publish_v2_trackio_snapshot,
+        )
 
         publish_v2_trackio_snapshot(
             output_dir=data_root.cache / "trackio" / V2_TRACKIO_RUN_NAME,

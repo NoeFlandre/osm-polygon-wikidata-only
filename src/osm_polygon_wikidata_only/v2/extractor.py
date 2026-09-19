@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from osm_polygon_wikidata_only import __version__
+from osm_polygon_wikidata_only import VERSION
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.analysis import area_bucket, bbox_from_geom, osm_primary_tag
 from osm_polygon_wikidata_only.domain.geometry import (
@@ -159,7 +159,7 @@ def _build_v2_row(
         "has_french_wikipedia": False,
         "text_available": False,
         "best_language": "",
-        "extraction_version": __version__,
+        "extraction_version": VERSION,
         "extracted_at": extracted_at or utc_now_iso(),
     }
     row.update(_wikipedia_tag_metadata(refs, rejections))

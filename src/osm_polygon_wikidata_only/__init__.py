@@ -17,3 +17,6 @@ from __future__ import annotations
 __all__ = ["__version__"]
 
 __version__ = "0.1.0"
+# Public spelling used by implementation modules that need the package version
+# without importing the dunder attribute across module boundaries.
+VERSION = __version__

@@ -271,6 +271,11 @@ def _render_front_matter(
     )
 
 
+# Public collaborator spelling for the publication facade; keep the private
+# helper name because it remains a local test seam.
+render_front_matter = _render_front_matter
+
+
 def _render_schema(
     poly_cols: list[str],
     poly_desc: Mapping[str, str],
@@ -420,7 +425,8 @@ def validate_front_matter(front_matter: str) -> None:
 
 def _parse_front_matter(front_matter: str) -> Mapping[str, Any]:
     """Deserialize the first non-empty YAML document as a mapping."""
-    import yaml
+    # PyYAML is a card-validation dependency; keep it out of core data imports.
+    import yaml  # noqa: PLC0415
 
     # ``safe_load_all`` accepts the conventional ``---\n...\n---\n``
     # envelope produced by :func:`render_dataset_card`. The first

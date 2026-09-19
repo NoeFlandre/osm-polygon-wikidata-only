@@ -14,16 +14,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from osm_polygon_wikidata_only.hf._upload_retry import _run_upload_attempts
+from osm_polygon_wikidata_only.hf._upload_retry import run_upload_attempts as _run_upload_attempts
 from osm_polygon_wikidata_only.hf._upload_state import (
     QUEUE_CONTRACT_VERSION,
     UploadStateStore,
-    _independent_copy,
-    _sha256_file,
 )
-from osm_polygon_wikidata_only.hf._upload_state import _read_envelope as _state_read_envelope
 from osm_polygon_wikidata_only.hf._upload_state import (
-    _remove_failed_upgrade as _remove_failed_upgrade_artifacts,
+    independent_copy as _independent_copy,
+)
+from osm_polygon_wikidata_only.hf._upload_state import read_envelope as _state_read_envelope
+from osm_polygon_wikidata_only.hf._upload_state import (
+    remove_failed_upgrade as _remove_failed_upgrade_artifacts,
+)
+from osm_polygon_wikidata_only.hf._upload_state import (
+    sha256_file as _sha256_file,
 )
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 

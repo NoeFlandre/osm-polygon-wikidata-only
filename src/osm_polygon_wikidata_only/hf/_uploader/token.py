@@ -32,7 +32,8 @@ def resolve_hf_token(explicit: str | None) -> str | None:
 
 def _load_hf_token() -> str | None:
     try:
-        from huggingface_hub import get_token
+        # Import the optional Hub package only when token resolution is requested.
+        from huggingface_hub import get_token  # noqa: PLC0415
     except ImportError:  # pragma: no cover
         return None
     try:
@@ -77,7 +78,8 @@ def _whoami_client(whoami: Any) -> Any:
     if whoami is not None:
         return whoami
     try:
-        from huggingface_hub import HfApi
+        # Network verification is an explicit boundary, not an import-time dependency.
+        from huggingface_hub import HfApi  # noqa: PLC0415
     except ImportError as error:  # pragma: no cover
         raise UploadError(
             "huggingface_hub is required to verify a token. Install with `uv add huggingface_hub`."

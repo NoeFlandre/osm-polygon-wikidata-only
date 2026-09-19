@@ -15,8 +15,8 @@ from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
 )
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
-from osm_polygon_wikidata_only.v2.card_models import _SentenceCardStats
-from osm_polygon_wikidata_only.v2.card_scanning import _load_polygon_index
+from osm_polygon_wikidata_only.v2.card_models import SentenceCardStats as _SentenceCardStats
+from osm_polygon_wikidata_only.v2.card_scanning import load_polygon_index as _load_polygon_index
 
 
 def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
@@ -152,3 +152,17 @@ def _sentence_polygon_ids_from_batch(
 def _compute_array(function: str, *arguments: Any, options: Any = None) -> Any:
     return pc.call_function(function, list(arguments), options=options)
 
+
+# Public collaborator spellings keep sentence metrics independent of the card
+# compatibility facade.
+compute_sentence_stats = _compute_sentence_stats
+load_sentence_manifest = _load_sentence_manifest
+sentence_manifest_totals = _sentence_manifest_totals
+sentence_region_totals = _sentence_region_totals
+sentence_document_ids = _sentence_document_ids
+update_sentence_document_ids = _update_sentence_document_ids
+sentence_document_ids_batch = _sentence_document_ids_batch
+sentence_polygon_count = _sentence_polygon_count
+collect_sentence_polygon_ids = _collect_sentence_polygon_ids
+sentence_polygon_ids_from_batch = _sentence_polygon_ids_from_batch
+compute_array = _compute_array

@@ -167,6 +167,18 @@ def _text_funnel(
     )
 
 
+# Public collaborator spellings for metric assembly; private names remain
+# available through the compatibility facade.
+collect_linked_non_empty_text_polygons = _collect_linked_non_empty_text_polygons
+count_linked_non_empty_text_polygons = _count_linked_non_empty_text_polygons
+merge_linked_non_empty_text_polygons = _merge_linked_non_empty_text_polygons
+merge_polygon_languages = _merge_polygon_languages
+polygon_languages = _polygon_languages
+polygon_languages_file = _polygon_languages_file
+text_funnel = _text_funnel
+text_metrics_from_scanned = _text_metrics_from_scanned
+
+
 __all__ = [
     "_collect_linked_non_empty_text_polygons",
     "_count_linked_non_empty_text_polygons",

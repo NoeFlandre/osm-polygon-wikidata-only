@@ -113,7 +113,10 @@ def _load_unique_text_polygon_counts(processed_dir: Path) -> tuple[int | None, i
     source of truth and this optional metric is omitted.
     """
     try:
-        from osm_polygon_wikidata_only.hf.geographic_text_presence import load_text_presence
+        # Text presence is an optional augmentation input during core-only scans.
+        from osm_polygon_wikidata_only.hf.geographic_text_presence import (  # noqa: PLC0415
+            load_text_presence,
+        )
 
         snapshot = load_text_presence(processed_dir)
     except (CoverageMapError, OSError, KeyError, ValueError):

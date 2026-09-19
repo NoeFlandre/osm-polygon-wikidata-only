@@ -528,6 +528,13 @@ def _store_reconciled_row(
     )
 
 
+# Public collaborator spellings used by V2 reuse orchestration.
+cached_client = _cached_client
+link_row = _link_row
+lookup_titles = _lookup_titles
+title_key = _title_key
+
+
 __all__ = [
     "DirectEnrichmentResult",
     "DirectWikipediaStatus",

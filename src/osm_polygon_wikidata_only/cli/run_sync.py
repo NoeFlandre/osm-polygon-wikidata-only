@@ -154,7 +154,10 @@ def _load_existing_core_for_publication(
     """Load finalized core artifacts when a repair changed or must republish them."""
     if core is not None or not required:
         return core
-    from osm_polygon_wikidata_only.hf.publication import load_existing_core_artifacts
+    # Recovery-only publication is loaded after the normal no-repair path is known.
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
+        load_existing_core_artifacts,
+    )
 
     return load_existing_core_artifacts(data_root, stem)
 
@@ -215,7 +218,8 @@ def _prepare_sync_plan(
     hub: HfHub | None,
 ) -> _PreparedSyncPlan:
     """Prepare local migration, remote reconciliation, and sync states."""
-    from osm_polygon_wikidata_only.pipeline.containment_migration import (
+    # The migration stack is needed only for a selected sync operation.
+    from osm_polygon_wikidata_only.pipeline.containment_migration import (  # noqa: PLC0415
         load_retired_children,
         load_retired_parent_children,
         prepare_safe_rules,
@@ -290,8 +294,12 @@ def _remote_reconciliation_helpers(
         return None, None
     # Keep these imports lazy so local-only callers do not capture temporary
     # test replacements in later push-enabled runs.
-    from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
-    from osm_polygon_wikidata_only.hf.repo_layout import canonical_region_paths
+    from osm_polygon_wikidata_only.hf.reconciliation import (  # noqa: PLC0415
+        ReconciliationPlanner,
+    )
+    from osm_polygon_wikidata_only.hf.repo_layout import (  # noqa: PLC0415
+        canonical_region_paths,
+    )
 
     return ReconciliationPlanner, canonical_region_paths
 
@@ -347,7 +355,8 @@ def _assemble_containment_retirement_upload(
     repo_id: str,
     parent_children: dict[str, tuple[str, ...]],
 ) -> list[PublicationOp]:
-    from osm_polygon_wikidata_only.hf.publication import (
+    # The retirement plan is only assembled when containment migration found work.
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
         assemble_containment_retirement_upload,
     )
 
@@ -483,10 +492,11 @@ def _run_sync_application(
     wikidata_client = runtime.wikidata
     wikipedia_client = runtime.wikipedia
     runtime_cache = runtime.cache
-    from osm_polygon_wikidata_only.pipeline.processor import (
+    # Construct the heavy processing collaborators after the plan and runtime exist.
+    from osm_polygon_wikidata_only.pipeline.processor import (  # noqa: PLC0415
         extract_pbf as _extract_pbf,
     )
-    from osm_polygon_wikidata_only.pipeline.processor import (
+    from osm_polygon_wikidata_only.pipeline.processor import (  # noqa: PLC0415
         process_extracted_pbf as _process_extracted_pbf,
     )
 
@@ -503,13 +513,17 @@ def _run_sync_application(
             cache=runtime_cache,
         )
 
-    from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
-    from osm_polygon_wikidata_only.hf.publication import (
+    from osm_polygon_wikidata_only.augmentation.progress import (  # noqa: PLC0415
+        AugmentationProgress,
+    )
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
         assemble_metadata_only_upload,
         assemble_region_upload,
     )
-    from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod
-    from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
+    from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod  # noqa: PLC0415
+    from osm_polygon_wikidata_only.pipeline.sync_heartbeat import (  # noqa: PLC0415
+        SyncHeartbeat,
+    )
 
     application = SyncApplication(
         context=SyncApplicationContext(

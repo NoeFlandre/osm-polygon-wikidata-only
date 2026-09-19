@@ -5,32 +5,74 @@ from __future__ import annotations
 from pathlib import Path
 
 from osm_polygon_wikidata_only.v2.card_models import (
+    CardFiles as _CardFiles,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
+    CardMetrics as _CardMetrics,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
+    SentenceCardStats as _SentenceCardStats,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
+    V1Baseline as _V1Baseline,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
+    V1Comparison as _V1Comparison,
+)
+from osm_polygon_wikidata_only.v2.card_models import (
     V2CardStats,
-    _CardFiles,
-    _CardMetrics,
-    _SentenceCardStats,
-    _V1Baseline,
-    _V1Comparison,
 )
 from osm_polygon_wikidata_only.v2.card_scanning import (
-    _collect_card_files,
-    _count_linked_non_empty_text_polygons,
-    _field_values_for_ids,
-    _load_polygon_index,
-    _polygon_ids_with_link_source,
-    _polygon_source_sets,
-    _scan_document_metrics,
-    _scan_polygon_metrics,
-    _sum_first_available,
-    _sum_metadata,
-    _text_metrics_from_scanned,
-    _unique_numeric_values,
-    _unique_values,
-    _v1_document_files,
-    _v1_section_files,
-    _v1_wikipedia_document_files,
+    collect_card_files as _collect_card_files,
 )
-from osm_polygon_wikidata_only.v2.card_sentences import _compute_sentence_stats
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    field_values_for_ids as _field_values_for_ids,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    load_polygon_index as _load_polygon_index,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    polygon_ids_with_link_source as _polygon_ids_with_link_source,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    polygon_source_sets as _polygon_source_sets,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    scan_polygon_metrics as _scan_polygon_metrics,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    sum_first_available as _sum_first_available,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    sum_metadata as _sum_metadata,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    unique_numeric_values as _unique_numeric_values,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    unique_values as _unique_values,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    v1_document_files as _v1_document_files,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    v1_section_files as _v1_section_files,
+)
+from osm_polygon_wikidata_only.v2.card_scanning import (
+    v1_wikipedia_document_files as _v1_wikipedia_document_files,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_documents import (
+    scan_document_metrics as _scan_document_metrics,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_links import (
+    count_linked_non_empty_text_polygons as _count_linked_non_empty_text_polygons,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_links import (
+    text_metrics_from_scanned as _text_metrics_from_scanned,
+)
+from osm_polygon_wikidata_only.v2.card_sentences import (
+    compute_sentence_stats as _compute_sentence_stats,
+)
 from osm_polygon_wikidata_only.v2.comparison import (
     select_v2_added_wikipedia_tag_document_polygon_ids_from_files,
 )
@@ -263,3 +305,15 @@ def _build_card_stats(
         sentence_stats=sentence_stats,
     )
 
+
+# Public collaborator spellings used by the compatibility facade.
+compute_card_metrics = _compute_card_metrics
+load_v1_baseline = _load_v1_baseline
+compute_v1_comparison = _compute_v1_comparison
+compare_polygon_sources = _compare_polygon_sources
+compare_document_content = _compare_document_content
+v1_document_words_by_id = _v1_document_words_by_id
+new_identity_words = _new_identity_words
+shared_content_count = _shared_content_count
+compare_unique_sections = _compare_unique_sections
+build_card_stats = _build_card_stats

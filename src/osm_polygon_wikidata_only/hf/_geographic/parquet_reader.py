@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
@@ -42,8 +43,6 @@ def iter_required_columns(
     required columns or is unreadable. The error message identifies
     the source file and the offending columns.
     """
-    import pyarrow as pa
-
     actual, metadata_read = _metadata_columns(parquet_path)
     try:
         yield from _iter_required_rows(
@@ -80,6 +79,10 @@ def _missing_columns_error(label: str, parquet_path: Path, missing: list[str]) -
     return CoverageMapError(
         f"{label} parquet {parquet_path} is missing required columns: {missing}"
     )
+
+
+metadata_columns = _metadata_columns
+missing_columns_error = _missing_columns_error
 
 
 def _iter_required_rows(

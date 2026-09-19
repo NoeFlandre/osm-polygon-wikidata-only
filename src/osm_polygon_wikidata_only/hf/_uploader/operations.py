@@ -30,7 +30,7 @@ from .errors import UploadError
 from .http_transport import configure_hf_http_transport
 from .plan import PublicationOp
 from .protocol import HfHub
-from .token import _resolve_hf_token
+from .token import resolve_hf_token as _resolve_hf_token
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.uploader")
 
@@ -71,7 +71,8 @@ def _build_hf_api(
     factory = api_factory
     if factory is None:
         try:
-            from huggingface_hub import HfApi
+            # Resolve the optional network client only for a real upload.
+            from huggingface_hub import HfApi  # noqa: PLC0415
         except ImportError as e:  # pragma: no cover
             raise UploadError(
                 "huggingface_hub is required for real uploads. Install with `uv add huggingface_hub`."
@@ -459,7 +460,11 @@ def _build_operations(
     ``delete_paths`` is the set of remote paths targeted by any
     ``delete`` op. Both sets feed the migration safety-net.
     """
-    from huggingface_hub import CommitOperationAdd, CommitOperationDelete
+    # Commit operation classes are needed only after a publication plan exists.
+    from huggingface_hub import (  # noqa: PLC0415
+        CommitOperationAdd,
+        CommitOperationDelete,
+    )
 
     if ops is not None:
         return _build_publication_operations(ops, CommitOperationAdd, CommitOperationDelete)
@@ -560,3 +565,9 @@ def upload_card(
 
 def default_commit_message(stem: str) -> str:
     return f"Update PBF {stem}"
+
+
+# Public collaborator spellings for Hub clients and error translation. Keep
+# private names available for the uploader's compatibility seams.
+build_hf_api = _build_hf_api
+translate_hf_error = _translate_hf_error

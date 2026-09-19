@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from osm_polygon_wikidata_only import __version__
+from osm_polygon_wikidata_only import VERSION
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.analysis import area_bucket, bbox_from_geom, osm_primary_tag
 from osm_polygon_wikidata_only.domain.geometry import (
@@ -160,7 +160,7 @@ def candidate_to_polygon(
         area_bucket=area_bucket(pg.area_m2),
         has_name=bool(name),
         has_wikidata=True,
-        extraction_version=__version__,
+        extraction_version=VERSION,
         extracted_at=extracted_at or utc_now_iso(),
     )
 
@@ -188,7 +188,9 @@ def extract_pbf(pbf_path: Path, *, settings: Settings) -> ExtractedPbf:
     PROCESSOR_LOGGER.info("Processing %s (region=%s)", pbf_path.name, stem.region)
 
     polygons: list[Polygon] = []
-    import osm_polygon_wikidata_only.io.pbf_reader as _pbf_reader_mod
+    # Keep this module import lazy so tests can replace the reader class at the
+    # established ``io.pbf_reader.PBFReader`` seam before extraction begins.
+    import osm_polygon_wikidata_only.io.pbf_reader as _pbf_reader_mod  # noqa: PLC0415
 
     reader = _pbf_reader_mod.PBFReader(pbf_path)
 

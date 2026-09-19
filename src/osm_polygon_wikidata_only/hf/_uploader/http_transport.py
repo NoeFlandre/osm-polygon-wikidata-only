@@ -30,7 +30,8 @@ def build_hf_http_client(
 ) -> httpx.Client:
     """Build the process-wide Hub client with bounded IPv4 transport."""
     if event_hook is None:
-        from huggingface_hub.utils._http import hf_request_event_hook
+        # The private Hub hook is optional and only needed when constructing a client.
+        from huggingface_hub.utils._http import hf_request_event_hook  # noqa: PLC0415
 
         event_hook = hf_request_event_hook
     return httpx.Client(
@@ -56,7 +57,8 @@ def configure_hf_http_transport(*, _set_factory: Any = None) -> None:
         if _configured:
             return
         if _set_factory is None:
-            from huggingface_hub import set_client_factory
+            # Keep import-time use of huggingface_hub out of local/test workflows.
+            from huggingface_hub import set_client_factory  # noqa: PLC0415
 
             _set_factory = set_client_factory
         _set_factory(build_hf_http_client)

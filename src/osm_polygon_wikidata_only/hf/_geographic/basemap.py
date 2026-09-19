@@ -27,6 +27,8 @@ _LAND_EDGE = "#b8aa90"
 # Shared figure layout constants.
 _FIGSIZE = (16, 8)
 _DPI = 100
+FIGSIZE = _FIGSIZE
+DPI = _DPI
 
 
 def load_land_basemap(cache_dir: Path) -> list[Any] | None:

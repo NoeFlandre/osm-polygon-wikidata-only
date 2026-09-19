@@ -116,7 +116,8 @@ def _write_snapshot_artifacts(
 def _resolve_trackio(trackio_module: Any | None) -> Any:
     if trackio_module is not None:
         return trackio_module
-    import trackio as trackio_module
+    # Trackio is an optional publication boundary, not a core scan dependency.
+    import trackio as trackio_module  # noqa: PLC0415
 
     return trackio_module
 
@@ -208,7 +209,8 @@ def _reset_frozen_run(trackio_module: Any, *, project: str, run_name: str) -> No
     """Remove only the previous local run with the fixed snapshot name."""
     if getattr(trackio_module, "__name__", "") != "trackio":
         return
-    from trackio.sqlite_storage import SQLiteStorage
+    # The storage adapter exists only for real Trackio runs, never for test doubles.
+    from trackio.sqlite_storage import SQLiteStorage  # noqa: PLC0415
 
     SQLiteStorage.delete_run(project, run_name)
 

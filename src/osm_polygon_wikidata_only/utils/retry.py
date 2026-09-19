@@ -48,6 +48,11 @@ def _cancel_pending_retries() -> None:
     _RETRY_CANCELLATION.set()
 
 
+# Public lifecycle collaborators for the recovery and queue coordinators.
+reset_retry_cancellation = _reset_retry_cancellation
+cancel_pending_retries = _cancel_pending_retries
+
+
 def _wait_for_retry(delay: float) -> None:
     if _RETRY_CANCELLATION.wait(delay):
         raise _RetryCancelled

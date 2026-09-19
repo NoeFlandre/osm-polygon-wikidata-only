@@ -20,7 +20,9 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 
 from .aggregation import aggregate_geographic_polygon_count
-from .basemap import _DPI, _FIGSIZE, draw_landmasses, init_axes
+from .basemap import DPI as _DPI
+from .basemap import FIGSIZE as _FIGSIZE
+from .basemap import draw_landmasses, init_axes
 from .h3_geometry import (
     DEFAULT_H3_RESOLUTION,
     DEFAULT_MIN_POLYGONS_PER_CELL,
@@ -197,7 +199,8 @@ def generate_geographic_polygon_count(
         h3_resolution=h3_resolution,
         min_polygons_per_cell=min_polygons_per_cell,
     )
-    from .basemap import load_land_basemap
+    # Basemap loading is optional and expensive; defer it until rendering is requested.
+    from .basemap import load_land_basemap  # noqa: PLC0415
 
     land_features = load_land_basemap(land_cache_dir) if land_cache_dir else None
     return render_geographic_polygon_count(

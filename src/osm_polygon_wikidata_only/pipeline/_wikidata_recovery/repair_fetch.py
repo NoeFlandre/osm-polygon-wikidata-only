@@ -332,3 +332,24 @@ __all__ = [
     "_select_new_documents",
     "_validate_recovery_fetch",
 ]
+
+
+# Public collaborator spellings used by the recovery facade.
+resolved_entity_map = _resolved_entity_map
+resolve_entities = _resolve_entities
+eligible_sitelinks = _eligible_sitelinks
+language_sitelinks = _language_sitelinks
+limit_sitelinks = _limit_sitelinks
+fetch_recovery_document = _fetch_recovery_document
+fetch_recovery_article = _fetch_recovery_article
+missing_recovery_article = _missing_recovery_article
+validate_recovery_fetch = _validate_recovery_fetch
+advance_missing_document = _advance_missing_document
+document_from_recovery_article = _document_from_recovery_article
+fetch_qid_documents = _fetch_qid_documents
+fetch_missing_documents = _fetch_missing_documents
+fetch_missing_documents_parallel = _fetch_missing_documents_parallel
+sections_for_new_documents = _sections_for_new_documents
+select_new_documents = _select_new_documents
+parse_recovery_documents = _parse_recovery_documents
+parse_recovery_document = _parse_recovery_document

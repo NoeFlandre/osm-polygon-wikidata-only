@@ -32,12 +32,20 @@ from osm_polygon_wikidata_only.v2.checkpoints import (
 )
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
-    _cached_client,
-    _link_row,
-    _lookup_titles,
-    _title_key,
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
+)
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    cached_client as _cached_client,
+)
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    link_row as _link_row,
+)
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    lookup_titles as _lookup_titles,
+)
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    title_key as _title_key,
 )
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf
 from osm_polygon_wikidata_only.v2.sections import (
