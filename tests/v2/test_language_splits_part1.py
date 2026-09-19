@@ -617,3 +617,42 @@ def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.M
         spec.schema_factory(),
         "snappy",
     )
+
+
+def test_v2_staging_reuses_an_existing_stage_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second release must adopt the staging tree an interrupted run left.
+
+    This is what makes resuming possible: the staging root already exists on
+    the retry, so creating it must tolerate that rather than fail.
+    """
+    root = tmp_path / "processed_v2"
+    root.mkdir()
+    destination = root / "nested/language_splits"
+    stage_root = destination.parent / ".language_splits-staging"
+    stage_root.mkdir(parents=True)
+    (stage_root / "left-over.parquet").write_bytes(b"from the interrupted run")
+
+    monkeypatch.setattr(language_splits, "_stage_v2_files", lambda *args: ([], {}))
+    monkeypatch.setattr(language_splits, "_validate_conservation", lambda *args: None)
+    monkeypatch.setattr(language_splits, "_manifest_payload", lambda *args: {})
+    monkeypatch.setattr(language_splits, "atomic_write_json", lambda *args: None)
+    monkeypatch.setattr(language_splits, "_install_staged_files", lambda *args: None)
+    monkeypatch.setattr(
+        language_splits, "_verify_source_inventory", lambda root, expected: expected
+    )
+    monkeypatch.setattr(language_splits.shutil, "rmtree", lambda path, **_kw: None)
+
+    inventory = cast(LanguageInventory, object())
+    result = language_splits._stage_and_install_v2_release(
+        root,
+        destination,
+        inventory,
+        1,
+        100_000,
+        root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+    )
+
+    assert result == (inventory, ())
+    assert (stage_root / "left-over.parquet").is_file()

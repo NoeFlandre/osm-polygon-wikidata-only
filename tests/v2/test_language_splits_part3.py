@@ -678,6 +678,17 @@ def test_v2_resume_rejects_a_shard_record_missing_its_row_count(tmp_path: Path) 
     assert language_splits._resume_file(entry, spec) is None
 
 
-def test_v2_resume_rejects_a_staged_path_map_with_a_non_string_key() -> None:
-    """A malformed staged-path map is rejected rather than coerced."""
-    assert language_splits._resume_staged_paths({4: "/tmp/x"}) is None
+def test_v2_resume_rejects_a_staged_path_map_with_a_non_string_key(tmp_path: Path) -> None:
+    """A malformed key is rejected even when the staged file really exists.
+
+    The staged file is real here on purpose: a map that fails only because the
+    path is missing would not prove the key is validated at all.
+    """
+    staged = tmp_path / "lang-fr.parquet"
+    staged.write_bytes(b"staged")
+
+    assert language_splits._resume_staged_paths({4: str(staged)}) is None
+    assert language_splits._resume_staged_paths({str(tmp_path / "f.parquet"): 4}) is None
+    assert language_splits._resume_staged_paths({str(tmp_path / "f.parquet"): str(staged)}) == {
+        tmp_path / "f.parquet": staged
+    }
