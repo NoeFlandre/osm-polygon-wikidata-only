@@ -161,9 +161,16 @@ def test_v2_release_targets_the_wikidata_and_wikipedia_dataset(tmp_path: Path) -
     card = (data_root.cache / "stats_release_snapshots" / "v2" / "README.md").read_text(
         encoding="utf-8"
     )
-    assert "<summary>Polygon surface and geometry</summary>" in card
-    assert "### Polygon surface and geometry" in card
+    assert "## Polygon area and geometry" in card
+    assert "| Polygons with successful non-empty text (unique OSM identities) |" in card
     assert "[`stats.json`](stats.json)" in card
+    payload = json.loads(
+        (data_root.cache / "stats_release_snapshots" / "v2" / "stats.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["card_contract"] == "minimal-v2"
+    assert "v2_card_stats" in payload
 
 
 def test_v1_release_moves_the_polygon_surface_report_from_the_card_into_stats(
@@ -215,12 +222,13 @@ def test_v1_release_moves_the_polygon_surface_report_from_the_card_into_stats(
     staging = data_root.cache / "stats_release_snapshots" / "v1"
     card = (staging / "README.md").read_text(encoding="utf-8")
     payload = json.loads((staging / "stats.json").read_text(encoding="utf-8"))
-    # The geometry histogram stays in the card but collapsed, so the public
-    # card reads as a summary without losing any published figure.
-    assert "<summary>Polygon surface and geometry</summary>" in card
-    assert "### Polygon surface and geometry" in card
+    # Detailed geometry stays in stats.json while the public card stays compact.
+    assert "## Polygon area and geometry" in card
+    assert "| Polygons with successful non-empty text (unique OSM identities) |" in card
     assert "[`stats.json`](stats.json)" in card
     assert payload["area_m2"]["total"] == 2500.0
+    assert payload["card_contract"] == "minimal-v1"
+    assert payload["dataset_stats"]["polygon_count"] == 1
 
 
 def test_v1_release_refuses_an_unconfirmed_repository(tmp_path: Path) -> None:

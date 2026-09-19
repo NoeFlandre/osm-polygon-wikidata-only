@@ -87,6 +87,7 @@ CardWriter = Callable[[Path], None]
 # Renders the public coverage assets into a staging directory and returns the
 # mapping of remote ``assets/*.png`` path to the freshly rendered local file.
 AssetWriter = Callable[[Path], Mapping[str, Path]]
+ReportExtraBuilder = Callable[[Any], Mapping[str, Any]]
 
 
 class StatsReleaseError(RuntimeError):
@@ -178,8 +179,11 @@ def _stage_report(
     stats: Any,
     destination: Path,
     provenance: dict[str, Any],
+    report_extra_builder: ReportExtraBuilder | None = None,
 ) -> None:
     payload = stats_payload(stats)
+    if report_extra_builder is not None:
+        payload.update(report_extra_builder(stats))
     payload["provenance"] = provenance
     atomic_write_json(destination, payload)
 
@@ -777,6 +781,7 @@ def release_polygon_stats(
     token: str | None = None,
     source_revision: str | None = None,
     data_revision: str | None = None,
+    report_extra_builder: ReportExtraBuilder | None = None,
 ) -> StatsReleaseReport:
     """Recompute, publish, and verify the card, report, and coverage assets."""
     _require_exact_repo(confirm_repo, repo_id)
@@ -802,6 +807,7 @@ def release_polygon_stats(
         card_writer=card_writer,
         asset_writer=asset_writer,
         remote=remote,
+        report_extra_builder=report_extra_builder,
     )
     if not apply:
         return _release_report(
@@ -875,11 +881,12 @@ def _prepare_release_files(
     card_writer: CardWriter,
     asset_writer: AssetWriter | None,
     remote: _RemoteState,
+    report_extra_builder: ReportExtraBuilder | None,
 ) -> tuple[tuple[ReleasedFile, ...], dict[str, Path]]:
     staging_dir.mkdir(parents=True, exist_ok=True)
     report_path = staging_dir / "stats.json"
     card_path = staging_dir / "README.md"
-    _stage_report(stats, report_path, provenance)
+    _stage_report(stats, report_path, provenance, report_extra_builder)
     card_writer(card_path)
     _merge_remote_card(card_path, remote)
     local_paths = {
@@ -1101,30 +1108,44 @@ def release_v1_polygon_stats(
     """Release the V1 Wikidata-only card and statistics report."""
     _require_canonical_repo(repo_id, DEFAULT_REPO_ID)
     from osm_polygon_wikidata_only.hf.publication import (
-        _write_readme_snapshot,
+        build_minimal_v1_release_snapshot,
         refresh_coverage_assets,
     )
 
+    prepared: Any = None
+
+    def get_prepared() -> Any:
+        nonlocal prepared
+        if prepared is None:
+            prepared = build_minimal_v1_release_snapshot(
+                data_root,
+                repo_id,
+                generated_on=generated_on,
+            )
+        return prepared
+
     def write_card(destination: Path) -> None:
-        _write_readme_snapshot(
-            data_root,
-            repo_id,
-            destination,
-            generated_on=generated_on,
-        )
+        from osm_polygon_wikidata_only.hf.minimal_card import render_minimal_card
+
+        _write_text_if_changed(destination, render_minimal_card(get_prepared().card))
 
     def write_assets(destination: Path) -> Mapping[str, Path]:
+        snapshot = get_prepared().text_presence
         coverage, presence, density = refresh_coverage_assets(
             data_root=data_root,
             snapshot_stem="release",
             snapshots_dir=destination,
             world_land_warning=None,
+            text_snapshot=snapshot,
         )
         return {
             REMOTE_COVERAGE_MAP_FILE: coverage,
             REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE: presence,
             REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE: density,
         }
+
+    def report_extra_builder(_stats: Any) -> Mapping[str, Any]:
+        return get_prepared().report_extra
 
     return release_polygon_stats(
         processed_dir=data_root.processed,
@@ -1139,6 +1160,7 @@ def release_v1_polygon_stats(
         token=token,
         source_revision=source_revision,
         data_revision=data_revision,
+        report_extra_builder=report_extra_builder,
     )
 
 
@@ -1157,33 +1179,45 @@ def release_v2_polygon_stats(
 ) -> StatsReleaseReport:
     """Release the V2 Wikidata + Wikipedia card and statistics report."""
     _require_canonical_repo(repo_id, V2_REPO_ID)
-    from osm_polygon_wikidata_only.v2.card import render_v2_card
+    from osm_polygon_wikidata_only.v2.card import build_minimal_v2_release_snapshot
     from osm_polygon_wikidata_only.v2.maps import generate_v2_map_assets
 
     processed_v2 = data_root.processed_v2
+    prepared: Any = None
 
-    def write_card(destination: Path) -> None:
-        _write_text_if_changed(
-            destination,
-            render_v2_card(
+    def get_prepared() -> Any:
+        nonlocal prepared
+        if prepared is None:
+            prepared = build_minimal_v2_release_snapshot(
                 processed_v2,
                 v1_processed=data_root.processed,
+                cache_dir=data_root.cache,
                 generated_on=generated_on,
-            ),
-        )
+            )
+        return prepared
+
+    def write_card(destination: Path) -> None:
+        from osm_polygon_wikidata_only.hf.minimal_card import render_minimal_card
+
+        _write_text_if_changed(destination, render_minimal_card(get_prepared().card))
 
     def write_assets(destination: Path) -> Mapping[str, Path]:
+        snapshot = get_prepared().text_presence
         coverage, presence, density = generate_v2_map_assets(
             processed_v2,
             destination,
             v1_processed=data_root.processed,
             land_cache_dir=data_root.cache,
+            text_snapshot=snapshot,
         )
         return {
             REMOTE_COVERAGE_MAP_FILE: coverage,
             REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE: presence,
             REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE: density,
         }
+
+    def report_extra_builder(_stats: Any) -> Mapping[str, Any]:
+        return get_prepared().report_extra
 
     return release_polygon_stats(
         processed_dir=processed_v2,
@@ -1198,6 +1232,7 @@ def release_v2_polygon_stats(
         token=token,
         source_revision=source_revision,
         data_revision=data_revision,
+        report_extra_builder=report_extra_builder,
     )
 
 

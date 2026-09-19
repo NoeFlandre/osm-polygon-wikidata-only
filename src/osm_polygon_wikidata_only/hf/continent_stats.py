@@ -140,7 +140,10 @@ def render_continent_stats(rows: Sequence[tuple[str, int, int, int, int, int]]) 
 
 
 def compute_continent_stats(
-    processed_root: Path, country_geojson_path: Path
+    processed_root: Path,
+    country_geojson_path: Path,
+    *,
+    links_dir: Path | None = None,
 ) -> list[tuple[str, int, int, int, int, int]]:
     """Compute deterministic document and polygon coverage by continent."""
     features = _load_continent_features(country_geojson_path)
@@ -152,9 +155,9 @@ def compute_continent_stats(
     assignments = _assign_polygon_rows(polygon_rows, features)
     polygon_continent = _polygon_continents(polygon_rows, assignments)
     polygon_counts = _count_assignments(assignments)
-    presence = load_text_presence(processed_root)
+    presence = load_text_presence(processed_root, links_dir=links_dir)
     wikipedia_docs, wikivoyage_docs = _document_counts(
-        read_document_links(processed_root),
+        read_document_links(processed_root, links_dir=links_dir),
         polygon_continent,
         presence,
         polygon_index=polygon_index.by_polygon_id,

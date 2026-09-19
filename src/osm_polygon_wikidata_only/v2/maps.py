@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.hf.geographic_text_density import (
     generate_geographic_text_density,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
+    TextPresenceSnapshot,
     generate_geographic_text_presence,
     load_text_presence,
 )
@@ -33,6 +34,7 @@ def generate_v2_map_assets(
     v1_processed: Path | None = None,
     land_geojson_path: Path | None = None,
     land_cache_dir: Path | None = None,
+    text_snapshot: TextPresenceSnapshot | None = None,
 ) -> tuple[Path, Path, Path]:
     """Render the three public V2 map views from V2 Parquet files.
 
@@ -51,7 +53,11 @@ def generate_v2_map_assets(
     )
     coverage_path = _render_coverage(processed_v2, output_dir, land_geojson_path)
     presence_path, density_path = _render_text_maps(
-        processed_v2, output_dir, land_geojson_path, land_cache_dir
+        processed_v2,
+        output_dir,
+        land_geojson_path,
+        land_cache_dir,
+        text_snapshot=text_snapshot,
     )
     if v1_processed is not None:
         generate_v2_added_wikipedia_tag_map(
@@ -133,9 +139,11 @@ def _render_text_maps(
     output_dir: Path,
     land_geojson_path: Path | None,
     land_cache_dir: Path | None,
+    *,
+    text_snapshot: TextPresenceSnapshot | None = None,
 ) -> tuple[Path, Path]:
     links_dir = processed_v2 / "polygon_document_links"
-    presence_snapshot = load_text_presence(processed_v2, links_dir=links_dir)
+    presence_snapshot = text_snapshot or load_text_presence(processed_v2, links_dir=links_dir)
 
     presence_path = output_dir / "geographic_text_presence.png"
     generate_geographic_text_presence(

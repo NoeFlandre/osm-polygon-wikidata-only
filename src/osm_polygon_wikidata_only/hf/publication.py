@@ -122,6 +122,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -170,7 +171,11 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     generate_coverage_map,
     load_centroids_from_parquet,
 )
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card, render_rejections_section
+from osm_polygon_wikidata_only.hf.dataset_card import (
+    _render_front_matter,
+    render_dataset_card,
+    render_rejections_section,
+)
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     compute_dataset_stats,
     render_stats_section,
@@ -180,12 +185,18 @@ from osm_polygon_wikidata_only.hf.geographic_text_density import (
 )
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     TextPresenceSnapshot,
+    load_text_presence,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     generate_geographic_text_presence as _generate_geographic_text_presence,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_presence import (
     load_text_presence as _load_text_presence,
+)
+from osm_polygon_wikidata_only.hf.minimal_card import (
+    ContinentCoverage,
+    MinimalCardSnapshot,
+    render_minimal_card,
 )
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
     render_polygon_stats_section,
@@ -310,6 +321,125 @@ def write_readme_snapshot(
     _write_readme_snapshot(data_root, repo_id, destination, generated_on=None)
 
 
+@dataclass(frozen=True, slots=True)
+class MinimalV1ReleaseSnapshot:
+    """Prepared V1 card values shared by the card, report, and maps."""
+
+    card: MinimalCardSnapshot
+    report_extra: dict[str, object]
+    text_presence: TextPresenceSnapshot
+
+
+def build_minimal_v1_release_snapshot(
+    data_root: DataRoot,
+    repo_id: str,
+    *,
+    generated_on: str | None = None,
+    text_presence: TextPresenceSnapshot | None = None,
+) -> MinimalV1ReleaseSnapshot:
+    """Compute the V1 public summary once for all release artifacts."""
+    core_stats = compute_dataset_stats(data_root.processed)
+    augmentation_stats = compute_augmentation_stats(
+        data_root.processed,
+        cache_index_dir=data_root.cache,
+    )
+    presence = text_presence or load_text_presence(data_root.processed)
+    countries_path = ensure_world_countries(data_root.cache)
+    continent_rows = compute_continent_stats(data_root.processed, countries_path)
+    front_matter = _render_front_matter(
+        repo_id=repo_id,
+        license="odbl",
+        primary_lang="en",
+        polygon_count=core_stats.polygon_count,
+        article_count=core_stats.article_count,
+        unique_wikidata_count=core_stats.unique_wikidata_count,
+    )
+    rows = tuple(
+        ContinentCoverage(
+            name=continent,
+            polygons=polygons,
+            wikipedia_documents=wikipedia_documents,
+            wikivoyage_documents=wikivoyage_documents,
+            wikipedia_text_polygons=wikipedia_text_polygons,
+            text_polygons=text_polygons,
+        )
+        for (
+            continent,
+            polygons,
+            wikipedia_documents,
+            wikivoyage_documents,
+            wikipedia_text_polygons,
+            text_polygons,
+        ) in continent_rows
+    )
+    documents = (
+        augmentation_stats.combined_languages.document_count
+        or augmentation_stats.wikipedia_documents.rows
+        + augmentation_stats.wikivoyage_documents.rows
+    )
+    sections = (
+        augmentation_stats.wikipedia_sections.rows
+        + augmentation_stats.wikivoyage_sections.rows
+    )
+    languages = (
+        augmentation_stats.combined_languages.language_count or core_stats.language_count
+    )
+    snapshot = MinimalCardSnapshot(
+        front_matter=front_matter,
+        repo_id=repo_id,
+        title="OSM Polygon Wikidata, Wikipedia and Wikivoyage",
+        description=(
+            "OSM polygons carrying `wikidata=*`, enriched with multilingual Wikipedia "
+            "and Wikivoyage documents. The published tables preserve regional records "
+            "and provenance."
+        ),
+        polygon_rows=core_stats.polygon_count,
+        unique_polygon_identities=core_stats.unique_polygon_identities or presence.polygon_count,
+        polygons_with_text=len(presence.combined_polygon_identities),
+        documents=documents,
+        sections=sections,
+        languages=languages,
+        regions=core_stats.region_count,
+        total_parquet_bytes=augmentation_stats.total_parquet_bytes,
+        continent_rows=rows,
+        generated_on=generated_on,
+        viewer_url=f"https://huggingface.co/datasets/{repo_id}/viewer",
+    )
+    report_extra = {
+        "card_contract": "minimal-v1",
+        "dataset_stats": asdict(core_stats),
+        "augmentation_stats": asdict(augmentation_stats),
+        "continent_stats": [asdict(row) for row in rows],
+        "text_coverage": {
+            "polygon_identities": presence.polygon_count,
+            "wikipedia_text_polygon_identities": len(presence.wikipedia_polygon_identities),
+            "combined_text_polygon_identities": len(presence.combined_polygon_identities),
+            "wikipedia_documents": len(presence.wikipedia_document_ids),
+            "wikivoyage_documents": len(presence.wikivoyage_document_ids),
+        },
+    }
+    return MinimalV1ReleaseSnapshot(snapshot, report_extra, presence)
+
+
+def write_minimal_v1_card(
+    data_root: DataRoot,
+    repo_id: str,
+    destination: Path,
+    *,
+    generated_on: str | None = None,
+    text_presence: TextPresenceSnapshot | None = None,
+) -> MinimalV1ReleaseSnapshot:
+    """Write the compact V1 card and return the prepared release snapshot."""
+    prepared = build_minimal_v1_release_snapshot(
+        data_root,
+        repo_id,
+        generated_on=generated_on,
+        text_presence=text_presence,
+    )
+    atomic_write_text(destination, render_minimal_card(prepared.card))
+    return prepared
+
+
 def _collapsed_section(summary: str, body: str) -> str:
     """Return ``body`` behind a Hub-rendered collapsed disclosure block."""
     nested = demote_headings(body.strip())
@@ -408,6 +538,7 @@ def refresh_coverage_assets(
     snapshot_stem: str,
     snapshots_dir: Path,
     world_land_warning: Callable[[str], None] | None,
+    text_snapshot: TextPresenceSnapshot | None = None,
 ) -> tuple[Path, Path, Path]:
     """Render the three public coverage PNGs into ``snapshots_dir``.
 
@@ -436,18 +567,19 @@ def refresh_coverage_assets(
             world_land_warning("Could not fetch world land data; map will omit continents")
         land_path = None
     generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
+    snapshot = text_snapshot or _load_text_presence(data_root.processed)
     text_presence_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_presence.png"
     _generate_geographic_text_presence(
         data_root.processed,
         text_presence_snapshot,
         land_geojson_path=land_path,
-        snapshot=(text_snapshot := _load_text_presence(data_root.processed)),
+        snapshot=snapshot,
     )
     density_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_density.png"
     _generate_geographic_text_density_snapshot(
         data_root,
         density_snapshot,
-        snapshot=text_snapshot,
+        snapshot=snapshot,
     )
     return map_snapshot, text_presence_snapshot, density_snapshot
 
