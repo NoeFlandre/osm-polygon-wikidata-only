@@ -6,6 +6,7 @@ without spinning up the rest of the pipeline.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable
 
@@ -66,8 +67,6 @@ class StreamingStats:
         if p.text_available:
             self._text_polygons.add(p.polygon_id)
         self._area_buckets[p.area_bucket] += 1
-        import json
-
         try:
             keys = json.loads(p.tag_keys)
         except (ValueError, TypeError):

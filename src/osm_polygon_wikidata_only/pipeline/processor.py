@@ -24,6 +24,7 @@ that already imported them from :mod:`pipeline.processor`.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -166,8 +167,6 @@ def process_extracted_pbf(
 
 
 def _perf_counter() -> float:
-    import time
-
     return time.perf_counter()
 
 
