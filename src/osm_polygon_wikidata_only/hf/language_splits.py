@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import cast
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
@@ -405,9 +406,10 @@ class _BucketCounter:
     malformed_rows: int = 0
     legacy_unusable_rows: int = 0
 
-    def observe(self, resolution: LanguageResolution) -> None:
-        self.row_count += 1
-        _increment_disposition(self, resolution.disposition)
+    def observe(self, resolution: LanguageResolution, count: int = 1) -> None:
+        """Record ``count`` rows that all resolved the same way."""
+        self.row_count += count
+        _increment_disposition(self, resolution.disposition, count)
 
 
 _DISPOSITION_COUNTER_FIELDS: dict[LanguageDisposition, str] = {
@@ -423,10 +425,11 @@ _DISPOSITION_COUNTER_FIELDS: dict[LanguageDisposition, str] = {
 def _increment_disposition(
     counter: _BucketCounter,
     disposition: LanguageDisposition,
+    count: int = 1,
 ) -> None:
-    """Increment the reason-specific field for one observed resolution."""
+    """Add ``count`` to the reason-specific field for one resolution."""
     field = _DISPOSITION_COUNTER_FIELDS[disposition]
-    setattr(counter, field, getattr(counter, field) + 1)
+    setattr(counter, field, getattr(counter, field) + count)
 
 
 def _collect_inventories(
@@ -665,11 +668,8 @@ def _scan_language_file(
                 columns=[spec.language_column],
                 batch_size=_BATCH_SIZE,
             ):
-                values = batch.column(0).to_pylist()
-                observed_rows += len(values)
-                for value in values:
-                    resolution = normalize_language(value)
-                    buckets.setdefault(resolution.partition, _BucketCounter()).observe(resolution)
+                observed_rows += batch.num_rows
+                _observe_language_batch(batch.column(0), buckets)
     except Exception as error:
         raise LanguageInventoryError(
             f"Could not scan language column {spec.language_column!r} in {path}: {error}"
@@ -678,6 +678,22 @@ def _scan_language_file(
         raise LanguageInventoryError(
             f"row count changed while scanning {path}: metadata={expected_rows}, observed={observed_rows}"
         )
+
+
+def _observe_language_batch(column: pa.Array, buckets: dict[str, _BucketCounter]) -> None:
+    """Count one batch by distinct language value rather than row by row.
+
+    A batch holds tens of thousands of rows but only a handful of distinct
+    language values, so the resolution runs once per distinct value and the
+    row count is added in bulk. The result is identical to resolving every
+    row, because ``normalize_language`` depends only on the value.
+    """
+    counts = pc.call_function("value_counts", [column])
+    for value, count in zip(
+        counts.field("values").to_pylist(), counts.field("counts").to_pylist(), strict=True
+    ):
+        resolution = normalize_language(value)
+        buckets.setdefault(resolution.partition, _BucketCounter()).observe(resolution, count)
 
 
 def _freeze_buckets(counters: dict[str, _BucketCounter]) -> tuple[LanguageBucket, ...]:
