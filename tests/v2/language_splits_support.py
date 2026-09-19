@@ -5,6 +5,7 @@ from __future__ import annotations
 # ruff: noqa: F401
 import errno
 import json
+import logging
 import subprocess
 import sys
 from collections import defaultdict

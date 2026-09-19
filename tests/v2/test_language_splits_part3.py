@@ -750,3 +750,31 @@ def test_v2_resume_files_rejects_a_non_list_and_a_bad_entry() -> None:
     assert language_splits._resume_files({"not": "a list"}, spec) is None
     assert language_splits._resume_files([{"bad": "entry"}], spec) is None
     assert language_splits._resume_files([], spec) == []
+
+
+def test_v2_staged_table_reports_the_resumed_table_and_shard_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Resuming is announced: operators need to see what was skipped and why."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    stage_root = tmp_path / "stage"
+    inventory = _resume_inventory()
+    staged = stage_root / "lang-fr.parquet"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(b"staged")
+    final = tmp_path / "language_splits/lang-fr.parquet"
+    language_splits._record_completed_table(
+        stage_root,
+        spec,
+        inventory,
+        [_resume_file_record("language_splits/lang-fr.parquet")],
+        {final: staged},
+    )
+    monkeypatch.setattr(language_splits, "_write_table", lambda *a: ([], {}))
+
+    with caplog.at_level(logging.INFO, logger=language_splits.LOGGER.name):
+        language_splits._staged_table(
+            tmp_path, tmp_path / "language_splits", stage_root, spec, inventory, 1, 10
+        )
+
+    assert f"Resuming: reusing 1 staged shards for {spec.table.value}" in caplog.text

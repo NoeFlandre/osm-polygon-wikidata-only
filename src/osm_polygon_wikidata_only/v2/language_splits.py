@@ -1002,7 +1002,7 @@ def _resume_marker_path(stage_root: Path, spec: LanguageTableSpec) -> Path:
 
 def _table_fingerprint(table_inventory: LanguageTableInventory) -> str:
     """Bind a staged table to the exact sources that produced it."""
-    return hashlib.sha256(json_dumps(table_inventory.to_dict()).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json_dumps(table_inventory.to_dict()).encode()).hexdigest()
 
 
 def _record_completed_table(
@@ -1053,7 +1053,7 @@ def _resume_payload(stage_root: Path, spec: LanguageTableSpec) -> dict[str, obje
     if not marker.is_file():
         return None
     try:
-        payload = json_loads(marker.read_text(encoding="utf-8"))
+        payload = json_loads(marker.read_bytes())
     except (OSError, UnicodeError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
