@@ -24,6 +24,15 @@ from osm_polygon_wikidata_only.pipeline._wikidata_recovery.audit import (
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 
 from .checkpoints import RecoveryBatchArtifacts, RecoveryCheckpointStore
+from .link_rows import (
+    canonical_wikipedia_links_to_legacy as _canonical_wikipedia_links_to_legacy,
+)
+from .link_rows import (
+    legacy_wikipedia_links_to_canonical as _legacy_wikipedia_links_to_canonical,
+)
+from .link_rows import (
+    merge_links as _merge_links,
+)
 from .models import (
     RecoveryRepairError,
     RecoveryRepairResult,
@@ -223,7 +232,22 @@ from .repair_outputs import (
 )
 from .repair_types import RepairInputs as _RepairInputs
 from .repair_types import RepairOutputs as _RepairOutputs
+from .storage import (
+    read_table as _read_table,
+)
+from .storage import (
+    region_paths as _region_paths,
+)
+from .storage import (
+    write_table as _write_table,
+)
 from .transaction import recover_interrupted_transactions
+from .validation import (
+    validate_existing_rows as _validate_existing_rows,
+)
+from .validation import (
+    validate_preservation as _validate_preservation,
+)
 
 
 def _execute_recovery_batches(
