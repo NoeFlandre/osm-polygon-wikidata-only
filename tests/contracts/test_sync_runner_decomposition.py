@@ -203,12 +203,15 @@ def test_mixed_plan_executes_in_documented_order(tmp_path: Path) -> None:
     * no NotImplementedError placeholder is ever called.
     """
     events: list[str] = []
+    first_extraction_started = threading.Event()
     second_extraction_started = threading.Event()
     enrichment_started = threading.Event()
 
     def fake_extract(pbf_path: Path) -> Any:
         name = _path_stem(pbf_path)
         events.append(f"extract:{name}")
+        if name == "new-a":
+            first_extraction_started.set()
         if name == "new-b":
             second_extraction_started.set()
         return type(
@@ -240,6 +243,10 @@ def test_mixed_plan_executes_in_documented_order(tmp_path: Path) -> None:
 
     def fake_augment(state: Any) -> Any:
         events.append(f"augment:{state.stem}")
+        if state.stem == "old-a":
+            assert first_extraction_started.wait(timeout=5.0), (
+                "first extraction must be in flight before backlog augmentation"
+            )
         if state.stem == "new-a":
             assert enrichment_started.is_set(), (
                 "new-a augmentation must run only after new-a processing"
@@ -276,7 +283,10 @@ def test_mixed_plan_executes_in_documented_order(tmp_path: Path) -> None:
     )
     assert rc == 0
     # Required ordering invariants.
-    assert events[0] == "extract:new-a", "first extraction must start before backlog augmentation"
+    # The prefetch runs on a worker thread, so the order in which it and the main
+    # thread append to ``events`` is not deterministic. ``fake_augment`` asserts the
+    # real invariant -- extraction is in flight before backlog augmentation proceeds.
+    assert "extract:new-a" in events
     assert events.index("augment:old-a") < events.index("process:new-a")
     assert events.index("extract:new-b") < events.index("augment:new-a")
     for stem in ("new-a", "new-b"):
@@ -394,8 +404,11 @@ def test_backlog_augmentation_exception_propagates_and_queue_still_closes(
     events: list[str] = []
     upload_failure_calls: list[list[str]] = []
 
+    extraction_started = threading.Event()
+
     def fake_extract(pbf_path: Path) -> Any:
         events.append(f"extract:{_path_stem(pbf_path)}")
+        extraction_started.set()
         return type(
             "E",
             (),
@@ -409,6 +422,9 @@ def test_backlog_augmentation_exception_propagates_and_queue_still_closes(
     def fake_augment(state: Any) -> Any:
         events.append(f"augment:{state.stem}")
         if state.stem == "backlog":
+            assert extraction_started.wait(timeout=5.0), (
+                "prefetch extraction must be in flight before backlog augmentation"
+            )
             raise RuntimeError("backlog failed")
         return type("A", (), {})()
 
@@ -430,8 +446,9 @@ def test_backlog_augmentation_exception_propagates_and_queue_still_closes(
             augment_region=fake_augment,
             close_uploads=fake_close,
         )
-    # Extract starts (prefetch) before backlog augment. Close runs exactly once.
-    assert events[0] == "extract:core"
+    # Extract starts (prefetch) before backlog augment; ``fake_augment`` asserts that
+    # ordering deterministically, since the two run on different threads.
+    assert "extract:core" in events
     assert "augment:backlog" in events
     assert events.count("close") == 1
     assert not any(e.startswith("process:") for e in events)
