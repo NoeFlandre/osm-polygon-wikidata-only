@@ -2,6 +2,10 @@
 
 from osm_polygon_wikidata_only.grid5000 import (
     sentence_controller,
+    sentence_controller_batches,
+    sentence_controller_import,
+    sentence_controller_ledger,
+    sentence_controller_lifecycle,
     sentence_controller_policy,
     sentence_publication,
     sentence_transport,
@@ -25,3 +29,11 @@ def test_implementation_owners_are_focused_modules() -> None:
         is sentence_publication.HfHubSentencePublisher
     )
 
+
+def test_controller_phases_live_in_focused_mixins() -> None:
+    assert sentence_controller.Grid5000SentenceController.__mro__[1:5] == (
+        sentence_controller_lifecycle.SentenceControllerLifecycleMixin,
+        sentence_controller_batches.SentenceControllerBatchMixin,
+        sentence_controller_import.SentenceControllerImportMixin,
+        sentence_controller_ledger.SentenceControllerLedgerMixin,
+    )
