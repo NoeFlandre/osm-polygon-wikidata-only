@@ -48,6 +48,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
 )
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json, atomic_write_text
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 
 REMOTE_CARD_FILE = "README.md"
@@ -164,11 +165,7 @@ class _RemoteState:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_file(path)
 
 
 def _write_text_if_changed(path: Path, text: str) -> None:
