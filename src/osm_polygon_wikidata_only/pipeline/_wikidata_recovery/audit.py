@@ -1,42 +1,94 @@
-"""Audit Wikidata-backed polygon data and classify recovery state."""
+"""Audit Wikidata-backed polygon data and classify recovery state.
+
+The orchestration and receipt boundary stay here for compatibility; tabular
+input validation, upstream resolution, and receipt codecs live in focused
+siblings.
+"""
+
+# ruff: noqa: F401
 
 from __future__ import annotations
 
 import logging
 import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from concurrent.futures import as_completed
 from pathlib import Path
-from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.augmentation.schema import fact_schema
 from osm_polygon_wikidata_only.augmentation.steps import sha256_file
-from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.domain.polygon_document_links import (
-    polygon_document_link_schema,
-)
-from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.enrichment.wikidata.models import (
-    BatchWikidataClient,
     WikidataClient,
     WikidataEntity,
 )
-from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
-    language_from_site,
-    qids_from_osm_tag,
-)
-from osm_polygon_wikidata_only.io.atomic import atomic_write_text
-from osm_polygon_wikidata_only.utils.json import dumps, loads
-from osm_polygon_wikidata_only.utils.retry import (
-    _cancel_pending_retries,
-    _reset_retry_cancellation,
-)
 
+from .audit_entities import (
+    affected_qid_entry,
+    blocked_region_result,
+    build_qid_result,
+    classified_region_result,
+    classify_qid,
+    classify_region,
+    collect_qid_data,
+    collect_region_qid_data,
+    eligible_sitelinks,
+    filtered_sitelinks,
+    global_qid_results,
+    limit_sitelinks,
+    progress_checkpoint,
+    resolve_entities,
+)
+from .audit_inputs import (
+    index_document_rows,
+    index_polygon_rows,
+    link_identity,
+    linked_polygon_qids,
+    load_region_rows,
+    missing_polygon_links,
+    orphan_fact_ids,
+    read_rows,
+    reference_column,
+    region_paths,
+    remember_link_identity,
+    require_schema,
+    resolve_link_target,
+    validate_link_row,
+    validate_polygon_qid,
+)
+from .audit_receipts import (
+    INDEX_RELATIVE_PATH,
+    RECOVERY_CONTRACT_VERSION,
+    decode_receipts,
+    fingerprints_match,
+    load_receipts,
+    parse_receipt_classifications,
+    parse_receipt_entries,
+    parse_receipt_polygon_ids,
+    receipt_fields,
+    receipt_from_result,
+    receipt_maps,
+    receipt_needs_repair,
+    receipt_result,
+    record_recovery_receipt,
+    reuse_receipt,
+    save_receipts,
+    store_receipt,
+    validate_receipt_classifications,
+)
+from .audit_runtime import (
+    classify_scoped_regions,
+    eligible_sitelinks_by_qid,
+    emit_audit_complete,
+    record_current_receipt,
+    save_changed_receipts,
+    validate_batch_size,
+    validation_progress,
+)
+from .audit_scanning import ScanHooks, scan_regions, validation_qids
+from .audit_types import RegionRows, RegionScan, ScanError
 from .models import (
     QidAuditResult,
     RecoveryAuditResult,
@@ -45,34 +97,79 @@ from .models import (
 )
 
 LOGGER = logging.getLogger(__name__)
-RECOVERY_CONTRACT_VERSION = "wikidata-enrichment-integrity-v2"
-_INDEX_RELATIVE_PATH = Path("wikidata_recovery/index.json")
 _UPSTREAM_BATCH_WINDOW = 3
 
+_RegionScan = RegionScan
+_RegionRows = RegionRows
+_ScanError = ScanError
+_INDEX_RELATIVE_PATH = INDEX_RELATIVE_PATH
+_region_paths = region_paths
+_load_region_rows = load_region_rows
+_index_polygon_rows = index_polygon_rows
+_index_document_rows = index_document_rows
+_linked_polygon_qids = linked_polygon_qids
+_missing_polygon_links = missing_polygon_links
+_orphan_fact_ids = orphan_fact_ids
+_require_schema = require_schema
+_read_rows = read_rows
+_link_identity = link_identity
+_reference_key = reference_column
+_remember_link_identity = remember_link_identity
+_resolve_link_target = resolve_link_target
+_validate_link_row = validate_link_row
+_validate_polygon_qid = validate_polygon_qid
+_classify_region = classify_region
+_classified_region_result = classified_region_result
+_blocked_region_result = blocked_region_result
+_affected_qid_entry = affected_qid_entry
+_classify_qid = classify_qid
+_global_qid_results = global_qid_results
+_collect_qid_data = collect_qid_data
+_collect_region_qid_data = collect_region_qid_data
+_build_qid_result = build_qid_result
+_eligible_sitelinks = eligible_sitelinks
+_filtered_sitelinks = filtered_sitelinks
+_limit_sitelinks = limit_sitelinks
+_progress_checkpoint = progress_checkpoint
+_load_receipts = load_receipts
+_decode_receipts = decode_receipts
+_reuse_receipt = reuse_receipt
+_receipt_fields = receipt_fields
+_fingerprints_match = fingerprints_match
+_receipt_maps = receipt_maps
+_parse_receipt_entries = parse_receipt_entries
+_parse_receipt_classifications = parse_receipt_classifications
+_parse_receipt_polygon_ids = parse_receipt_polygon_ids
+_receipt_needs_repair = receipt_needs_repair
+_receipt_from_result = receipt_from_result
+_validate_receipt_classifications = validate_receipt_classifications
+_receipt_result = receipt_result
+_store_receipt = store_receipt
+_save_receipts = save_receipts
+_validate_batch_size = validate_batch_size
+_validation_progress = validation_progress
+_eligible_sitelinks_by_qid = eligible_sitelinks_by_qid
+_save_changed_receipts = save_changed_receipts
+_emit_audit_complete = emit_audit_complete
+_record_current_receipt = record_current_receipt
+_validation_qids = validation_qids
 
-@dataclass(frozen=True, slots=True)
-class _RegionScan:
-    stem: str
-    fingerprints: tuple[tuple[str, str], ...]
-    polygon_ids_by_qid: tuple[tuple[str, tuple[str, ...]], ...]
-    missing_polygon_ids_by_qid: tuple[tuple[str, tuple[str, ...]], ...]
-    orphan_fact_ids: tuple[str, ...] = ()
-    orphan_document_ids: tuple[str, ...] = ()
-    blocked_reason: str = ""
 
-
-@dataclass(frozen=True, slots=True)
-class _RegionRows:
-    paths: dict[str, Path]
-    canonical_links: bool
-    polygon_rows: list[dict[str, Any]]
-    link_rows: list[dict[str, Any]]
-    document_rows: list[dict[str, Any]]
-    fact_rows: list[dict[str, Any]]
-
-
-class _ScanError(ValueError):
-    pass
+def _resolve_entities(
+    client: WikidataClient,
+    qids: list[str],
+    *,
+    batch_size: int,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[dict[str, WikidataEntity | None], int]:
+    """Preserve the audit module's patchable ``as_completed`` seam."""
+    return resolve_entities(
+        client,
+        qids,
+        batch_size=batch_size,
+        progress=progress,
+        as_completed_fn=as_completed,
+    )
 
 
 def audit_wikidata_integrity(
@@ -149,128 +246,6 @@ def audit_wikidata_integrity(
     )
 
 
-def _validate_batch_size(batch_size: int) -> None:
-    if batch_size < 1:
-        raise ValueError("batch_size must be >= 1")
-
-
-def _validation_progress(
-    emit: Callable[[str], None],
-    batch_size: int,
-    started_at: float,
-) -> Callable[[int, int], None]:
-    def report(completed: int, total: int) -> None:
-        if completed <= batch_size or _progress_checkpoint(
-            completed,
-            total,
-            every=max(batch_size * 10, 1),
-        ):
-            emit(
-                "Wikidata integrity audit upstream validation "
-                f"{completed}/{total} QIDs; {time.monotonic() - started_at:.0f}s elapsed"
-            )
-
-    return report
-
-
-def _eligible_sitelinks_by_qid(
-    entities: Mapping[str, WikidataEntity | None],
-    *,
-    languages: tuple[str, ...] | None,
-    max_articles_per_qid: int | None,
-) -> dict[str, tuple[tuple[str, str], ...]]:
-    return {
-        qid: _eligible_sitelinks(
-            entity,
-            languages=languages,
-            max_articles_per_qid=max_articles_per_qid,
-        )
-        for qid, entity in entities.items()
-    }
-
-
-def _save_changed_receipts(
-    index_path: Path,
-    receipts: dict[str, object],
-    changed: bool,
-) -> None:
-    if changed:
-        _save_receipts(index_path, receipts)
-
-
-def _emit_audit_complete(
-    emit: Callable[[str], None],
-    regions: list[RegionAuditResult],
-    qids: list[QidAuditResult],
-    cache_hits: int,
-    validation_qids: list[str],
-    scoped_count: int,
-    started_at: float,
-) -> None:
-    affected_regions, affected_qids, affected_polygons, orphan_facts, orphan_documents = (
-        _audit_counts(regions, qids)
-    )
-    emit(
-        "Wikidata integrity audit complete: "
-        f"regions scanned {len(regions)}/{scoped_count}; "
-        f"QIDs examined {len(qids)}; authoritative cache hits {cache_hits}; "
-        f"QIDs requiring upstream validation {len(validation_qids)}; "
-        f"affected QIDs {affected_qids}; affected polygons {affected_polygons}; "
-        f"orphan facts {orphan_facts}; orphan Wikipedia documents {orphan_documents}; "
-        f"affected regions {affected_regions}; {time.monotonic() - started_at:.0f}s elapsed"
-    )
-
-
-def _audit_counts(
-    regions: list[RegionAuditResult],
-    qids: list[QidAuditResult],
-) -> tuple[int, int, int, int, int]:
-    return (
-        _count_repair_regions(regions),
-        _count_repair_qids(qids),
-        _count_affected_polygons(regions),
-        _count_orphan_facts(regions),
-        _count_orphan_documents(regions),
-    )
-
-
-def _count_repair_regions(regions: list[RegionAuditResult]) -> int:
-    return sum(region.requires_repair for region in regions)
-
-
-def _count_repair_qids(qids: list[QidAuditResult]) -> int:
-    return sum(result.state is RecoveryClassification.REPAIR_REQUIRED for result in qids)
-
-
-def _count_affected_polygons(regions: list[RegionAuditResult]) -> int:
-    return sum(region.affected_polygon_count for region in regions)
-
-
-def _count_orphan_facts(regions: list[RegionAuditResult]) -> int:
-    return sum(len(region.orphan_fact_ids) for region in regions)
-
-
-def _count_orphan_documents(regions: list[RegionAuditResult]) -> int:
-    return sum(len(region.orphan_document_ids) for region in regions)
-
-
-def _region_paths(data_root: DataRoot, stem: str) -> tuple[tuple[str, Path, bool], ...]:
-    return (
-        ("polygons", data_root.processed_polygons / f"{stem}.parquet", True),
-        ("polygon_articles", data_root.processed_links / f"{stem}.parquet", True),
-        (
-            "wikipedia_documents",
-            data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet",
-            True,
-        ),
-        (
-            "wikidata_facts",
-            data_root.processed / "wikidata" / "facts" / f"{stem}.parquet",
-            True,
-        ),
-    )
-
-
 def _region_fingerprints(data_root: DataRoot, stem: str) -> tuple[tuple[str, str], ...]:
     return tuple(
         (label, _fingerprint_path(path, required))
@@ -299,75 +274,23 @@ def _scan_regions(
     started_at: float,
     emit: Callable[[str], None],
 ) -> tuple[dict[str, _RegionScan], dict[str, RegionAuditResult]]:
-    scans: dict[str, _RegionScan] = {}
-    reused_results: dict[str, RegionAuditResult] = {}
-    for region_index, stem in enumerate(scoped_stems, start=1):
-        reused, scan = _scan_region_for_audit(
-            data_root,
-            stem,
-            receipts.get(stem),
-            contract_matches=contract_matches,
-        )
-        if reused is not None:
-            reused_results[stem] = reused
-        else:
-            assert scan is not None
-            scans[stem] = scan
-        _emit_scan_progress(
-            emit,
-            region_index,
-            len(scoped_stems),
-            started_at,
-        )
-    return scans, reused_results
-
-
-def _scan_region_for_audit(
-    data_root: DataRoot,
-    stem: str,
-    raw_receipt: object,
-    *,
-    contract_matches: bool,
-) -> tuple[RegionAuditResult | None, _RegionScan | None]:
-    try:
-        fingerprints = _region_fingerprints(data_root, stem)
-        reused = _reuse_receipt(stem, fingerprints, raw_receipt)
-        if contract_matches and reused is not None:
-            return reused, None
-        return None, _scan_region(data_root, stem, fingerprints)
-    except (OSError, ValueError, TypeError, KeyError) as error:
-        return None, _RegionScan(
-            stem=stem,
-            fingerprints=(),
-            polygon_ids_by_qid=(),
-            missing_polygon_ids_by_qid=(),
-            blocked_reason=str(error),
-        )
-
-
-def _emit_scan_progress(
-    emit: Callable[[str], None],
-    completed: int,
-    total: int,
-    started_at: float,
-) -> None:
-    if _progress_checkpoint(completed, total, every=25):
-        emit(
-            "Wikidata integrity audit local scan "
-            f"{completed}/{total} regions; "
-            f"{time.monotonic() - started_at:.0f}s elapsed"
-        )
-
-
-def _validation_qids(scans: Mapping[str, _RegionScan]) -> list[str]:
-    return sorted(
-        {
-            qid
-            for scan in scans.values()
-            if not scan.blocked_reason
-            for qid, polygon_ids in scan.missing_polygon_ids_by_qid
-            if polygon_ids
-        }
+    hooks = ScanHooks(
+        region_fingerprints=_region_fingerprints,
+        scan_region=_scan_region,
+        progress_checkpoint=lambda completed, total, *, every: _progress_checkpoint(
+            completed,
+            total,
+            every=every,
+        ),
+    )
+    return scan_regions(
+        data_root,
+        scoped_stems,
+        receipts,
+        contract_matches=contract_matches,
+        started_at=started_at,
+        emit=emit,
+        hooks=hooks,
     )
 
 
@@ -379,31 +302,15 @@ def _classify_scoped_regions(
     eligible_sitelinks: Mapping[str, tuple[tuple[str, str], ...]],
     receipts: dict[str, object],
 ) -> tuple[list[RegionAuditResult], bool]:
-    region_results: list[RegionAuditResult] = []
-    changed_receipts = False
-    for stem in scoped_stems:
-        reused = reused_results.get(stem)
-        if reused is not None:
-            region_results.append(reused)
-            continue
-        result = _classify_region(scans[stem], dict(entities), dict(eligible_sitelinks))
-        region_results.append(result)
-        changed_receipts |= _record_current_receipt(stem, result, receipts)
-    return region_results, changed_receipts
-
-
-def _record_current_receipt(
-    stem: str,
-    result: RegionAuditResult,
-    receipts: dict[str, object],
-) -> bool:
-    if result.blocked_reason or result.requires_repair:
-        return False
-    receipt = _receipt_from_result(result)
-    if receipts.get(stem) == receipt:
-        return False
-    receipts[stem] = receipt
-    return True
+    return classify_scoped_regions(
+        scoped_stems,
+        scans,
+        reused_results,
+        entities,
+        eligible_sitelinks,
+        receipts,
+        classify_region_fn=_classify_region,
+    )
 
 
 def _scan_region(
@@ -437,693 +344,6 @@ def _scan_region(
     )
 
 
-def _load_region_rows(data_root: DataRoot, stem: str) -> _RegionRows:
-    paths = {label: path for label, path, _ in _region_paths(data_root, stem)}
-    _require_schema(paths["polygons"], polygon_schema())
-    link_schema = pq.read_schema(paths["polygon_articles"])
-    canonical_links = link_schema.equals(polygon_document_link_schema(), check_metadata=True)
-    if not canonical_links:
-        _require_schema(paths["polygon_articles"], polygon_article_schema())
-    _require_schema(paths["wikipedia_documents"], wikipedia_document_schema())
-    _require_schema(paths["wikidata_facts"], fact_schema())
-    link_columns = (
-        ["polygon_id", "document_id", "project", "wikidata"]
-        if canonical_links
-        else ["polygon_id", "article_id", "wikidata"]
-    )
-    return _RegionRows(
-        paths=paths,
-        canonical_links=canonical_links,
-        polygon_rows=_read_rows(paths["polygons"], ["polygon_id", "wikidata"]),
-        link_rows=_read_rows(paths["polygon_articles"], link_columns),
-        document_rows=_read_rows(
-            paths["wikipedia_documents"],
-            ["article_id", "document_id", "wikidata"],
-        ),
-        fact_rows=_read_rows(paths["wikidata_facts"], ["fact_id", "wikidata"]),
-    )
-
-
-def _index_polygon_rows(
-    rows: list[dict[str, Any]],
-) -> tuple[dict[str, tuple[str, ...]], dict[str, list[str]]]:
-    polygons: dict[str, tuple[str, ...]] = {}
-    polygon_ids_by_qid: dict[str, list[str]] = {}
-    for row in rows:
-        polygon_id = _required_string(row, "polygon_id", "polygons")
-        raw_qid = _required_string(row, "wikidata", "polygons")
-        qids = qids_from_osm_tag(raw_qid)
-        if not qids:
-            raise _ScanError(f"polygons contains invalid Wikidata identifier {raw_qid!r}")
-        if polygon_id in polygons:
-            raise _ScanError(f"polygons contains duplicate polygon_id {polygon_id!r}")
-        polygons[polygon_id] = qids
-        for qid in qids:
-            polygon_ids_by_qid.setdefault(qid, []).append(polygon_id)
-    return polygons, polygon_ids_by_qid
-
-
-def _index_document_rows(
-    rows: list[dict[str, Any]],
-    polygon_ids_by_qid: Mapping[str, list[str]],
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[str]]:
-    documents_by_article: dict[str, dict[str, Any]] = {}
-    documents_by_id: dict[str, dict[str, Any]] = {}
-    document_ids: set[str] = set()
-    orphan_document_ids: list[str] = []
-    for row in rows:
-        article_id = _required_string(row, "article_id", "wikipedia documents")
-        document_id = _required_string(row, "document_id", "wikipedia documents")
-        qid = _required_string(row, "wikidata", "wikipedia documents")
-        if article_id in documents_by_article:
-            raise _ScanError(f"wikipedia documents contains duplicate article_id {article_id!r}")
-        if document_id in document_ids:
-            raise _ScanError(f"wikipedia documents contains duplicate document_id {document_id!r}")
-        if qid not in polygon_ids_by_qid:
-            orphan_document_ids.append(document_id)
-        documents_by_article[article_id] = row
-        documents_by_id[document_id] = row
-        document_ids.add(document_id)
-    return documents_by_article, documents_by_id, orphan_document_ids
-
-
-def _linked_polygon_qids(
-    rows: list[dict[str, Any]],
-    *,
-    canonical_links: bool,
-    polygons: Mapping[str, tuple[str, ...]],
-    documents_by_article: Mapping[str, dict[str, Any]],
-    documents_by_id: Mapping[str, dict[str, Any]],
-    orphan_document_ids: list[str],
-) -> set[tuple[str, str]]:
-    linked_polygon_qids: set[tuple[str, str]] = set()
-    link_ids: set[tuple[str, str]] = set()
-    for row in rows:
-        link = _validate_link_row(
-            row,
-            canonical_links=canonical_links,
-            polygons=polygons,
-            documents_by_article=documents_by_article,
-            documents_by_id=documents_by_id,
-            orphan_document_ids=orphan_document_ids,
-            link_ids=link_ids,
-        )
-        if link is not None:
-            linked_polygon_qids.add((link[0], link[2]))
-    return linked_polygon_qids
-
-
-def _validate_link_row(
-    row: Mapping[str, Any],
-    *,
-    canonical_links: bool,
-    polygons: Mapping[str, tuple[str, ...]],
-    documents_by_article: Mapping[str, dict[str, Any]],
-    documents_by_id: Mapping[str, dict[str, Any]],
-    orphan_document_ids: list[str],
-    link_ids: set[tuple[str, str]],
-) -> tuple[str, str, str] | None:
-    identity = _link_identity(row, canonical_links=canonical_links, link_ids=link_ids)
-    if identity is None:
-        return None
-    return _resolve_link_target(
-        identity,
-        canonical_links=canonical_links,
-        polygons=polygons,
-        documents_by_article=documents_by_article,
-        documents_by_id=documents_by_id,
-        orphan_document_ids=orphan_document_ids,
-    )
-
-
-def _link_identity(
-    row: Mapping[str, Any],
-    *,
-    canonical_links: bool,
-    link_ids: set[tuple[str, str]],
-) -> tuple[str, str, str, str] | None:
-    if canonical_links and str(row.get("project") or "") != "wikipedia":
-        return None
-    polygon_id = _required_string(row, "polygon_id", "polygon_articles")
-    reference_key = _reference_key(canonical_links)
-    reference_id = _required_string(row, reference_key, "polygon_articles")
-    qid = _required_string(row, "wikidata", "polygon_articles")
-    identity = (polygon_id, reference_id)
-    _remember_link_identity(identity, link_ids)
-    return polygon_id, reference_key, reference_id, qid
-
-
-def _reference_key(canonical_links: bool) -> str:
-    return "document_id" if canonical_links else "article_id"
-
-
-def _remember_link_identity(identity: tuple[str, str], link_ids: set[tuple[str, str]]) -> None:
-    if identity in link_ids:
-        raise _ScanError(f"polygon_articles contains duplicate identity {identity!r}")
-    link_ids.add(identity)
-
-
-def _resolve_link_target(
-    identity: tuple[str, str, str, str],
-    *,
-    canonical_links: bool,
-    polygons: Mapping[str, tuple[str, ...]],
-    documents_by_article: Mapping[str, dict[str, Any]],
-    documents_by_id: Mapping[str, dict[str, Any]],
-    orphan_document_ids: list[str],
-) -> tuple[str, str, str] | None:
-    polygon_id, reference_key, reference_id, qid = identity
-    document = (
-        documents_by_id.get(reference_id)
-        if canonical_links
-        else documents_by_article.get(reference_id)
-    )
-    if document is not None and str(document["document_id"]) in orphan_document_ids:
-        return None
-    _validate_polygon_qid(polygon_id, qid, polygons)
-    return _finish_link_target(
-        polygon_id,
-        reference_key,
-        reference_id,
-        qid,
-        document,
-        canonical_links,
-    )
-
-
-def _validate_polygon_qid(
-    polygon_id: str,
-    qid: str,
-    polygons: Mapping[str, tuple[str, ...]],
-) -> None:
-    polygon_qids = polygons.get(polygon_id)
-    if polygon_qids is None:
-        raise _ScanError(f"polygon_articles references absent polygon_id {polygon_id!r}")
-    if qid not in polygon_qids:
-        raise _ScanError(
-            f"polygon_articles QID {qid!r} disagrees with polygon {polygon_id!r} "
-            f"QIDs {polygon_qids!r}"
-        )
-
-
-def _finish_link_target(
-    polygon_id: str,
-    reference_key: str,
-    reference_id: str,
-    qid: str,
-    document: dict[str, Any] | None,
-    canonical_links: bool,
-) -> tuple[str, str, str] | None:
-    if document is None:
-        return _missing_link_target(reference_key, reference_id, canonical_links)
-    if str(document.get("wikidata") or "") != qid:
-        raise _ScanError(f"document {reference_id!r} disagrees with link QID {qid!r}")
-    return polygon_id, reference_id, qid
-
-
-def _missing_link_target(
-    reference_key: str,
-    reference_id: str,
-    canonical_links: bool,
-) -> None:
-    if canonical_links:
-        # A canonical link can outlive its document if an interrupted or
-        # older augmentation run overwrote the recovered document table.
-        # Leave the polygon/QID pair unlinked so the normal missing-pair
-        # calculation routes it through targeted recovery.
-        return None
-    raise _ScanError(f"polygon_articles references absent {reference_key} {reference_id!r}")
-
-
-def _missing_polygon_links(
-    polygon_ids_by_qid: Mapping[str, list[str]],
-    linked_polygon_qids: set[tuple[str, str]],
-) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    missing: list[tuple[str, tuple[str, ...]]] = []
-    for qid, polygon_ids in sorted(polygon_ids_by_qid.items()):
-        missing_ids = tuple(
-            polygon_id
-            for polygon_id in sorted(polygon_ids)
-            if (polygon_id, qid) not in linked_polygon_qids
-        )
-        if missing_ids:
-            missing.append((qid, missing_ids))
-    return tuple(missing)
-
-
-def _orphan_fact_ids(rows: list[dict[str, Any]], valid_polygon_qids: set[str]) -> list[str]:
-    orphan_fact_ids: list[str] = []
-    seen_fact_ids: set[str] = set()
-    for row in rows:
-        fact_id = _required_string(row, "fact_id", "wikidata facts")
-        qid = _required_string(row, "wikidata", "wikidata facts")
-        if fact_id in seen_fact_ids:
-            raise _ScanError(f"wikidata facts contains duplicate fact_id {fact_id!r}")
-        seen_fact_ids.add(fact_id)
-        if qid not in valid_polygon_qids:
-            orphan_fact_ids.append(fact_id)
-    return orphan_fact_ids
-
-
-def _require_schema(path: Path, expected: pa.Schema) -> None:
-    actual: pa.Schema = pq.read_schema(path)
-    if not actual.equals(expected, check_metadata=True):
-        raise _ScanError(f"Recovery input schema mismatch: {path}")
-
-
-def _read_rows(path: Path, columns: list[str]) -> list[dict[str, Any]]:
-    table: pa.Table = pq.read_table(path, columns=columns)
-    rows: list[dict[str, Any]] = table.to_pylist()
-    return rows
-
-
-def _required_string(row: Mapping[str, Any], key: str, table: str) -> str:
-    value = row.get(key)
-    if not isinstance(value, str) or not value:
-        raise _ScanError(f"{table} contains an empty or non-string {key}")
-    return value
-
-
-def _resolve_entities(
-    client: WikidataClient,
-    qids: list[str],
-    *,
-    batch_size: int,
-    progress: Callable[[int, int], None] | None = None,
-) -> tuple[dict[str, WikidataEntity | None], int]:
-    if isinstance(client, BatchWikidataClient):
-        return _resolve_batch_entities(client, qids, batch_size=batch_size, progress=progress)
-    return _resolve_single_entities(client, qids, progress=progress)
-
-
-def _resolve_single_entities(
-    client: WikidataClient,
-    qids: list[str],
-    *,
-    progress: Callable[[int, int], None] | None,
-) -> tuple[dict[str, WikidataEntity | None], int]:
-    resolved: dict[str, WikidataEntity | None] = {}
-    for index, qid in enumerate(qids, start=1):
-        resolved[qid] = client.get_entity(qid)
-        if progress is not None:
-            progress(index, len(qids))
-    return resolved, 0
-
-
-def _resolve_batch_entities(
-    client: BatchWikidataClient,
-    qids: list[str],
-    *,
-    batch_size: int,
-    progress: Callable[[int, int], None] | None,
-) -> tuple[dict[str, WikidataEntity | None], int]:
-    chunks = [qids[start : start + batch_size] for start in range(0, len(qids), batch_size)]
-    if not chunks:
-        return {}, 0
-    completed = _run_batch_futures(client, chunks, total=len(qids), progress=progress)
-    resolved: dict[str, WikidataEntity | None] = {}
-    cache_hits = 0
-    for index in range(len(chunks)):
-        chunk, results, hits = completed[index]
-        resolved.update(zip(chunk, results, strict=True))
-        cache_hits += hits
-    return resolved, cache_hits
-
-
-def _resolve_batch_chunk(
-    client: BatchWikidataClient,
-    index: int,
-    chunk: list[str],
-) -> tuple[int, list[str], list[WikidataEntity | None], int]:
-    results = client.get_entities(chunk)
-    if len(results) != len(chunk):
-        raise RuntimeError("Wikidata batch client returned the wrong result count")
-    raw_hits = getattr(client, "last_batch_cache_hits", 0)
-    hits = raw_hits if isinstance(raw_hits, int) else 0
-    return index, chunk, results, hits
-
-
-def _run_batch_futures(
-    client: BatchWikidataClient,
-    chunks: list[list[str]],
-    *,
-    total: int,
-    progress: Callable[[int, int], None] | None,
-) -> dict[int, tuple[list[str], list[WikidataEntity | None], int]]:
-    completed: dict[int, tuple[list[str], list[WikidataEntity | None], int]] = {}
-    completed_qids = 0
-    _reset_retry_cancellation()
-    try:
-        with ThreadPoolExecutor(max_workers=min(_UPSTREAM_BATCH_WINDOW, len(chunks))) as executor:
-            futures = [
-                executor.submit(_resolve_batch_chunk, client, index, chunk)
-                for index, chunk in enumerate(chunks)
-            ]
-            try:
-                for future in as_completed(futures):
-                    index, chunk, results, hits = future.result()
-                    completed[index] = (chunk, results, hits)
-                    completed_qids += len(chunk)
-                    _report_batch_progress(progress, completed_qids, total)
-            except BaseException:
-                _cancel_pending_retries()
-                for future in futures:
-                    future.cancel()
-                raise
-    finally:
-        _reset_retry_cancellation()
-    return completed
-
-
-def _report_batch_progress(
-    progress: Callable[[int, int], None] | None,
-    completed: int,
-    total: int,
-) -> None:
-    if progress is not None:
-        progress(completed, total)
-
-
-def _progress_checkpoint(completed: int, total: int, *, every: int) -> bool:
-    return total > 0 and (completed == 1 or completed == total or completed % every == 0)
-
-
-def _eligible_sitelinks(
-    entity: WikidataEntity | None,
-    *,
-    languages: tuple[str, ...] | None,
-    max_articles_per_qid: int | None,
-) -> tuple[tuple[str, str], ...]:
-    if entity is None:
-        return ()
-    return _limit_sitelinks(_filtered_sitelinks(entity, languages), max_articles_per_qid)
-
-
-def _filtered_sitelinks(
-    entity: WikidataEntity,
-    languages: tuple[str, ...] | None,
-) -> tuple[tuple[str, str], ...]:
-    allowed = set(languages) if languages is not None else None
-    return tuple(
-        (site, title)
-        for site, title in sorted(entity.sitelinks.items())
-        if allowed is None or language_from_site(site) in allowed
-    )
-
-
-def _limit_sitelinks(
-    sitelinks: tuple[tuple[str, str], ...],
-    max_articles_per_qid: int | None,
-) -> tuple[tuple[str, str], ...]:
-    if max_articles_per_qid is None:
-        return sitelinks
-    return sitelinks[: max(0, max_articles_per_qid)]
-
-
-def _classify_region(
-    scan: _RegionScan,
-    entities: dict[str, WikidataEntity | None],
-    eligible_sitelinks: dict[str, tuple[tuple[str, str], ...]],
-) -> RegionAuditResult:
-    if scan.blocked_reason:
-        return _blocked_region_result(scan)
-    missing = dict(scan.missing_polygon_ids_by_qid)
-    classifications: list[tuple[str, RecoveryClassification]] = []
-    affected: list[tuple[str, tuple[str, ...]]] = []
-    for qid, _polygon_ids in scan.polygon_ids_by_qid:
-        state, affected_polygon_ids = _classify_qid(
-            qid,
-            missing,
-            entities,
-            eligible_sitelinks,
-        )
-        affected.extend(_affected_qid_entry(qid, affected_polygon_ids))
-        classifications.append((qid, state))
-    return _classified_region_result(scan, classifications, affected)
-
-
-def _classified_region_result(
-    scan: _RegionScan,
-    classifications: list[tuple[str, RecoveryClassification]],
-    affected: list[tuple[str, tuple[str, ...]]],
-) -> RegionAuditResult:
-    affected_qids = tuple(qid for qid, _ in affected)
-    affected_polygon_ids = {polygon_id for _, polygon_ids in affected for polygon_id in polygon_ids}
-    return RegionAuditResult(
-        stem=scan.stem,
-        fingerprints=scan.fingerprints,
-        classifications=tuple(classifications),
-        polygon_ids_by_qid=scan.polygon_ids_by_qid,
-        affected_polygon_ids_by_qid=tuple(affected),
-        affected_qids=affected_qids,
-        affected_polygon_count=len(affected_polygon_ids),
-        orphan_fact_ids=scan.orphan_fact_ids,
-        orphan_document_ids=scan.orphan_document_ids,
-    )
-
-
-def _affected_qid_entry(
-    qid: str,
-    polygon_ids: tuple[str, ...],
-) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    if not polygon_ids:
-        return ()
-    return ((qid, polygon_ids),)
-
-
-def _blocked_region_result(scan: _RegionScan) -> RegionAuditResult:
-    return RegionAuditResult(
-        stem=scan.stem,
-        fingerprints=scan.fingerprints,
-        classifications=(),
-        polygon_ids_by_qid=(),
-        affected_polygon_ids_by_qid=(),
-        affected_qids=(),
-        affected_polygon_count=0,
-        orphan_fact_ids=scan.orphan_fact_ids,
-        orphan_document_ids=scan.orphan_document_ids,
-        blocked_reason=scan.blocked_reason,
-    )
-
-
-def _classify_qid(
-    qid: str,
-    missing: Mapping[str, tuple[str, ...]],
-    entities: Mapping[str, WikidataEntity | None],
-    eligible_sitelinks: Mapping[str, tuple[tuple[str, str], ...]],
-) -> tuple[RecoveryClassification, tuple[str, ...]]:
-    if qid not in missing:
-        return RecoveryClassification.CURRENT, ()
-    if entities[qid] is None:
-        return RecoveryClassification.AUTHORITATIVE_MISSING, ()
-    if not eligible_sitelinks[qid]:
-        return RecoveryClassification.AUTHORITATIVE_NO_SITELINK, ()
-    return RecoveryClassification.REPAIR_REQUIRED, missing[qid]
-
-
-def _global_qid_results(
-    regions: list[RegionAuditResult],
-    eligible_sitelinks: dict[str, tuple[tuple[str, str], ...]],
-) -> list[QidAuditResult]:
-    states, region_names, polygon_ids = _collect_qid_data(regions)
-    return [
-        _build_qid_result(
-            qid,
-            states,
-            region_names,
-            polygon_ids,
-            eligible_sitelinks,
-        )
-        for qid in sorted(states)
-    ]
-
-
-def _collect_qid_data(
-    regions: list[RegionAuditResult],
-) -> tuple[
-    dict[str, list[RecoveryClassification]],
-    dict[str, set[str]],
-    dict[str, set[str]],
-]:
-    states: dict[str, list[RecoveryClassification]] = {}
-    region_names: dict[str, set[str]] = {}
-    polygon_ids: dict[str, set[str]] = {}
-    for region in regions:
-        _collect_region_qid_data(region, states, region_names, polygon_ids)
-    return states, region_names, polygon_ids
-
-
-def _collect_region_qid_data(
-    region: RegionAuditResult,
-    states: dict[str, list[RecoveryClassification]],
-    region_names: dict[str, set[str]],
-    polygon_ids: dict[str, set[str]],
-) -> None:
-    region_polygon_ids = dict(region.polygon_ids_by_qid)
-    for qid, state in region.classifications:
-        states.setdefault(qid, []).append(state)
-        region_names.setdefault(qid, set()).add(region.stem)
-        polygon_ids.setdefault(qid, set()).update(region_polygon_ids.get(qid, ()))
-
-
-def _build_qid_result(
-    qid: str,
-    states: Mapping[str, list[RecoveryClassification]],
-    region_names: Mapping[str, set[str]],
-    polygon_ids: Mapping[str, set[str]],
-    eligible_sitelinks: Mapping[str, tuple[tuple[str, str], ...]],
-) -> QidAuditResult:
-    priority = (
-        RecoveryClassification.BLOCKED,
-        RecoveryClassification.REPAIR_REQUIRED,
-        RecoveryClassification.CURRENT,
-        RecoveryClassification.AUTHORITATIVE_NO_ARTICLE,
-        RecoveryClassification.AUTHORITATIVE_NO_SITELINK,
-        RecoveryClassification.AUTHORITATIVE_MISSING,
-    )
-    state = next(candidate for candidate in priority if candidate in states[qid])
-    return QidAuditResult(
-        qid=qid,
-        state=state,
-        regions=tuple(sorted(region_names[qid])),
-        polygon_ids=tuple(sorted(polygon_ids[qid])),
-        sitelinks=eligible_sitelinks.get(qid, ()),
-    )
-
-
-def _load_receipts(path: Path) -> tuple[dict[str, object], bool]:
-    if not path.is_file():
-        return {}, False
-    try:
-        raw = loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}, False
-    return _decode_receipts(raw)
-
-
-def _decode_receipts(raw: object) -> tuple[dict[str, object], bool]:
-    if not isinstance(raw, dict) or raw.get("contract_version") != RECOVERY_CONTRACT_VERSION:
-        return {}, False
-    regions = raw.get("regions")
-    if not isinstance(regions, dict):
-        return {}, False
-    return dict(cast(dict[str, object], regions)), True
-
-
-def _reuse_receipt(
-    stem: str,
-    fingerprints: tuple[tuple[str, str], ...],
-    raw_receipt: object,
-) -> RegionAuditResult | None:
-    fields = _receipt_fields(raw_receipt, fingerprints)
-    if fields is None:
-        return None
-    raw_classifications, raw_polygon_ids = fields
-    entries = _parse_receipt_entries(raw_classifications, raw_polygon_ids)
-    if entries is None:
-        return None
-    classifications, polygon_ids_by_qid = entries
-    if _receipt_needs_repair(classifications):
-        return None
-    return RegionAuditResult(
-        stem=stem,
-        fingerprints=fingerprints,
-        classifications=classifications,
-        polygon_ids_by_qid=polygon_ids_by_qid,
-        affected_polygon_ids_by_qid=(),
-        affected_qids=(),
-        affected_polygon_count=0,
-        orphan_fact_ids=(),
-        orphan_document_ids=(),
-        reused=True,
-    )
-
-
-def _receipt_fields(
-    raw_receipt: object,
-    fingerprints: tuple[tuple[str, str], ...],
-) -> tuple[dict[object, object], dict[object, object]] | None:
-    if not isinstance(raw_receipt, dict):
-        return None
-    raw_fingerprints = raw_receipt.get("fingerprints")
-    if not _fingerprints_match(raw_fingerprints, fingerprints):
-        return None
-    return _receipt_maps(cast(Mapping[str, object], raw_receipt))
-
-
-def _fingerprints_match(
-    raw_fingerprints: object,
-    fingerprints: tuple[tuple[str, str], ...],
-) -> bool:
-    return isinstance(raw_fingerprints, dict) and dict(fingerprints) == raw_fingerprints
-
-
-def _receipt_maps(
-    raw_receipt: Mapping[str, object],
-) -> tuple[dict[object, object], dict[object, object]] | None:
-    raw_classifications = raw_receipt.get("classifications")
-    raw_polygon_ids = raw_receipt.get("polygon_ids")
-    if not isinstance(raw_classifications, dict) or not isinstance(raw_polygon_ids, dict):
-        return None
-    return cast(dict[object, object], raw_classifications), cast(
-        dict[object, object], raw_polygon_ids
-    )
-
-
-def _parse_receipt_entries(
-    raw_classifications: dict[object, object],
-    raw_polygon_ids: dict[object, object],
-) -> (
-    tuple[
-        tuple[tuple[str, RecoveryClassification], ...],
-        tuple[tuple[str, tuple[str, ...]], ...],
-    ]
-    | None
-):
-    classifications = _parse_receipt_classifications(raw_classifications)
-    polygon_ids_by_qid = _parse_receipt_polygon_ids(raw_polygon_ids)
-    if classifications is None or polygon_ids_by_qid is None:
-        return None
-    return classifications, polygon_ids_by_qid
-
-
-def _parse_receipt_classifications(
-    raw_classifications: dict[object, object],
-) -> tuple[tuple[str, RecoveryClassification], ...] | None:
-    try:
-        return tuple(
-            (str(qid), RecoveryClassification(str(state)))
-            for qid, state in sorted(raw_classifications.items())
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_receipt_polygon_ids(
-    raw_polygon_ids: dict[object, object],
-) -> tuple[tuple[str, tuple[str, ...]], ...] | None:
-    parsed: list[tuple[str, tuple[str, ...]]] = []
-    for qid, values in sorted(raw_polygon_ids.items()):
-        if not isinstance(values, list):
-            return None
-        parsed.append((str(qid), tuple(sorted(str(value) for value in values))))
-    return tuple(parsed)
-
-
-def _receipt_needs_repair(
-    classifications: tuple[tuple[str, RecoveryClassification], ...],
-) -> bool:
-    return any(state is RecoveryClassification.REPAIR_REQUIRED for _, state in classifications)
-
-
-def _receipt_from_result(result: RegionAuditResult) -> dict[str, object]:
-    return {
-        "fingerprints": dict(result.fingerprints),
-        "classifications": {qid: state.value for qid, state in result.classifications},
-        "polygon_ids": {qid: list(values) for qid, values in result.polygon_ids_by_qid},
-    }
-
-
 def record_region_recovery_receipt(
     data_root: DataRoot,
     stem: str,
@@ -1131,61 +351,13 @@ def record_region_recovery_receipt(
 ) -> RegionAuditResult:
     fingerprints = _region_fingerprints(data_root, stem)
     scan = _scan_region(data_root, stem, fingerprints)
-    expected_qids = {qid for qid, _ in scan.polygon_ids_by_qid}
-    _validate_receipt_classifications(stem, classifications, expected_qids)
-    result = _receipt_result(stem, fingerprints, scan, classifications)
-    _store_receipt(data_root, stem, result)
-    return result
-
-
-def _validate_receipt_classifications(
-    stem: str,
-    classifications: Mapping[str, RecoveryClassification],
-    expected_qids: set[str],
-) -> None:
-    if set(classifications) != expected_qids:
-        raise ValueError(
-            f"Recovery receipt classifications do not cover region {stem!r}: "
-            f"expected {sorted(expected_qids)}, got {sorted(classifications)}"
-        )
-    if any(state is RecoveryClassification.REPAIR_REQUIRED for state in classifications.values()):
-        raise ValueError("A completed recovery receipt cannot contain repair_required")
-
-
-def _receipt_result(
-    stem: str,
-    fingerprints: tuple[tuple[str, str], ...],
-    scan: _RegionScan,
-    classifications: Mapping[str, RecoveryClassification],
-) -> RegionAuditResult:
-    return RegionAuditResult(
-        stem=stem,
+    return record_recovery_receipt(
+        data_root,
+        stem,
+        classifications,
         fingerprints=fingerprints,
-        classifications=tuple(sorted(classifications.items())),
-        polygon_ids_by_qid=scan.polygon_ids_by_qid,
-        affected_polygon_ids_by_qid=(),
-        affected_qids=(),
-        affected_polygon_count=0,
-        orphan_fact_ids=scan.orphan_fact_ids,
-        orphan_document_ids=scan.orphan_document_ids,
+        scan=scan,
     )
-
-
-def _store_receipt(data_root: DataRoot, stem: str, result: RegionAuditResult) -> None:
-    index_path = data_root.cache / _INDEX_RELATIVE_PATH
-    receipts, contract_matches = _load_receipts(index_path)
-    if not contract_matches:
-        receipts = {}
-    receipts[stem] = _receipt_from_result(result)
-    _save_receipts(index_path, receipts)
-
-
-def _save_receipts(path: Path, receipts: dict[str, object]) -> None:
-    payload = {
-        "contract_version": RECOVERY_CONTRACT_VERSION,
-        "regions": {stem: receipts[stem] for stem in sorted(receipts)},
-    }
-    atomic_write_text(path, dumps(payload) + "\n")
 
 
 __all__ = [

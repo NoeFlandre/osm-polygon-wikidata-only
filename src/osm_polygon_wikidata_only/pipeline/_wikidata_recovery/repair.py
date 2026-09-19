@@ -32,10 +32,16 @@ from .models import (
 from .progress import RecoveryProgress
 from .repair_artifacts import (
     RECOVERY_BATCH_WINDOW,
-    _advance_missing_document,
     _build_and_checkpoint,
     _build_batch_artifacts,
     _collect_recovery_futures,
+    _recovery_qid_batches,
+    _run_missing_recovery_batches,
+)
+from .repair_artifacts import _execute_recovery_batches as _execute_recovery_batches_impl
+from .repair_fetch import (
+    RECOVERY_NETWORK_WORKERS,
+    _advance_missing_document,
     _document_from_recovery_article,
     _eligible_sitelinks,
     _fetch_missing_documents,
@@ -48,15 +54,21 @@ from .repair_artifacts import (
     _missing_recovery_article,
     _parse_recovery_document,
     _parse_recovery_documents,
-    _recovery_qid_batches,
     _resolve_entities,
     _resolved_entity_map,
-    _run_missing_recovery_batches,
     _sections_for_new_documents,
     _select_new_documents,
     _validate_recovery_fetch,
 )
-from .repair_artifacts import _execute_recovery_batches as _execute_recovery_batches_impl
+from .repair_fields import (
+    _apply_best_language_links,
+    _has_article_text,
+    _preferred_language,
+    _recompute_affected_polygon_fields,
+    _recompute_polygon_row,
+    _recompute_polygon_rows,
+    _summarize_polygon_links,
+)
 from .repair_inputs import (
     _load_repair_inputs,
     _load_repair_links,
@@ -71,22 +83,15 @@ from .repair_inputs import (
 from .repair_merge import (
     _affected_polygon_ids,
     _append_merge_rows,
-    _apply_best_language_links,
     _flatten_batch_rows,
     _flatten_recovery_batches,
-    _has_article_text,
     _merge_repair_outputs,
     _merge_repair_tables,
     _merge_rows,
     _persisted_repair_links,
-    _preferred_language,
-    _recompute_affected_polygon_fields,
-    _recompute_polygon_row,
-    _recompute_polygon_rows,
     _removed_section_ids,
     _repair_change_flags,
     _sort_repair_tables,
-    _summarize_polygon_links,
     _terminal_classification,
     _terminal_classifications,
     _validate_merge_rows,
