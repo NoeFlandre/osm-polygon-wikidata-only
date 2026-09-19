@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: F401
-
 import hashlib
 import json
 from pathlib import Path
@@ -23,6 +22,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction, plan_sync_states
+
 
 def compute_sha256(path: Path) -> str:
     h = hashlib.sha256()

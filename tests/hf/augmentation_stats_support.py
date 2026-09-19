@@ -15,7 +15,6 @@ Wikimedia or Hugging Face.
 from __future__ import annotations
 
 # ruff: noqa: F401
-
 import json
 import logging
 from dataclasses import replace

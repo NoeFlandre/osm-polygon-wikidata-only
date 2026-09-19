@@ -43,7 +43,6 @@ The tests also verify exact submission counts:
 from __future__ import annotations
 
 # ruff: noqa: F401
-
 import dataclasses
 import logging
 from collections.abc import Callable

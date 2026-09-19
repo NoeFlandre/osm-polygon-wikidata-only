@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # ruff: noqa: F401
-
 import errno
 import json
 import subprocess
@@ -48,6 +47,7 @@ from osm_polygon_wikidata_only.v2.schema import (
     polygon_v2_schema,
     wikipedia_document_v2_schema,
 )
+
 
 def _row_for_schema(schema: pa.Schema, **values: object) -> dict[str, object]:
     row: dict[str, object] = {}
