@@ -777,4 +777,8 @@ def test_v2_staged_table_reports_the_resumed_table_and_shard_count(
             tmp_path, tmp_path / "language_splits", stage_root, spec, inventory, 1, 10
         )
 
-    assert f"Resuming: reusing 1 staged shards for {spec.table.value}" in caplog.text
+    # Exact equality, not containment: a padded or re-cased format string is a
+    # different operator-facing message and must not pass.
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Resuming: reusing 1 staged shards for {spec.table.value}"
+    ]
