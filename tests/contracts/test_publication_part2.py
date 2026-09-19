@@ -5,6 +5,9 @@ from __future__ import annotations
 # ruff: noqa: F403,F405
 from tests.contracts.publication_support import *
 
+# Every module in this split opts into the publication text-map stub.
+pytestmark = pytest.mark.usefixtures("stub_combined_text_map")
+
 
 def test_assemble_core_upload_invokes_warning_callback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

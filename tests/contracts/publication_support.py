@@ -70,23 +70,6 @@ STEM = "monaco-latest"
 REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 
 
-@pytest.fixture(autouse=True)
-def _stub_combined_text_map(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep publication contracts isolated from real Parquet rendering."""
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._load_text_presence",
-        lambda _root: object(),
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_presence",
-        lambda _root, dest, **_kw: dest.touch() or dest,
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
-        lambda _cache: None,
-    )
-
-
 def _stub_process_result(tmp_path: Path) -> tuple[ProcessResult, DataRoot]:
     data_root = DataRoot(tmp_path)
     data_root.ensure()

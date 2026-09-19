@@ -5,6 +5,9 @@ from __future__ import annotations
 # ruff: noqa: F403,F405
 from tests.contracts.publication_support import *
 
+# Every module in this split opts into the publication text-map stub.
+pytestmark = pytest.mark.usefixtures("stub_combined_text_map")
+
 
 def test_cli_commands_no_longer_implements_publication_assembly() -> None:
     """cli.commands must not contain publication assembly implementations."""

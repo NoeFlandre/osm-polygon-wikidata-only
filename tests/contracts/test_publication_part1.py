@@ -5,6 +5,9 @@ from __future__ import annotations
 # ruff: noqa: F403,F405
 from tests.contracts.publication_support import *
 
+# Every module in this split opts into the publication text-map stub.
+pytestmark = pytest.mark.usefixtures("stub_combined_text_map")
+
 
 def test_assemblers_have_no_submit_parameter() -> None:
     """None of the three public assemblers accepts a submit callable.

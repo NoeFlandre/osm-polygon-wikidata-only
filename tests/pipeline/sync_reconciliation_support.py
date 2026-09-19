@@ -174,13 +174,6 @@ def _setup_mock_region(
         aug_manifest_path.write_text(json.dumps(aug_manifest, indent=2))
 
 
-@pytest.fixture
-def mock_hf_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "fake-token")
-    monkeypatch.setattr(commands, "verify_hf_token", lambda value: "noeflandre")
-    monkeypatch.setattr(commands, "verify_repo_authorization", lambda token, repo_id: "noeflandre")
-
-
 class _LoggerSpy:
     """In-process recorder for ``LOGGER`` info/error calls.
 
