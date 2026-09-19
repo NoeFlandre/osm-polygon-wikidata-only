@@ -37,10 +37,16 @@ def open_parquet(path: Path | str) -> pq.ParquetFile:
 def iter_record_batches(
     parquet_file: pq.ParquetFile,
     *,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    batch_size: int,
     columns: Sequence[str] | None = None,
 ) -> Iterator[pa.RecordBatch]:
-    """Yield record batches read synchronously on the calling thread."""
+    """Yield record batches read synchronously on the calling thread.
+
+    ``batch_size`` is required rather than defaulted. Each scanner already
+    has a bound it means to enforce, and a default here would silently
+    absorb a caller that stopped passing one -- including a mutant that
+    deletes the argument, which the mutation gate must be able to kill.
+    """
     kwargs: dict[str, Any] = {"batch_size": batch_size, "use_threads": False}
     if columns is not None:
         kwargs["columns"] = list(columns)
