@@ -75,9 +75,7 @@ def build_minimal_v2_release_snapshot(
         total_area_m2=geometry_area[0],
         median_area_m2=geometry_area[1],
         document_words=stats.document_words,
-        sentence_rows=(
-            stats.sentence_stats.total_rows if stats.sentence_stats is not None else None
-        ),
+        sentence_rows=_sentence_rows(stats.sentence_stats),
         sentence_coverage=_sentence_coverage(stats.sentence_stats),
         continent_rows=rows,
         generated_on=generated_on,
@@ -132,6 +130,11 @@ def _polygons_with_text(stats: Any, presence: TextPresenceSnapshot) -> int:
     if stats.non_empty_text_polygons is not None:
         return int(stats.non_empty_text_polygons)
     return len(presence.combined_polygon_identities)
+
+
+def _sentence_rows(stats: Any) -> int | None:
+    """Return the sentence-row total, or ``None`` without sentence sidecars."""
+    return None if stats is None else int(stats.total_rows)
 
 
 def _sentence_coverage(stats: Any) -> SentenceCoverage | None:

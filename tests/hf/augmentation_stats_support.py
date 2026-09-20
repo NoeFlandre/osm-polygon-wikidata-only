@@ -2,9 +2,7 @@
 
 These tests verify that ``compute_augmentation_stats`` produces
 factual counts derived directly from the local finalized Parquet
-files, and that ``render_stats_section`` honors the augmentation
-extension for backwards-compatible callers. The tests also pin
-the cache contract: second refresh performs zero Parquet table
+files. The tests also pin the cache contract: second refresh performs zero Parquet table
 reads, a single changed file is rescanned, deleted files are
 removed.
 
@@ -38,16 +36,7 @@ from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     ProjectTextStats,
     WikidataFactStats,
 )
-from osm_polygon_wikidata_only.hf._dataset_stats.rendering import (
-    _article_tail_counts,
-    _fmt_int,
-    _fmt_size,
-    _render_unreadable_note,
-)
-from osm_polygon_wikidata_only.hf.dataset_stats import (
-    DatasetStats,
-    render_stats_section,
-)
+from osm_polygon_wikidata_only.hf.dataset_stats import DatasetStats
 
 # --- helpers ------------------------------------------------------------
 

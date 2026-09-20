@@ -22,7 +22,6 @@ from osm_polygon_wikidata_only.hf.continent_stats import (
     compute_continent_stats,
     render_continent_stats,
 )
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 from osm_polygon_wikidata_only.hf.geographic_text_density import (
     aggregate_geographic_text_density,
 )
@@ -295,31 +294,6 @@ def test_continent_document_counts_resolve_duplicate_polygon_aliases(
     )
 
     assert compute_continent_stats(processed, country_path) == [("Europe", 1, 1, 0, 1, 1)]
-
-
-def test_dataset_card_uses_public_language_and_combined_map_first() -> None:
-    card = render_dataset_card(
-        repo_id="owner/dataset",
-        stats={},
-        polygon_columns=[],
-        polygon_descriptions={},
-        article_columns=[],
-        article_descriptions={},
-        link_columns=[],
-        link_descriptions={},
-    )
-    assert "and no per-QID article cap" not in card
-    assert "lossless" not in card
-    assert "Additional derived text and fact tables are" not in card
-    assert "Wikipedia and Wikivoyage text" in card
-    assert "assets/geographic_text_presence.png" in card
-    assert card.index("assets/geographic_text_presence.png") < card.index("assets/coverage_map.png")
-    assert "assets/geographic_text_density.png" in card
-    assert "assets/geographic_wikipedia_text_coverage.png" not in card
-    assert "assets/geographic_polygon_count.png" not in card
-    assert card.count("![") == 4
-    assert "Each point represents one globally unique `(osm_type, osm_id)` identity" in card
-    assert "raw number of unique `(osm_type, osm_id)` polygon identities" in card
 
 
 def test_combined_text_density_counts_overlap_once(tmp_path: Path) -> None:

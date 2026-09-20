@@ -347,39 +347,6 @@ def test_subdir_present_requires_at_least_one_readable_parquet(tmp_path: Path) -
     assert stats.wikidata_facts.subdir_present is False
 
 
-def test_headline_document_corpus_words_excludes_sections() -> None:
-    """The headline ``Wikipedia + Wikivoyage document words`` must
-    aggregate document-only word totals (Wikipedia + Wikivoyage
-    documents), not sections. Section word totals stay in their
-    individual sections.
-    """
-    stats = _empty_dataset_stats()
-    aug = AugmentationStats(
-        core_region_count=1,
-        fully_augmented_count=1,
-        partial_augmented_count=0,
-        not_augmented_count=0,
-        orphan_sidecar_stems=[],
-        wikipedia_documents=ProjectTextStats(rows=1, total_words=164_000_000),
-        wikipedia_sections=ProjectTextStats(rows=100, total_words=230_000_000),
-        wikivoyage_documents=ProjectTextStats(rows=1, total_words=4_900_000),
-        wikivoyage_sections=ProjectTextStats(rows=10, total_words=50_000_000),
-        wikidata_facts=WikidataFactStats(rows=1),
-        core_parquet_bytes=10,
-        augmentation_parquet_bytes=20,
-        total_parquet_bytes=30,
-        unreadable_file_count=0,
-    )
-    md = render_stats_section(stats, augmentation_stats=aug)
-    head_block = md.split("## Storage accounting", 1)[0]
-    row = next(
-        line
-        for line in head_block.splitlines()
-        if line.startswith("| Wikipedia + Wikivoyage document words ")
-    )
-    assert "168,900,000" in row, f"document corpus words must exclude sections, got {row!r}"
-
-
 def test_cache_module_does_not_export_make_cache_key() -> None:
     """The unused ``make_cache_key`` helper must be removed from the
     cache module so the surface reflects reality.
@@ -388,20 +355,6 @@ def test_cache_module_does_not_export_make_cache_key() -> None:
 
     assert "make_cache_key" not in getattr(cachemod, "__all__", ())
     assert not hasattr(cachemod, "make_cache_key")
-
-
-def test_avg_sections_docstring_does_not_claim_trailing_pipe() -> None:
-    """``_avg_sections`` returns the float string; the caller adds the
-    trailing ``|``. Its docstring must not claim it returns the pipe.
-    """
-    import inspect
-
-    from osm_polygon_wikidata_only.hf._dataset_stats import rendering as rendering_mod
-
-    doc = inspect.getdoc(rendering_mod._avg_sections) or ""
-    assert "trailing" not in doc.lower(), (
-        f"_avg_sections docstring must not claim it returns the trailing '|': {doc!r}"
-    )
 
 
 def test_cache_module_docstring_matches_storage_path() -> None:

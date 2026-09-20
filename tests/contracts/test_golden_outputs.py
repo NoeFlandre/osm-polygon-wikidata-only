@@ -16,17 +16,6 @@ from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.domain.polygon_document_links import (
-    CANONICAL_COLUMNS,
-    CANONICAL_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.domain.schema import (
-    ARTICLE_COLUMNS,
-    ARTICLE_DESCRIPTIONS,
-    POLYGON_COLUMNS,
-    POLYGON_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
@@ -35,21 +24,6 @@ GOLDEN = FIXTURE_ROOT / "golden"
 FIXTURE_PROCESSED = FIXTURE_ROOT / "processed"
 STEM = "monaco-latest"
 REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
-
-
-def _render_card(*, generated_on: str | None = None) -> str:
-    return render_dataset_card(
-        repo_id=REPO_ID,
-        stats={"polygon_count": 1, "article_count": 1, "unique_wikidata_count": 1},
-        polygon_columns=list(POLYGON_COLUMNS),
-        polygon_descriptions=POLYGON_DESCRIPTIONS,
-        article_columns=list(ARTICLE_COLUMNS),
-        article_descriptions=ARTICLE_DESCRIPTIONS,
-        link_columns=list(CANONICAL_COLUMNS),
-        link_descriptions=CANONICAL_DESCRIPTIONS,
-        maintainer="Noé Flandre",
-        generated_on=generated_on,
-    )
 
 
 def _seed_data_root(tmp: Path) -> DataRoot:
@@ -177,23 +151,6 @@ def _build_result_objects(data_root: DataRoot) -> tuple[ProcessResult, Augmentat
         counts={},
     )
     return core, augmentation
-
-
-def test_dataset_card_matches_golden() -> None:
-    """The clock-free dataset card Markdown matches its golden file exactly."""
-    golden_path = GOLDEN / "dataset_card.md"
-    assert golden_path.exists(), "dataset card golden fixture missing"
-    assert _render_card() == golden_path.read_text()
-
-
-def test_dataset_card_has_no_clock_output_unless_date_is_explicitly_pinned() -> None:
-    import re
-
-    generated = _render_card()
-    pinned = _render_card(generated_on="2026-01-02")
-
-    assert re.search(r"Generated on \d{4}-\d{2}-\d{2}\.", generated) is None
-    assert "Generated on 2026-01-02." in pinned
 
 
 def test_publication_file_list_matches_golden(tmp_path: Path) -> None:

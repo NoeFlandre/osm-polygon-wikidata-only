@@ -43,21 +43,14 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     fact_schema,
     section_schema,
 )
-from osm_polygon_wikidata_only.domain.polygon_document_links import (
-    CANONICAL_COLUMNS,
-    CANONICAL_DESCRIPTIONS,
-)
 from osm_polygon_wikidata_only.domain.schema import (
     ARTICLE_COLUMNS,
-    ARTICLE_DESCRIPTIONS,
     POLYGON_ARTICLE_COLUMNS,
     POLYGON_COLUMNS,
-    POLYGON_DESCRIPTIONS,
     article_schema,
     polygon_article_schema,
     polygon_schema,
 )
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 
 REGION = "monaco-latest"
 
@@ -381,25 +374,6 @@ def build_schema_snapshots(out: Path) -> dict[str, Path]:
     return snap
 
 
-def build_golden_card(out: Path) -> Path:
-    """Capture the dataset card Markdown produced by the current renderer."""
-    card = render_dataset_card(
-        repo_id="NoeFlandre/osm-polygon-wikidata-only",
-        stats={"polygon_count": 1, "article_count": 1, "unique_wikidata_count": 1},
-        polygon_columns=list(POLYGON_COLUMNS),
-        polygon_descriptions=POLYGON_DESCRIPTIONS,
-        article_columns=list(ARTICLE_COLUMNS),
-        article_descriptions=ARTICLE_DESCRIPTIONS,
-        link_columns=list(CANONICAL_COLUMNS),
-        link_descriptions=CANONICAL_DESCRIPTIONS,
-        maintainer="Noé Flandre",
-    )
-    path = out / "golden" / "dataset_card.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(card, encoding="utf-8")
-    return path.relative_to(out)
-
-
 def build_golden_publication(out: Path) -> Path:
     """Capture the unified-sync upload file list shape."""
     pub = {
@@ -490,14 +464,12 @@ def main() -> None:
     out = Path(__file__).resolve().parent
     parquets = build_parquets(out)
     schemas = build_schema_snapshots(out)
-    card = build_golden_card(out)
     publication = build_golden_publication(out)
     help_files = build_golden_help(out)
     summary = {
         "region": REGION,
         "parquets": {k: str(v) for k, v in parquets.items()},
         "schemas": {k: str(v) for k, v in schemas.items()},
-        "golden_card": str(card),
         "golden_publication": str(publication),
         "golden_help": {k: str(v) for k, v in help_files.items()},
     }

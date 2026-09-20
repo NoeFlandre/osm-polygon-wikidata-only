@@ -429,26 +429,3 @@ def test_map_uploaded_alongside_parquet_in_orchestrator_callback(
 
     # The callback fires once per PBF, after processing each one.
     assert callback_invocations == ["a.osm.pbf", "b.osm.pbf"]
-
-
-# --- dataset card embedding ---------------------------------------------
-
-
-def test_render_dataset_card_includes_coverage_map() -> None:
-    from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
-
-    markdown = render_dataset_card(
-        repo_id="org/name",
-        stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
-        polygon_columns=["polygon_id"],
-        polygon_descriptions={"polygon_id": "id"},
-        article_columns=["article_id"],
-        article_descriptions={"article_id": "id"},
-        link_columns=["polygon_id"],
-        link_descriptions={"polygon_id": "id"},
-    )
-    import re
-
-    assert "assets/coverage_map.png" in markdown
-    # The card no longer references the root path directly
-    assert not re.search(r"!\[[^]]*\]\(coverage_map\.png\)", markdown)

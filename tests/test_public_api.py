@@ -195,7 +195,7 @@ def test_geographic_facade_preserves_asset_path_constants() -> None:
 
 
 def test_dataset_stats_facade_preserves_public_symbols() -> None:
-    """The dataset_stats facade must re-export the three documented
+    """The dataset_stats facade must re-export the two documented
     public symbols unchanged."""
     from osm_polygon_wikidata_only.hf import dataset_stats as facade
     from osm_polygon_wikidata_only.hf._dataset_stats.aggregation import (
@@ -204,13 +204,9 @@ def test_dataset_stats_facade_preserves_public_symbols() -> None:
     from osm_polygon_wikidata_only.hf._dataset_stats.models import (
         DatasetStats as focused_stats,
     )
-    from osm_polygon_wikidata_only.hf._dataset_stats.rendering import (
-        render_stats_section as focused_render,
-    )
 
     assert facade.DatasetStats is focused_stats
     assert facade.compute_dataset_stats is focused_compute
-    assert facade.render_stats_section is focused_render
 
 
 def test_uploader_facade_preserves_public_symbols() -> None:

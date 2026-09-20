@@ -137,9 +137,9 @@ def test_pipeline_orchestrator_facade_identity() -> None:
 
 def test_hf_dataset_card_facade_identity() -> None:
     from osm_polygon_wikidata_only.hf import dataset_card as facade
-    from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card as focused
+    from osm_polygon_wikidata_only.hf.dataset_card import render_front_matter as focused
 
-    assert facade.render_dataset_card is focused
+    assert facade.render_front_matter is focused
 
 
 def test_hf_uploader_facade_identity() -> None:
@@ -301,8 +301,8 @@ def test_pipeline_orchestrator_all_equals_phase_1_frozen_list() -> None:
     assert set(facade.__all__) == frozen
 
 
-def test_hf_dataset_card_all_equals_phase_1_frozen_list() -> None:
-    """The Phase 1 frozen public surface is exactly ``render_dataset_card``.
+def test_hf_dataset_card_all_equals_frozen_list() -> None:
+    """The public surface is exactly ``render_front_matter``.
 
     The front-matter validator is NOT part of the public facade. It is
     reachable only via direct module attribute access; this test pins
@@ -311,9 +311,9 @@ def test_hf_dataset_card_all_equals_phase_1_frozen_list() -> None:
     """
     from osm_polygon_wikidata_only.hf import dataset_card as facade
 
-    frozen = {"render_dataset_card"}
+    frozen = {"render_front_matter"}
     assert set(facade.__all__) == frozen
-    assert facade.render_dataset_card is not None
+    assert facade.render_front_matter is not None
 
 
 def test_hf_uploader_all_equals_phase_1_frozen_list() -> None:

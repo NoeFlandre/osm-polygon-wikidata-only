@@ -158,9 +158,7 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     generate_coverage_map,
     load_centroids_from_parquet,
 )
-from osm_polygon_wikidata_only.hf.dataset_card import (
-    render_front_matter as _render_front_matter,
-)
+from osm_polygon_wikidata_only.hf.dataset_card import render_front_matter
 from osm_polygon_wikidata_only.hf.dataset_stats import compute_dataset_stats
 from osm_polygon_wikidata_only.hf.geographic_text_density import (
     generate_geographic_text_density as _generate_geographic_text_density,
@@ -329,7 +327,7 @@ def build_minimal_v1_release_snapshot(
     presence = text_presence or load_text_presence(data_root.processed)
     countries_path = ensure_world_countries(data_root.cache)
     continent_rows = compute_continent_stats(data_root.processed, countries_path)
-    front_matter = _render_front_matter(
+    front_matter = render_front_matter(
         repo_id=repo_id,
         license="odbl",
         primary_lang="en",

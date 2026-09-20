@@ -1,14 +1,12 @@
-"""Multi-table dataset card for the HF Hub dataset.
+"""YAML front matter for the V1 dataset card.
 
-Produces a single ``README.md``-style card with YAML front matter, a
-schema section for every parquet table, OSM/Wikidata/Wikipedia
-attribution, and license info. The augmentation schema descriptions
-live in :mod:`osm_polygon_wikidata_only.augmentation.schema_descriptions`
-which is the single source of truth referenced from here.
+The card body is rendered by
+:mod:`osm_polygon_wikidata_only.hf.minimal_card`; this module owns only the
+front matter, which declares the Dataset Viewer configurations and the
+``dataset_info`` counters the Hub reads.
 
-Cards are byte-stable by default. A ``Generated on`` line is rendered
-only when the caller supplies a pinned date; the release path therefore
-never depends on the wall clock.
+``validate_front_matter`` is a structural test seam. It is deliberately absent
+from :data:`__all__` and is not re-exported by the package facade.
 """
 
 from __future__ import annotations
@@ -16,203 +14,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from osm_polygon_wikidata_only.augmentation.schema import (
-    DOCUMENT_COLUMNS,
-    FACT_COLUMNS,
-    SECTION_COLUMNS,
-)
-from osm_polygon_wikidata_only.augmentation.schema_descriptions import (
-    DOCUMENT_DESCRIPTIONS,
-    FACT_DESCRIPTIONS,
-    SECTION_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-    WIKIPEDIA_DOCUMENT_COLUMNS,
-    WIKIPEDIA_DOCUMENT_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.hf._trackio.rendering import render_snapshot_markdown
-from osm_polygon_wikidata_only.hf.repo_layout import (
-    REMOTE_COVERAGE_MAP_FILE,
-    REMOTE_DATASET_HERO_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE,
-)
-
-V1_GITHUB_URL = "https://github.com/NoeFlandre/osm-polygon-wikidata-only/tree/v1.0.0"
+__all__ = ["render_front_matter"]
 
 
-def render_dataset_card(
-    *,
-    repo_id: str,
-    stats: Mapping[str, Any],
-    polygon_columns: list[str],
-    polygon_descriptions: Mapping[str, str],
-    article_columns: list[str],
-    article_descriptions: Mapping[str, str],
-    link_columns: list[str],
-    link_descriptions: Mapping[str, str],
-    primary_lang: str = "en",
-    maintainer: str = "Noé Flandre",
-    stats_section: str | None = None,
-    rejections_section: str | None = None,
-    generated_on: str | None = None,
-) -> str:
-    """Render the dataset card markdown.
-
-    ``stats`` may include ``polygon_count``, ``article_count``,
-    ``unique_wikidata_count``, etc.
-
-    ``stats_section`` is an optional pre-rendered markdown block of
-    factual dataset statistics (snapshot, funnel, language distribution).
-    When provided, it is included verbatim after the coverage map.
-
-    ``rejections_section`` is an optional pre-rendered markdown block
-    summarising the deterministic join-integrity pass (Path A: rejected
-    polygon_articles rows whose wikidata does not match the canonical
-    polygons table, and rejected wikivoyage documents whose wikidata is
-    absent from polygons). The block travels with the card so the
-    audit metadata is reproducible from the published artifact.
-
-    The YAML front matter declares the canonical dataset tables.
-
-    ``generated_on`` is optional pinned release metadata. It is never
-    inferred from the wall clock, so repeated renders are byte-identical
-    unless the caller changes the supplied value.
-    """
-    rc_lines = _render_front_matter(
-        repo_id=repo_id,
-        license="odbl",
-        primary_lang=primary_lang,
-        polygon_count=stats.get("polygon_count", 0),
-        article_count=stats.get("article_count", 0),
-        unique_wikidata_count=stats.get("unique_wikidata_count", 0),
-    )
-
-    schema_section = _render_schema(
-        polygon_columns,
-        polygon_descriptions,
-        article_columns,
-        article_descriptions,
-        link_columns,
-        link_descriptions,
-    )
-
-    stats_block = _optional_card_block(stats_section)
-    trackio_block = render_snapshot_markdown()
-    rejections_block = _optional_card_block(rejections_section)
-    generated_block = _generated_card_block(generated_on)
-
-    body = (
-        f"# {repo_id}\n\n"
-        f"![{repo_id} dataset overview]({REMOTE_DATASET_HERO_FILE})\n\n"
-        "Blog post: [How to describe a place on Earth with Wikidata]"
-        "(https://noeflandre.com/posts/describe-place-on-earth-part1-wikidata).\n\n"
-        "OSM polygons tagged with a `wikidata=*` reference, "
-        "enriched with Wikipedia and Wikivoyage text across all available languages. "
-        "The published tables are:\n\n"
-        "- `polygons/<stem>.parquet` — one row per polygon\n"
-        "- `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia article\n"
-        "- `polygon_articles/<stem>.parquet` — unified polygon-to-document "
-        "many-to-many links for Wikipedia and Wikivoyage; `project` identifies "
-        "the source and `document_id` references its document table\n"
-        "- `wikipedia/sections/<stem>.parquet` — section-level partitions of Wikipedia "
-        "document text\n"
-        "- `wikivoyage/documents/<stem>.parquet` — full Wikivoyage documents associated "
-        "with places through Wikidata\n"
-        "- `wikivoyage/sections/<stem>.parquet` — section-level partitions of Wikivoyage "
-        "document text\n"
-        "- `wikidata/facts/<stem>.parquet` — structured Wikidata claims for polygon "
-        "entities\n\n"
-        "Links are derived from the Wikidata identifiers shared by each OSM polygon and "
-        "its Wikipedia or Wikivoyage documents.\n\n"
-        f"{generated_block}"
-        f"Maintained by **{maintainer}**.\n\n"
-        "Source code: [GitHub repository]"
-        "(https://github.com/NoeFlandre/osm-polygon-wikidata-only).\n\n"
-        f"This Hugging Face dataset is **V1**, produced by the [V1.0.0 GitHub code]({V1_GITHUB_URL}).\n\n"
-        f"{trackio_block}\n"
-        "## Coverage\n\n"
-        "### Polygons with Wikipedia or Wikivoyage text\n\n"
-        f"![Polygons with Wikipedia or Wikivoyage text]({REMOTE_GEOGRAPHIC_TEXT_PRESENCE_FILE})\n\n"
-        "Each point is one globally unique `(osm_type, osm_id)` polygon identity linked "
-        "to a Wikipedia or Wikivoyage document whose extraction succeeded "
-        "(`fetch_status=ok`) and whose trimmed `full_text` is non-empty. Overlapping "
-        "regional rows and multiple qualifying documents count once.\n\n"
-        "### All dataset polygons\n\n"
-        f"![Coverage Map]({REMOTE_COVERAGE_MAP_FILE})\n\n"
-        "Each point represents one globally unique `(osm_type, osm_id)` identity carrying "
-        "an OSM `wikidata=*` tag, whether or not corresponding Wikipedia or Wikivoyage "
-        "text is available. Regional polygon rows remain separate source records.\n\n"
-        "## Geographic coverage\n\n"
-        "### Wikipedia + Wikivoyage text density\n\n"
-        f"![Geographic Wikipedia and Wikivoyage Text Density]"
-        f"({REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE})\n\n"
-        "Each H3 cell contains the raw number of unique `(osm_type, osm_id)` polygon "
-        "identities with successfully extracted (`fetch_status=ok`) non-empty Wikipedia "
-        "or Wikivoyage text. A polygon is counted once even when both projects, several "
-        "documents, or overlapping regional rows qualify. Colour uses a logarithmic "
-        "purple-to-yellow scale; this is an absolute density count, not a proportion "
-        "of all polygon rows.\n\n"
-        f"{stats_block}\n"
-        f"{schema_section}\n"
-        "## Data sources & licenses\n\n"
-        "- **OpenStreetMap** polygons: (c) OpenStreetMap contributors, "
-        "licensed under [ODbL 1.0](https://opendatacommons.org/licenses/odbl/).\n"
-        "- **Wikidata** entity data: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).\n"
-        "- **Wikipedia** article text: licensed under "
-        "[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) "
-        "by the respective Wikipedia editors; attributed inline per article.\n"
-        "- **Wikivoyage** text: licensed under "
-        "[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) "
-        "by the respective Wikivoyage editors; attributed inline per document.\n"
-        "- **Natural Earth** Admin-0 geography: public-domain 1:110m reference data "
-        "used only to assign centroid-based continent statistics and draw context maps.\n\n"
-        "## How to load\n\n"
-        "```python\n"
-        "from datasets import load_dataset\n"
-        'ds = load_dataset("parquet", data_files={\n'
-        f'    "polygons": "hf://datasets/{repo_id}/polygons/*.parquet",\n'
-        "})\n"
-        "```\n"
-        "## Citation\n\n"
-        "If you use this dataset, please cite it. Download the dataset citation metadata "
-        "from [`CITATION.cff`](CITATION.cff).\n"
-    )
-
-    return _insert_rejections_block(
-        rc_lines + "\n" + body,
-        stats_block=stats_block,
-        rejections_block=rejections_block,
-        schema_section=schema_section,
-    )
-
-
-def _optional_card_block(block: str | None) -> str:
-    return block if block is not None else ""
-
-
-def _generated_card_block(generated_on: str | None) -> str:
-    return f"Generated on {generated_on}.\n\n" if generated_on else ""
-
-
-def _insert_rejections_block(
-    body: str,
-    *,
-    stats_block: str,
-    rejections_block: str,
-    schema_section: str,
-) -> str:
-    if not rejections_block:
-        return body
-    insertion_marker = f"{stats_block}\n" if stats_block else ""
-    return body.replace(
-        insertion_marker + f"{schema_section}\n",
-        insertion_marker + f"{rejections_block}\n" + f"{schema_section}\n",
-        1,
-    )
-
-
-def _render_front_matter(
+def render_front_matter(
     *,
     repo_id: str,
     license: str,
@@ -271,135 +76,6 @@ def _render_front_matter(
     )
 
 
-# Public collaborator spelling for the publication facade; keep the private
-# helper name because it remains a local test seam.
-render_front_matter = _render_front_matter
-
-
-def _render_schema(
-    poly_cols: list[str],
-    poly_desc: Mapping[str, str],
-    art_cols: list[str],
-    art_desc: Mapping[str, str],
-    link_cols: list[str],
-    link_desc: Mapping[str, str],
-) -> str:
-    parts = ["## Schema\n"]
-    parts.append(_render_table("polygons", poly_cols, poly_desc))
-    parts.append(
-        _render_table(
-            "wikipedia/documents",
-            list(WIKIPEDIA_DOCUMENT_COLUMNS),
-            WIKIPEDIA_DOCUMENT_DESCRIPTIONS,
-        )
-    )
-    parts.append(_render_table("polygon_articles", link_cols, link_desc))
-    parts.append(
-        _render_combined_table(
-            "`wikivoyage/documents`",
-            list(DOCUMENT_COLUMNS),
-            DOCUMENT_DESCRIPTIONS,
-        )
-    )
-    parts.append(
-        _render_combined_table(
-            "`wikipedia/sections` and `wikivoyage/sections`",
-            list(SECTION_COLUMNS),
-            SECTION_DESCRIPTIONS,
-        )
-    )
-    parts.append(_render_combined_table("`wikidata/facts`", list(FACT_COLUMNS), FACT_DESCRIPTIONS))
-    return "\n".join(parts) + "\n"
-
-
-def _render_table(name: str, cols: list[str], descriptions: Mapping[str, str]) -> str:
-    lines = [f"### `{name}`", "", "| Column | Description |", "| --- | --- |"]
-    for c in cols:
-        lines.append(f"| `{c}` | {descriptions.get(c, '')} |")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _render_combined_table(heading: str, cols: list[str], descriptions: Mapping[str, str]) -> str:
-    lines = [f"### {heading}", "", "| Column | Description |", "| --- | --- |"]
-    for c in cols:
-        lines.append(f"| `{c}` | {descriptions.get(c, '')} |")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def render_rejections_section(audit: Mapping[str, Any]) -> str:
-    """Render the deterministic join-integrity audit as a markdown block.
-
-    The audit is the JSON payload produced by
-    :func:`osm_polygon_wikidata_only.augmentation.integrity.enforce_all_regions`.
-    Path A only: rows whose wikidata does not match the canonical
-    polygon wikidata are rejected (not rewritten); wikivoyage documents
-    whose wikidata is absent from polygons are rejected with cascading
-    sections.
-
-    The block is empty when no rejection was recorded, so the card
-    is stable across reruns on a clean dataset.
-    """
-    totals = _audit_totals(audit)
-    polygon_rejected, voyage_rejected, voyage_cascaded = _rejection_counts(totals)
-    contract_version = str(audit.get("contract_version", "join-integrity-v1"))
-    shards = sorted(totals.get("shards_with_rejections", []) or [])
-
-    parts = [
-        "## Join-integrity audit\n",
-        f"Path A (reject-only, never rewrite QIDs). Contract version `{contract_version}`.\n",
-        "| Channel | Rejected |",
-        "| --- | --- |",
-        f"| `polygon_articles` rows with mismatched wikidata | {polygon_rejected} |",
-        f"| `wikivoyage/documents` with wikidata absent from polygons | {voyage_rejected} |",
-        f"| `wikivoyage/sections` cascaded from rejected documents | {voyage_cascaded} |",
-        "",
-    ]
-    return "\n".join(_render_affected_shards(parts, shards))
-
-
-def _audit_totals(audit: Any) -> Mapping[str, Any]:
-    """Return the totals mapping, preserving the empty non-mapping fallback."""
-    return audit.get("totals", {}) if isinstance(audit, Mapping) else {}
-
-
-def _rejection_counts(totals: Mapping[str, Any]) -> tuple[int, int, int]:
-    """Extract the three displayed rejection counts."""
-    return (
-        _count_total(totals, "polygon_articles_rejected"),
-        _count_total(totals, "wikivoyage_documents_rejected"),
-        _count_total(totals, "wikivoyage_sections_cascaded"),
-    )
-
-
-def _count_total(totals: Mapping[str, Any], key: str) -> int:
-    """Read one optional count from an audit totals mapping."""
-    return int(totals.get(key, 0) or 0)
-
-
-def _render_affected_shards(parts: list[str], shards: list[str]) -> list[str]:
-    """Append the optional sorted affected-shard line."""
-    if shards:
-        parts.append("Affected shards: " + ", ".join(f"`{shard}`" for shard in shards) + ".\n")
-    return parts
-
-
-__all__ = ["render_dataset_card"]
-
-
-# ---------------------------------------------------------------------------
-# Front-matter structural validation
-# ---------------------------------------------------------------------------
-#
-# ``validate_front_matter`` is a TEST-only structural helper. It is
-# imported directly by the dataset-card test suite via the module path;
-# it deliberately does NOT appear in :data:`__all__` and is not
-# re-exported by :mod:`osm_polygon_wikidata_only.hf` or by the
-# dataset-card facade. The Phase 1 frozen public surface is exactly
-# ``{"render_dataset_card"}``.
-
-
 def validate_front_matter(front_matter: str) -> None:
     """Validate the structural shape of the dataset-card YAML front matter.
 
@@ -429,7 +105,7 @@ def _parse_front_matter(front_matter: str) -> Mapping[str, Any]:
     import yaml  # noqa: PLC0415
 
     # ``safe_load_all`` accepts the conventional ``---\n...\n---\n``
-    # envelope produced by :func:`render_dataset_card`. The first
+    # envelope produced by :func:`render_front_matter`. The first
     # yielded document is the canonical front-matter mapping; trailing
     # ``None`` entries (introduced by PyYAML's trailing whitespace
     # handling) are ignored.

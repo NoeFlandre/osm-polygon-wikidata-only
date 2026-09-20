@@ -22,7 +22,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     InMemoryWikipediaClient,
     WikipediaArticle,
 )
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
+from osm_polygon_wikidata_only.hf.dataset_card import render_front_matter
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
     REMOTE_LINKS_DIR,
@@ -166,15 +166,13 @@ def test_end_to_end_pbf_to_parquet_to_manifest_to_hf_stub(
 
     # Render and "upload" the card + per-file parquet + manifest via stub.
     stub = StubHfHub()
-    card_md = render_dataset_card(
+    card_md = render_front_matter(
         repo_id=settings.repo_id,
-        stats={"polygon_count": 2, "article_count": 3, "unique_wikidata_count": 2},
-        polygon_columns=[f.name for f in poly_t.schema],
-        polygon_descriptions={c: c for c in poly_t.schema.names},
-        article_columns=[f.name for f in art_t.schema],
-        article_descriptions={c: c for c in art_t.schema.names},
-        link_columns=[f.name for f in link_t.schema],
-        link_descriptions={c: c for c in link_t.schema.names},
+        license="odbl",
+        primary_lang="en",
+        polygon_count=2,
+        article_count=3,
+        unique_wikidata_count=2,
     )
     upload_card(settings.repo_id, card_md, hub=stub)
     for path, sub in [

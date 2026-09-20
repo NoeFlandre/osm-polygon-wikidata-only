@@ -10,12 +10,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from osm_polygon_wikidata_only.hf.dataset_card import render_dataset_card
 from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_ARTICLES_DIR,
-    REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
-    REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE,
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
@@ -576,110 +572,3 @@ def test_upload_card_records_markdown() -> None:
     remote = upload_card("org/name", "# card", hub=stub, commit_message="add card")
     assert remote == "README.md"
     assert stub.uploads[0]["size_bytes"] == len(b"# card")
-
-
-def test_render_dataset_card_includes_schema() -> None:
-    markdown = render_dataset_card(
-        repo_id="org/name",
-        stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
-        polygon_columns=["polygon_id", "name", "area_m2"],
-        polygon_descriptions={
-            "polygon_id": "Stable per-PBF polygon identifier.",
-            "name": "OSM name tag (may be empty).",
-            "area_m2": "Polygon area, square meters.",
-        },
-        article_columns=["article_id", "language", "full_text"],
-        article_descriptions={
-            "article_id": "Stable article identifier.",
-            "language": "ISO 639-1 code.",
-            "full_text": "Plain-text body.",
-        },
-        link_columns=["polygon_id", "article_id"],
-        link_descriptions={
-            "polygon_id": "Polygon row this article links to.",
-            "article_id": "Article row this polygon links to.",
-        },
-    )
-    assert markdown.startswith("---\n")
-    assert "license: odbl" in markdown
-    assert "polygons/*.parquet" in markdown
-    assert "`polygons`" in markdown
-    assert "`articles`" in markdown
-    assert "`polygon_articles`" in markdown
-    assert "Stable per-PBF polygon identifier." in markdown
-
-
-def test_render_dataset_card_mentions_licenses() -> None:
-    markdown = render_dataset_card(
-        repo_id="org/name",
-        stats={},
-        polygon_columns=[],
-        polygon_descriptions={},
-        article_columns=[],
-        article_descriptions={},
-        link_columns=[],
-        link_descriptions={},
-    )
-    assert "ODbL" in markdown
-    assert "CC BY-SA" in markdown
-    assert "Wikipedia" in markdown
-
-
-def test_render_dataset_card_identifies_multilingual_scope_and_maintainer() -> None:
-    markdown = render_dataset_card(
-        repo_id="NoeFlandre/osm-polygon-wikidata-only",
-        stats={},
-        polygon_columns=[],
-        polygon_descriptions={},
-        article_columns=[],
-        article_descriptions={},
-        link_columns=[],
-        link_descriptions={},
-    )
-    assert "Noé Flandre" in markdown
-    assert "across all available languages" in markdown
-    assert "no per-QID article cap" not in markdown
-    assert "Wikipedia and Wikivoyage text" in markdown
-    assert "  - multilingual" in markdown
-
-
-def test_render_dataset_card_includes_geographic_coverage_section() -> None:
-
-    markdown = render_dataset_card(
-        repo_id="org/name",
-        stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
-        polygon_columns=["polygon_id"],
-        polygon_descriptions={"polygon_id": "id"},
-        article_columns=["article_id"],
-        article_descriptions={"article_id": "id"},
-        link_columns=["polygon_id"],
-        link_descriptions={"polygon_id": "id"},
-    )
-    assert "## Geographic coverage" in markdown
-    assert "### Wikipedia + Wikivoyage text density" in markdown
-    assert REMOTE_GEOGRAPHIC_TEXT_DENSITY_FILE in markdown
-    assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE not in markdown
-    assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE not in markdown
-    assert REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE == "assets/geographic_wikipedia_text_coverage.png"
-    assert REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE == "assets/geographic_polygon_count.png"
-
-
-def test_render_dataset_card_explains_combined_text_density_metric() -> None:
-    """The card defines the raw, deduplicated cross-project H3 metric."""
-    markdown = render_dataset_card(
-        repo_id="org/name",
-        stats={"polygon_count": 1, "article_count": 2, "unique_wikidata_count": 1},
-        polygon_columns=["polygon_id"],
-        polygon_descriptions={"polygon_id": "id"},
-        article_columns=["article_id"],
-        article_descriptions={"article_id": "id"},
-        link_columns=["polygon_id"],
-        link_descriptions={"polygon_id": "id"},
-    )
-    coverage_section = markdown.split("## Geographic coverage", 1)[1].split("\n## ", 1)[0]
-
-    assert "raw number of unique `(osm_type, osm_id)` polygon identities" in coverage_section
-    assert "Wikipedia or Wikivoyage" in coverage_section
-    assert "counted once" in coverage_section
-    assert "not a proportion" in coverage_section
-    assert "H3 cell" in coverage_section

@@ -37,8 +37,14 @@ constructs these clients with the project defaults.
 
 ## Dataset cards and publication
 
-- `osm_polygon_wikidata_only.hf.dataset_card.render_dataset_card` renders the
-  Hugging Face dataset card from supplied schema descriptions and statistics.
+- `osm_polygon_wikidata_only.hf.minimal_card.render_minimal_card` renders both
+  public dataset cards from a `MinimalCardSnapshot`: one section skeleton, one
+  eight-row snapshot table, the coverage maps, and pointers to `stats.json`. It
+  refuses a card body of 8 KiB or more.
+- `osm_polygon_wikidata_only.hf.dataset_card.render_front_matter` renders the V1
+  card's YAML front matter, which declares the Dataset Viewer configurations;
+  `osm_polygon_wikidata_only.v2.card_front_matter.render_front_matter` is its V2
+  counterpart.
 - `osm_polygon_wikidata_only.hf.uploader` exposes `upload_parquet`,
   `upload_manifest`, `upload_card`, and `upload_files`, plus the `HfHub` and
   `StubHfHub` in-memory stub and token/authorization helpers. These functions
