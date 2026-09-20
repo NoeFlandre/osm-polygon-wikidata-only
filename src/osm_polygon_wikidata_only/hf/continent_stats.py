@@ -26,6 +26,8 @@ def assign_continents(
     points: Sequence[tuple[float, float]], features: Sequence[dict[str, Any]]
 ) -> list[str]:
     """Assign ``(lon, lat)`` points to Natural Earth continent polygons."""
+    if not points:
+        return []
     assignments = np.full(len(points), "Unassigned", dtype=object)
     point_array = np.asarray(points, dtype=float)
     for feature in features:

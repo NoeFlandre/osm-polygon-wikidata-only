@@ -19,9 +19,13 @@ from osm_polygon_wikidata_only.hf.minimal_card import (
     SentenceCoverage,
     continent_coverage_rows,
 )
+from osm_polygon_wikidata_only.hf.polygon_geometry_stats import load_polygon_geometry_stats
+from osm_polygon_wikidata_only.v2.card_front_matter import (
+    render_front_matter as _render_front_matter,
+)
 from osm_polygon_wikidata_only.v2.card_metrics import compute_v2_card_stats
-from osm_polygon_wikidata_only.v2.card_rendering import render_front_matter as _render_front_matter
-from osm_polygon_wikidata_only.v2.config import V2_GITHUB_URL, V2_REPO_ID
+from osm_polygon_wikidata_only.v2.card_models import V2CardStats
+from osm_polygon_wikidata_only.v2.config import V1_DATASET_URL, V2_GITHUB_URL, V2_REPO_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,11 +44,13 @@ def build_minimal_v2_release_snapshot(
     cache_dir: Path | None = None,
     generated_on: str | None = None,
     text_presence: TextPresenceSnapshot | None = None,
+    stats: V2CardStats | None = None,
 ) -> MinimalV2ReleaseSnapshot:
     """Compute the V2 public summary once for all release artifacts."""
-    stats = compute_v2_card_stats(processed_v2, v1_processed=v1_processed)
+    stats = stats or compute_v2_card_stats(processed_v2, v1_processed=v1_processed)
     links_dir = processed_v2 / "polygon_document_links"
-    presence = text_presence or load_text_presence(processed_v2, links_dir=links_dir)
+    presence = text_presence or _load_presence(processed_v2, links_dir)
+    geometry_area = _geometry_area(processed_v2)
     countries_path = ensure_world_countries(cache_dir or processed_v2.parent / "cache")
     rows = _continent_rows(processed_v2, countries_path, links_dir)
     front_matter = _render_front_matter(stats, processed_v2=processed_v2)
@@ -53,9 +59,10 @@ def build_minimal_v2_release_snapshot(
         repo_id=V2_REPO_ID,
         title="OSM Polygon Wikidata + Wikipedia, V2",
         description=(
-            "OSM polygons enriched with multilingual Wikipedia and Wikivoyage text. "
-            "V2 also retains valid multilingual `wikipedia=*` references, including "
-            "polygons without a Wikidata QID."
+            f"V2 builds on the [V1 Wikidata-only dataset]({V1_DATASET_URL}) with "
+            "multilingual Wikipedia and Wikivoyage text. It also retains valid "
+            "multilingual `wikipedia=*` references, including polygons without a "
+            "Wikidata QID."
         ),
         polygon_rows=stats.polygons,
         unique_polygon_identities=stats.unique_polygon_identities or presence.polygon_count,
@@ -65,6 +72,8 @@ def build_minimal_v2_release_snapshot(
         languages=stats.languages,
         regions=stats.regions,
         total_parquet_bytes=stats.total_parquet_storage_bytes,
+        total_area_m2=geometry_area[0],
+        median_area_m2=geometry_area[1],
         document_words=stats.document_words,
         sentence_rows=(
             stats.sentence_stats.total_rows if stats.sentence_stats is not None else None
@@ -76,6 +85,33 @@ def build_minimal_v2_release_snapshot(
         viewer_url=f"https://huggingface.co/datasets/{V2_REPO_ID}/viewer",
     )
     return MinimalV2ReleaseSnapshot(snapshot, _report_extra(stats, rows, presence), presence)
+
+
+_EMPTY_PRESENCE = TextPresenceSnapshot(
+    polygon_count=0,
+    wikipedia_covered_polygon_ids=frozenset(),
+    combined_covered_polygon_ids=frozenset(),
+    wikipedia_document_ids=frozenset(),
+    wikivoyage_document_ids=frozenset(),
+    covered_points=(),
+)
+
+
+def _load_presence(processed_v2: Path, links_dir: Path) -> TextPresenceSnapshot:
+    """Return the text-presence snapshot, or an empty one when it cannot be scanned."""
+    try:
+        return load_text_presence(processed_v2, links_dir=links_dir)
+    except (CoverageMapError, OSError, ValueError):
+        return _EMPTY_PRESENCE
+
+
+def _geometry_area(processed_v2: Path) -> tuple[float | None, float | None]:
+    """Return the total and median polygon area, or ``None`` when unavailable."""
+    try:
+        area = load_polygon_geometry_stats(processed_v2).area
+    except (CoverageMapError, OSError, ValueError):
+        return None, None
+    return area.total_m2, area.median_m2
 
 
 def _continent_rows(

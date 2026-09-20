@@ -93,6 +93,8 @@ class MinimalCardSnapshot:
     languages: int
     regions: int
     total_parquet_bytes: int
+    total_area_m2: float | None = None
+    median_area_m2: float | None = None
     document_words: int | None = None
     sentence_rows: int | None = None
     sentence_coverage: SentenceCoverage | None = None
@@ -140,15 +142,16 @@ def _body_lines(snapshot: MinimalCardSnapshot) -> list[str]:
         f"| Unique polygon identities (osm_type, osm_id) | {_integer(snapshot.unique_polygon_identities)} |",
         f"| Polygons with successful non-empty text (unique OSM identities) | {_integer(snapshot.polygons_with_text)} |",
         f"| Wikipedia + Wikivoyage documents | {_integer(snapshot.documents)} |",
-        f"| Document words | {_optional_integer(snapshot.document_words)} |",
         f"| Wikipedia + Wikivoyage sections | {_integer(snapshot.sections)} |",
-        f"| Sentence rows | {_sentence_rows(snapshot.sentence_rows)} |",
         f"| Wikipedia + Wikivoyage languages | {_integer(snapshot.languages)} |",
         f"| Geographic regions | {_integer(snapshot.regions)} |",
         f"| Total Parquet size | {_size(snapshot.total_parquet_bytes)} |",
         "",
-        "Polygon rows preserve regional records; identity and text metrics count each "
-        "`(osm_type, osm_id)` once. Text requires `fetch_status=ok` and non-empty `full_text`.",
+        "Polygon rows preserve regional records. Identity metrics use one deterministic "
+        "representative per `(osm_type, osm_id)`. Text requires `fetch_status=ok` and a "
+        "trimmed non-empty `full_text`.",
+        "",
+        _text_volume(snapshot),
         "",
         "Document words count full Wikipedia and Wikivoyage document text; section rows "
         "are excluded. Sentence rows include split and explicitly unsplit unsupported-language "
@@ -188,7 +191,8 @@ def _body_lines(snapshot: MinimalCardSnapshot) -> list[str]:
         "",
         "## Polygon area and geometry",
         "",
-        f"Complete area, histogram, geometry, extent, and per-source statistics: [`{snapshot.stats_path}`]({snapshot.stats_path}).",
+        _area_summary(snapshot),
+        f"Complete area distribution, histogram, geometry, extent, and per-source statistics: [`{snapshot.stats_path}`]({snapshot.stats_path}).",
         "",
         "## Schema",
         "",
@@ -207,7 +211,7 @@ def _body_lines(snapshot: MinimalCardSnapshot) -> list[str]:
         "",
         "## Citation",
         "",
-        "Cite the dataset using [`CITATION.cff`](CITATION.cff).",
+        "Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff).",
         "",
     ]
 
@@ -229,8 +233,25 @@ def _optional_integer(value: int | None) -> str:
     return "Not available" if value is None else _integer(value)
 
 
-def _sentence_rows(value: int | None) -> str:
-    return "Not generated for this dataset version" if value is None else _integer(value)
+def _text_volume(snapshot: MinimalCardSnapshot) -> str:
+    """Summarise document words and sentence rows in one sentence."""
+    words = f"Text volume: {_optional_integer(snapshot.document_words)} document words"
+    if snapshot.sentence_rows is None:
+        return f"{words}. Sentence rows are not generated for this dataset version."
+    return f"{words}; {_integer(snapshot.sentence_rows)} sentence rows."
+
+
+def _area_summary(snapshot: MinimalCardSnapshot) -> str:
+    if snapshot.total_area_m2 is None or snapshot.median_area_m2 is None:
+        return "Polygon area summary is available in the machine-readable statistics report."
+    return (
+        f"Recorded polygon area: {snapshot.total_area_m2 / 1_000_000:,.4f} km² total; "
+        f"median {_area(snapshot.median_area_m2)}."
+    )
+
+
+def _area(value: float) -> str:
+    return f"{value:,.1f} m²"
 
 
 def _sentence_coverage_lines(coverage: SentenceCoverage | None) -> list[str]:

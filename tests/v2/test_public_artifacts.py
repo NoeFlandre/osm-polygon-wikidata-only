@@ -46,7 +46,8 @@ def test_v2_card_is_viewer_ready_and_documents_v1_comparison(tmp_path: Path) -> 
     assert "path: wikipedia/documents/*.parquet" in card
     assert "path: polygon_document_links/*.parquet" in card
     assert "https://github.com/NoeFlandre/osm-polygon-wikidata-only" in card
-    assert "## V2 compared with V1" in card
+    assert "## Dataset snapshot" in card
+    assert "## V2 compared with V1" not in card
     assert "assets/coverage_map.png" in card
     assert "assets/geographic_text_presence.png" in card
     assert "assets/geographic_text_density.png" in card
@@ -56,12 +57,11 @@ def test_v2_card_is_viewer_ready_and_documents_v1_comparison(tmp_path: Path) -> 
     assert hero in card
     assert card.index(hero) < card.index("# OSM Polygon Wikidata + Wikipedia, V2")
     assert card.index(hero) < card.index("V2 builds on")
-    assert "**Wikipedia-tag-only polygons:** 1" in card
+    assert "| Polygon rows across regional extracts | 1 |" in card
     assert "V2 builds on the [V1 Wikidata-only dataset]" in card
     assert "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only" in card
     assert "not entered manually" not in card
-    assert "`wikidata` means the polygon came from an OSM `wikidata=*` tag" in card
-    assert "`wikidata_sitelink` means the relationship came from a Wikidata sitelink" in card
+    assert len(card.split("\n---\n", 2)[-1].encode("utf-8")) < 8192
 
 
 def test_v2_card_explains_regional_duplicate_policy(tmp_path: Path) -> None:
@@ -69,8 +69,8 @@ def test_v2_card_explains_regional_duplicate_policy(tmp_path: Path) -> None:
 
     card = render_v2_card(tmp_path)
 
-    assert "Regional extracts can overlap" in card
-    assert "We keep those copies to preserve regional membership and provenance" in card
+    assert "Polygon rows preserve regional records" in card
+    assert "Identity metrics use one deterministic representative" in card
 
 
 def test_v2_card_front_matter_has_viewer_configs_for_every_table(tmp_path: Path) -> None:

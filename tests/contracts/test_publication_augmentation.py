@@ -24,10 +24,12 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import article_schema
+from osm_polygon_wikidata_only.hf.minimal_card import render_minimal_card
 from osm_polygon_wikidata_only.hf.publication import (
     assemble_augmentation_upload,
     assemble_core_upload,
     assemble_region_upload,
+    build_minimal_v1_release_snapshot,
     write_readme_snapshot,
 )
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
@@ -229,17 +231,17 @@ def test_write_readme_snapshot_includes_core_and_augmentation_stats(
     # is the last add).
     readme_path = add_ops[-2].local_path
     md = readme_path.read_text(encoding="utf-8")
-    # The public augmentation-aware card omits the legacy
-    # Wikipedia-only funnel in favor of combined text metrics.
+    # The compact public card carries one snapshot table and the shared
+    # sections; per-corpus and storage detail lives in stats.json.
     assert "## Dataset snapshot" in md
     assert "## Wikipedia coverage funnel" not in md
     assert "## Geographic distribution by continent" in md
-    # Augmentation sections are present because sidecars exist.
-    assert "## Augmentation coverage" not in md
-    assert "## Storage accounting" in md
-    assert "## Wikipedia text corpus" in md
-    assert "## Wikivoyage text corpus" in md
-    assert "## Wikidata facts" in md
+    assert "## Storage accounting" not in md
+    assert "## Wikipedia text corpus" not in md
+    assert "## Wikivoyage text corpus" not in md
+    assert "## Wikidata facts" not in md
+    assert "Text volume:" in md
+    assert "[`stats.json`](stats.json)" in md
 
 
 def test_write_readme_snapshot_core_only_when_no_augmentation_dirs(
@@ -259,13 +261,13 @@ def test_write_readme_snapshot_core_only_when_no_augmentation_dirs(
     add_ops = [op for op in files if op.action == "add"]
     readme_path = add_ops[-2].local_path
     md = readme_path.read_text(encoding="utf-8")
-    # Core sections always present.
+    # The shared skeleton renders identically whether or not augmentation
+    # sidecars exist, so the README contract is stable across pipeline states.
     assert "## Dataset snapshot" in md
-    # When augmentation dirs are missing, augmentation sections are
-    # still rendered (showing empty data) so the README contract is
-    # stable across pipeline states.
-    assert "## Wikipedia text corpus" in md
-    assert "## Wikidata facts" in md
+    assert "## Coverage maps" in md
+    assert "## Schema" in md
+    assert "## Wikipedia text corpus" not in md
+    assert "## Wikidata facts" not in md
 
 
 def test_write_readme_snapshot_deterministic_for_identical_inputs(
@@ -478,36 +480,18 @@ def test_write_readme_snapshot_writes_to_destination_atomic(
         "osm_polygon_wikidata_only.hf.publication.atomic_write_text",
         fake_atomic,
     )
-    render_kwargs = {}
-
-    def fake_render_dataset_card(**kwargs):  # type: ignore[no-untyped-def]
-        render_kwargs.update(kwargs)
-        return "BODY"
-
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication.render_dataset_card",
-        fake_render_dataset_card,
-    )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication.render_stats_section",
-        lambda *args, **kwargs: "STATS",
-    )
     destination = tmp_path / "out.md"
     write_readme_snapshot(data_root, REPO_ID, destination)
     assert len(captured) == 1
     assert captured[0][0] == destination
-    assert captured[0][1] == "BODY"
-    assert render_kwargs["stats"] == {
-        "polygon_count": 1,
-        "article_count": 1,
-        "unique_wikidata_count": 1,
-    }
+    assert captured[0][1] == destination.read_text(encoding="utf-8")
+    assert "| Polygon rows across regional extracts | 1 |" in captured[0][1]
 
 
-def test_write_readme_snapshot_includes_integrity_audit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_release_snapshot_carries_the_integrity_audit_into_the_report(
+    tmp_path: Path,
 ) -> None:
-    """A valid integrity audit is carried into the public card."""
+    """The compact card drops the audit table, so stats.json must carry it."""
     _core, data_root = _stub_process_result(tmp_path)
     audit_path = data_root.processed / "integrity" / "integrity_audit.json"
     audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -525,11 +509,17 @@ def test_write_readme_snapshot_includes_integrity_audit(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication.render_dataset_card",
-        lambda **kwargs: kwargs["rejections_section"] or "",
-    )
-    destination = tmp_path / "out.md"
-    write_readme_snapshot(data_root, REPO_ID, destination)
-    assert "## Join-integrity audit" in destination.read_text(encoding="utf-8")
-    assert "join-integrity-v2" in destination.read_text(encoding="utf-8")
+
+    prepared = build_minimal_v1_release_snapshot(data_root, REPO_ID)
+
+    audit = prepared.report_extra["join_integrity_audit"]
+    assert audit == {
+        "contract_version": "join-integrity-v2",
+        "totals": {
+            "polygon_articles_rejected": 1,
+            "wikivoyage_documents_rejected": 2,
+            "wikivoyage_sections_cascaded": 3,
+            "shards_with_rejections": ["region-latest"],
+        },
+    }
+    assert "## Join-integrity audit" not in render_minimal_card(prepared.card)

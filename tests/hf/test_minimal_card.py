@@ -28,6 +28,8 @@ def _snapshot() -> MinimalCardSnapshot:
         languages=4,
         regions=2,
         total_parquet_bytes=2_000_000,
+        total_area_m2=12_500.0,
+        median_area_m2=250.0,
         document_words=1_234,
         sentence_rows=5_678,
         sentence_coverage=SentenceCoverage(
@@ -44,13 +46,15 @@ def test_minimal_card_has_the_shared_eight_row_snapshot_and_maps() -> None:
     card = render_minimal_card(_snapshot())
 
     assert card.startswith("---\nlicense: odbl\n---\n")
-    snapshot_table = card.split("## Dataset snapshot\n", 1)[1].split("\n\nPolygon rows", 1)[0]
-    assert sum(line.startswith("| ") for line in snapshot_table.splitlines()) == 12
+    snapshot_table = card.split("## Dataset snapshot\n", 1)[1].split("\n\nText volume", 1)[0]
+    assert sum(line.startswith("| ") for line in snapshot_table.splitlines()) == 10
     assert card.count("| Metric | Value |") == 1
     assert "| Unique polygon identities (osm_type, osm_id) | 8 |" in card
     assert "| Polygons with successful non-empty text (unique OSM identities) | 6 |" in card
-    assert "| Document words | 1,234 |" in card
-    assert "| Sentence rows | 5,678 |" in card
+    assert "| Document words |" not in card
+    assert "| Sentence rows |" not in card
+    assert "Text volume: 1,234 document words; 5,678 sentence rows." in card
+    assert "Recorded polygon area: 0.0125 km² total; median 250.0 m²." in card
     assert "## Sentence-splitting coverage" in card
     assert "- Eligible text units: 3" in card
     assert "- Units split because language is supported: 2" in card
@@ -77,7 +81,10 @@ def test_minimal_card_explains_when_sentence_sidecars_are_not_generated() -> Non
         replace(_snapshot(), sentence_rows=None),
     )
 
-    assert "| Sentence rows | Not generated for this dataset version |" in card
+    assert (
+        "Text volume: 1,234 document words. "
+        "Sentence rows are not generated for this dataset version." in card
+    )
 
 
 def test_minimal_card_rejects_an_oversized_description() -> None:

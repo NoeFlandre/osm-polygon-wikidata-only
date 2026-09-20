@@ -1215,10 +1215,13 @@ def release_v2_polygon_stats(
 
     def write_assets(destination: Path) -> Mapping[str, Path]:
         snapshot = get_prepared().text_presence
+        # ``v1_processed`` is deliberately omitted: it only adds the V2-added
+        # Wikipedia-tag comparison map, which this release neither renders on
+        # the compact card nor publishes, and which costs a full extra scan of
+        # both the V1 and V2 polygon tables.
         coverage, presence, density = generate_v2_map_assets(
             processed_v2,
             destination,
-            v1_processed=data_root.processed,
             land_cache_dir=data_root.cache,
             text_snapshot=snapshot,
         )

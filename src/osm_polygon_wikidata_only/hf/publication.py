@@ -134,20 +134,9 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     build_wikipedia_document_table,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.domain.polygon_document_links import (
-    CANONICAL_COLUMNS,
-    CANONICAL_DESCRIPTIONS,
-)
-from osm_polygon_wikidata_only.domain.schema import (
-    ARTICLE_COLUMNS,
-    ARTICLE_DESCRIPTIONS,
-    POLYGON_COLUMNS,
-    POLYGON_DESCRIPTIONS,
-)
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
     compute_augmentation_stats,
 )
-from osm_polygon_wikidata_only.hf._dataset_stats.rendering import demote_headings
 from osm_polygon_wikidata_only.hf._publication import artifacts as _publication_artifacts
 from osm_polygon_wikidata_only.hf._publication.artifacts import (
     load_existing_core_artifacts,
@@ -162,10 +151,7 @@ from osm_polygon_wikidata_only.hf._uploader.plan import (
     add_op,
     delete_op,
 )
-from osm_polygon_wikidata_only.hf.continent_stats import (
-    compute_continent_stats,
-    render_continent_stats,
-)
+from osm_polygon_wikidata_only.hf.continent_stats import compute_continent_stats
 from osm_polygon_wikidata_only.hf.coverage_map import (
     ensure_world_countries,
     ensure_world_land,
@@ -173,16 +159,9 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     load_centroids_from_parquet,
 )
 from osm_polygon_wikidata_only.hf.dataset_card import (
-    render_dataset_card,
-    render_rejections_section,
-)
-from osm_polygon_wikidata_only.hf.dataset_card import (
     render_front_matter as _render_front_matter,
 )
-from osm_polygon_wikidata_only.hf.dataset_stats import (
-    compute_dataset_stats,
-    render_stats_section,
-)
+from osm_polygon_wikidata_only.hf.dataset_stats import compute_dataset_stats
 from osm_polygon_wikidata_only.hf.geographic_text_density import (
     generate_geographic_text_density as _generate_geographic_text_density,
 )
@@ -202,7 +181,7 @@ from osm_polygon_wikidata_only.hf.minimal_card import (
     render_minimal_card,
 )
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
-    render_polygon_stats_section,
+    load_polygon_geometry_stats,
     write_polygon_stats_report,
 )
 from osm_polygon_wikidata_only.hf.repo_layout import (
@@ -346,6 +325,7 @@ def build_minimal_v1_release_snapshot(
         data_root.processed,
         cache_index_dir=data_root.cache,
     )
+    geometry_stats = load_polygon_geometry_stats(data_root.processed)
     presence = text_presence or load_text_presence(data_root.processed)
     countries_path = ensure_world_countries(data_root.cache)
     continent_rows = compute_continent_stats(data_root.processed, countries_path)
@@ -376,6 +356,8 @@ def build_minimal_v1_release_snapshot(
         languages=languages,
         regions=core_stats.region_count,
         total_parquet_bytes=augmentation_stats.total_parquet_bytes,
+        total_area_m2=geometry_stats.area.total_m2,
+        median_area_m2=geometry_stats.area.median_m2,
         document_words=(
             augmentation_stats.wikipedia_documents.total_words
             + augmentation_stats.wikivoyage_documents.total_words
@@ -389,6 +371,7 @@ def build_minimal_v1_release_snapshot(
         "dataset_stats": asdict(core_stats),
         "augmentation_stats": asdict(augmentation_stats),
         "continent_stats": [asdict(row) for row in rows],
+        "join_integrity_audit": _integrity_audit(data_root),
         "text_coverage": {
             "polygon_identities": presence.polygon_count,
             "wikipedia_text_polygon_identities": len(presence.wikipedia_polygon_identities),
@@ -398,6 +381,27 @@ def build_minimal_v1_release_snapshot(
         },
     }
     return MinimalV1ReleaseSnapshot(snapshot, report_extra, presence)
+
+
+def _integrity_audit(data_root: DataRoot) -> dict[str, Any] | None:
+    """Return the join-integrity audit payload published in ``stats.json``.
+
+    The compact card no longer renders the audit table, so the report is the
+    only place these counts remain available.
+    """
+    audit_path = data_root.processed / "integrity" / "integrity_audit.json"
+    if not audit_path.is_file():
+        return None
+    try:
+        payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {
+        **payload,
+        "contract_version": str(payload.get("contract_version", INTEGRITY_CONTRACT_VERSION)),
+    }
 
 
 def _corpus_totals(augmentation_stats: Any, core_stats: Any) -> tuple[int, int, int]:
@@ -437,12 +441,6 @@ def write_minimal_v1_card(
     return prepared
 
 
-def _collapsed_section(summary: str, body: str) -> str:
-    """Return ``body`` behind a Hub-rendered collapsed disclosure block."""
-    nested = demote_headings(body.strip())
-    return f"<details>\n<summary>{summary}</summary>\n\n{nested}\n\n</details>\n"
-
-
 def _write_readme_snapshot(
     data_root: DataRoot,
     repo_id: str,
@@ -474,58 +472,10 @@ def _write_readme_snapshot(
     written atomically via
     :func:`osm_polygon_wikidata_only.io.atomic.atomic_write_text`.
     """
-    core_stats = compute_dataset_stats(data_root.processed)
-    aggregate = {
-        "polygon_count": core_stats.polygon_count,
-        "article_count": core_stats.article_count,
-        "unique_wikidata_count": core_stats.unique_wikidata_count,
-    }
-    augmentation_stats = compute_augmentation_stats(
-        data_root.processed,
-        cache_index_dir=data_root.cache,
-    )
-    stats_section = render_stats_section(
-        core_stats,
-        augmentation_stats=augmentation_stats,
-        public=True,
-    )
-    stats_section += "\n" + _collapsed_section(
-        "Polygon surface and geometry",
-        render_polygon_stats_section(data_root.processed),
-    )
-    if any(data_root.processed_polygons.glob("*.parquet")):
-        countries_path = ensure_world_countries(data_root.cache)
-        stats_section += "\n" + render_continent_stats(
-            compute_continent_stats(data_root.processed, countries_path)
-        )
-    rejections_section: str | None = None
-    audit_path = data_root.processed / "integrity" / "integrity_audit.json"
-    if audit_path.is_file():
-        try:
-            audit_payload = json.loads(audit_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            audit_payload = None
-        if isinstance(audit_payload, dict):
-            audit_contract = str(audit_payload.get("contract_version", INTEGRITY_CONTRACT_VERSION))
-            rejections_section = render_rejections_section(
-                {**audit_payload, "contract_version": audit_contract}
-            )
+    prepared = build_minimal_v1_release_snapshot(data_root, repo_id, generated_on=generated_on)
     atomic_write_text(
         destination,
-        render_dataset_card(
-            repo_id=repo_id,
-            stats=aggregate,
-            polygon_columns=list(POLYGON_COLUMNS),
-            polygon_descriptions=POLYGON_DESCRIPTIONS,
-            article_columns=list(ARTICLE_COLUMNS),
-            article_descriptions=ARTICLE_DESCRIPTIONS,
-            link_columns=list(CANONICAL_COLUMNS),
-            link_descriptions=CANONICAL_DESCRIPTIONS,
-            maintainer="Noé Flandre",
-            stats_section=stats_section,
-            rejections_section=rejections_section,
-            generated_on=generated_on,
-        ),
+        render_minimal_card(prepared.card),
     )
 
 

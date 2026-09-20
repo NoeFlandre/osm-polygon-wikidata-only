@@ -33,14 +33,14 @@ def test_card_is_factual_and_deterministic(tmp_path: Path) -> None:
     first = render_v2_card(tmp_path)
     second = render_v2_card(tmp_path)
     assert first == second
-    assert "Wikipedia-tag-only polygons:** 1" in first
-    assert "exact V1 22-column section schema" in first
-    assert "--dataset-version v2" in first
+    assert "| Polygon rows across regional extracts | 1 |" in first
+    assert "Text volume:" in first
+    assert "## V2 compared with V1" not in first
     assert "external drive" not in first
     assert first.rstrip().endswith(
         "Download the dataset citation metadata from [`CITATION.cff`](CITATION.cff)."
     )
-    assert first.index("## Citation") > first.index("## Reproducibility")
+    assert first.index("## Citation") > first.index("## Polygon area and geometry")
     output = write_v2_card(tmp_path)
     assert output.read_text(encoding="utf-8") == first
     assert output.read_bytes() == first.encode("utf-8")
@@ -54,13 +54,8 @@ def test_card_documents_exact_sentence_split_scope_when_sidecars_exist(tmp_path:
 
     card_text = render_v2_card(tmp_path)
 
-    assert "sat-3l-sm" in card_text
-    assert "exact ISO codes listed in `docs/sentence-splitting.md`" in card_text
-    assert "one unsplit row" in card_text
-    assert "segmentation_status=unsupported_language" in card_text
-    assert "never passed to SaT" in card_text
-    assert "wikipedia/sentences/<stem>.parquet" in card_text
-    assert "wikipedia_sentences" in card_text
+    assert "Sentence rows | Not generated for this dataset version" not in card_text
+    assert "Text volume:" in card_text
 
 
 def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path) -> None:
@@ -190,16 +185,8 @@ def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path)
 
     card_text = render_v2_card(tmp_path, stats=stats)
     assert "| Polygons with successful non-empty text (unique OSM identities) | 2 |" in card_text
-    assert (
-        "73,322,752 split sentence rows" not in card_text
-        and (
-            "Data-derived totals: 3 split sentence rows plus "
-            "1 unsupported-language rows retained unsplit = 4 total rows; "
-            "1 supported language codes; 3 polygons linked to sentence-sidecar "
-            "documents across 1 Wikipedia and 1 Wikivoyage sidecars."
-        )
-        in card_text
-    )
+    assert "73,322,752 split sentence rows" not in card_text
+    assert "4 sentence rows." in card_text
     assert "Eligible text units: 3" in card_text
     assert "Supported-language coverage: 66.7%" in card_text
     assert "Top unsupported languages by count: `xx` (1)" in card_text
@@ -776,8 +763,7 @@ def test_v2_card_reports_word_and_section_deltas_from_v1(tmp_path: Path) -> None
     assert stats.additional_document_words_vs_v1 == 6
     assert stats.additional_sections_vs_v1 == 0
     card_text = render_v2_card(v2, v1_processed=v1, stats=stats)
-    assert "**Additional document-row words in V2 (Wikipedia + Wikivoyage):** 6" in card_text
-    assert "**Additional section rows in V2 (Wikipedia + Wikivoyage):** 0" in card_text
+    assert "## V2 compared with V1" not in card_text
 
 
 def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) -> None:
@@ -881,15 +867,4 @@ def test_v2_card_reports_source_split_and_unique_content_deltas(tmp_path: Path) 
     assert stats.additional_unique_sections_vs_v1 == 1
 
     card_text = render_v2_card(v2, v1_processed=v1, stats=stats)
-    assert "**Additional polygon identities:** 3" in card_text
-    assert "**Of those, polygons with a Wikipedia tag:** 2" in card_text
-    assert "**Of those, Wikidata-only polygons:** 1" in card_text
-    assert "**New Wikipedia-tag polygons without a matching page at the snapshot:** 0" in card_text
-    assert (
-        "**V2-added polygons with a new Wikipedia-tag document and no Wikidata discovery:** 1"
-        in card_text
-    )
-    assert "assets/v2_added_wikipedia_tag_documents.png" in card_text
-    assert "**Words in newly added Wikipedia document identities:** 10" in card_text
-    assert "**New Wikipedia document identities sharing content with V1:** 1" in card_text
-    assert "**Additional unique section identities:** 1" in card_text
+    assert "## V2 compared with V1" not in card_text

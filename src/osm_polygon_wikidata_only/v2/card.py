@@ -15,6 +15,12 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.v2.card_front_matter import (
+    has_parquet as _has_parquet,
+)
+from osm_polygon_wikidata_only.v2.card_front_matter import (
+    render_front_matter as _render_front_matter,
+)
 from osm_polygon_wikidata_only.v2.card_metrics import (
     build_card_stats as _build_card_stats,
 )
@@ -80,25 +86,7 @@ from osm_polygon_wikidata_only.v2.card_release import (
     jsonable as _jsonable,
 )
 from osm_polygon_wikidata_only.v2.card_rendering import (
-    has_parquet as _has_parquet,
-)
-from osm_polygon_wikidata_only.v2.card_rendering import (
-    non_empty_text_polygon_count as _non_empty_text_polygon_count,
-)
-from osm_polygon_wikidata_only.v2.card_rendering import (
-    render_comparison as _render_comparison,
-)
-from osm_polygon_wikidata_only.v2.card_rendering import (
-    render_front_matter as _render_front_matter,
-)
-from osm_polygon_wikidata_only.v2.card_rendering import (
     render_v2_card,
-)
-from osm_polygon_wikidata_only.v2.card_rendering import (
-    sentence_section_lines as _sentence_section_lines,
-)
-from osm_polygon_wikidata_only.v2.card_rendering import (
-    unique_polygon_count as _unique_polygon_count,
 )
 from osm_polygon_wikidata_only.v2.card_scanning import (
     batch_column as _batch_column,

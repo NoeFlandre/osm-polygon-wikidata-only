@@ -163,8 +163,8 @@ def test_v2_release_targets_the_wikidata_and_wikipedia_dataset(tmp_path: Path) -
     )
     assert "## Polygon area and geometry" in card
     assert "| Polygons with successful non-empty text (unique OSM identities) |" in card
-    assert "| Document words | 0 |" in card
-    assert "| Sentence rows | Not generated for this dataset version |" in card
+    assert "Text volume: 0 document words" in card
+    assert "Sentence rows are not generated for this dataset version." in card
     assert "[`stats.json`](stats.json)" in card
     payload = json.loads(
         (data_root.cache / "stats_release_snapshots" / "v2" / "stats.json").read_text(
@@ -227,8 +227,8 @@ def test_v1_release_moves_the_polygon_surface_report_from_the_card_into_stats(
     # Detailed geometry stays in stats.json while the public card stays compact.
     assert "## Polygon area and geometry" in card
     assert "| Polygons with successful non-empty text (unique OSM identities) |" in card
-    assert "| Document words | 0 |" in card
-    assert "| Sentence rows | Not generated for this dataset version |" in card
+    assert "Text volume: 0 document words" in card
+    assert "Sentence rows are not generated for this dataset version." in card
     assert "[`stats.json`](stats.json)" in card
     assert payload["area_m2"]["total"] == 2500.0
     assert payload["card_contract"] == "minimal-v1"
