@@ -513,6 +513,7 @@ def _run_sync_application(
             cache=runtime_cache,
         )
 
+    # Keep the remaining execution collaborators lazy until the selected sync path is ready.
     from osm_polygon_wikidata_only.augmentation.progress import (  # noqa: PLC0415
         AugmentationProgress,
     )
