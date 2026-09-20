@@ -404,3 +404,185 @@ def test_v2_write_batch_routes_rows_to_language_shard(
     language_splits._flush_shard(state, shard)
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
     assert observed["max_rows_per_shard"] == 10
+
+
+def test_v2_writer_and_resume_helpers_keep_boundary_contracts_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the small state transitions that protect resumable writes."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    zero = LanguageBucket(
+        language="en",
+        row_count=0,
+        canonical_rows=0,
+        legacy_alias_rows=0,
+        missing_rows=0,
+        blank_rows=0,
+        malformed_rows=0,
+        legacy_unusable_rows=0,
+    )
+    one = LanguageBucket(
+        language="fr",
+        row_count=1,
+        canonical_rows=1,
+        legacy_alias_rows=0,
+        missing_rows=0,
+        blank_rows=0,
+        malformed_rows=0,
+        legacy_unusable_rows=0,
+    )
+    inventory = LanguageTableInventory(
+        table=spec.table,
+        configuration=spec.configuration,
+        language_column=spec.language_column,
+        identity_columns=spec.identity_columns,
+        source_files=(),
+        row_count=1,
+        buckets=(zero, one),
+    )
+    assert language_splits._table_shard_counts(inventory, 100) == {"fr": 1}
+
+    written: list[pa.Table] = []
+
+    class Writer:
+        def write_table(self, table: pa.Table) -> None:
+            written.append(table)
+
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    shard = SimpleNamespace(
+        source_files=[], row_count=0, writer=Writer(), pending=[], pending_bytes=0
+    )
+    first = pa.record_batch([pa.array(["en"] * 2)], names=["language"])
+    second = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
+    monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_splits, "_TOTAL_FLUSH_BYTES", 10**9)
+    language_splits._buffer_rows(state, shard, first)
+    language_splits._buffer_rows(state, shard, second)
+    assert shard.pending_bytes == first.nbytes + second.nbytes
+    assert state.pending_bytes == shard.pending_bytes
+    language_splits._flush_shard(state, shard)
+    assert [table.num_rows for table in written] == [5]
+    assert shard.pending == []
+    assert shard.pending_bytes == state.pending_bytes == 0
+
+    shard.source_files = ["source-a.parquet"]
+    language_splits._record_source_file(shard, "source-a.parquet")
+    language_splits._record_source_file(shard, "source-b.parquet")
+    assert shard.source_files == ["source-a.parquet", "source-b.parquet"]
+
+    marker = language_splits._resume_marker_path(tmp_path, spec)
+    assert marker == tmp_path / ".resume" / f"{spec.table.value}.json"
+    staged = tmp_path / "staged.parquet"
+    staged.write_bytes(b"staged")
+    assert language_splits._resume_staged_entry("final.parquet", str(staged)) == (
+        Path("final.parquet"),
+        staged,
+    )
+    assert language_splits._resume_staged_entry(4, str(staged)) is None
+
+    record = _resume_file_record("language_splits/lang-fr.parquet").to_dict()
+    restored = language_splits._resume_file(record, spec)
+    assert restored is not None
+    assert restored.path == record["path"]
+    assert language_splits._resume_file({**record, "source_files": "bad"}, spec) is None
+    assert language_splits._resume_file({**record, "configuration": None}, spec) is None
+    assert language_splits._resume_file_rows({"source_files": ["a"], "row_count": 2}) == (
+        ("a",),
+        2,
+    )
+    assert language_splits._resume_file_rows({"source_files": "a", "row_count": 2}) is None
+
+
+def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slice is written once, then the next shard receives only its remainder."""
+    batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+
+    class FakeWriter:
+        def __init__(self) -> None:
+            self.rows: list[list[dict[str, object]]] = []
+
+        def write_table(self, table: pa.Table) -> None:
+            self.rows.append(table.to_pylist())
+
+        def close(self) -> None:
+            return None
+
+    first = SimpleNamespace(
+        source_files=[], row_count=9, writer=FakeWriter(), pending=[], pending_bytes=0
+    )
+    second = SimpleNamespace(
+        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
+    )
+    state.current["en"] = first
+    writers = iter((first, second))
+
+    def next_writer(*_args: object) -> SimpleNamespace:
+        try:
+            return next(writers)
+        except StopIteration as error:
+            raise AssertionError("the writer loop consumed more than two shards") from error
+
+    monkeypatch.setattr(language_splits, "_writer_for_language", next_writer)
+    with ExitStack() as stack:
+        language_splits._write_language_indices(
+            "en",
+            pa.array([0, 1, 2], type=pa.int64()),
+            batch,
+            tmp_path / "destination",
+            tmp_path / "stage",
+            spec,
+            "source.parquet",
+            10,
+            {"en": 2},
+            batch.schema,
+            state,
+            stack,
+        )
+    language_splits._flush_shard(state, second)
+
+    assert first.row_count == 10
+    assert second.row_count == 2
+    assert [row for group in first.writer.rows for row in group] == [{"language": "en"}]
+    assert [row for group in second.writer.rows for row in group] == [
+        {"language": "en"},
+        {"language": "en"},
+    ]
+
+
+def test_v2_staged_table_uses_the_resume_result_and_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A completed table is returned without rebuilding or changing its inputs."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    inventory = _resume_inventory()
+    record = _resume_file_record("language_splits/lang-fr.parquet")
+    resumed = ([record], {tmp_path / record.path: tmp_path / "staged.parquet"})
+    observed: list[object] = []
+
+    def resume(_stage: Path, _spec: object, table: object):
+        observed.append(table)
+        return resumed
+
+    monkeypatch.setattr(language_splits, "_resume_completed_table", resume)
+    monkeypatch.setattr(
+        language_splits,
+        "_write_table",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("completed tables are not rebuilt")),
+    )
+
+    result = language_splits._staged_table(
+        tmp_path,
+        tmp_path / "destination",
+        tmp_path / "stage",
+        spec,
+        inventory,
+        1,
+        10,
+    )
+
+    assert result == resumed
+    assert observed == [inventory]
