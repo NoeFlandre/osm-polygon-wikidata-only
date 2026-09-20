@@ -228,6 +228,34 @@ def _manifest(root: Path) -> dict[str, object]:
     return json.loads((root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH).read_text(encoding="utf-8"))
 
 
+def _resume_inventory(row_count: int = 4) -> LanguageTableInventory:
+    """Minimal table inventory whose fingerprint depends on ``row_count``."""
+    spec = language_table_specs(DatasetContract.V2)[0]
+    return LanguageTableInventory(
+        table=spec.table,
+        configuration=spec.configuration,
+        language_column=spec.language_column,
+        identity_columns=spec.identity_columns,
+        source_files=("polygon_document_links/a.parquet",),
+        row_count=row_count,
+        buckets=(),
+    )
+
+
+def _resume_file_record(path: str) -> V2LanguageSplitFile:
+    spec = language_table_specs(DatasetContract.V2)[0]
+    return V2LanguageSplitFile(
+        table=spec.table,
+        configuration=spec.configuration,
+        language="fr",
+        split="lang-fr",
+        source_files=("polygon_document_links/a.parquet",),
+        path=path,
+        row_count=4,
+        sha256="digest",
+    )
+
+
 def _shard(root: Path, table: str, language: str, stem: str) -> Path:
     configuration = f"{table}_by_language"
     return root / "language_splits" / configuration / f"lang-{language}" / f"{stem}.parquet"
