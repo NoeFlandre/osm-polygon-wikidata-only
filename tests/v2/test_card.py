@@ -225,6 +225,62 @@ def test_sentence_manifest_totals_preserve_validation_and_counting() -> None:
         )
 
 
+def test_sentence_document_ids_collect_unique_non_empty_values(tmp_path: Path) -> None:
+    path = tmp_path / "sentences.parquet"
+    pq.write_table(pa.table({"document_id": ["doc-a", "", None, "doc-a", "doc-b"]}), path)
+
+    values: set[str] = set()
+    card._update_sentence_document_ids(path, values)
+
+    assert values == {"doc-a", "doc-b"}
+    assert card._sentence_document_ids([path]) == values
+
+
+def test_sentence_document_ids_ignore_files_without_document_id(tmp_path: Path) -> None:
+    path = tmp_path / "sentences.parquet"
+    pq.write_table(pa.table({"language": ["en"]}), path)
+
+    values = {"existing"}
+    card._update_sentence_document_ids(path, values)
+
+    assert values == {"existing"}
+
+
+def test_sentence_coverage_totals_reject_invalid_region_values() -> None:
+    manifest_path = Path("sentence_splitting.json")
+
+    with pytest.raises(ValueError, match="Invalid sentence coverage manifest"):
+        card._sentence_coverage_totals(
+            [{"sections": "not-an-int", "split_sections": 0, "unsplit_sections": 0}],
+            manifest_path,
+        )
+    with pytest.raises(ValueError, match="Invalid sentence coverage manifest"):
+        card._sentence_coverage_totals(
+            [{"sections": 2, "split_sections": 2, "unsplit_sections": 1}],
+            manifest_path,
+        )
+
+
+def test_unsupported_languages_by_file_merges_and_validates_regions() -> None:
+    manifest_path = Path("sentence_splitting.json")
+
+    assert card._unsupported_languages_by_file(
+        [
+            {"project": "wikipedia", "stem": "r", "unsupported_languages": ["xx"]},
+            {"project": "wikipedia", "stem": "r", "unsupported_languages": ["yy", "xx"]},
+        ],
+        manifest_path,
+    ) == {("wikipedia", "r"): frozenset({"xx", "yy"})}
+
+    with pytest.raises(ValueError, match="Invalid sentence coverage manifest"):
+        card._unsupported_languages_by_file([{}], manifest_path)
+    with pytest.raises(ValueError, match="Invalid sentence coverage manifest"):
+        card._unsupported_languages_by_file(
+            [{"project": "wikipedia", "stem": "r", "unsupported_languages": "xx"}],
+            manifest_path,
+        )
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [

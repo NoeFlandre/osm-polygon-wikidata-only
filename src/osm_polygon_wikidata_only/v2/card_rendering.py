@@ -219,32 +219,49 @@ def _non_empty_text_polygon_count(snapshot: V2CardStats) -> int:
 
 
 def _sentence_section_lines(stats: _SentenceCardStats | None) -> tuple[str, ...]:
-    lines = (
-        "Sentence sidecars are opt-in and use `sat-3l-sm` only for the exact ISO codes listed in `docs/sentence-splitting.md` in the [source repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/docs/sentence-splitting.md). Any other language code remains one unsplit row with `segmentation_status=unsupported_language`; it is never passed to SaT.",
-    )
+    lines = (_sentence_scope_line(),)
     if stats is not None:
-        supported_percentage = (
-            stats.supported_units / stats.eligible_units if stats.eligible_units else 0.0
-        )
-        unsupported_percentage = (
-            stats.unsupported_units / stats.eligible_units if stats.eligible_units else 0.0
-        )
-        top_languages = (
-            "; ".join(
-                f"`{language or 'missing'}` ({count:,})"
-                for language, count in stats.top_unsupported_languages[:10]
-            )
-            or "None"
-        )
-        lines += (
-            f"Data-derived totals: {stats.split_rows:,} split sentence rows plus {stats.unsupported_rows:,} unsupported-language rows retained unsplit = {stats.total_rows:,} total rows; {stats.supported_language_count:,} supported language codes; {stats.polygon_count:,} polygons linked to sentence-sidecar documents across {stats.wikipedia_sidecars:,} Wikipedia and {stats.wikivoyage_sidecars:,} Wikivoyage sidecars.",
-            f"Eligible text units: {stats.eligible_units:,}; units split because language is supported: {stats.supported_units:,}; units left unsplit because language is unsupported: {stats.unsupported_units:,}.",
-            f"Supported-language coverage: {supported_percentage:.1%}; unsupported-language share: {unsupported_percentage:.1%}.",
-            f"Top unsupported languages by count: {top_languages}.",
-        )
+        lines += _sentence_stats_lines(stats)
     return (
         *lines,
-        "When generated, sentence rows are stored in `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet`; `manifests/sentence_splitting.json` records the model, revision, and observed routing.",
+        _sentence_storage_line(),
+    )
+
+
+def _sentence_scope_line() -> str:
+    return "Sentence sidecars are opt-in and use `sat-3l-sm` only for the exact ISO codes listed in `docs/sentence-splitting.md` in the [source repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/docs/sentence-splitting.md). Any other language code remains one unsplit row with `segmentation_status=unsupported_language`; it is never passed to SaT."
+
+
+def _sentence_storage_line() -> str:
+    return "When generated, sentence rows are stored in `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet`; `manifests/sentence_splitting.json` records the model, revision, and observed routing."
+
+
+def _sentence_stats_lines(stats: _SentenceCardStats) -> tuple[str, ...]:
+    supported_percentage, unsupported_percentage = _sentence_percentages(stats)
+    return (
+        f"Data-derived totals: {stats.split_rows:,} split sentence rows plus {stats.unsupported_rows:,} unsupported-language rows retained unsplit = {stats.total_rows:,} total rows; {stats.supported_language_count:,} supported language codes; {stats.polygon_count:,} polygons linked to sentence-sidecar documents across {stats.wikipedia_sidecars:,} Wikipedia and {stats.wikivoyage_sidecars:,} Wikivoyage sidecars.",
+        f"Eligible text units: {stats.eligible_units:,}; units split because language is supported: {stats.supported_units:,}; units left unsplit because language is unsupported: {stats.unsupported_units:,}.",
+        f"Supported-language coverage: {supported_percentage:.1%}; unsupported-language share: {unsupported_percentage:.1%}.",
+        f"Top unsupported languages by count: {_format_unsupported_languages(stats)}.",
+    )
+
+
+def _sentence_percentages(stats: _SentenceCardStats) -> tuple[float, float]:
+    if not stats.eligible_units:
+        return 0.0, 0.0
+    return (
+        stats.supported_units / stats.eligible_units,
+        stats.unsupported_units / stats.eligible_units,
+    )
+
+
+def _format_unsupported_languages(stats: _SentenceCardStats) -> str:
+    return (
+        "; ".join(
+            f"`{language or 'missing'}` ({count:,})"
+            for language, count in stats.top_unsupported_languages[:10]
+        )
+        or "None"
     )
 
 

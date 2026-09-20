@@ -35,21 +35,10 @@ def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
     )
     total_rows, unsupported_rows = _sentence_manifest_totals(regions, manifest_path)
     unsupported_by_file = _unsupported_languages_by_file(regions, manifest_path)
-    unsupported_language_counts: Counter[str] = Counter()
-    document_ids = {
-        project: _scan_sentence_sidecars(
-            paths,
-            project=project,
-            unsupported_by_file=unsupported_by_file,
-            unsupported_counts=unsupported_language_counts,
-        )
-        for project, paths in sentence_paths.items()
-    }
-    if sum(unsupported_language_counts.values()) != unsupported_units:
-        raise ValueError(
-            "Sentence sidecar unsupported-language counts do not match the manifest: "
-            f"{sum(unsupported_language_counts.values())} != {unsupported_units}"
-        )
+    document_ids, unsupported_language_counts = _scan_sentence_documents(
+        sentence_paths, unsupported_by_file
+    )
+    _validate_unsupported_language_counts(unsupported_language_counts, unsupported_units)
     return _SentenceCardStats(
         total_rows=total_rows,
         split_rows=total_rows - unsupported_rows,
@@ -65,6 +54,32 @@ def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:
         wikipedia_sidecars=len(sentence_paths["wikipedia"]),
         wikivoyage_sidecars=len(sentence_paths["wikivoyage"]),
     )
+
+
+def _scan_sentence_documents(
+    sentence_paths: Mapping[str, list[Path]],
+    unsupported_by_file: Mapping[tuple[str, str], frozenset[str]],
+) -> tuple[dict[str, set[str]], Counter[str]]:
+    unsupported_language_counts: Counter[str] = Counter()
+    document_ids = {
+        project: _scan_sentence_sidecars(
+            paths,
+            project=project,
+            unsupported_by_file=unsupported_by_file,
+            unsupported_counts=unsupported_language_counts,
+        )
+        for project, paths in sentence_paths.items()
+    }
+    return document_ids, unsupported_language_counts
+
+
+def _validate_unsupported_language_counts(counts: Counter[str], expected: int) -> None:
+    observed = sum(counts.values())
+    if observed != expected:
+        raise ValueError(
+            "Sentence sidecar unsupported-language counts do not match the manifest: "
+            f"{observed} != {expected}"
+        )
 
 
 def _load_sentence_manifest(manifest_path: Path) -> tuple[list[object], list[object]]:
@@ -93,28 +108,33 @@ def _sentence_manifest_totals(regions: Iterable[object], manifest_path: Path) ->
 def _sentence_coverage_totals(
     regions: Iterable[object], manifest_path: Path
 ) -> tuple[int, int, int]:
-    eligible_units = 0
-    supported_units = 0
-    unsupported_units = 0
+    eligible_units = supported_units = unsupported_units = 0
     for region in regions:
-        if not isinstance(region, Mapping):
-            raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
-        values = cast(Mapping[str, object], region)
-        try:
-            sections = int(cast(Any, values["sections"]))
-            split_sections = int(cast(Any, values["split_sections"]))
-            unsplit_sections = int(cast(Any, values["unsplit_sections"]))
-        except (KeyError, TypeError, ValueError) as error:
-            raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}") from error
-        if (
-            min(sections, split_sections, unsplit_sections) < 0
-            or split_sections + unsplit_sections != sections
-        ):
-            raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}")
+        sections, split_sections, unsplit_sections = _sentence_coverage_region(
+            region, manifest_path
+        )
         eligible_units += sections
         supported_units += split_sections
         unsupported_units += unsplit_sections
     return eligible_units, supported_units, unsupported_units
+
+
+def _sentence_coverage_region(region: object, manifest_path: Path) -> tuple[int, int, int]:
+    if not isinstance(region, Mapping):
+        raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
+    values = cast(Mapping[str, object], region)
+    try:
+        sections = int(cast(Any, values["sections"]))
+        split_sections = int(cast(Any, values["split_sections"]))
+        unsplit_sections = int(cast(Any, values["unsplit_sections"]))
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}") from error
+    if (
+        min(sections, split_sections, unsplit_sections) < 0
+        or split_sections + unsplit_sections != sections
+    ):
+        raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}")
+    return sections, split_sections, unsplit_sections
 
 
 def _unsupported_languages_by_file(
@@ -122,21 +142,26 @@ def _unsupported_languages_by_file(
 ) -> dict[tuple[str, str], frozenset[str]]:
     values_by_file: dict[tuple[str, str], set[str]] = {}
     for region in regions:
-        if not isinstance(region, Mapping):
-            raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
-        values = cast(Mapping[str, object], region)
-        try:
-            project = str(values["project"])
-            stem = str(values["stem"])
-            languages = values["unsupported_languages"]
-        except KeyError as error:
-            raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}") from error
-        if not isinstance(languages, list):
-            raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}")
-        values_by_file.setdefault((project, stem), set()).update(
-            str(language) for language in languages
-        )
+        key, languages = _unsupported_language_region(region, manifest_path)
+        values_by_file.setdefault(key, set()).update(languages)
     return {key: frozenset(values) for key, values in values_by_file.items()}
+
+
+def _unsupported_language_region(
+    region: object, manifest_path: Path
+) -> tuple[tuple[str, str], set[str]]:
+    if not isinstance(region, Mapping):
+        raise ValueError(f"Invalid sentence manifest region: {manifest_path}")
+    values = cast(Mapping[str, object], region)
+    try:
+        project = str(values["project"])
+        stem = str(values["stem"])
+        languages = values["unsupported_languages"]
+    except KeyError as error:
+        raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}") from error
+    if not isinstance(languages, list):
+        raise ValueError(f"Invalid sentence coverage manifest: {manifest_path}")
+    return (project, stem), {str(language) for language in languages}
 
 
 def _scan_sentence_sidecars(
@@ -169,26 +194,54 @@ def _scan_sentence_sidecar(
         columns = [name for name in ("document_id", "language") if name in names]
         if not columns:
             return
-        value_set = (
-            pa.array(sorted(unsupported_languages), type=pa.string())
-            if unsupported_languages
-            else None
-        )
+        value_set = _unsupported_language_array(unsupported_languages)
         for batch in iter_record_batches(parquet_file, columns=columns, batch_size=65_536):
-            by_name = {name: batch.column(index) for index, name in enumerate(columns)}
-            if "document_id" in by_name:
-                document_ids.update(_sentence_document_ids_array(by_name["document_id"]))
-            if value_set is not None and "language" in by_name:
-                matches = _compute_array(
-                    "is_in",
-                    by_name["language"],
-                    options=pc.SetLookupOptions(value_set),
-                )
-                filtered = _compute_array("filter", by_name["language"], matches)
-                for item in _compute_array("value_counts", filtered).to_pylist():
-                    language = item["values"]
-                    if language is not None:
-                        unsupported_counts[str(language)] += int(item["counts"])
+            _scan_sentence_batch(
+                batch,
+                columns,
+                value_set,
+                document_ids,
+                unsupported_counts,
+            )
+
+
+def _unsupported_language_array(languages: frozenset[str]) -> pa.Array | None:
+    if not languages:
+        return None
+    return pa.array(sorted(languages), type=pa.string())
+
+
+def _scan_sentence_batch(
+    batch: pa.RecordBatch,
+    columns: list[str],
+    unsupported_values: pa.Array | None,
+    document_ids: set[str],
+    unsupported_counts: Counter[str],
+) -> None:
+    by_name = {name: batch.column(index) for index, name in enumerate(columns)}
+    document_column = by_name.get("document_id")
+    if document_column is not None:
+        document_ids.update(_sentence_document_ids_array(document_column))
+    language_column = by_name.get("language")
+    if language_column is not None and unsupported_values is not None:
+        _count_unsupported_languages(language_column, unsupported_values, unsupported_counts)
+
+
+def _count_unsupported_languages(
+    language_column: pa.Array,
+    unsupported_values: pa.Array,
+    counts: Counter[str],
+) -> None:
+    matches = _compute_array(
+        "is_in",
+        language_column,
+        options=pc.SetLookupOptions(unsupported_values),
+    )
+    filtered = _compute_array("filter", language_column, matches)
+    for item in _compute_array("value_counts", filtered).to_pylist():
+        language = item["values"]
+        if language is not None:
+            counts[str(language)] += int(item["counts"])
 
 
 def _sentence_region_totals(region: object, manifest_path: Path) -> tuple[int, int]:
