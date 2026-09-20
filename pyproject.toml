@@ -176,6 +176,8 @@ pytest_add_cli_args_test_selection = [
     "tests/v2/test_language_splits_part1.py",
     "tests/v2/test_language_splits_part2.py",
     "tests/v2/test_language_splits_part3.py",
+    "tests/v2/test_language_splits_partition_writing.py",
+    "tests/v2/test_language_splits_resume_buffers.py",
     "tests/v2/test_pbf_reader_scope.py",
     "tests/v2/test_sentence_logic.py",
     "tests/grid5000/test_sentence_protocol.py",
