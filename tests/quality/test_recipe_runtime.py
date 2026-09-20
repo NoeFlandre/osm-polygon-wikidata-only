@@ -161,6 +161,16 @@ def test_baseline_recipe_executes_pytest() -> None:
     assert "baseline-pytest" in rendered
 
 
+def test_mutation_worker_count_is_configurable() -> None:
+    default = _run_just("--dry-run", "mutation", env={"MUTMUT_MAX_CHILDREN": None})
+    assert default.returncode == 0, default.stderr
+    assert '--max-children "2"' in default.stdout + default.stderr
+
+    ci = _run_just("--dry-run", "mutation", env={"MUTMUT_MAX_CHILDREN": "4"})
+    assert ci.returncode == 0, ci.stderr
+    assert '--max-children "4"' in ci.stdout + ci.stderr
+
+
 def test_preprocessing_coverage_is_reused_by_its_crap_recipe(tmp_path: Path) -> None:
     runtime = tmp_path / "quality runtime"
     child_env = {

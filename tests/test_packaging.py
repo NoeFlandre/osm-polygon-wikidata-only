@@ -129,6 +129,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "crap-preprocessing",
         "crap-upload",
         "quality-strength",
+        "quality-fast",
         "smoke-test",
         "diff-review",
         "qa-gauntlet",
@@ -149,6 +150,7 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         "mutation",
         "smoke-test",
         "diff-review",
+        "quality-fast",
     ):
         rendered = subprocess.run(
             ["just", "--dry-run", recipe],
@@ -190,6 +192,7 @@ def test_github_actions_delegates_quality_commands_to_just() -> None:
 
     assert "taiki-e/install-action@just" in workflow
     assert "run: just quality-gauntlet" in workflow
+    assert 'MUTMUT_MAX_CHILDREN: "4"' in workflow
     for recipe in ("coverage", "lint", "format-check", "typecheck", "build"):
         assert f"run: just {recipe}" not in workflow
     assert "uv sync --frozen" not in workflow

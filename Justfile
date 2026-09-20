@@ -11,6 +11,7 @@ export RUFF_CACHE_DIR := absolute_path(env_var_or_default("RUFF_CACHE_DIR", QUAL
 export HYPOTHESIS_STORAGE_DIRECTORY := absolute_path(env_var_or_default("HYPOTHESIS_STORAGE_DIRECTORY", QUALITY_CACHE_DIR + "/hypothesis"))
 export MPLCONFIGDIR := absolute_path(env_var_or_default("MPLCONFIGDIR", QUALITY_CACHE_DIR + "/matplotlib"))
 export UV_PYTHON_INSTALL_DIR := absolute_path(env_var_or_default("UV_PYTHON_INSTALL_DIR", QUALITY_CACHE_DIR + "/python"))
+MUTMUT_MAX_CHILDREN := env_var_or_default("MUTMUT_MAX_CHILDREN", "2")
 
 default:
     @just --list
@@ -112,7 +113,7 @@ mutation:
     # after a source edit was observed to under-generate the mutant population
     # (2801 instead of 3038 mutants), which silently weakens the gate.
     rm -rf mutants
-    uv run python -m mutmut run --max-children 2
+    uv run python -m mutmut run --max-children "{{ MUTMUT_MAX_CHILDREN }}"
     uv run python -m mutmut results --all=true | uv run python -m scripts.quality.mutation_gate
 
 smoke-test: quality-runtime
@@ -126,6 +127,14 @@ diff-review:
 
 quality-gauntlet: quality-runtime
     uv run python scripts/quality/qa_gauntlet.py
+
+# Fast local feedback: lint, types, the no-coverage suite, and diff hygiene.
+# The full gauntlet remains the release-quality completion gate.
+quality-fast: quality-runtime
+    just ruff
+    just ty
+    just baseline
+    just diff-review
 
 # Compatibility alias retained for historical references in tooling.
 qa-gauntlet: quality-gauntlet

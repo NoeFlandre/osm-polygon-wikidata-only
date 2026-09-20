@@ -119,6 +119,15 @@ The deterministic pre-completion gate is:
 just quality-gauntlet
 ```
 
+For fast local feedback, use:
+
+```bash
+just quality-fast
+```
+
+That runs Ruff, `ty`, the no-coverage test suite, and diff checks. It is a
+development loop, not a replacement for the full completion gate below.
+
 The command runs the current quality recipes once, in a fixed fail-fast order:
 
 ```bash
@@ -203,8 +212,9 @@ intentionally scoped: network clients, large data, publication, live GPU work,
 and other external side effects are covered by focused integration or
 operational checks instead. Static Ruff and ty checks constrain source shape
 and types; they do not prove runtime side-effect safety. Reports and temporary
-files stay under the configured quality runtime, and mutation uses two workers
-to bound memory without reading production data. HTMLParser trampoline
+files stay under the configured quality runtime. Mutation uses two workers by
+default to bound local memory; CI sets four workers for the same deterministic
+population without changing the gate. HTMLParser trampoline
 mutations remain unsupported by mutmut 3.7 and are not actionable.
 
 ```bash

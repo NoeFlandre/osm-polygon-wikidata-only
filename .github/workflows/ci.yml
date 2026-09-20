@@ -23,6 +23,10 @@ jobs:
       - name: Install Python
         run: uv python install 3.12
       - name: Run the deterministic QA gauntlet
+        env:
+          # CI runners have more headroom than local Macs; keep the same
+          # mutation population while reducing wall-clock time.
+          MUTMUT_MAX_CHILDREN: "4"
         run: just quality-gauntlet
 
   preprocessing:
