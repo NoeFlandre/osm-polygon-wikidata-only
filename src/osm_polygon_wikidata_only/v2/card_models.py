@@ -95,6 +95,10 @@ class _SentenceCardStats:
     total_rows: int
     split_rows: int
     unsupported_rows: int
+    eligible_units: int
+    supported_units: int
+    unsupported_units: int
+    top_unsupported_languages: tuple[tuple[str, int], ...]
     polygon_count: int
     supported_language_count: int
     wikipedia_sidecars: int

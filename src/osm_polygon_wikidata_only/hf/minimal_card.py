@@ -25,6 +25,30 @@ class ContinentCoverage:
     text_polygons: int
 
 
+@dataclass(frozen=True, slots=True)
+class SentenceCoverage:
+    """Input-unit coverage for the sentence splitter."""
+
+    eligible_units: int
+    supported_units: int
+    unsupported_units: int
+    top_unsupported_languages: tuple[tuple[str, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        if min(self.eligible_units, self.supported_units, self.unsupported_units) < 0:
+            raise ValueError("sentence coverage counts must be non-negative")
+        if self.supported_units + self.unsupported_units != self.eligible_units:
+            raise ValueError("sentence coverage counts must add up to eligible units")
+
+    @property
+    def supported_percentage(self) -> float:
+        return _percentage(self.supported_units, self.eligible_units)
+
+    @property
+    def unsupported_percentage(self) -> float:
+        return _percentage(self.unsupported_units, self.eligible_units)
+
+
 def continent_coverage_rows(
     rows: Iterable[tuple[str, int, int, int, int, int]],
 ) -> tuple[ContinentCoverage, ...]:
@@ -69,6 +93,9 @@ class MinimalCardSnapshot:
     languages: int
     regions: int
     total_parquet_bytes: int
+    document_words: int | None = None
+    sentence_rows: int | None = None
+    sentence_coverage: SentenceCoverage | None = None
     continent_rows: Sequence[ContinentCoverage] = ()
     generated_on: str | None = None
     source_url: str = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
@@ -113,7 +140,9 @@ def _body_lines(snapshot: MinimalCardSnapshot) -> list[str]:
         f"| Unique polygon identities (osm_type, osm_id) | {_integer(snapshot.unique_polygon_identities)} |",
         f"| Polygons with successful non-empty text (unique OSM identities) | {_integer(snapshot.polygons_with_text)} |",
         f"| Wikipedia + Wikivoyage documents | {_integer(snapshot.documents)} |",
+        f"| Document words | {_optional_integer(snapshot.document_words)} |",
         f"| Wikipedia + Wikivoyage sections | {_integer(snapshot.sections)} |",
+        f"| Sentence rows | {_sentence_rows(snapshot.sentence_rows)} |",
         f"| Wikipedia + Wikivoyage languages | {_integer(snapshot.languages)} |",
         f"| Geographic regions | {_integer(snapshot.regions)} |",
         f"| Total Parquet size | {_size(snapshot.total_parquet_bytes)} |",
@@ -121,6 +150,11 @@ def _body_lines(snapshot: MinimalCardSnapshot) -> list[str]:
         "Polygon rows preserve regional records; identity and text metrics count each "
         "`(osm_type, osm_id)` once. Text requires `fetch_status=ok` and non-empty `full_text`.",
         "",
+        "Document words count full Wikipedia and Wikivoyage document text; section rows "
+        "are excluded. Sentence rows include split and explicitly unsplit unsupported-language "
+        "rows when sentence sidecars exist.",
+        "",
+        *_sentence_coverage_lines(snapshot.sentence_coverage),
         "## Coverage maps",
         "",
         "### All polygon identities",
@@ -191,6 +225,46 @@ def _integer(value: int) -> str:
     return f"{value:,}"
 
 
+def _optional_integer(value: int | None) -> str:
+    return "Not available" if value is None else _integer(value)
+
+
+def _sentence_rows(value: int | None) -> str:
+    return "Not generated for this dataset version" if value is None else _integer(value)
+
+
+def _sentence_coverage_lines(coverage: SentenceCoverage | None) -> list[str]:
+    if coverage is None:
+        return []
+    top_languages = (
+        "; ".join(
+            f"`{_language_label(language)}` ({_integer(count)})"
+            for language, count in coverage.top_unsupported_languages[:10]
+        )
+        or "None"
+    )
+    return [
+        "## Sentence-splitting coverage",
+        "",
+        "Measured over input text units (sections), not output sentence rows.",
+        f"- Eligible text units: {_integer(coverage.eligible_units)}",
+        f"- Units split because language is supported: {_integer(coverage.supported_units)}",
+        f"- Units left unsplit because language is unsupported: {_integer(coverage.unsupported_units)}",
+        f"- Supported-language coverage: {coverage.supported_percentage:.1%}",
+        f"- Unsupported-language share: {coverage.unsupported_percentage:.1%}",
+        f"- Top unsupported languages by count: {top_languages}",
+        "",
+    ]
+
+
+def _language_label(language: str) -> str:
+    return language or "missing"
+
+
+def _percentage(numerator: int, denominator: int) -> float:
+    return numerator / denominator if denominator else 0.0
+
+
 def _size(value: int) -> str:
     if value < 1_000_000_000:
         return f"{value / 1_000_000:.1f} MB"
@@ -201,6 +275,7 @@ __all__ = [
     "MAX_CARD_BODY_BYTES",
     "ContinentCoverage",
     "MinimalCardSnapshot",
+    "SentenceCoverage",
     "continent_coverage_rows",
     "render_minimal_card",
 ]

@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.hf.geographic_text_presence import (
 from osm_polygon_wikidata_only.hf.minimal_card import (
     ContinentCoverage,
     MinimalCardSnapshot,
+    SentenceCoverage,
     continent_coverage_rows,
 )
 from osm_polygon_wikidata_only.v2.card_metrics import compute_v2_card_stats
@@ -64,6 +65,11 @@ def build_minimal_v2_release_snapshot(
         languages=stats.languages,
         regions=stats.regions,
         total_parquet_bytes=stats.total_parquet_storage_bytes,
+        document_words=stats.document_words,
+        sentence_rows=(
+            stats.sentence_stats.total_rows if stats.sentence_stats is not None else None
+        ),
+        sentence_coverage=_sentence_coverage(stats.sentence_stats),
         continent_rows=rows,
         generated_on=generated_on,
         source_url=V2_GITHUB_URL,
@@ -90,6 +96,17 @@ def _polygons_with_text(stats: Any, presence: TextPresenceSnapshot) -> int:
     if stats.non_empty_text_polygons is not None:
         return int(stats.non_empty_text_polygons)
     return len(presence.combined_polygon_identities)
+
+
+def _sentence_coverage(stats: Any) -> SentenceCoverage | None:
+    if stats is None:
+        return None
+    return SentenceCoverage(
+        eligible_units=stats.eligible_units,
+        supported_units=stats.supported_units,
+        unsupported_units=stats.unsupported_units,
+        top_unsupported_languages=stats.top_unsupported_languages,
+    )
 
 
 def _report_extra(

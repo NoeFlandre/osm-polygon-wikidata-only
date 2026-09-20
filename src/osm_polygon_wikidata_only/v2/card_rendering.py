@@ -223,8 +223,24 @@ def _sentence_section_lines(stats: _SentenceCardStats | None) -> tuple[str, ...]
         "Sentence sidecars are opt-in and use `sat-3l-sm` only for the exact ISO codes listed in `docs/sentence-splitting.md` in the [source repository](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/docs/sentence-splitting.md). Any other language code remains one unsplit row with `segmentation_status=unsupported_language`; it is never passed to SaT.",
     )
     if stats is not None:
+        supported_percentage = (
+            stats.supported_units / stats.eligible_units if stats.eligible_units else 0.0
+        )
+        unsupported_percentage = (
+            stats.unsupported_units / stats.eligible_units if stats.eligible_units else 0.0
+        )
+        top_languages = (
+            "; ".join(
+                f"`{language or 'missing'}` ({count:,})"
+                for language, count in stats.top_unsupported_languages[:10]
+            )
+            or "None"
+        )
         lines += (
             f"Data-derived totals: {stats.split_rows:,} split sentence rows plus {stats.unsupported_rows:,} unsupported-language rows retained unsplit = {stats.total_rows:,} total rows; {stats.supported_language_count:,} supported language codes; {stats.polygon_count:,} polygons linked to sentence-sidecar documents across {stats.wikipedia_sidecars:,} Wikipedia and {stats.wikivoyage_sidecars:,} Wikivoyage sidecars.",
+            f"Eligible text units: {stats.eligible_units:,}; units split because language is supported: {stats.supported_units:,}; units left unsplit because language is unsupported: {stats.unsupported_units:,}.",
+            f"Supported-language coverage: {supported_percentage:.1%}; unsupported-language share: {unsupported_percentage:.1%}.",
+            f"Top unsupported languages by count: {top_languages}.",
         )
     return (
         *lines,

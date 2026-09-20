@@ -376,6 +376,10 @@ def build_minimal_v1_release_snapshot(
         languages=languages,
         regions=core_stats.region_count,
         total_parquet_bytes=augmentation_stats.total_parquet_bytes,
+        document_words=(
+            augmentation_stats.wikipedia_documents.total_words
+            + augmentation_stats.wikivoyage_documents.total_words
+        ),
         continent_rows=rows,
         generated_on=generated_on,
         viewer_url=f"https://huggingface.co/datasets/{repo_id}/viewer",

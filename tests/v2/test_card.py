@@ -181,6 +181,10 @@ def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path)
     assert stats.sentence_stats.total_rows == 4
     assert stats.sentence_stats.split_rows == 3
     assert stats.sentence_stats.unsupported_rows == 1
+    assert stats.sentence_stats.eligible_units == 3
+    assert stats.sentence_stats.supported_units == 2
+    assert stats.sentence_stats.unsupported_units == 1
+    assert stats.sentence_stats.top_unsupported_languages == (("xx", 1),)
     assert stats.sentence_stats.polygon_count == 3
     assert stats.non_empty_text_polygons == 2
 
@@ -196,6 +200,9 @@ def test_card_reports_sentence_and_overall_text_counts_from_data(tmp_path: Path)
         )
         in card_text
     )
+    assert "Eligible text units: 3" in card_text
+    assert "Supported-language coverage: 66.7%" in card_text
+    assert "Top unsupported languages by count: `xx` (1)" in card_text
 
 
 def test_sentence_manifest_totals_preserve_validation_and_counting() -> None:
