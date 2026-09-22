@@ -125,27 +125,17 @@ def test_language_card_merge_is_idempotent_at_section_boundary() -> None:
 
 
 @pytest.mark.parametrize(
-    (
-        "version",
-        "configuration",
-        "expected_path",
-        "expected_splits",
-        "expected_card_splits",
-    ),
+    ("version", "configuration", "expected_path"),
     [
         (
             LanguageSplitVersion.V1,
             "polygon_articles_by_language",
             "data/polygon_articles_by_language/lang-en-00000-of-00001.parquet",
-            ("lang-en", "lang-unknown"),
-            ("lang-<language>", "lang-unknown"),
         ),
         (
             LanguageSplitVersion.V2,
             "wikipedia_documents_by_language",
             "language_splits/wikipedia_documents_by_language/lang-en/part-*.parquet",
-            ("lang_en", "lang_unknown"),
-            ("lang_<language>", "lang_unknown"),
         ),
     ],
 )
@@ -153,8 +143,6 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     version: LanguageSplitVersion,
     configuration: str,
     expected_path: str,
-    expected_splits: tuple[str, str],
-    expected_card_splits: tuple[str, str],
 ) -> None:
     existing = (
         "---\n"
@@ -181,15 +169,29 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     configs = {config["config_name"]: config for config in payload["configs"]}
 
     assert "polygons" in configs
-    language_config = configs[configuration]
-    assert language_config["data_files"] == [
-        {"split": expected_splits[0], "path": expected_path},
-        {
-            "split": expected_splits[1],
-            "path": expected_path.replace("lang-en", "lang-unknown"),
-        },
-    ]
-    assert f"`{expected_card_splits[0]}` and `{expected_card_splits[1]}`" in merged
+    if version is LanguageSplitVersion.V1:
+        assert configs[configuration]["data_files"] == [
+            {"split": "lang-en", "path": expected_path},
+            {
+                "split": "lang-unknown",
+                "path": expected_path.replace("lang-en", "lang-unknown"),
+            },
+        ]
+        assert "`lang-<language>` and `lang-unknown`" in merged
+    else:
+        assert configs[configuration + "__lang_en"]["data_files"] == [
+            {"split": "train", "path": expected_path}
+        ]
+        assert configs[configuration + "__lang_unknown"]["data_files"] == [
+            {
+                "split": "train",
+                "path": expected_path.replace("lang-en", "lang-unknown"),
+            }
+        ]
+        assert (
+            f"`{configuration}__lang_<language>` (split `train`) and "
+            f"`{configuration}__lang_unknown` (split `train`)"
+        ) in merged
     assert (
         _merge_language_card(
             merged,
@@ -202,7 +204,7 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     )
 
 
-def test_v2_viewer_split_names_sanitize_language_code_dashes() -> None:
+def test_v2_viewer_config_names_sanitize_language_code_dashes() -> None:
     existing = (
         "---\n"
         "configs:\n"
@@ -222,20 +224,57 @@ def test_v2_viewer_split_names_sanitize_language_code_dashes() -> None:
         configuration_languages=(("wikipedia_documents_by_language", ("be-tarask", "unknown")),),
     )
     payload = yaml.safe_load(merged.split("---", 2)[1])
-    language_config = {config["config_name"]: config for config in payload["configs"]}[
-        "wikipedia_documents_by_language"
+    configs = {config["config_name"]: config for config in payload["configs"]}
+
+    assert configs["wikipedia_documents_by_language__lang_be_tarask"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-*.parquet",
+        }
+    ]
+    assert configs["wikipedia_documents_by_language__lang_unknown"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
+        }
     ]
 
-    assert language_config["data_files"] == [
+
+def test_v2_viewer_uses_one_config_per_language_to_avoid_split_limit() -> None:
+    existing = (
+        "---\n"
+        "configs:\n"
+        "  - config_name: polygons\n"
+        "    data_files:\n"
+        "      - split: polygons\n"
+        "        path: polygons/*.parquet\n"
+        "---\n"
+        "# Existing card\n"
+    )
+
+    merged = _merge_language_card(
+        existing,
+        version=LanguageSplitVersion.V2,
+        configurations=("wikipedia_documents_by_language",),
+        languages=("be-tarask", "unknown"),
+        configuration_languages=(("wikipedia_documents_by_language", ("be-tarask", "unknown")),),
+    )
+    payload = yaml.safe_load(merged.split("---", 2)[1])
+    configs = {config["config_name"]: config for config in payload["configs"]}
+
+    assert configs["wikipedia_documents_by_language__lang_be_tarask"]["data_files"] == [
         {
-            "split": "lang_be_tarask",
+            "split": "train",
             "path": "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-*.parquet",
-        },
-        {
-            "split": "lang_unknown",
-            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
-        },
+        }
     ]
+    assert configs["wikipedia_documents_by_language__lang_unknown"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
+        }
+    ]
+    assert "wikipedia_documents_by_language" not in configs
 
 
 def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:
@@ -880,5 +919,6 @@ def test_v2_publication_uses_one_commit_and_second_run_is_noop_for_multipart_lan
         in hub.commits[0]["paths"]
     )
     remote_card = hub.remote_content["README.md"].decode()
-    assert "split: lang_be_tarask" in remote_card
+    assert "config_name: wikipedia_documents_by_language__lang_be_tarask" in remote_card
+    assert "split: train" in remote_card
     assert "lang-be-tarask/part-*.parquet" in remote_card

@@ -33,22 +33,23 @@ inventory order; no rows are deduplicated or dropped.
 ## Dataset Viewer contract
 
 The dataset-card YAML front matter is the Viewer configuration contract. For
-each language-bearing table, the release will add a distinct
-`<configuration>_by_language` config and one `data_files` entry per non-empty
-language split, including the unknown partition when present:
+each language-bearing table, the release will add these declarations, including
+the unknown partition when present:
 
-- V1: Viewer split `lang-<language>`, stored at
+- V1: one `<configuration>_by_language` config with Viewer split
+  `lang-<language>`, stored at
   `data/<configuration>/lang-<language>-00000-of-00001.parquet`
-- V2: Viewer split `lang_<language>` with dashes in the language code replaced
-  by underscores, stored at
+- V2: one `<configuration>__lang_<language>` config per language with one
+  Viewer `train` split, with dashes in the language code replaced by
+  underscores in the config name, stored at
   `language_splits/<configuration>/lang-<language>/*.parquet`
 
 The existing default configurations and all unrelated front matter remain
 unchanged. The managed language-config block is replaced deterministically on
-reruns, so both cards expose language values as Viewer-selectable splits and
+reruns, so both cards expose language values as Viewer-selectable subsets and
 the update is idempotent. The release acceptance check calls the Dataset
 Viewer `/splits` and `/first-rows` APIs at the final revision for representative
-language splits in both datasets.
+language configurations and their `train` splits in both datasets.
 
 ## Atomicity and publication
 

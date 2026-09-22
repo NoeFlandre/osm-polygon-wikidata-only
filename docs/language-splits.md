@@ -32,10 +32,12 @@ fingerprints, expected files, row counts, and generated manifest paths. The
 command streams source Parquet batches, preserves row-level language
 semantics, maps unusable language values to the accepted `unknown` bucket,
 and uses Hugging Face-compatible names such as `lang-be-tarask`. Both
-published dataset cards declare one additive Hugging Face Dataset Viewer
-configuration per language-bearing table. V1 uses `lang-<language>` split
-names; V2 uses `lang_<language>` split names with language-code dashes replaced
-by underscores, while the V2 storage directories retain `lang-<language>`.
+published dataset cards declare additive Hugging Face Dataset Viewer language
+selections. V1 uses one configuration per language-bearing table with
+`lang-<language>` split names. V2 uses one configuration per table/language
+pair, named `<configuration>__lang_<language>` with language-code dashes
+replaced by underscores, and one `train` split; its storage directories retain
+`lang-<language>`.
 
 The plain `language-splits` command is local generation only. It does not read
 raw PBF files, sample or truncate rows, upload to Hugging Face, or modify
@@ -63,7 +65,8 @@ exact confirmations for `both`. V1 publishes
 `data/<configuration>/lang-<language>-00000-of-00001.parquet` files; V2
 publishes deterministic bounded
 `language_splits/<configuration>/lang-<language>/part-*.parquet` shards. The
-V2 Viewer split names use the underscore form described above. The generated
+V2 Viewer configuration names use the form described above and expose the
+single `train` split. The generated
 manifests remain under `manifests/` and are the ownership record
 used to remove only obsolete generated shards on later releases.
 

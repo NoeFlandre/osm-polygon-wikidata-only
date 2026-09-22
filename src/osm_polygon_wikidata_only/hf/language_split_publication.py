@@ -881,23 +881,30 @@ def _render_language_front_matter_block(
 ) -> str:
     lines = [_LANGUAGE_CONFIG_BEGIN]
     for configuration, languages in sorted(configuration_languages, key=lambda item: item[0]):
-        lines.append(f"  - config_name: {configuration}")
-        lines.append("    data_files:")
-        for language in sorted(set(languages), key=_language_sort_key):
-            storage_split = f"lang-{language}"
-            split = (
-                storage_split
-                if version is LanguageSplitVersion.V1
-                else f"lang_{language.replace('-', '_')}"
-            )
-            if version is LanguageSplitVersion.V1:
+        sorted_languages = sorted(set(languages), key=_language_sort_key)
+        if version is LanguageSplitVersion.V1:
+            lines.append(f"  - config_name: {configuration}")
+            lines.append("    data_files:")
+            for language in sorted_languages:
+                storage_split = f"lang-{language}"
                 path = f"data/{configuration}/{storage_split}-00000-of-00001.parquet"
-            else:
-                path = f"language_splits/{configuration}/{storage_split}/part-*.parquet"
-            lines.append(f"      - split: {split}")
+                lines.append(f"      - split: {storage_split}")
+                lines.append(f"        path: {path}")
+            continue
+        for language in sorted_languages:
+            storage_split = f"lang-{language}"
+            lines.append(f"  - config_name: {_v2_language_config_name(configuration, language)}")
+            lines.append("    data_files:")
+            path = f"language_splits/{configuration}/{storage_split}/part-*.parquet"
+            lines.append("      - split: train")
             lines.append(f"        path: {path}")
     lines.append(_LANGUAGE_CONFIG_END)
     return "\n".join(lines) + "\n"
+
+
+def _v2_language_config_name(configuration: str, language: str) -> str:
+    """Return a Viewer subset name for one V2 table/language pair."""
+    return f"{configuration}__lang_{language.replace('-', '_')}"
 
 
 def _render_language_card_section(
@@ -924,8 +931,8 @@ def _render_language_card_section(
             unknown_label = "`lang-unknown`"
             path = f"data/{configuration}/lang-<language>-00000-of-00001.parquet"
         else:
-            split_label = "`lang_<language>`"
-            unknown_label = "`lang_unknown`"
+            split_label = f"`{configuration}__lang_<language>` (split `train`)"
+            unknown_label = f"`{configuration}__lang_unknown` (split `train`)"
             path = f"language_splits/{configuration}/lang-<language>/part-*.parquet"
         lines.append(f"| `{configuration}` | {split_label} and {unknown_label} | `{path}` |")
     lines.extend(
