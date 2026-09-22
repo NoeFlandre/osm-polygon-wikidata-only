@@ -884,11 +884,16 @@ def _render_language_front_matter_block(
         lines.append(f"  - config_name: {configuration}")
         lines.append("    data_files:")
         for language in sorted(set(languages), key=_language_sort_key):
-            split = f"lang-{language}"
+            storage_split = f"lang-{language}"
+            split = (
+                storage_split
+                if version is LanguageSplitVersion.V1
+                else f"lang_{language.replace('-', '_')}"
+            )
             if version is LanguageSplitVersion.V1:
-                path = f"data/{configuration}/{split}-00000-of-00001.parquet"
+                path = f"data/{configuration}/{storage_split}-00000-of-00001.parquet"
             else:
-                path = f"language_splits/{configuration}/{split}/part-*.parquet"
+                path = f"language_splits/{configuration}/{storage_split}/part-*.parquet"
             lines.append(f"      - split: {split}")
             lines.append(f"        path: {path}")
     lines.append(_LANGUAGE_CONFIG_END)
@@ -915,10 +920,14 @@ def _render_language_card_section(
     ]
     for configuration in sorted(configurations):
         if version is LanguageSplitVersion.V1:
+            split_label = "`lang-<language>`"
+            unknown_label = "`lang-unknown`"
             path = f"data/{configuration}/lang-<language>-00000-of-00001.parquet"
         else:
+            split_label = "`lang_<language>`"
+            unknown_label = "`lang_unknown`"
             path = f"language_splits/{configuration}/lang-<language>/part-*.parquet"
-        lines.append(f"| `{configuration}` | `lang-<language>` and `lang-unknown` | `{path}` |")
+        lines.append(f"| `{configuration}` | {split_label} and {unknown_label} | `{path}` |")
     lines.extend(
         [
             "",

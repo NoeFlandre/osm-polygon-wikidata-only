@@ -37,8 +37,11 @@ each language-bearing table, the release will add a distinct
 `<configuration>_by_language` config and one `data_files` entry per non-empty
 language split, including `lang-unknown` when present:
 
-- V1: `data/<configuration>/lang-<language>-00000-of-00001.parquet`
-- V2: `language_splits/<configuration>/lang-<language>/*.parquet`
+- V1: Viewer split `lang-<language>`, stored at
+  `data/<configuration>/lang-<language>-00000-of-00001.parquet`
+- V2: Viewer split `lang_<language>` with dashes in the language code replaced
+  by underscores, stored at
+  `language_splits/<configuration>/lang-<language>/*.parquet`
 
 The existing default configurations and all unrelated front matter remain
 unchanged. The managed language-config block is replaced deterministically on

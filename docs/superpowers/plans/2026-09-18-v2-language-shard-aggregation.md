@@ -37,7 +37,7 @@ Assert that `_expected_v2_files` derives shard paths from inventory row counts w
 
 - [ ] **Step 4: Add failing Dataset Viewer front-matter assertions.**
 
-Parse the managed card YAML and assert that each language-bearing configuration has a `<configuration>_by_language` entry, each non-empty language has a `split: lang-<language>` entry, V1 uses exact files, and V2 uses the aggregated `part-*.parquet` glob.
+Parse the managed card YAML and assert that each language-bearing configuration has a `<configuration>_by_language` entry, each non-empty language has a V1 `split: lang-<language>` or V2 `split: lang_<language>` entry with language-code dashes replaced by underscores, V1 uses exact files, and V2 uses the aggregated `part-*.parquet` glob.
 
 - [ ] **Step 5: Run the focused tests to confirm RED.**
 
@@ -117,7 +117,7 @@ Render V2 examples using `language_splits/<configuration>/lang-<language>/part-*
 
 - [ ] **Step 4: Add deterministic Viewer config declarations to both cards.**
 
-Carry a sorted mapping of each language-bearing configuration to its non-empty language buckets in `LanguagePublicationPlan`. Replace a marked YAML front-matter block while preserving all existing fields. Emit one config per language-bearing table and one split/path entry per language; use exact V1 paths and V2 shard globs. Include `lang-unknown` and preserve unrelated configs.
+Carry a sorted mapping of each language-bearing configuration to its non-empty language buckets in `LanguagePublicationPlan`. Replace a marked YAML front-matter block while preserving all existing fields. Emit one config per language-bearing table and one split/path entry per language; use exact V1 paths and V2 shard globs. Keep V1 Viewer split names as `lang-<language>`. For V2, replace dashes in the language code with underscores for the Viewer split name (`lang_<language>`), while retaining `lang-<language>` in the storage path. Include the unknown partition and preserve unrelated configs.
 
 - [ ] **Step 5: Update publication tests.**
 
@@ -141,7 +141,7 @@ Expected: focused release tests pass and the V2 plan contains fewer than 25,000 
 
 - [ ] **Step 1: Document the V2 shard layout and contract version.**
 
-Explain that both dataset cards declare language configs and Viewer-selectable `lang-*` splits. Explain that V2 uses deterministic `part-*` Parquet shards, preserves row-level language semantics and source provenance, and remains one atomic Hub commit. Remove the statement that V2 is currently impossible while retaining the 25,000-file safety refusal.
+Explain that both dataset cards declare language configs and Viewer-selectable language splits: V1 uses `lang-*`, while V2 uses underscore-safe `lang_*` names and retains dash-based storage directories. Explain that V2 uses deterministic `part-*` Parquet shards, preserves row-level language semantics and source provenance, and remains one atomic Hub commit. Remove the statement that V2 is currently impossible while retaining the 25,000-file safety refusal.
 
 - [ ] **Step 2: Run focused and static checks.**
 

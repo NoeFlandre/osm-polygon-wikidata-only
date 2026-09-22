@@ -125,17 +125,27 @@ def test_language_card_merge_is_idempotent_at_section_boundary() -> None:
 
 
 @pytest.mark.parametrize(
-    ("version", "configuration", "expected_path"),
+    (
+        "version",
+        "configuration",
+        "expected_path",
+        "expected_splits",
+        "expected_card_splits",
+    ),
     [
         (
             LanguageSplitVersion.V1,
             "polygon_articles_by_language",
             "data/polygon_articles_by_language/lang-en-00000-of-00001.parquet",
+            ("lang-en", "lang-unknown"),
+            ("lang-<language>", "lang-unknown"),
         ),
         (
             LanguageSplitVersion.V2,
             "wikipedia_documents_by_language",
             "language_splits/wikipedia_documents_by_language/lang-en/part-*.parquet",
+            ("lang_en", "lang_unknown"),
+            ("lang_<language>", "lang_unknown"),
         ),
     ],
 )
@@ -143,6 +153,8 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     version: LanguageSplitVersion,
     configuration: str,
     expected_path: str,
+    expected_splits: tuple[str, str],
+    expected_card_splits: tuple[str, str],
 ) -> None:
     existing = (
         "---\n"
@@ -171,12 +183,13 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     assert "polygons" in configs
     language_config = configs[configuration]
     assert language_config["data_files"] == [
-        {"split": "lang-en", "path": expected_path},
+        {"split": expected_splits[0], "path": expected_path},
         {
-            "split": "lang-unknown",
+            "split": expected_splits[1],
             "path": expected_path.replace("lang-en", "lang-unknown"),
         },
     ]
+    assert f"`{expected_card_splits[0]}` and `{expected_card_splits[1]}`" in merged
     assert (
         _merge_language_card(
             merged,
@@ -187,6 +200,42 @@ def test_language_card_declares_viewer_language_configs_and_splits(
         )
         == merged
     )
+
+
+def test_v2_viewer_split_names_sanitize_language_code_dashes() -> None:
+    existing = (
+        "---\n"
+        "configs:\n"
+        "  - config_name: polygons\n"
+        "    data_files:\n"
+        "      - split: polygons\n"
+        "        path: polygons/*.parquet\n"
+        "---\n"
+        "# Existing card\n"
+    )
+
+    merged = _merge_language_card(
+        existing,
+        version=LanguageSplitVersion.V2,
+        configurations=("wikipedia_documents_by_language",),
+        languages=("be-tarask", "unknown"),
+        configuration_languages=(("wikipedia_documents_by_language", ("be-tarask", "unknown")),),
+    )
+    payload = yaml.safe_load(merged.split("---", 2)[1])
+    language_config = {config["config_name"]: config for config in payload["configs"]}[
+        "wikipedia_documents_by_language"
+    ]
+
+    assert language_config["data_files"] == [
+        {
+            "split": "lang_be_tarask",
+            "path": "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-*.parquet",
+        },
+        {
+            "split": "lang_unknown",
+            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
+        },
+    ]
 
 
 def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:
