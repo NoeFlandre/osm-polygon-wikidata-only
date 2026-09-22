@@ -31,11 +31,14 @@ and legacy-unusable values (including the observed V1 project labels
 they are never dropped or converted to a guessed language.
 
 Each language-bearing table gets an additive Hugging Face configuration named
-`<table>_by_language`. Its splits are `lang-<canonical-language>`, including
-`lang-unknown`. The `lang-` prefix keeps split names unambiguous and avoids
-reserved generic names such as `train`, `test`, and `validation`. The V1
-default configurations and paths remain unchanged. The V2 configurations are
-separate because its repository, root, schemas, and link table are separate.
+`<table>_by_language`. V1 splits are `lang-<canonical-language>`, including
+`lang-unknown`. V2 Viewer splits are `lang_<canonical-language>` with dashes in
+the language code replaced by underscores, including `lang_unknown`; V2 storage
+directories retain the canonical `lang-<language>` form. These prefixes keep
+split names unambiguous and avoid reserved generic names such as `train`,
+`test`, and `validation`. The V1 default configurations and paths remain
+unchanged. The V2 configurations are separate because its repository, root,
+schemas, and link table are separate.
 
 The inventory is computed from schema-validated Parquet artifacts and the
 corresponding contract manifest. It records the dataset contract, source
@@ -72,7 +75,7 @@ contract:
 french_v2_links = load_dataset(
     "NoeFlandre/osm-polygon-wikidata-and-wikipedia",
     name="polygon_document_links_by_language",
-    split="lang-fr",
+    split="lang_fr",
 )
 ```
 

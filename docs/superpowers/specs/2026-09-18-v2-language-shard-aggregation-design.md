@@ -35,7 +35,7 @@ inventory order; no rows are deduplicated or dropped.
 The dataset-card YAML front matter is the Viewer configuration contract. For
 each language-bearing table, the release will add a distinct
 `<configuration>_by_language` config and one `data_files` entry per non-empty
-language split, including `lang-unknown` when present:
+language split, including the unknown partition when present:
 
 - V1: Viewer split `lang-<language>`, stored at
   `data/<configuration>/lang-<language>-00000-of-00001.parquet`

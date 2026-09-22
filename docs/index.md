@@ -114,10 +114,12 @@ retained in both relevant partitions without collapsing them by OSM identity.
 | V2 `NoeFlandre/osm-polygon-wikidata-and-wikipedia` | `polygon_document_links`, Wikipedia documents/sections | `polygons` |
 
 Each language-bearing table uses an additive `<table>_by_language`
-configuration and a `lang-<language>` split. Missing, blank, malformed, and
-legacy-unusable values go to `lang-unknown` with reason counts; no row is
-dropped. The two inventories are generated independently from their
-schema-validated artifacts and manifests.
+configuration. V1 uses `lang-<language>` Viewer splits; V2 uses
+`lang_<language>` with language-code dashes replaced by underscores, while its
+storage directories retain `lang-<language>`. Missing, blank, malformed, and
+legacy-unusable values go to the corresponding `unknown` split with reason
+counts; no row is dropped. The two inventories are generated independently
+from their schema-validated artifacts and manifests.
 
 For example, load only French V1 Wikipedia documents with:
 
@@ -145,6 +147,9 @@ The generated dataset card describes the columns and reports statistics derived
 from the finalized tables. Attribution and source licenses remain part of the
 published contract; see the [README](https://github.com/NoeFlandre/osm-polygon-wikidata-only#licensing-and-attribution)
 for details.
+
+V2 Viewer selections use names such as `lang_fr` (the stored path remains
+`language_splits/<configuration>/lang-fr/`).
 
 Optional V2 sentence sidecars use only `segment-any-text/sat-3l-sm` for the
 exact supported language-code set. Other language codes stay as one unsplit
