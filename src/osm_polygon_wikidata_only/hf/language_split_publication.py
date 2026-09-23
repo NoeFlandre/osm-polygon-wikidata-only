@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf._uploader.operations import build_hf_api as _build_hf_api
@@ -21,7 +21,9 @@ from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, d
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.token import resolve_hf_token
 from osm_polygon_wikidata_only.hf.language_split_release import (
+    LanguageSplitReleaseResult,
     LanguageSplitVersion,
+    LanguageSplitVersionPlan,
     plan_language_split_release,
     run_language_split_release,
 )
@@ -29,6 +31,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     DATASET_V1_ID,
     DATASET_V2_ID,
     DatasetContract,
+    LanguageInventory,
 )
 from osm_polygon_wikidata_only.hf.uploader import upload_files
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
@@ -39,6 +42,20 @@ from osm_polygon_wikidata_only.io.hashing import (
 )
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
+
+if TYPE_CHECKING:
+    # Type-only: the release module keeps the per-version generators lazy.
+    from osm_polygon_wikidata_only.hf.v1_language_splits import (
+        V1LanguageSplitRelease,
+        V1PartitionFile,
+    )
+    from osm_polygon_wikidata_only.v2.language_splits import (
+        V2LanguageSplitFile,
+        V2LanguageSplitResult,
+    )
+
+    _GeneratedRelease = V1LanguageSplitRelease | V2LanguageSplitResult
+    _GeneratedFile = V1PartitionFile | V2LanguageSplitFile
 
 LANGUAGE_PUBLICATION_COMMIT_MESSAGE = "Publish row-level language partitions"
 V1_LANGUAGE_MANIFEST_REMOTE = "manifests/language_splits_v1.json"
@@ -284,7 +301,7 @@ def _plan_only_publication(
 
 def _publish_generated_versions(
     data_root: Path,
-    generated: Any,
+    generated: LanguageSplitReleaseResult,
     *,
     hub: HfHub,
     token: str | None,
@@ -305,8 +322,8 @@ def _publish_generated_versions(
 
 def _publish_one_version(
     data_root: Path,
-    version_plan: Any,
-    generated: Any,
+    version_plan: LanguageSplitVersionPlan,
+    generated: _GeneratedRelease,
     *,
     hub: HfHub,
     token: str | None,
@@ -489,7 +506,7 @@ def _record_no_op(
     return report
 
 
-def _plan_from_version_plan(version_plan: Any) -> LanguagePublicationPlan:
+def _plan_from_version_plan(version_plan: LanguageSplitVersionPlan) -> LanguagePublicationPlan:
     """Map the validated local plan to remote paths before generation."""
     records = version_plan.to_dict(version_plan.processed_root.parent)["expected_files"]
     files = tuple(
@@ -522,7 +539,9 @@ def _plan_from_version_plan(version_plan: Any) -> LanguagePublicationPlan:
     )
 
 
-def _configuration_languages(inventory: Any) -> tuple[tuple[str, tuple[str, ...]], ...]:
+def _configuration_languages(
+    inventory: LanguageInventory,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """Return non-empty language buckets grouped by Viewer configuration."""
     grouped: list[tuple[str, tuple[str, ...]]] = []
     for table in getattr(inventory, "tables", ()):
@@ -542,7 +561,9 @@ def _language_sort_key(language: str) -> tuple[bool, str]:
     return language == "unknown", language
 
 
-def _plan_from_generated(version_plan: Any, generated: Any) -> LanguagePublicationPlan:
+def _plan_from_generated(
+    version_plan: LanguageSplitVersionPlan, generated: _GeneratedRelease
+) -> LanguagePublicationPlan:
     """Build a complete hashed plan from generated local files."""
     contract = _contract_for_version(version_plan.version)
     files = tuple(
@@ -577,7 +598,9 @@ def _plan_from_generated(version_plan: Any, generated: Any) -> LanguagePublicati
     )
 
 
-def _generated_local_path(version_plan: Any, generated_file: Any) -> Path:
+def _generated_local_path(
+    version_plan: LanguageSplitVersionPlan, generated_file: _GeneratedFile
+) -> Path:
     path = Path(generated_file.path)
     return (
         path
@@ -681,12 +704,11 @@ def _remote_entries(
 ) -> dict[str, Any]:
     wanted = sorted(set(paths))
     result: dict[str, Any] = {}
-    get_paths_info = _path_info_reader(hub, revision)
     for start in range(0, len(wanted), 256):
         chunk = wanted[start : start + 256]
         _read_remote_entries(
             result,
-            get_paths_info,
+            hub,
             repo_id=repo_id,
             paths=chunk,
             revision=revision,
@@ -694,25 +716,16 @@ def _remote_entries(
     return result
 
 
-def _path_info_reader(hub: HfHub, revision: str) -> Any:
-    reader = getattr(cast(Any, hub), "get_paths_info", None)
-    if not callable(reader):
-        raise LanguagePublicationError(
-            f"remote client cannot read paths at immutable revision {revision}"
-        )
-    return reader
-
-
 def _read_remote_entries(
     result: dict[str, Any],
-    get_paths_info: Any,
+    hub: HfHub,
     *,
     repo_id: str,
     paths: list[str],
     revision: str,
 ) -> None:
     try:
-        entries = get_paths_info(
+        entries = hub.get_paths_info(
             repo_id=repo_id,
             paths=paths,
             revision=revision,

@@ -670,7 +670,7 @@ def test_remote_entries_rejects_clients_without_path_reads() -> None:
     class NoPathInfoHub:
         pass
 
-    with pytest.raises(LanguagePublicationError, match="remote client cannot read paths"):
+    with pytest.raises(LanguagePublicationError, match="could not read remote paths"):
         _remote_entries(NoPathInfoHub(), V1_REPO, ("README.md",), revision="immutable-rev")
 
 
