@@ -31,11 +31,12 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
 from osm_polygon_wikidata_only.hf._polygon_geometry.validation import PolygonStatsInputError
+from osm_polygon_wikidata_only.hf._publication.hub_snapshot import read_repo_sha
+from osm_polygon_wikidata_only.hf._publication.language_card import LANGUAGE_CARD_HEADING
 from osm_polygon_wikidata_only.hf._uploader.operations import build_hf_api as _build_hf_api
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.token import resolve_hf_token
-from osm_polygon_wikidata_only.hf.language_split_publication import LANGUAGE_CARD_HEADING
 from osm_polygon_wikidata_only.hf.polygon_geometry_stats import (
     load_polygon_geometry_stats,
     stats_payload,
@@ -165,10 +166,6 @@ class _RemoteState:
     contents: dict[str, bytes]
 
 
-def _sha256(path: Path) -> str:
-    return sha256_file(path)
-
-
 def _write_text_if_changed(path: Path, text: str) -> None:
     if path.is_file() and path.read_text(encoding="utf-8") == text:
         return
@@ -191,7 +188,7 @@ def _stage_report(
 def _released_file(path: Path, path_in_repo: str) -> ReleasedFile:
     return ReleasedFile(
         path_in_repo=path_in_repo,
-        sha256=_sha256(path),
+        sha256=sha256_file(path),
         size_bytes=path.stat().st_size,
     )
 
@@ -360,7 +357,7 @@ def _inventory_row(
     return relative_path, {
         "path": relative_path,
         "row_count": actual_rows,
-        "sha256": _sha256(path),
+        "sha256": sha256_file(path),
         "size_bytes": path.stat().st_size,
         "source_pbf": source_pbf,
     }
@@ -508,8 +505,7 @@ def _remote_revision(client: Any, repo_id: str) -> str | None:
     repo_info = getattr(client, "repo_info", None)
     if not callable(repo_info):
         return None
-    info = repo_info(repo_id, repo_type="dataset")
-    revision = getattr(info, "sha", None)
+    revision = read_repo_sha(client, repo_id)
     return str(revision) if revision else None
 
 
@@ -740,7 +736,7 @@ def _verify_remote_hash(
         revision,
         cache_dir=cache_dir,
     )
-    if _sha256(local_path) != item.sha256:
+    if sha256_file(local_path) != item.sha256:
         raise StatsReleaseError(f"remote SHA-256 mismatch for {item.path_in_repo}")
 
 

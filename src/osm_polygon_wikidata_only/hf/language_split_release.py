@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf._publication.data_root import resolve_data_root
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
     LanguageInventory,
@@ -126,7 +127,7 @@ def plan_language_split_release(
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> LanguageSplitReleasePlan:
     """Validate selected inventories and return a no-write release plan."""
-    root = _resolve_data_root(data_root)
+    root = resolve_data_root(data_root, LanguageSplitReleaseError, label="Data root")
     _validate_batch_size(batch_size)
     versions = _selected_versions(dataset_version)
     release_plans = tuple(_plan_version(root, version) for version in versions)
@@ -158,14 +159,6 @@ def run_language_split_release(
         _generate_version(release, batch_size=plan.batch_size) for release in plan.releases
     )
     return LanguageSplitReleaseResult(plan=plan, dry_run=False, generated=generated)
-
-
-def _resolve_data_root(data_root: DataRoot | Path) -> Path:
-    root = data_root.path if isinstance(data_root, DataRoot) else Path(data_root)
-    root = root.resolve()
-    if not root.is_dir():
-        raise LanguageSplitReleaseError(f"Data root is not a directory: {root}")
-    return root
 
 
 def _validate_batch_size(batch_size: int) -> None:

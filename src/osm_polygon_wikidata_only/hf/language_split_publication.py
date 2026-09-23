@@ -9,13 +9,22 @@ card, and submits one atomic Hub commit per dataset.
 from __future__ import annotations
 
 import hashlib
-import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf._publication.data_root import resolve_data_root
+from osm_polygon_wikidata_only.hf._publication.hub_snapshot import read_repo_sha
+from osm_polygon_wikidata_only.hf._publication.language_card import LANGUAGE_CARD_HEADING
+from osm_polygon_wikidata_only.hf._publication.language_card import (
+    language_sort_key as _language_sort_key,
+)
+from osm_polygon_wikidata_only.hf._publication.language_card import (
+    merge_language_card as _merge_language_card,
+)
+from osm_polygon_wikidata_only.hf._publication.language_errors import LanguagePublicationError
 from osm_polygon_wikidata_only.hf._uploader.operations import build_hf_api as _build_hf_api
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
@@ -60,16 +69,9 @@ if TYPE_CHECKING:
 LANGUAGE_PUBLICATION_COMMIT_MESSAGE = "Publish row-level language partitions"
 V1_LANGUAGE_MANIFEST_REMOTE = "manifests/language_splits_v1.json"
 V2_LANGUAGE_MANIFEST_REMOTE = "manifests/language_splits.json"
-LANGUAGE_CARD_HEADING = "## Language partitions"
-_LANGUAGE_CONFIG_BEGIN = "  # BEGIN LANGUAGE SPLIT CONFIGS"
-_LANGUAGE_CONFIG_END = "  # END LANGUAGE SPLIT CONFIGS"
 _REMOTE_README = "README.md"
 _REMOTE_CACHE_DIR = "language_split_publication"
 MAX_ATOMIC_PUBLICATION_FILES = 25_000
-
-
-class LanguagePublicationError(RuntimeError):
-    """Raised when a language publication cannot be completed safely."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +192,7 @@ def plan_language_split_publication(
     confirm_repos: Sequence[str] = (),
 ) -> tuple[LanguagePublicationPlan, ...]:
     """Validate source inventories and return a no-write publication plan."""
-    root = _resolve_data_root(data_root)
+    root = resolve_data_root(data_root, LanguagePublicationError)
     # Digests of unchanged artifacts survive between runs, so a repeated
     # release does not re-read the whole corpus just to re-derive them.
     enable_hash_cache(root / "cache" / "hash_cache")
@@ -221,7 +223,7 @@ def run_language_split_publication(
     commit to its exact dataset, and performs a revision-bound remote check.
     Repeating the run with unchanged local inputs produces no second commit.
     """
-    root = _resolve_data_root(data_root)
+    root = resolve_data_root(data_root, LanguagePublicationError)
     versions = _selected_versions(dataset_version)
     _validate_confirmations(versions, confirm_repos)
     if dry_run or not apply:
@@ -557,10 +559,6 @@ def _configuration_languages(
     return tuple(sorted(grouped, key=lambda item: item[0]))
 
 
-def _language_sort_key(language: str) -> tuple[bool, str]:
-    return language == "unknown", language
-
-
 def _plan_from_generated(
     version_plan: LanguageSplitVersionPlan, generated: _GeneratedRelease
 ) -> LanguagePublicationPlan:
@@ -752,12 +750,11 @@ def _remote_files(hub: HfHub, repo_id: str, *, revision: str) -> set[str]:
 
 def _remote_revision(hub: HfHub, repo_id: str) -> str:
     try:
-        info = hub.repo_info(repo_id, repo_type="dataset")
+        revision = read_repo_sha(hub, repo_id)
     except Exception as error:
         raise LanguagePublicationError(
             f"could not read remote revision for {repo_id}: {error}"
         ) from error
-    revision = getattr(info, "sha", None)
     if not isinstance(revision, str) or not revision:
         raise LanguagePublicationError(
             f"remote revision unavailable for {repo_id}; refusing an unpinned publication"
@@ -849,143 +846,6 @@ def _write_card_snapshot(data_root: Path, plan: LanguagePublicationPlan, existin
     )
     atomic_write_text(path, updated)
     return path
-
-
-def _merge_language_card(
-    existing: str,
-    *,
-    version: LanguageSplitVersion,
-    configurations: Sequence[str],
-    languages: Sequence[str],
-    configuration_languages: Sequence[tuple[str, Sequence[str]]] = (),
-) -> str:
-    """Replace only the managed language section and preserve other card text."""
-    if configuration_languages:
-        existing = _merge_language_front_matter(existing, version, configuration_languages)
-    section = _render_language_card_section(version, configurations, languages)
-    pattern = re.compile(
-        rf"^{re.escape(LANGUAGE_CARD_HEADING)}\n.*?(?=^## |\Z)",
-        re.MULTILINE | re.DOTALL,
-    )
-    match = pattern.search(existing)
-    if match:
-        matched = match.group(0)
-        trailing_newlines = len(matched) - len(matched.rstrip("\n"))
-        separator = "\n" * trailing_newlines
-        replacement = section.rstrip("\n") + separator
-        return existing[: match.start()] + replacement + existing[match.end() :]
-    marker = re.search(r"^## Data sources & licenses\n", existing, re.MULTILINE)
-    if marker:
-        return existing[: marker.start()] + section + "\n" + existing[marker.start() :]
-    return existing.rstrip() + "\n\n" + section
-
-
-def _merge_language_front_matter(
-    existing: str,
-    version: LanguageSplitVersion,
-    configuration_languages: Sequence[tuple[str, Sequence[str]]],
-) -> str:
-    """Replace the managed language config block without reserializing YAML."""
-    if not existing.startswith("---\n"):
-        raise LanguagePublicationError(
-            "dataset card has no YAML front matter; refusing to add Viewer language configs"
-        )
-    closing = existing.find("\n---", 4)
-    if closing < 0:
-        raise LanguagePublicationError(
-            "dataset card YAML front matter is unterminated; refusing to add Viewer language configs"
-        )
-    front_matter = existing[4:closing]
-    block = _render_language_front_matter_block(version, configuration_languages)
-    marker_pattern = re.compile(
-        rf"^{re.escape(_LANGUAGE_CONFIG_BEGIN)}\n.*?^{re.escape(_LANGUAGE_CONFIG_END)}\n?",
-        re.MULTILINE | re.DOTALL,
-    )
-    marked = marker_pattern.search(front_matter)
-    if marked:
-        updated_front_matter = front_matter[: marked.start()] + block + front_matter[marked.end() :]
-    else:
-        configs = re.search(r"^configs:\s*$", front_matter, re.MULTILINE)
-        if configs is None:
-            raise LanguagePublicationError(
-                "dataset card YAML front matter has no configs field; "
-                "refusing to add Viewer language configs"
-            )
-        insertion = configs.end()
-        updated_front_matter = (
-            front_matter[:insertion] + "\n" + block.rstrip("\n") + front_matter[insertion:]
-        )
-    return "---\n" + updated_front_matter + existing[closing:]
-
-
-def _render_language_front_matter_block(
-    version: LanguageSplitVersion,
-    configuration_languages: Sequence[tuple[str, Sequence[str]]],
-) -> str:
-    lines = [_LANGUAGE_CONFIG_BEGIN]
-    for configuration, languages in sorted(configuration_languages, key=lambda item: item[0]):
-        sorted_languages = sorted(set(languages), key=_language_sort_key)
-        if version is LanguageSplitVersion.V1:
-            lines.append(f"  - config_name: {configuration}")
-            lines.append("    data_files:")
-            for language in sorted_languages:
-                storage_split = f"lang-{language}"
-                path = f"data/{configuration}/{storage_split}-00000-of-00001.parquet"
-                lines.append(f"      - split: {storage_split}")
-                lines.append(f"        path: {path}")
-            continue
-        for language in sorted_languages:
-            storage_split = f"lang-{language}"
-            lines.append(f"  - config_name: {_v2_language_config_name(configuration, language)}")
-            lines.append("    data_files:")
-            path = f"language_splits/{configuration}/{storage_split}/part-*.parquet"
-            lines.append("      - split: train")
-            lines.append(f"        path: {path}")
-    lines.append(_LANGUAGE_CONFIG_END)
-    return "\n".join(lines) + "\n"
-
-
-def _v2_language_config_name(configuration: str, language: str) -> str:
-    """Return a Viewer subset name for one V2 table/language pair."""
-    return f"{configuration}__lang_{language.replace('-', '_')}"
-
-
-def _render_language_card_section(
-    version: LanguageSplitVersion,
-    configurations: Sequence[str],
-    languages: Sequence[str],
-) -> str:
-    contract = "V1" if version is LanguageSplitVersion.V1 else "V2"
-    lines = [
-        LANGUAGE_CARD_HEADING,
-        "",
-        f"The {contract} language release is an additive, row-level partition of the published text tables.",
-        "Each source row is routed by its normalized `language` value; multilingual rows are not collapsed to a polygon-level preferred language.",
-        "Missing, blank, malformed, and legacy-unusable values are preserved in the explicit `lang-unknown` partition.",
-        "",
-        f"Validated languages: **{len(languages)}** (including `unknown`).",
-        "",
-        "| Configuration | Split names | Remote path |",
-        "| --- | --- | --- |",
-    ]
-    for configuration in sorted(configurations):
-        if version is LanguageSplitVersion.V1:
-            split_label = "`lang-<language>`"
-            unknown_label = "`lang-unknown`"
-            path = f"data/{configuration}/lang-<language>-00000-of-00001.parquet"
-        else:
-            split_label = f"`{configuration}__lang_<language>` (split `train`)"
-            unknown_label = f"`{configuration}__lang_unknown` (split `train`)"
-            path = f"language_splits/{configuration}/lang-<language>/part-*.parquet"
-        lines.append(f"| `{configuration}` | {split_label} and {unknown_label} | `{path}` |")
-    lines.extend(
-        [
-            "",
-            "The release manifest records the source fingerprint, schema, row counts, and SHA-256 hash for every generated file.",
-            "",
-        ]
-    )
-    return "\n".join(lines)
 
 
 def _manifest_owned_paths(raw: bytes | None, plan: LanguagePublicationPlan) -> set[str]:
@@ -1133,14 +993,6 @@ def _validate_confirmations(
         )
 
 
-def _resolve_data_root(data_root: DataRoot | Path) -> Path:
-    root = data_root.path if isinstance(data_root, DataRoot) else Path(data_root)
-    root = root.resolve()
-    if not root.is_dir():
-        raise LanguagePublicationError(f"data root is not a directory: {root}")
-    return root
-
-
 def _git_blob_sha1(path: Path) -> str:
     digest = hashlib.sha1(usedforsecurity=False)
     size = path.stat().st_size
@@ -1152,6 +1004,7 @@ def _git_blob_sha1(path: Path) -> str:
 
 
 __all__ = [
+    "LANGUAGE_CARD_HEADING",
     "LANGUAGE_PUBLICATION_COMMIT_MESSAGE",
     "LanguagePublicationError",
     "LanguagePublicationPlan",
