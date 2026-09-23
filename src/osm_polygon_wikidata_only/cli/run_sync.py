@@ -7,13 +7,13 @@ state-execution policy lives in :mod:`pipeline.sync_runner`;
 this module only builds collaborators and calls
 :func:`pipeline.sync_runner.run_sync`.
 
-When ``--push`` is disabled, ``build_upload_files`` and
-``submit_upload`` are both passed as ``None`` so the runner
-never invokes publication assembly. When ``--push`` is enabled,
-the CLI shell builds the region-publication list through
-:func:`hf.publication.assemble_region_upload` (a pure assembler
-that performs NO upload) and submits the returned list through
-the upload queue exactly once per region.
+Publication policy lives in :class:`cli.sync_application.SyncApplication`:
+when ``--push`` is disabled it hands the runner no publication
+callbacks, so publication assembly never runs. When ``--push`` is
+enabled it builds each region's publication list through
+:func:`hf.publication.assemble_region_upload` (a pure assembler that
+performs NO upload) and submits that list through the upload queue
+exactly once per region.
 """
 
 from __future__ import annotations
@@ -412,24 +412,18 @@ def execute(
     _remote_inventory: RemoteInventory | None = None,
     _hub: HfHub | None = None,
 ) -> int:
-    """Run the ``sync-dir`` CLI command by wiring collaborators to
-    :func:`pipeline.sync_runner.run_sync`.
+    """Run the ``sync-dir`` CLI command.
 
-    The CLI shell owns the unified-plan count log line and
-    decides whether publication assembly runs. When
-    ``--push`` is disabled, both ``build_upload_files`` and
-    ``submit_upload`` are ``None`` and the runner never invokes
-    the publication assembly.
+    Prepares the unified sync plan (local states plus remote
+    reconciliation), builds the Wikimedia runtime, augmentation client
+    and optional upload queue, enqueues containment retirement, logs the
+    plan counts, and then delegates execution to
+    :class:`cli.sync_application.SyncApplication`, which decides whether
+    publication runs and calls :func:`pipeline.sync_runner.run_sync`.
 
-    When ``--push`` is enabled, the CLI shell builds the region
-    file list through
-    :func:`hf.publication.assemble_region_upload` (a pure assembler
-    that returns the ordered list) and the runner submits it via
-    the upload queue. The CLI shell and runner together produce
-    exactly ONE atomic commit per region: the assembler never
-    submits, and the runner submits the assembled list exactly
-    once. The unified-sync path silently swallows the legacy
-    world-land exception (the ``warning_callback`` is ``None``).
+    ``build_upload_files`` optionally replaces the default region
+    publication builder when ``--push`` is enabled; production passes
+    ``None``.
     """
     push_enabled = bool(getattr(args, "push", False))
     dry_run = bool(getattr(args, "dry_run", False))
@@ -549,7 +543,6 @@ def _run_sync_application(
             process_extracted_pbf=_process,
             augment_region=augment_region,
             load_existing_augmentation=load_existing_augmentation_result,
-            recover_region=lambda state: None,
             run_sync=sync_runner_mod.run_sync,
             plan_link_migration=plan_link_migration,
             apply_link_migration=apply_link_migration,

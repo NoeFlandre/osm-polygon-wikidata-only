@@ -148,10 +148,6 @@ def _services(
         events.append(f"load:{stem}")
         return SimpleNamespace(counts={})
 
-    def recover(state: RegionSyncState) -> object | None:
-        events.append(f"recover:{state.stem}")
-        return None
-
     def plan_links(*_args: Any, **_kwargs: Any) -> Any:
         return link_plan if link_plan is not None else SimpleNamespace(stems=[])
 
@@ -184,7 +180,6 @@ def _services(
         process_extracted_pbf=process,
         augment_region=augment,
         load_existing_augmentation=load_existing,
-        recover_region=recover,
         run_sync=runner,
         plan_link_migration=plan_links,
         apply_link_migration=lambda *_args, **_kwargs: None,
