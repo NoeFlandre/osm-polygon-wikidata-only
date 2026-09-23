@@ -497,7 +497,7 @@ class AdaptiveRequestScheduler:
             if wait > 0:
                 self._sleep(wait)
             with self._lock:
-                self._request_started_at.append(self._clock())
+                self._record_recent(self._request_started_at, self._clock())
                 self._in_flight += 1
             try:
                 return operation()
