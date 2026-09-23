@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -63,6 +63,14 @@ class LanguagePublishedFile:
     path_in_repo: str
     size_bytes: int | None
     sha256: str | None
+    _git_sha1: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    def git_sha1(self) -> str:
+        """Return the git blob SHA-1 of the local file, computed once."""
+        if self._git_sha1 is None:
+            object.__setattr__(self, "_git_sha1", _git_blob_sha1(self.local_path))
+        assert self._git_sha1 is not None
+        return self._git_sha1
 
     def to_dict(self) -> dict[str, object]:
         """Return deterministic evidence for this file."""
@@ -639,15 +647,16 @@ def _remote_digest_matches(
         matched = matcher(local, remote)
         if matched is not None:
             return matched
-    downloaded = _remote_bytes(
+    remote_sha256 = _remote_download(
         hub,
         repo_id,
         local.path_in_repo,
+        sha256_file,
         revision=revision,
         data_root=data_root,
         required=False,
     )
-    return downloaded is not None and hashlib.sha256(downloaded).hexdigest() == local.sha256
+    return remote_sha256 is not None and remote_sha256 == local.sha256
 
 
 def _remote_lfs_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
@@ -660,7 +669,7 @@ def _remote_lfs_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
 def _remote_blob_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
     blob_id = getattr(remote, "blob_id", None)
     if isinstance(blob_id, str) and len(blob_id) == 40:
-        return blob_id == _git_blob_sha1(local.local_path)
+        return blob_id == local.git_sha1()
 
 
 def _remote_entries(
@@ -776,6 +785,27 @@ def _remote_bytes(
     data_root: Path,
     required: bool,
 ) -> bytes | None:
+    return _remote_download(
+        hub,
+        repo_id,
+        path,
+        Path.read_bytes,
+        revision=revision,
+        data_root=data_root,
+        required=required,
+    )
+
+
+def _remote_download[T](
+    hub: HfHub,
+    repo_id: str,
+    path: str,
+    read: Callable[[Path], T],
+    *,
+    revision: str,
+    data_root: Path,
+    required: bool,
+) -> T | None:
     cache_dir = data_root / "cache" / _REMOTE_CACHE_DIR
     try:
         downloaded = hub.hf_hub_download(
@@ -785,7 +815,7 @@ def _remote_bytes(
             repo_type="dataset",
             cache_dir=str(cache_dir),
         )
-        return Path(downloaded).read_bytes()
+        return read(Path(downloaded))
     except Exception as error:
         if required:
             raise LanguagePublicationError(

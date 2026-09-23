@@ -507,6 +507,59 @@ def test_remote_matches_lfs_blob_and_size_paths(tmp_path: Path) -> None:
     assert not _remote_matches(local, wrong_size, StubHfHub(), V1_REPO, "rev", tmp_path)
 
 
+def test_git_blob_sha1_is_computed_once_per_published_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local_path = tmp_path / "part.parquet"
+    local_path.write_bytes(b"fixture")
+    local = LanguagePublishedFile(
+        local_path=local_path,
+        path_in_repo="part.parquet",
+        size_bytes=local_path.stat().st_size,
+        sha256=hashlib.sha256(b"fixture").hexdigest(),
+    )
+    expected = _git_blob_sha1(local_path)
+    calls: list[Path] = []
+
+    def counted(path: Path) -> str:
+        calls.append(path)
+        return expected
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication._git_blob_sha1", counted
+    )
+    remote = SimpleNamespace(size=local.size_bytes, lfs=None, blob_id=expected)
+
+    assert _remote_matches(local, remote, StubHfHub(), V1_REPO, "rev", tmp_path)
+    assert _remote_matches(local, remote, StubHfHub(), V1_REPO, "rev", tmp_path)
+    assert calls == [local_path]
+    assert local == LanguagePublishedFile(
+        local_path=local_path,
+        path_in_repo="part.parquet",
+        size_bytes=local.size_bytes,
+        sha256=local.sha256,
+    )
+
+
+def test_remote_digest_fallback_hashes_downloaded_file(tmp_path: Path) -> None:
+    local_path = tmp_path / "part.parquet"
+    local_path.write_bytes(b"fixture")
+    downloaded = tmp_path / "downloaded.parquet"
+    downloaded.write_bytes(b"fixture")
+    local = LanguagePublishedFile(
+        local_path=local_path,
+        path_in_repo="part.parquet",
+        size_bytes=local_path.stat().st_size,
+        sha256=hashlib.sha256(b"fixture").hexdigest(),
+    )
+    remote = SimpleNamespace(size=local.size_bytes, lfs=None, blob_id=None)
+    hub = SimpleNamespace(hf_hub_download=lambda *args, **kwargs: str(downloaded))
+
+    assert _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
+    downloaded.write_bytes(b"changed")
+    assert not _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
+
+
 def test_remote_verification_rejects_missing_and_stale_files(tmp_path: Path) -> None:
     missing_plan = LanguagePublicationPlan(
         version=LanguageSplitVersion.V1,
