@@ -169,14 +169,29 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     configs = {config["config_name"]: config for config in payload["configs"]}
 
     assert "polygons" in configs
-    language_config = configs[configuration]
-    assert language_config["data_files"] == [
-        {"split": "lang-en", "path": expected_path},
-        {
-            "split": "lang-unknown",
-            "path": expected_path.replace("lang-en", "lang-unknown"),
-        },
-    ]
+    if version is LanguageSplitVersion.V1:
+        assert configs[configuration]["data_files"] == [
+            {"split": "lang-en", "path": expected_path},
+            {
+                "split": "lang-unknown",
+                "path": expected_path.replace("lang-en", "lang-unknown"),
+            },
+        ]
+        assert "`lang-<language>` and `lang-unknown`" in merged
+    else:
+        assert configs[configuration + "__lang_en"]["data_files"] == [
+            {"split": "train", "path": expected_path}
+        ]
+        assert configs[configuration + "__lang_unknown"]["data_files"] == [
+            {
+                "split": "train",
+                "path": expected_path.replace("lang-en", "lang-unknown"),
+            }
+        ]
+        assert (
+            f"`{configuration}__lang_<language>` (split `train`) and "
+            f"`{configuration}__lang_unknown` (split `train`)"
+        ) in merged
     assert (
         _merge_language_card(
             merged,
@@ -187,6 +202,79 @@ def test_language_card_declares_viewer_language_configs_and_splits(
         )
         == merged
     )
+
+
+def test_v2_viewer_config_names_sanitize_language_code_dashes() -> None:
+    existing = (
+        "---\n"
+        "configs:\n"
+        "  - config_name: polygons\n"
+        "    data_files:\n"
+        "      - split: polygons\n"
+        "        path: polygons/*.parquet\n"
+        "---\n"
+        "# Existing card\n"
+    )
+
+    merged = _merge_language_card(
+        existing,
+        version=LanguageSplitVersion.V2,
+        configurations=("wikipedia_documents_by_language",),
+        languages=("be-tarask", "unknown"),
+        configuration_languages=(("wikipedia_documents_by_language", ("be-tarask", "unknown")),),
+    )
+    payload = yaml.safe_load(merged.split("---", 2)[1])
+    configs = {config["config_name"]: config for config in payload["configs"]}
+
+    assert configs["wikipedia_documents_by_language__lang_be_tarask"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-*.parquet",
+        }
+    ]
+    assert configs["wikipedia_documents_by_language__lang_unknown"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
+        }
+    ]
+
+
+def test_v2_viewer_uses_one_config_per_language_to_avoid_split_limit() -> None:
+    existing = (
+        "---\n"
+        "configs:\n"
+        "  - config_name: polygons\n"
+        "    data_files:\n"
+        "      - split: polygons\n"
+        "        path: polygons/*.parquet\n"
+        "---\n"
+        "# Existing card\n"
+    )
+
+    merged = _merge_language_card(
+        existing,
+        version=LanguageSplitVersion.V2,
+        configurations=("wikipedia_documents_by_language",),
+        languages=("be-tarask", "unknown"),
+        configuration_languages=(("wikipedia_documents_by_language", ("be-tarask", "unknown")),),
+    )
+    payload = yaml.safe_load(merged.split("---", 2)[1])
+    configs = {config["config_name"]: config for config in payload["configs"]}
+
+    assert configs["wikipedia_documents_by_language__lang_be_tarask"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-*.parquet",
+        }
+    ]
+    assert configs["wikipedia_documents_by_language__lang_unknown"]["data_files"] == [
+        {
+            "split": "train",
+            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
+        }
+    ]
+    assert "wikipedia_documents_by_language" not in configs
 
 
 def test_publication_requires_exact_target_confirmation(tmp_path: Path) -> None:
@@ -718,3 +806,119 @@ def test_publication_uses_one_commit_and_second_run_is_noop(
         in hub.commits[0]["paths"]
     )
     assert "## Language partitions" in hub.remote_content["README.md"].decode()
+
+
+def test_v2_publication_uses_one_commit_and_second_run_is_noop_for_multipart_language(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processed_root = tmp_path / "processed_v2"
+    output_root = processed_root / "language_splits"
+    output_root.mkdir(parents=True)
+    shard = output_root / (
+        "wikipedia_documents_by_language/lang-be-tarask/part-00000-of-00001.parquet"
+    )
+    shard.parent.mkdir(parents=True)
+    shard.write_bytes(b"parquet-fixture")
+    manifest = output_root / "manifests/language_splits.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {"files": [{"path": "language_splits/" + shard.relative_to(processed_root).as_posix()}]}
+        ),
+        encoding="utf-8",
+    )
+
+    configuration = "wikipedia_documents_by_language"
+    version_plan = SimpleNamespace(
+        version=LanguageSplitVersion.V2,
+        processed_root=processed_root,
+        output_root=output_root,
+        manifest_path=manifest,
+        inventory=SimpleNamespace(
+            contract=DatasetContract.V2,
+            languages=("be-tarask", "unknown"),
+            tables=(
+                SimpleNamespace(
+                    configuration=configuration,
+                    buckets=(
+                        SimpleNamespace(language="be-tarask", row_count=1),
+                        SimpleNamespace(language="unknown", row_count=1),
+                    ),
+                ),
+            ),
+        ),
+    )
+    generated = SimpleNamespace(
+        output_root=output_root,
+        manifest_path=manifest,
+        files=(
+            SimpleNamespace(
+                path=shard.relative_to(processed_root),
+                configuration=configuration,
+                language="be-tarask",
+                split="lang-be-tarask",
+            ),
+        ),
+    )
+    result = SimpleNamespace(plan=SimpleNamespace(releases=(version_plan,)), generated=(generated,))
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_release",
+        lambda *args, **kwargs: result,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.plan_language_split_publication",
+        lambda *args, **kwargs: (
+            LanguagePublicationPlan(
+                version=LanguageSplitVersion.V2,
+                repo_id=V2_REPO,
+                processed_root=processed_root,
+                output_root=output_root,
+                manifest_path=manifest,
+                manifest_remote_path="manifests/language_splits.json",
+                languages=("be-tarask", "unknown"),
+                configurations=(configuration,),
+                files=(),
+            ),
+        ),
+    )
+
+    readme = (
+        "---\n"
+        "configs:\n"
+        "  - config_name: polygons\n"
+        "    data_files:\n"
+        "      - split: polygons\n"
+        "        path: polygons/*.parquet\n"
+        "---\n"
+        "# Card\n"
+    )
+    hub = StubHfHub(remote_files={"README.md"}, remote_content={"README.md": readme.encode()})
+    first = run_language_split_publication(
+        tmp_path,
+        dataset_version="v2",
+        confirm_repos=(V2_REPO,),
+        apply=True,
+        hub=hub,
+    )
+    second = run_language_split_publication(
+        tmp_path,
+        dataset_version="v2",
+        confirm_repos=(V2_REPO,),
+        apply=True,
+        hub=hub,
+    )
+
+    assert first.reports[0].committed is True
+    assert second.reports[0].no_op is True
+    assert second.reports[0].committed is False
+    assert len(hub.commits) == 1
+    assert "README.md" in hub.commits[0]["paths"]
+    assert (
+        "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-00000-of-00001.parquet"
+        in hub.commits[0]["paths"]
+    )
+    remote_card = hub.remote_content["README.md"].decode()
+    assert "config_name: wikipedia_documents_by_language__lang_be_tarask" in remote_card
+    assert "split: train" in remote_card
+    assert "lang-be-tarask/part-*.parquet" in remote_card

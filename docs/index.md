@@ -113,11 +113,15 @@ retained in both relevant partitions without collapsing them by OSM identity.
 | V1 `NoeFlandre/osm-polygon-wikidata-only` | `polygon_articles`, Wikipedia documents/sections, Wikivoyage documents/sections | `polygons`, `wikidata/facts` |
 | V2 `NoeFlandre/osm-polygon-wikidata-and-wikipedia` | `polygon_document_links`, Wikipedia documents/sections | `polygons` |
 
-Each language-bearing table uses an additive `<table>_by_language`
-configuration and a `lang-<language>` split. Missing, blank, malformed, and
-legacy-unusable values go to `lang-unknown` with reason counts; no row is
-dropped. The two inventories are generated independently from their
-schema-validated artifacts and manifests.
+Each language-bearing table uses additive language metadata. V1 keeps one
+`<table>_by_language` configuration with `lang-<language>` Viewer splits. V2
+uses one Viewer configuration per table/language pair, named
+`<table>_by_language__lang_<language>` (language-code dashes become
+underscores), with one `train` split; its storage directories retain
+`lang-<language>`. Missing, blank, malformed, and legacy-unusable values go to
+the corresponding `unknown` partition with reason counts; no row is dropped.
+The two inventories are generated independently from their schema-validated
+artifacts and manifests.
 
 For example, load only French V1 Wikipedia documents with:
 
@@ -145,6 +149,11 @@ The generated dataset card describes the columns and reports statistics derived
 from the finalized tables. Attribution and source licenses remain part of the
 published contract; see the [README](https://github.com/NoeFlandre/osm-polygon-wikidata-only#licensing-and-attribution)
 for details.
+
+V2 Viewer selections use names such as
+`wikipedia_documents_by_language__lang_fr` with split `train` (the stored path
+remains `language_splits/<configuration>/lang-fr/`). The unknown partition is
+`<table>_by_language__lang_unknown`.
 
 Optional V2 sentence sidecars use only `segment-any-text/sat-3l-sm` for the
 exact supported language-code set. Other language codes stay as one unsplit

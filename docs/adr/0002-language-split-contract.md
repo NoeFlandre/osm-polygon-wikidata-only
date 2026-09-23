@@ -30,9 +30,15 @@ and legacy-unusable values (including the observed V1 project labels
 `simple` and `abstract`) are retained in an explicit `lang-unknown` bucket;
 they are never dropped or converted to a guessed language.
 
-Each language-bearing table gets an additive Hugging Face configuration named
-`<table>_by_language`. Its splits are `lang-<canonical-language>`, including
-`lang-unknown`. The `lang-` prefix keeps split names unambiguous and avoids
+Each language-bearing table gets additive Hugging Face language selections.
+V1 keeps one `<table>_by_language` configuration with splits named
+`lang-<canonical-language>`, including `lang-unknown`. V2 uses one Viewer
+configuration per table/language pair, named
+`<table>_by_language__lang_<canonical-language>` with dashes replaced by
+underscores, and exposes that configuration through one `train` split. V2
+storage directories retain the canonical `lang-<language>` form. This puts the
+language dimension in Viewer configurations rather than creating hundreds of
+splits in one config, while keeping split names unambiguous and avoiding
 reserved generic names such as `train`, `test`, and `validation`. The V1
 default configurations and paths remain unchanged. The V2 configurations are
 separate because its repository, root, schemas, and link table are separate.
@@ -71,8 +77,8 @@ contract:
 ```python
 french_v2_links = load_dataset(
     "NoeFlandre/osm-polygon-wikidata-and-wikipedia",
-    name="polygon_document_links_by_language",
-    split="lang-fr",
+    name="polygon_document_links_by_language__lang_fr",
+    split="train",
 )
 ```
 
