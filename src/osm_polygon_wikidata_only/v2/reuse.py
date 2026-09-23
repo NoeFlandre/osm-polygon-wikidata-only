@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.compute as pc
+
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_from_article_row,
 )
@@ -60,6 +63,10 @@ from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef, parse_w
 LOGGER = logging.getLogger(__name__)
 _PARQUET_BATCH_SIZE = 65_536
 _RECONCILIATION_LOOKUP_BATCH_SIZE = 256
+_V1_LINK_COLUMNS: tuple[str, ...] = tuple(
+    dict.fromkeys((*CANONICAL_COLUMNS, "document_id", "article_id", "project", "wikidata"))
+)
+_SECTION_KEY_COLUMNS: tuple[str, ...] = ("section_id", "document_id")
 
 SIDECAR_SUBDIRS: tuple[str, ...] = (
     "wikipedia/sections",
@@ -94,19 +101,34 @@ class _MergeInputs:
     all_refs: tuple[WikipediaTagRef, ...]
 
 
-def _rows(path: Path) -> Iterator[dict[str, Any]]:
+def _rows(path: Path, *, columns: Iterable[str] | None = None) -> Iterator[dict[str, Any]]:
+    """Yield rows batch by batch, optionally projecting to ``columns``.
+
+    Projected columns absent from the file are skipped; callers read rows with
+    ``dict.get`` so a missing column and an unread column behave the same.
+    """
     if not path.is_file():
         return
     with open_parquet(path) as parquet_file:
-        for batch in iter_record_batches(parquet_file, batch_size=_PARQUET_BATCH_SIZE):
+        projection = _present_columns(parquet_file, columns)
+        for batch in iter_record_batches(
+            parquet_file, batch_size=_PARQUET_BATCH_SIZE, columns=projection
+        ):
             yield from batch.to_pylist()
+
+
+def _present_columns(parquet_file: Any, columns: Iterable[str] | None) -> list[str] | None:
+    if columns is None:
+        return None
+    names = set(parquet_file.schema_arrow.names)
+    return [column for column in columns if column in names]
 
 
 def load_v1_region(data_root: DataRoot, stem: str) -> V1RegionData:
     """Load V1 rows while accepting both pre- and post-migration links."""
     polygons = _rows(data_root.processed_polygons / f"{stem}.parquet")
     documents = _load_v1_documents(data_root, stem)
-    links = _rows(data_root.processed_links / f"{stem}.parquet")
+    links = _rows(data_root.processed_links / f"{stem}.parquet", columns=_V1_LINK_COLUMNS)
     by_article = {str(row.get("article_id")): row for row in documents}
     normalized_links = _normalize_links(links, by_article)
     sidecars = _v1_sidecar_paths(data_root, stem)
@@ -718,18 +740,86 @@ def _load_section_rows(
     filter_document_ids: bool,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     sections_path = data_root.processed_v2 / "wikipedia" / "sections" / f"{stem}.parquet"
-    sections = list(_rows(sections_path))
-    sections, completed_section_ids = _merge_checkpoint_sections(sections, fetch_checkpoint)
+    checkpoint_state = (
+        fetch_checkpoint.load_section_state() if fetch_checkpoint is not None else None
+    )
+    if filter_document_ids:
+        checkpoint_rows = checkpoint_state[0] if checkpoint_state is not None else []
+        sections = _document_section_rows(sections_path, documents, checkpoint_rows)
+    else:
+        sections = list(_rows(sections_path))
+    sections, completed_section_ids = _merge_checkpoint_sections(sections, checkpoint_state)
     return _filter_section_rows(sections, completed_section_ids, documents, filter_document_ids)
+
+
+def _document_section_rows(
+    path: Path,
+    documents: dict[str, dict[str, Any]],
+    checkpoint_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Read only the stored sections that can survive the document filter.
+
+    A stored row is kept when any row sharing its ``section_id`` (stored or
+    checkpointed) belongs to a kept document.  Every other row would be
+    dropped by :func:`_filter_section_rows` without affecting the position
+    or value of a surviving section, so the merged output is unchanged.
+    The filter runs in Arrow, and only kept rows become Python dicts.
+    """
+    if not path.is_file():
+        return []
+    with open_parquet(path) as parquet_file:
+        if not _has_string_section_keys(parquet_file.schema_arrow):
+            return list(_rows(path))
+        document_ids = pa.array(list(documents), type=pa.string())
+        kept_section_ids = {
+            str(row.get("section_id", ""))
+            for row in checkpoint_rows
+            if str(row.get("document_id", "")) in documents
+        }
+        for batch in iter_record_batches(
+            parquet_file, batch_size=_PARQUET_BATCH_SIZE, columns=_SECTION_KEY_COLUMNS
+        ):
+            section_ids = _section_key(batch.column(0))
+            kept = _compute(
+                "filter", section_ids, _is_in(_section_key(batch.column(1)), document_ids)
+            )
+            kept_section_ids.update(kept.to_pylist())
+        section_id_set = pa.array(sorted(kept_section_ids), type=pa.string())
+        rows: list[dict[str, Any]] = []
+        for batch in iter_record_batches(parquet_file, batch_size=_PARQUET_BATCH_SIZE):
+            section_ids = _section_key(batch.column(batch.schema.get_field_index("section_id")))
+            rows.extend(batch.filter(_is_in(section_ids, section_id_set)).to_pylist())
+        return rows
+
+
+def _has_string_section_keys(schema: pa.Schema) -> bool:
+    names = set(schema.names)
+    return all(
+        column in names and pa.types.is_string(schema.field(column).type)
+        for column in _SECTION_KEY_COLUMNS
+    )
+
+
+def _section_key(values: Any) -> Any:
+    """Mirror ``str(row.get(column, ""))`` for a nullable string column."""
+    return pc.fill_null(values, "None")
+
+
+def _is_in(values: Any, value_set: Any) -> Any:
+    return _compute("is_in", values, options=pc.SetLookupOptions(value_set))
+
+
+def _compute(function: str, *arguments: Any, options: Any = None) -> Any:
+    return pc.call_function(function, list(arguments), options=options)
 
 
 def _merge_checkpoint_sections(
     sections: list[dict[str, Any]],
-    fetch_checkpoint: RegionFetchCheckpoint | None,
+    checkpoint_state: tuple[list[dict[str, Any]], set[str]] | None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    if fetch_checkpoint is None:
+    if checkpoint_state is None:
         return sections, set()
-    checkpoint_sections, completed_section_ids = fetch_checkpoint.load_section_state()
+    checkpoint_sections, completed_section_ids = checkpoint_state
     sections.extend(checkpoint_sections)
     return list(
         {str(row.get("section_id", "")): row for row in sections}.values()
