@@ -70,6 +70,48 @@ class _HostState:
 
 
 @dataclass(frozen=True, slots=True)
+class _RateLimits:
+    """Validated global concurrency, rate, and host-throttle settings."""
+
+    max_in_flight: int
+    max_requests_per_minute: float
+    minimum_requests_per_minute: float
+    successes_per_increase: int
+    host_throttle_window_s: float
+    host_throttle_threshold: int
+
+
+@dataclass(slots=True)
+class _GlobalRateState:
+    """Mutable process-wide pacing state, guarded by the scheduler lock."""
+
+    current_requests_per_minute: float
+    successful_requests: int = 0
+    next_request_at: float = 0.0
+    cooldown_until: float = 0.0
+    in_flight: int = 0
+    # Monotonic timestamp of the last systemic global reduction. A
+    # second escalation within ``host_throttle_window_s`` is suppressed
+    # so a flurry of throttles from many hosts does not repeatedly
+    # halve the global rate within seconds. Initialised to -inf so
+    # the first systemic event is always allowed to fire.
+    last_systemic_reduction_at: float = float("-inf")
+
+
+@dataclass(slots=True)
+class _ThrottleHistory:
+    """Rolling throttle and host-activity history, guarded by the scheduler lock."""
+
+    # host -> last throttle time, used for systemic detection.
+    systemic_host_events: dict[str, float] = field(default_factory=dict)
+    # Rolling timestamps of every host throttle response (telemetry).
+    global_throttle_times: deque[float] = field(default_factory=lambda: deque[float]())
+    # Active host tracking for proportional systemic detection
+    # (host -> last activity timestamp).
+    active_host_timestamps: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class _SystemicConfig:
     """Validated settings for proportional systemic-throttle detection."""
 
@@ -199,58 +241,45 @@ class AdaptiveRequestScheduler:
             minimum_systemic_hosts=minimum_systemic_hosts,
             systemic_host_fraction=systemic_host_fraction,
         )
-        self._proportional_mode = systemic.proportional_mode
-        self._active_host_window_s = systemic.active_host_window_s
-        self._minimum_systemic_hosts = systemic.minimum_systemic_hosts
-        self._systemic_host_fraction = systemic.systemic_host_fraction
-        self._max_in_flight = max_in_flight
+        self._systemic = systemic
+        self._limits = _RateLimits(
+            max_in_flight=max_in_flight,
+            max_requests_per_minute=maximum,
+            minimum_requests_per_minute=minimum_requests_per_minute,
+            successes_per_increase=successes_per_increase,
+            host_throttle_window_s=host_throttle_window_s,
+            host_throttle_threshold=host_throttle_threshold,
+        )
+        # Mutable global pacing state. Protected by ``_lock``.
+        self._rate = _GlobalRateState(current_requests_per_minute=requests_per_minute)
+        # Rolling throttle/activity history. Protected by ``_lock``.
+        self._history = _ThrottleHistory()
         self._semaphore = threading.BoundedSemaphore(max_in_flight)
-        self._current_requests_per_minute = requests_per_minute
-        self._max_requests_per_minute = maximum
-        self._minimum_requests_per_minute = minimum_requests_per_minute
-        self._successes_per_increase = successes_per_increase
-        self._successful_requests = 0
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
-        self._next_request_at = 0.0
-        self._cooldown_until = 0.0
-        self._host_throttle_window_s = host_throttle_window_s
-        self._host_throttle_threshold = host_throttle_threshold
-        # host -> last throttle time, used for systemic detection.
-        self._systemic_host_events: dict[str, float] = {}
-        # Rolling timestamps of every host throttle response (telemetry).
-        self._global_throttle_times: deque[float] = deque()
         # Per-host independent state.
         self._host_states: dict[str, _HostState] = {}
         self._hosts_lock = threading.Lock()
         self._request_started_at: deque[float] = deque()
-        self._in_flight = 0
-        # Active host tracking for proportional systemic detection.
-        # Maps host -> last activity timestamp. Protected by ``_lock``.
-        self._active_host_timestamps: dict[str, float] = {}
-        # Monotonic timestamp of the last systemic global reduction. A
-        # second escalation within ``host_throttle_window_s`` is suppressed
-        # so a flurry of throttles from many hosts does not repeatedly
-        # halve the global rate within seconds. Initialised to -inf so
-        # the first systemic event is always allowed to fire.
-        self._last_systemic_reduction_at: float = float("-inf")
 
     def defer(self, delay_s: float) -> None:
         """Apply one cooldown to every future request (explicit global backoff)."""
         with self._lock:
-            self._cooldown_until = max(self._cooldown_until, self._clock() + max(0.0, delay_s))
+            self._rate.cooldown_until = max(
+                self._rate.cooldown_until, self._clock() + max(0.0, delay_s)
+            )
 
     @property
     def max_in_flight(self) -> int:
         """Return the configured process-wide concurrency bound."""
-        return self._max_in_flight
+        return self._limits.max_in_flight
 
     @property
     def current_requests_per_minute(self) -> float:
         """Return the active process-wide request rate."""
         with self._lock:
-            return self._current_requests_per_minute
+            return self._rate.current_requests_per_minute
 
     def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
         """Wait for ``host``'s cooldown and enforce its minimum interval.
@@ -266,7 +295,7 @@ class AdaptiveRequestScheduler:
         """
         # Record this host as active for proportional threshold.
         with self._lock:
-            self._active_host_timestamps[host] = self._clock()
+            self._history.active_host_timestamps[host] = self._clock()
         state = self._host_state(host)
         while True:
             with state.lock:
@@ -287,16 +316,16 @@ class AdaptiveRequestScheduler:
     def report_success(self) -> None:
         """Gradually increase request pace after a successful request window."""
         with self._lock:
-            if self._current_requests_per_minute >= self._max_requests_per_minute:
-                self._successful_requests = 0
+            if self._rate.current_requests_per_minute >= self._limits.max_requests_per_minute:
+                self._rate.successful_requests = 0
                 return
-            self._successful_requests += 1
-            if self._successful_requests < self._successes_per_increase:
+            self._rate.successful_requests += 1
+            if self._rate.successful_requests < self._limits.successes_per_increase:
                 return
-            self._successful_requests = 0
-            self._current_requests_per_minute = min(
-                self._max_requests_per_minute,
-                self._current_requests_per_minute * 1.25,
+            self._rate.successful_requests = 0
+            self._rate.current_requests_per_minute = min(
+                self._limits.max_requests_per_minute,
+                self._rate.current_requests_per_minute * 1.25,
             )
 
     def report_throttled(self, delay_s: float) -> None:
@@ -308,15 +337,15 @@ class AdaptiveRequestScheduler:
         systemic.
         """
         with self._lock:
-            self._cooldown_until = max(
-                self._cooldown_until,
+            self._rate.cooldown_until = max(
+                self._rate.cooldown_until,
                 self._clock() + max(0.0, delay_s),
             )
-            self._current_requests_per_minute = max(
-                self._minimum_requests_per_minute,
-                self._current_requests_per_minute / 2,
+            self._rate.current_requests_per_minute = max(
+                self._limits.minimum_requests_per_minute,
+                self._rate.current_requests_per_minute / 2,
             )
-            self._successful_requests = 0
+            self._rate.successful_requests = 0
 
     def report_host_throttled(self, host: str, delay_s: float) -> None:
         """Record a per-host throttle and escalate globally only when systemic.
@@ -344,15 +373,16 @@ class AdaptiveRequestScheduler:
     def _record_systemic_host_event(self, host: str, now: float) -> bool:
         """Record one host event and atomically decide whether to escalate."""
         with self._lock:
-            self._record_recent(self._global_throttle_times, now)
-            cutoff = now - self._host_throttle_window_s
-            self._systemic_host_events = {
-                h: t for h, t in self._systemic_host_events.items() if t > cutoff
+            self._record_recent(self._history.global_throttle_times, now)
+            cutoff = now - self._limits.host_throttle_window_s
+            self._history.systemic_host_events = {
+                h: t for h, t in self._history.systemic_host_events.items() if t > cutoff
             }
-            self._systemic_host_events[host] = now
+            self._history.systemic_host_events[host] = now
             systemic = (
-                len(self._systemic_host_events) >= self._systemic_threshold()
-                and now - self._last_systemic_reduction_at > self._host_throttle_window_s
+                len(self._history.systemic_host_events) >= self._systemic_threshold()
+                and now - self._rate.last_systemic_reduction_at
+                > self._limits.host_throttle_window_s
             )
             if not systemic:
                 return False
@@ -360,22 +390,22 @@ class AdaptiveRequestScheduler:
             # operation: the next contender that acquires this lock will
             # see the fresh timestamp and fail the guard, guaranteeing at
             # most one reduction per window.
-            self._last_systemic_reduction_at = now
+            self._rate.last_systemic_reduction_at = now
             return True
 
     def _apply_global_throttle(self, delay_s: float, *, count_event: bool) -> None:
         with self._lock:
             if count_event:
-                self._record_recent(self._global_throttle_times, self._clock())
-            self._cooldown_until = max(
-                self._cooldown_until,
+                self._record_recent(self._history.global_throttle_times, self._clock())
+            self._rate.cooldown_until = max(
+                self._rate.cooldown_until,
                 self._clock() + max(0.0, delay_s),
             )
-            self._current_requests_per_minute = max(
-                self._minimum_requests_per_minute,
-                self._current_requests_per_minute / 2,
+            self._rate.current_requests_per_minute = max(
+                self._limits.minimum_requests_per_minute,
+                self._rate.current_requests_per_minute / 2,
             )
-            self._successful_requests = 0
+            self._rate.successful_requests = 0
 
     def _systemic_threshold(self) -> int:
         """Compute the dynamic systemic threshold based on active host population.
@@ -392,16 +422,16 @@ class AdaptiveRequestScheduler:
 
         Must be called while ``self._lock`` is held.
         """
-        if not self._proportional_mode:
-            return self._host_throttle_threshold
+        if not self._systemic.proportional_mode:
+            return self._limits.host_throttle_threshold
         active = self._active_host_count()
         if active == 0:
-            return self._host_throttle_threshold
+            return self._limits.host_throttle_threshold
         return min(
             active,
             max(
-                self._minimum_systemic_hosts,
-                math.ceil(active * self._systemic_host_fraction),
+                self._systemic.minimum_systemic_hosts,
+                math.ceil(active * self._systemic.systemic_host_fraction),
             ),
         )
 
@@ -411,11 +441,11 @@ class AdaptiveRequestScheduler:
         Must be called while ``self._lock`` is held.
         """
         now = self._clock()
-        cutoff = now - self._active_host_window_s
-        self._active_host_timestamps = {
-            h: t for h, t in self._active_host_timestamps.items() if t > cutoff
+        cutoff = now - self._systemic.active_host_window_s
+        self._history.active_host_timestamps = {
+            h: t for h, t in self._history.active_host_timestamps.items() if t > cutoff
         }
-        return len(self._active_host_timestamps)
+        return len(self._history.active_host_timestamps)
 
     def _host_state(self, host: str) -> _HostState:
         with self._hosts_lock:
@@ -443,10 +473,10 @@ class AdaptiveRequestScheduler:
             while self._request_started_at and self._request_started_at[0] < cutoff:
                 self._request_started_at.popleft()
             recent = len(self._request_started_at)
-            self._prune_recent(self._global_throttle_times, now)
-            throttle_events = len(self._global_throttle_times)
-            global_cooldown = max(0.0, self._cooldown_until - now)
-            utilization = recent / self._max_requests_per_minute * 100.0
+            self._prune_recent(self._history.global_throttle_times, now)
+            throttle_events = len(self._history.global_throttle_times)
+            global_cooldown = max(0.0, self._rate.cooldown_until - now)
+            utilization = recent / self._limits.max_requests_per_minute * 100.0
         return now, recent, throttle_events, global_cooldown, utilization
 
     def _host_snapshot_metrics(self, now: float) -> tuple[int, int]:
@@ -470,10 +500,10 @@ class AdaptiveRequestScheduler:
         return RequestSchedulerSnapshot(
             requests_last_minute=recent,
             current_requests_per_minute=self.current_requests_per_minute,
-            maximum_requests_per_minute=self._max_requests_per_minute,
+            maximum_requests_per_minute=self._limits.max_requests_per_minute,
             utilization_percent=utilization,
-            in_flight=self._in_flight,
-            max_in_flight=self._max_in_flight,
+            in_flight=self._rate.in_flight,
+            max_in_flight=self._limits.max_in_flight,
             throttle_events=throttle_events,
             throttled_hosts_last_minute=throttled_hosts,
             cooling_down_hosts=cooling_down,
@@ -490,20 +520,20 @@ class AdaptiveRequestScheduler:
         with self._semaphore:
             with self._lock:
                 now = self._clock()
-                ready_at = max(now, self._next_request_at, self._cooldown_until)
-                interval = 60.0 / self._current_requests_per_minute
-                self._next_request_at = ready_at + interval
+                ready_at = max(now, self._rate.next_request_at, self._rate.cooldown_until)
+                interval = 60.0 / self._rate.current_requests_per_minute
+                self._rate.next_request_at = ready_at + interval
             wait = ready_at - self._clock()
             if wait > 0:
                 self._sleep(wait)
             with self._lock:
                 self._record_recent(self._request_started_at, self._clock())
-                self._in_flight += 1
+                self._rate.in_flight += 1
             try:
                 return operation()
             finally:
                 with self._lock:
-                    self._in_flight -= 1
+                    self._rate.in_flight -= 1
 
 
 _DEFAULT_SCHEDULER = AdaptiveRequestScheduler(

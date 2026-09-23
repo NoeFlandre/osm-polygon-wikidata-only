@@ -157,7 +157,9 @@ def test_standalone_augmentation_scheduler_uses_proportional_policy(tmp_path) ->
     for i in range(5):
         scheduler.report_host_throttled(hosts[i], 2.0)
 
-    assert scheduler.current_requests_per_minute == scheduler._max_requests_per_minute, (
+    assert (
+        scheduler.current_requests_per_minute == scheduler.snapshot().maximum_requests_per_minute
+    ), (
         f"standalone augmentation scheduler should use proportional policy; "
         f"5 of 195 throttled should not reduce; got {scheduler.current_requests_per_minute}"
     )
