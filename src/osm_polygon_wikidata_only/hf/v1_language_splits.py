@@ -19,7 +19,6 @@ bounded Arrow batches are retained while partition files are written.
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -43,6 +42,10 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+from osm_polygon_wikidata_only.io.staged_install import (
+    CrossFilesystemInstallError,
+    install_staged_files,
+)
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 
@@ -563,67 +566,17 @@ def _manifest_payload(
 
 def _install_staged_files(release_root: Path, staged: dict[Path, Path]) -> None:
     previous = _previous_partition_paths(release_root)
-    final_paths = set(staged)
-    stale = sorted(previous - final_paths, key=lambda path: path.as_posix())
-    targets = sorted((*final_paths, *stale), key=lambda path: path.as_posix())
-    backups: dict[Path, Path] = {}
-    installed: list[Path] = []
     try:
-        _backup_targets(targets, backups)
-        _install_files(staged, installed)
-    except BaseException:
-        _restore_files(installed, backups)
-        raise
-    finally:
-        _cleanup_transaction(staged, backups)
-
-
-def _backup_targets(targets: list[Path], backups: dict[Path, Path]) -> None:
-    for target in targets:
-        if target.exists():
-            backups[target] = _backup_existing(target)
-
-
-def _install_files(staged: dict[Path, Path], installed: list[Path]) -> list[Path]:
-    for final, temporary in sorted(staged.items(), key=lambda item: item[0].as_posix()):
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(temporary, final)
-        installed.append(final)
-    return installed
-
-
-def _restore_files(installed: list[Path], backups: dict[Path, Path]) -> None:
-    _remove_installed_files(installed)
-    _restore_backups(backups)
-
-
-def _remove_installed_files(installed: list[Path]) -> None:
-    for final in installed:
-        final.unlink(missing_ok=True)
-
-
-def _restore_backups(backups: dict[Path, Path]) -> None:
-    for final, backup in sorted(backups.items(), key=lambda item: item[0].as_posix()):
-        if backup.exists():
-            final.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(backup, final)
-
-
-def _cleanup_transaction(staged: dict[Path, Path], backups: dict[Path, Path]) -> None:
-    for temporary in staged.values():
-        temporary.unlink(missing_ok=True)
-    for backup in backups.values():
-        backup.unlink(missing_ok=True)
-
-
-def _backup_existing(path: Path) -> Path:
-    descriptor, raw_backup = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".backup", dir=path.parent
-    )
-    os.close(descriptor)
-    backup = Path(raw_backup)
-    os.replace(path, backup)
-    return backup
+        install_staged_files(
+            staged,
+            stale=previous - set(staged),
+            manifest_path=release_root / V1_LANGUAGE_SPLIT_MANIFEST,
+        )
+    except CrossFilesystemInstallError as error:
+        raise V1LanguageSplitError(
+            "V1 language split publication cannot cross filesystems (EXDEV): "
+            f"{error.source} -> {error.destination}"
+        ) from error
 
 
 def _previous_partition_paths(output_root: Path) -> set[Path]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # ruff: noqa: F403,F405
+from osm_polygon_wikidata_only.io import staged_install
 from tests.v2.language_splits_support import *
 
 
@@ -344,11 +345,11 @@ def test_v2_split_rolls_back_after_install_failure(
     ) -> None:
         final, temporary = min(staged.items(), key=lambda item: item[0].as_posix())
         final.parent.mkdir(parents=True, exist_ok=True)
-        language_splits.os.replace(temporary, final)
+        staged_install.os.replace(temporary, final)
         installed.append(final)
         raise RuntimeError("injected language split failure")
 
-    monkeypatch.setattr(language_splits, "_install_files", fail_after_first_install)
+    monkeypatch.setattr(staged_install, "install_files", fail_after_first_install)
     with pytest.raises(RuntimeError, match="injected language split failure"):
         build_v2_language_splits(root)
 
@@ -365,13 +366,13 @@ def test_v2_split_rolls_back_if_backup_phase_fails(
     root = _write_v2_fixture(tmp_path)
     build_v2_language_splits(root)
     before = _release_snapshot(root)
-    original_backup_targets = language_splits._backup_targets
+    original_backup_targets = staged_install.backup_targets
 
     def fail_during_backup(targets: list[Path], backups: dict[Path, Path]) -> None:
         original_backup_targets(targets[:1], backups)
         raise RuntimeError("injected backup failure")
 
-    monkeypatch.setattr(language_splits, "_backup_targets", fail_during_backup)
+    monkeypatch.setattr(staged_install, "backup_targets", fail_during_backup)
     with pytest.raises(RuntimeError, match="injected backup failure"):
         build_v2_language_splits(root)
 
@@ -393,16 +394,16 @@ def test_v2_install_files_sorts_by_final_path_and_records_every_install(
     temporary_a.write_bytes(b"a")
     temporary_z.write_bytes(b"z")
     replacements: list[tuple[Path, Path]] = []
-    original_replace = language_splits.os.replace
+    original_replace = staged_install.os.replace
 
     def recording_replace(source: Path, destination: Path) -> None:
         replacements.append((source, destination))
         original_replace(source, destination)
 
-    monkeypatch.setattr(language_splits.os, "replace", recording_replace)
+    monkeypatch.setattr(staged_install.os, "replace", recording_replace)
     installed: list[Path] = []
 
-    language_splits._install_files(
+    staged_install.install_files(
         {final_z: temporary_z, final_a: temporary_a},
         installed,
     )
@@ -427,13 +428,13 @@ def test_v2_nested_output_files_are_installed_before_manifest(
     data_stage.write_bytes(b"data")
     manifest_stage.write_bytes(b"manifest")
     replacements: list[tuple[Path, Path]] = []
-    original_replace = language_splits.os.replace
+    original_replace = staged_install.os.replace
 
     def recording_replace(source: Path, target: Path) -> None:
         replacements.append((source, target))
         original_replace(source, target)
 
-    monkeypatch.setattr(language_splits.os, "replace", recording_replace)
+    monkeypatch.setattr(staged_install.os, "replace", recording_replace)
 
     language_splits._install_staged_files(
         root,
@@ -453,7 +454,7 @@ def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
     build_v2_language_splits(root)
     before = _release_snapshot(root)
     manifest_path = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
-    original_replace = language_splits.os.replace
+    original_replace = staged_install.os.replace
     failed = False
 
     def reject_manifest_install(source: Path, target: Path) -> None:
@@ -463,7 +464,7 @@ def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
             raise OSError(errno.EXDEV, "Invalid cross-device link")
         original_replace(source, target)
 
-    monkeypatch.setattr(language_splits.os, "replace", reject_manifest_install)
+    monkeypatch.setattr(staged_install.os, "replace", reject_manifest_install)
 
     with pytest.raises(V2LanguageSplitError, match="EXDEV") as error:
         build_v2_language_splits(root)
@@ -510,13 +511,13 @@ def test_v2_install_files_requires_explicit_final_path_order(
     replacements: list[tuple[InstallPath, InstallPath]] = []
 
     monkeypatch.setattr(
-        language_splits.os,
+        staged_install.os,
         "replace",
         lambda source, destination: replacements.append((source, destination)),
     )
     installed: list[InstallPath] = []
 
-    language_splits._install_files(
+    staged_install.install_files(
         {final_z: temporary_z, final_a: temporary_a},
         installed,
     )
