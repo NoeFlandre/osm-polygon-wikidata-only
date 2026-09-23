@@ -278,3 +278,16 @@ def test_filtered_section_load_matches_python_filter_exactly(
         assert completed == set()
     assert rows == expected
     assert [row["text"] for row in rows]
+
+
+def test_filtered_section_load_handles_missing_and_non_string_key_files(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.reuse_direct import _document_section_rows
+
+    documents = {"keep": {"document_id": "keep"}}
+    assert _document_section_rows(tmp_path / "missing.parquet", documents, []) == []
+
+    path = tmp_path / "legacy-sections.parquet"
+    rows = [{"section_id": 1, "document_id": "keep"}, {"section_id": 2, "document_id": "drop"}]
+    pq.write_table(pa.Table.from_pylist(rows), path)
+    # Non-string keys fall back to the full Python load; filtering happens later.
+    assert _document_section_rows(path, documents, []) == rows

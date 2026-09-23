@@ -403,26 +403,39 @@ def _document_section_rows(
     with open_parquet(path) as parquet_file:
         if not _has_string_section_keys(parquet_file.schema_arrow):
             return list(_rows(path))
-        document_ids = pa.array(list(documents), type=pa.string())
-        kept_section_ids = {
-            str(row.get("section_id", ""))
-            for row in checkpoint_rows
-            if str(row.get("document_id", "")) in documents
-        }
-        for batch in iter_record_batches(
-            parquet_file, batch_size=_PARQUET_BATCH_SIZE, columns=_SECTION_KEY_COLUMNS
-        ):
-            section_ids = _section_key(batch.column(0))
-            kept = _compute(
-                "filter", section_ids, _is_in(_section_key(batch.column(1)), document_ids)
-            )
-            kept_section_ids.update(kept.to_pylist())
-        section_id_set = pa.array(sorted(kept_section_ids), type=pa.string())
-        rows: list[dict[str, Any]] = []
-        for batch in iter_record_batches(parquet_file, batch_size=_PARQUET_BATCH_SIZE):
-            section_ids = _section_key(batch.column(batch.schema.get_field_index("section_id")))
-            rows.extend(batch.filter(_is_in(section_ids, section_id_set)).to_pylist())
-        return rows
+        kept_section_ids = _kept_section_ids(parquet_file, documents, checkpoint_rows)
+        return _rows_with_section_ids(parquet_file, kept_section_ids)
+
+
+def _kept_section_ids(
+    parquet_file: Any,
+    documents: dict[str, dict[str, Any]],
+    checkpoint_rows: list[dict[str, Any]],
+) -> set[str]:
+    """Collect section ids owned by a kept document, reading only key columns."""
+    document_ids = pa.array(list(documents), type=pa.string())
+    kept_section_ids = {
+        str(row.get("section_id", ""))
+        for row in checkpoint_rows
+        if str(row.get("document_id", "")) in documents
+    }
+    for batch in iter_record_batches(
+        parquet_file, batch_size=_PARQUET_BATCH_SIZE, columns=_SECTION_KEY_COLUMNS
+    ):
+        section_ids = _section_key(batch.column(0))
+        kept = _compute("filter", section_ids, _is_in(_section_key(batch.column(1)), document_ids))
+        kept_section_ids.update(kept.to_pylist())
+    return kept_section_ids
+
+
+def _rows_with_section_ids(parquet_file: Any, section_ids: set[str]) -> list[dict[str, Any]]:
+    """Convert to Python only the stored rows whose section id is in ``section_ids``."""
+    section_id_set = pa.array(sorted(section_ids), type=pa.string())
+    rows: list[dict[str, Any]] = []
+    for batch in iter_record_batches(parquet_file, batch_size=_PARQUET_BATCH_SIZE):
+        keys = _section_key(batch.column(batch.schema.get_field_index("section_id")))
+        rows.extend(batch.filter(_is_in(keys, section_id_set)).to_pylist())
+    return rows
 
 
 def _has_string_section_keys(schema: pa.Schema) -> bool:
