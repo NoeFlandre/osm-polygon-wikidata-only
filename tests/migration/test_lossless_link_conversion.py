@@ -385,3 +385,28 @@ def test_ambiguous_article_id_blocks_stem(tmp_path: Path) -> None:
     sp = next(s for s in plan.stems if s.stem == stem)
     assert sp.classification == mod.StemClassification.BLOCKED
     assert "AMBIG" in sp.reason or "ambig" in sp.reason or "multiple" in sp.reason.lower()
+
+
+def test_apply_reuses_supplied_plan_without_replanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan from ``plan_link_migration`` can be applied directly."""
+    mod = _import_module()
+    stem = "alpha-latest"
+    processed = tmp_path / "processed"
+    _write_polygons(processed, stem, [_poly_row("p1", "Q1")])
+    _write_documents(processed, stem, [_doc_row("a1", "Q1:wikipedia:en:100:1", "Q1", 100, 1)])
+    _write_legacy_links(processed, stem, [_legacy_row("p1", "a1", "Q1")])
+
+    plan = mod.plan_link_migration(processed, stems={stem})
+
+    def _no_replan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("apply_link_migration must not re-plan a supplied plan")
+
+    monkeypatch.setattr(mod, "plan_link_migration", _no_replan)
+    mod.apply_link_migration(processed, plan=plan)
+
+    canonical = pq.read_table(  # type: ignore[no-untyped-call]
+        processed / "polygon_articles" / f"{stem}.parquet"
+    ).to_pylist()
+    assert [row["document_id"] for row in canonical] == ["Q1:wikipedia:en:100:1"]

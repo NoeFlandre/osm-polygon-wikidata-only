@@ -475,7 +475,7 @@ def _load_augmentation_result(
         if not migration.stems or migration.stems[0].classification.value == "canonical":
             LOGGER.info("Skipping augmentation for %s (already current)", stem)
             return None
-        apply_link_migration(data_root.processed, stems={stem})
+        apply_link_migration(data_root.processed, plan=migration)
         LOGGER.info(
             "Migrated %s to unified polygon-document links without Wikimedia requests",
             stem,
