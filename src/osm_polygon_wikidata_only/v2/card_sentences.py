@@ -17,7 +17,9 @@ from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.card_models import SentenceCardStats as _SentenceCardStats
-from osm_polygon_wikidata_only.v2.card_scanning import load_polygon_index as _load_polygon_index
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    load_polygon_index as _load_polygon_index,
+)
 
 
 def _compute_sentence_stats(processed_v2: Path) -> _SentenceCardStats | None:

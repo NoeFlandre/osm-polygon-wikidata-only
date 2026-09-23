@@ -29,18 +29,6 @@ from osm_polygon_wikidata_only.v2.card_scanning import (
     field_values_for_ids as _field_values_for_ids,
 )
 from osm_polygon_wikidata_only.v2.card_scanning import (
-    load_polygon_index as _load_polygon_index,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    polygon_ids_with_link_source as _polygon_ids_with_link_source,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    polygon_source_sets as _polygon_source_sets,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    scan_polygon_metrics as _scan_polygon_metrics,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
     sum_first_available as _sum_first_available,
 )
 from osm_polygon_wikidata_only.v2.card_scanning import (
@@ -69,6 +57,18 @@ from osm_polygon_wikidata_only.v2.card_scanning_links import (
 )
 from osm_polygon_wikidata_only.v2.card_scanning_links import (
     text_metrics_from_scanned as _text_metrics_from_scanned,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    load_polygon_index as _load_polygon_index,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    polygon_ids_with_link_source as _polygon_ids_with_link_source,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    polygon_source_sets as _polygon_source_sets,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    scan_polygon_metrics as _scan_polygon_metrics,
 )
 from osm_polygon_wikidata_only.v2.card_sentences import (
     compute_sentence_stats as _compute_sentence_stats,

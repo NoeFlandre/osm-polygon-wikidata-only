@@ -11,16 +11,16 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.v2.card_models import DocumentMetrics as _DocumentMetrics
 from osm_polygon_wikidata_only.v2.card_scanning import (
-    batch_column as _batch_column,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    batch_value as _batch_value,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
     has_non_empty_words as _has_non_empty_words,
 )
 from osm_polygon_wikidata_only.v2.card_scanning import (
     word_column as _word_column,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    batch_column as _batch_column,
+)
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    batch_value as _batch_value,
 )
 
 _SUCCESSFUL_FETCH_STATUS = "ok"
