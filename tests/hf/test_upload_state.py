@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import osm_polygon_wikidata_only.hf._upload_state as state
+import osm_polygon_wikidata_only.io.hashing as hashing
 from osm_polygon_wikidata_only.hf._upload_state import UploadStateStore
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 
@@ -135,25 +136,12 @@ def test_sequence_from_envelope_accepts_sequence_one(tmp_path: Path) -> None:
     assert state._sequence_from_state_path(path) == 1
 
 
-def test_sha256_reads_fixed_size_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sha256_reuses_cached_io_hashing_digest(tmp_path: Path) -> None:
     payload = tmp_path / "payload.bin"
-    payload.write_bytes(b"ignored")
-    reads: list[int | None] = []
+    payload.write_bytes(b"chunk")
 
-    class Reader:
-        def __enter__(self) -> Reader:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def read(self, size: int | None) -> bytes:
-            reads.append(size)
-            return b"chunk" if len(reads) == 1 else b""
-
-    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: Reader())
+    assert state.sha256_file is hashing.sha256_file
     assert state._sha256_file(payload) == hashlib.sha256(b"chunk").hexdigest()
-    assert reads == [65536, 65536]
 
 
 def test_independent_copy_creates_missing_parent_without_sharing_inode(tmp_path: Path) -> None:
