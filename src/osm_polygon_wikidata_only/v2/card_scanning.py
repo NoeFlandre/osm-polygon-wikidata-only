@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
-from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -338,47 +337,3 @@ record_polygon_row = _record_polygon_row
 word_column = _word_column
 has_non_empty_words = _has_non_empty_words
 non_empty_strings = _non_empty_strings
-
-
-_DOCUMENT_EXPORTS = frozenset(
-    {
-        "_document_batch_columns",
-        "_document_column_names",
-        "_document_columns",
-        "_document_metric_columns",
-        "_record_document_language",
-        "_record_document_row",
-        "_record_document_text",
-        "_record_document_words",
-        "_record_non_empty_text_document",
-        "_scan_document_batch",
-        "_scan_document_batches",
-        "_scan_document_file",
-        "_scan_document_metrics",
-    }
-)
-_LINK_EXPORTS = frozenset(
-    {
-        "_collect_linked_non_empty_text_polygons",
-        "_count_linked_non_empty_text_polygons",
-        "_merge_linked_non_empty_text_polygons",
-        "_merge_polygon_languages",
-        "_polygon_languages",
-        "_polygon_languages_file",
-        "_text_funnel",
-        "_text_metrics_from_scanned",
-    }
-)
-
-
-def __getattr__(name: str) -> Any:
-    """Lazily expose moved scanners for old private import seams."""
-    if name in _DOCUMENT_EXPORTS:
-        # Compatibility lookup avoids importing both scanner modules at startup.
-        card_scanning_documents = import_module(f"{__package__}.card_scanning_documents")
-        return getattr(card_scanning_documents, name)
-    if name in _LINK_EXPORTS:
-        # Compatibility lookup avoids importing both scanner modules at startup.
-        card_scanning_links = import_module(f"{__package__}.card_scanning_links")
-        return getattr(card_scanning_links, name)
-    raise AttributeError(name)
