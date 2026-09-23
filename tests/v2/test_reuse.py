@@ -9,7 +9,9 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
-from osm_polygon_wikidata_only.v2.reuse import _direct_inputs, _rows, load_v1_region
+from osm_polygon_wikidata_only.v2.reuse import load_v1_region
+from osm_polygon_wikidata_only.v2.reuse_load import _direct_inputs
+from osm_polygon_wikidata_only.v2.reuse_load import iter_parquet_rows as _rows
 
 
 def _write(path: Path, schema: pa.Schema, row: dict) -> None:
@@ -95,7 +97,7 @@ def test_rows_consumes_ordered_batches_without_reading_the_whole_file(
     ]
     batch_sizes: list[int] = []
 
-    import osm_polygon_wikidata_only.v2.reuse as reuse
+    import osm_polygon_wikidata_only.v2.reuse_load as reuse
 
     class BatchOnlyParquetFile:
         def __init__(self, _source: Path) -> None:
@@ -139,7 +141,7 @@ def test_rows_closes_parquet_file_after_iteration(
     schema = polygon_schema()
     _write(path, schema, _empty(schema))
 
-    import osm_polygon_wikidata_only.v2.reuse as reuse
+    import osm_polygon_wikidata_only.v2.reuse_load as reuse
 
     original = reuse.open_parquet
     opened: list[object] = []
@@ -223,7 +225,7 @@ def test_filtered_section_load_matches_python_filter_exactly(
     with_checkpoint: bool,
 ) -> None:
     from osm_polygon_wikidata_only.augmentation.schema import section_schema
-    from osm_polygon_wikidata_only.v2.reuse import _load_section_rows
+    from osm_polygon_wikidata_only.v2.reuse_direct import _load_section_rows
 
     root = DataRoot(tmp_path)
     root.ensure()

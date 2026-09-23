@@ -15,10 +15,10 @@ from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
 from osm_polygon_wikidata_only.v2.reuse import (
-    _run_direct_workers,
     merge_v2_region,
     reconcile_v2_region,
 )
+from osm_polygon_wikidata_only.v2.reuse_direct import _run_direct_workers
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
 from tests.v2.test_direct_enrichment import _article, _v1_row
