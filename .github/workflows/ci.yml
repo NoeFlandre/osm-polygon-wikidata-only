@@ -15,11 +15,13 @@ jobs:
     # bounded mutation tests. Keep enough time for a cold runner.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@cb30b4c9cca98bbd320daf128741850f83d8a99f # v2 (just)
+        with:
+          tool: just
       - name: Install Python
         run: uv python install 3.12
       - name: Run the deterministic QA gauntlet
@@ -33,11 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@cb30b4c9cca98bbd320daf128741850f83d8a99f # v2 (just)
+        with:
+          tool: just
       - name: Install Python
         run: uv python install 3.12
       - name: Run preprocessing quality checks
@@ -47,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build the development test image
         run: docker build --target development --tag osm-polygon-wikidata-only:ci-development .
       - name: Run the development pytest suite
