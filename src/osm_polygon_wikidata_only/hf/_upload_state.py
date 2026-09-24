@@ -7,7 +7,6 @@ The queue itself only coordinates workers and upload callbacks.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -19,6 +18,7 @@ from typing import Any
 
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
 
 UploadOps = list[PublicationOp]
 CopyFile = Callable[[Path, Path], None]
@@ -91,17 +91,6 @@ def _sequence_from_state_path(path: Path) -> int:
     if not isinstance(sequence, int) or isinstance(sequence, bool):
         return 0
     return max(sequence, 0)
-
-
-def _sha256_file(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open("rb") as file:
-        while True:
-            chunk = file.read(65536)
-            if not chunk:
-                break
-            hasher.update(chunk)
-    return hasher.hexdigest()
 
 
 def _independent_copy(source: Path, target: Path) -> None:

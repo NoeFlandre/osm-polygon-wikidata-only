@@ -1201,3 +1201,13 @@ def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: 
 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {"num_rows": 1, "document_id": ["doc-fr"]}
+
+
+@pytest.mark.parametrize("wrap", [Path, DataRoot])
+def test_plan_rejects_a_missing_data_root_with_a_release_error(tmp_path: Path, wrap: type) -> None:
+    missing = tmp_path / "missing"
+
+    with pytest.raises(language_split_release.LanguageSplitReleaseError) as error:
+        language_split_release.plan_language_split_release(wrap(missing))
+
+    assert str(error.value) == f"Data root is not a directory: {missing.resolve()}"
