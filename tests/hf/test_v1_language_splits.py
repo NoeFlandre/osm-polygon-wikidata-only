@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -21,10 +22,10 @@ from osm_polygon_wikidata_only.hf.v1_language_splits import (
     V1_LANGUAGE_SPLIT_MANIFEST,
     V1LanguageSplitError,
     _previous_partition_path,
-    _restore_files,
     _validate_partition_counts,
     generate_v1_language_splits,
 )
+from osm_polygon_wikidata_only.io import staged_install
 
 
 def _row_for_schema(schema: pa.Schema, **values: object) -> dict[str, object]:
@@ -460,7 +461,7 @@ def test_v1_partition_restores_backed_up_files_after_an_install_failure(tmp_path
     final.write_bytes(b"new")
     backup.write_bytes(b"old")
 
-    _restore_files([final], {final: backup})
+    staged_install.restore_files([final], {final: backup})
 
     assert final.read_bytes() == b"old"
     assert not backup.exists()
@@ -481,7 +482,7 @@ def test_v1_partition_restores_a_partial_backup_when_the_next_backup_fails(
     temporary_a.write_bytes(b"new-a")
     temporary_b.write_bytes(b"new-b")
 
-    original_backup = v1_language_splits._backup_existing
+    original_backup = staged_install.backup_existing
     calls = 0
 
     def fail_on_second_backup(path: Path) -> Path:
@@ -491,7 +492,7 @@ def test_v1_partition_restores_a_partial_backup_when_the_next_backup_fails(
             raise OSError("fixture backup failure")
         return original_backup(path)
 
-    monkeypatch.setattr(v1_language_splits, "_backup_existing", fail_on_second_backup)
+    monkeypatch.setattr(staged_install, "backup_existing", fail_on_second_backup)
     with pytest.raises(OSError, match="fixture backup failure"):
         v1_language_splits._install_staged_files(
             release,
@@ -514,18 +515,18 @@ def test_v1_partition_removes_new_files_after_a_partial_install_failure(
 
     def fail_after_first_install(
         staged: dict[Path, Path],
-        installed: list[Path] | None = None,
-    ) -> list[Path]:
-        installed = [] if installed is None else installed
+        installed: list[Path],
+        *,
+        manifest_path: Path | None = None,
+    ) -> None:
         for final, temporary in sorted(staged.items(), key=lambda item: item[0].as_posix()):
             final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(temporary, final)
             installed.append(final)
             if len(installed) == 1:
                 raise OSError("fixture install failure")
-        return installed
 
-    monkeypatch.setattr(v1_language_splits, "_install_files", fail_after_first_install)
+    monkeypatch.setattr(staged_install, "install_files", fail_after_first_install)
     with pytest.raises(OSError, match="fixture install failure"):
         generate_v1_language_splits(processed, output, batch_size=1)
 
@@ -552,3 +553,50 @@ def test_v1_partition_is_readable_by_standard_hugging_face_loader(tmp_path: Path
 
     assert dataset["document_id"] == ["doc-fr"]
     assert dataset["language"] == ["fr"]
+
+
+def test_v1_install_moves_the_manifest_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = tmp_path / "processed"
+    output = tmp_path / "release"
+    _write_fixture(processed)
+    replacements: list[Path] = []
+    original_replace = staged_install.os.replace
+
+    def recording_replace(source: Path, target: Path) -> None:
+        replacements.append(Path(target))
+        original_replace(source, target)
+
+    monkeypatch.setattr(staged_install.os, "replace", recording_replace)
+    generate_v1_language_splits(processed, output, batch_size=1)
+
+    assert replacements[-1] == output / V1_LANGUAGE_SPLIT_MANIFEST
+
+
+def test_v1_cross_filesystem_install_is_rejected_and_rolled_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = tmp_path / "processed"
+    output = tmp_path / "release"
+    _write_fixture(processed)
+    generate_v1_language_splits(processed, output, batch_size=1)
+    before = {
+        path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()
+    }
+    manifest = output / V1_LANGUAGE_SPLIT_MANIFEST
+    original_replace = staged_install.os.replace
+
+    def reject_manifest(source: Path, target: Path) -> None:
+        if Path(target) == manifest and not Path(source).name.endswith(".backup"):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        original_replace(source, target)
+
+    monkeypatch.setattr(staged_install.os, "replace", reject_manifest)
+    with pytest.raises(V1LanguageSplitError, match="EXDEV"):
+        generate_v1_language_splits(processed, output, batch_size=1)
+
+    after = {
+        path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()
+    }
+    assert after == before

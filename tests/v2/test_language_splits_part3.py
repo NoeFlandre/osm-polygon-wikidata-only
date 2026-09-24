@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # ruff: noqa: F403,F405
+from osm_polygon_wikidata_only.io import staged_install
 from tests.v2.language_splits_support import *
 
 
@@ -51,9 +52,9 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
     def fake_remove(destination: Path, owned_paths: set[SortPath]) -> None:
         observed["owned"] = owned_paths
 
-    monkeypatch.setattr(language_splits, "_backup_targets", fake_backup)
-    monkeypatch.setattr(language_splits, "_install_files", fake_install)
-    monkeypatch.setattr(language_splits, "_cleanup_transaction", fake_cleanup)
+    monkeypatch.setattr(staged_install, "backup_targets", fake_backup)
+    monkeypatch.setattr(staged_install, "install_files", fake_install)
+    monkeypatch.setattr(staged_install, "cleanup_transaction", fake_cleanup)
     monkeypatch.setattr(language_splits, "_remove_empty_output_directories", fake_remove)
 
     language_splits._install_staged_files(tmp_path, tmp_path / "language_splits", staged)
@@ -77,15 +78,15 @@ def test_v2_restore_files_is_missing_safe_and_sorts_backups_by_final_path(
     backup_z.write_bytes(b"z")
     backup_a.write_bytes(b"a")
     replacements: list[tuple[Path, Path]] = []
-    original_replace = language_splits.os.replace
+    original_replace = staged_install.os.replace
 
     def recording_replace(source: Path, destination: Path) -> None:
         replacements.append((source, destination))
         original_replace(source, destination)
 
-    monkeypatch.setattr(language_splits.os, "replace", recording_replace)
+    monkeypatch.setattr(staged_install.os, "replace", recording_replace)
 
-    language_splits._restore_files(
+    staged_install.restore_files(
         [missing_final],
         {final_z: backup_z, final_a: backup_a},
     )
@@ -139,12 +140,12 @@ def test_v2_restore_files_requires_final_path_order_and_recursive_parent_creatio
     backup_a_existing = ExistingBackup(backup_a.value, events)
 
     monkeypatch.setattr(
-        language_splits.os,
+        staged_install.os,
         "replace",
         lambda source, destination: replacements.append((source, destination)),
     )
 
-    language_splits._restore_files(
+    staged_install.restore_files(
         [missing],
         {final_z: backup_z_existing, final_a: backup_a_existing},
     )
@@ -166,7 +167,7 @@ def test_v2_backup_existing_keeps_hidden_backup_next_to_original(tmp_path: Path)
     path.write_bytes(b"payload")
     backup: Path | None = None
     try:
-        backup = language_splits._backup_existing(path)
+        backup = staged_install.backup_existing(path)
 
         assert not path.exists()
         assert backup.parent == path.parent

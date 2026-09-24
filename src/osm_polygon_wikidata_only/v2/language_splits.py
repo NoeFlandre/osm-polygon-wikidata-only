@@ -9,12 +9,9 @@ own ``language`` value is the only partition key.
 from __future__ import annotations
 
 import argparse
-import errno
 import hashlib
 import logging
-import os
 import shutil
-import tempfile
 from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -41,6 +38,10 @@ from osm_polygon_wikidata_only.hf.language_splits import (
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+from osm_polygon_wikidata_only.io.staged_install import (
+    CrossFilesystemInstallError,
+    install_staged_files,
+)
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
@@ -662,90 +663,18 @@ def _install_staged_files(
 ) -> None:
     previous = _previous_partition_paths(root, destination)
     final_paths = set(staged)
-    stale = previous - final_paths
-    targets = sorted(final_paths | stale, key=lambda path: path.as_posix())
-    backups: dict[Path, Path] = {}
-    installed: list[Path] = []
     try:
-        _backup_targets(targets, backups)
-        _install_files(
+        install_staged_files(
             staged,
-            installed,
+            stale=previous - final_paths,
             manifest_path=root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
         )
-    except BaseException:
-        _restore_files(installed, backups)
-        raise
-    finally:
-        _cleanup_transaction(staged, backups)
+    except CrossFilesystemInstallError as error:
+        raise V2LanguageSplitError(
+            "V2 language split publication cannot cross filesystems (EXDEV): "
+            f"{error.source} -> {error.destination}"
+        ) from error
     _remove_empty_output_directories(destination, previous | final_paths)
-
-
-def _backup_targets(targets: list[Path], backups: dict[Path, Path]) -> None:
-    try:
-        for target in targets:
-            if target.exists():
-                backups[target] = _backup_existing(target)
-    except BaseException:
-        _restore_files([], backups)
-        raise
-
-
-def _install_files(
-    staged: dict[Path, Path],
-    installed: list[Path],
-    *,
-    manifest_path: Path | None = None,
-) -> None:
-    ordered = sorted(
-        staged.items(),
-        key=lambda item: (
-            manifest_path is not None and item[0] == manifest_path,
-            item[0].as_posix(),
-        ),
-    )
-    for final, temporary in ordered:
-        final.parent.mkdir(parents=True, exist_ok=True)
-        _replace_path(temporary, final)
-        installed.append(final)
-
-
-def _restore_files(installed: list[Path], backups: dict[Path, Path]) -> None:
-    for final in installed:
-        final.unlink(missing_ok=True)
-    for final, backup in sorted(backups.items(), key=lambda item: item[0].as_posix()):
-        if backup.exists():
-            final.parent.mkdir(parents=True, exist_ok=True)
-            _replace_path(backup, final)
-
-
-def _cleanup_transaction(staged: dict[Path, Path], backups: dict[Path, Path]) -> None:
-    for temporary in staged.values():
-        temporary.unlink(missing_ok=True)
-    for backup in backups.values():
-        backup.unlink(missing_ok=True)
-
-
-def _backup_existing(path: Path) -> Path:
-    descriptor, raw_backup = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".backup", dir=path.parent
-    )
-    os.close(descriptor)
-    backup = Path(raw_backup)
-    _replace_path(path, backup)
-    return backup
-
-
-def _replace_path(source: Path, destination: Path) -> None:
-    try:
-        os.replace(source, destination)
-    except OSError as error:
-        if error.errno == errno.EXDEV:
-            raise V2LanguageSplitError(
-                "V2 language split publication cannot cross filesystems (EXDEV): "
-                f"{source} -> {destination}"
-            ) from error
-        raise
 
 
 def _previous_partition_paths(root: Path, destination: Path) -> set[Path]:
