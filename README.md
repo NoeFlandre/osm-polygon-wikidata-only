@@ -186,7 +186,8 @@ export OSM_POLYGON_DATA_ROOT=/path/to/osm-polygon-data
 
 ## Usage
 
-After `uv sync`, the processing and augmentation commands are:
+After `uv sync`, the main `osm-polygon-wikidata-only` CLI (argparse
+subcommands) and the standalone helper scripts are:
 
 ```bash
 uv run osm-polygon-wikidata-only sync-dir <dir> [--options]
@@ -195,6 +196,7 @@ uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
 uv run osm-polygon-wikidata-only augment-region <stem>  [--options]
 uv run osm-polygon-wikidata-only augment-dir             [--options]
 uv run osm-polygon-wikidata-only language-splits         [--options]
+uv run osm-polygon-wikidata-only publish-language-splits [--options]
 uv run osm-polygon-wikidata-only split-v2-sentences       [--options]
 uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
 ```

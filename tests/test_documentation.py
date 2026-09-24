@@ -81,10 +81,15 @@ def test_pages_workflow_builds_strict_site_and_deploys_artifact() -> None:
     build_run = "\n".join(step.get("run", "") for step in build["steps"] if isinstance(step, dict))
     assert "mkdocs build --strict --site-dir site" in build_run
     assert "uv run python scripts/assemble_docs_site.py --site-dir site" in build_run
-    assert any(step.get("uses") == "actions/upload-pages-artifact@v3" for step in build["steps"])
+    assert any(
+        str(step.get("uses", "")).startswith("actions/upload-pages-artifact@")
+        for step in build["steps"]
+    )
     assert build["permissions"] == {"contents": "read", "pages": "read"}
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
-    assert any(step.get("uses") == "actions/deploy-pages@v4" for step in deploy["steps"])
+    assert any(
+        str(step.get("uses", "")).startswith("actions/deploy-pages@") for step in deploy["steps"]
+    )
 
 
 def test_readme_documents_complete_wikimedia_bot_password_workflow() -> None:

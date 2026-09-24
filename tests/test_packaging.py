@@ -190,7 +190,12 @@ def test_github_actions_delegates_quality_commands_to_just() -> None:
     root = Path(__file__).parents[1]
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "taiki-e/install-action@just" in workflow
+    assert "taiki-e/install-action@" in workflow
+    assert "tool: just" in workflow
+    for line in workflow.splitlines():
+        if "uses:" in line:
+            ref = line.split("@", 1)[1].split()[0]
+            assert len(ref) == 40, f"action not pinned to a commit SHA: {line.strip()}"
     assert "run: just quality-gauntlet" in workflow
     assert 'MUTMUT_MAX_CHILDREN: "4"' in workflow
     for recipe in ("coverage", "lint", "format-check", "typecheck", "build"):
