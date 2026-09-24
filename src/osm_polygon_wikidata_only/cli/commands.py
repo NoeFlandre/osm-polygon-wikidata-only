@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -475,7 +475,7 @@ def _load_augmentation_result(
         if not migration.stems or migration.stems[0].classification.value == "canonical":
             LOGGER.info("Skipping augmentation for %s (already current)", stem)
             return None
-        apply_link_migration(data_root.processed, stems={stem})
+        apply_link_migration(data_root.processed, plan=migration)
         LOGGER.info(
             "Migrated %s to unified polygon-document links without Wikimedia requests",
             stem,
@@ -594,23 +594,17 @@ def _log_process_results(results: Sequence[ProcessResult]) -> None:
         )
 
 
-def _run_processing_command(
+def _processing_upload_enqueuer(
     args: argparse.Namespace,
+    settings: Settings,
     *,
     data_root: DataRoot,
-    settings: Settings,
-) -> int:
-    """Run the core PBF processor and drain any requested uploads."""
-    wd, wiki, cache = _build_clients(settings, data_root=data_root)
-    inputs = _processing_inputs(args.command, args.input)
-    upload_queue = _build_upload_queue(args, settings, data_root=data_root)
-    # A directory run publishes one region per PBF; the repository-wide
-    # assets are produced once after the queue drains instead of after
-    # each region.
-    defer_metadata_assets = args.command == "process-dir"
-    # A simulated push must not touch durable publication state.
-    dry_run = bool(getattr(args, "dry_run", False))
-    published_stems: set[str] = set()
+    upload_queue: BackgroundUploadQueue | None,
+    defer_metadata_assets: bool,
+    dry_run: bool,
+    published_stems: set[str],
+) -> Callable[[ProcessResult], None]:
+    """Return the per-region ``on_complete`` hook that queues core uploads."""
     deferred_stems: dict[str, str] = {}
 
     def enqueue_upload(result: ProcessResult) -> None:
@@ -632,6 +626,35 @@ def _run_processing_command(
         )
         published_stems.add(_result_stem(result))
 
+    return enqueue_upload
+
+
+def _run_processing_command(
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+) -> int:
+    """Run the core PBF processor and drain any requested uploads."""
+    wd, wiki, cache = _build_clients(settings, data_root=data_root)
+    inputs = _processing_inputs(args.command, args.input)
+    upload_queue = _build_upload_queue(args, settings, data_root=data_root)
+    # A directory run publishes one region per PBF; the repository-wide
+    # assets are produced once after the queue drains instead of after
+    # each region.
+    defer_metadata_assets = args.command == "process-dir"
+    # A simulated push must not touch durable publication state.
+    dry_run = bool(getattr(args, "dry_run", False))
+    published_stems: set[str] = set()
+    enqueue_upload = _processing_upload_enqueuer(
+        args,
+        settings,
+        data_root=data_root,
+        upload_queue=upload_queue,
+        defer_metadata_assets=defer_metadata_assets,
+        dry_run=dry_run,
+        published_stems=published_stems,
+    )
     upload_failures: list[str] = []
     processing_completed = False
     try:

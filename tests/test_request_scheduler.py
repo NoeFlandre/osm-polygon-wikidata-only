@@ -684,3 +684,17 @@ def test_scheduler_rejects_invalid_configuration(kwargs: dict[str, object], mess
         AdaptiveRequestScheduler(**kwargs)  # type: ignore[arg-type]
 
     assert str(error.value) == message
+
+
+def test_request_history_stays_bounded_without_snapshots() -> None:
+    now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = AdaptiveRequestScheduler(requests_per_minute=60, clock=clock, sleep=sleep)
+
+    for _ in range(300):
+        scheduler.run(lambda: None)
+
+    # One request per second: only the last rolling minute is retained,
+    # even though snapshot() was never called to prune the history.
+    assert now[0] > 250
+    assert len(scheduler._request_started_at) <= 61
+    assert scheduler.snapshot().requests_last_minute == len(scheduler._request_started_at)

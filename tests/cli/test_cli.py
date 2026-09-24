@@ -190,6 +190,47 @@ def test_load_augmentation_result_skips_a_current_canonical_region(
     )
 
 
+def test_load_augmentation_result_skip_existing_plans_link_migration_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.augmentation.orchestrator as orchestrator
+    import osm_polygon_wikidata_only.pipeline.link_migration as migration
+
+    data_root = DataRoot(tmp_path)
+    args = argparse.Namespace(skip_existing=True)
+    marker = object()
+    legacy_plan = SimpleNamespace(
+        stems=(SimpleNamespace(classification=migration.StemClassification.MIGRATABLE),)
+    )
+    plan_calls: list[object] = []
+    applied: list[object] = []
+    monkeypatch.setattr(commands, "augmentation_is_current", lambda *_args: True)
+    monkeypatch.setattr(
+        migration,
+        "plan_link_migration",
+        lambda *_args, **kwargs: plan_calls.append(kwargs) or legacy_plan,
+    )
+    monkeypatch.setattr(
+        migration,
+        "apply_link_migration",
+        lambda *_args, **kwargs: applied.append(kwargs.get("plan")),
+    )
+    monkeypatch.setattr(
+        orchestrator, "load_existing_augmentation_result", lambda *_args, **_kwargs: marker
+    )
+
+    result = commands._load_augmentation_result(
+        args,
+        data_root=data_root,
+        stem="andorra-latest",
+        augmentation_client=object(),  # type: ignore[arg-type]
+    )
+
+    assert result is marker
+    assert plan_calls == [{"stems": {"andorra-latest"}}]
+    assert applied == [legacy_plan]
+
+
 def test_load_augmentation_result_augments_and_loads_when_not_current(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

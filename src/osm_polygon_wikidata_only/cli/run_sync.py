@@ -7,13 +7,13 @@ state-execution policy lives in :mod:`pipeline.sync_runner`;
 this module only builds collaborators and calls
 :func:`pipeline.sync_runner.run_sync`.
 
-When ``--push`` is disabled, ``build_upload_files`` and
-``submit_upload`` are both passed as ``None`` so the runner
-never invokes publication assembly. When ``--push`` is enabled,
-the CLI shell builds the region-publication list through
-:func:`hf.publication.assemble_region_upload` (a pure assembler
-that performs NO upload) and submits the returned list through
-the upload queue exactly once per region.
+Publication policy lives in :class:`cli.sync_application.SyncApplication`:
+when ``--push`` is disabled it hands the runner no publication
+callbacks, so publication assembly never runs. When ``--push`` is
+enabled it builds each region's publication list through
+:func:`hf.publication.assemble_region_upload` (a pure assembler that
+performs NO upload) and submits that list through the upload queue
+exactly once per region.
 """
 
 from __future__ import annotations
@@ -220,22 +220,15 @@ def _prepare_sync_plan(
     """Prepare local migration, remote reconciliation, and sync states."""
     # The migration stack is needed only for a selected sync operation.
     from osm_polygon_wikidata_only.pipeline.containment_migration import (  # noqa: PLC0415
-        load_retired_children,
         load_retired_parent_children,
-        prepare_safe_rules,
     )
 
-    _prepare_containment_rules(
-        enabled=push_enabled,
-        data_path=data_root.path,
+    pbfs, input_stems = _prepare_local_inputs(
+        args,
+        data_root=data_root,
+        push_enabled=push_enabled,
         dry_run=dry_run,
-        prepare_safe_rules=prepare_safe_rules,
     )
-    retired_children = load_retired_children(data_root.processed)
-    pbfs = _active_pbfs(collect_pbfs([args.input]), retired_children)
-    input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
-    _run_pre_publication_migration(data_root, input_stems)
-
     planner_cls, canonical_region_paths = _remote_reconciliation_helpers(push_enabled)
     remote_state = _prepare_remote_reconciliation(
         enabled=push_enabled,
@@ -249,6 +242,53 @@ def _prepare_sync_plan(
         canonical_region_paths=canonical_region_paths,
         planner_cls=planner_cls,
     )
+    return _plan_prepared_sync(
+        pbfs,
+        input_stems=input_stems,
+        remote_state=remote_state,
+        data_root=data_root,
+        settings=settings,
+        push_enabled=push_enabled,
+    )
+
+
+def _prepare_local_inputs(
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    push_enabled: bool,
+    dry_run: bool,
+) -> tuple[list[Path], set[str]]:
+    """Prepare containment rules, select active inputs, and migrate them locally."""
+    # The migration stack is needed only for a selected sync operation.
+    from osm_polygon_wikidata_only.pipeline.containment_migration import (  # noqa: PLC0415
+        load_retired_children,
+        prepare_safe_rules,
+    )
+
+    _prepare_containment_rules(
+        enabled=push_enabled,
+        data_path=data_root.path,
+        dry_run=dry_run,
+        prepare_safe_rules=prepare_safe_rules,
+    )
+    retired_children = load_retired_children(data_root.processed)
+    pbfs = _active_pbfs(collect_pbfs([args.input]), retired_children)
+    input_stems = {pbf.name.removesuffix(".osm.pbf") for pbf in pbfs}
+    _run_pre_publication_migration(data_root, input_stems)
+    return pbfs, input_stems
+
+
+def _plan_prepared_sync(
+    pbfs: list[Path],
+    *,
+    input_stems: set[str],
+    remote_state: _RemoteReconciliation,
+    data_root: DataRoot,
+    settings: Settings,
+    push_enabled: bool,
+) -> _PreparedSyncPlan:
+    """Derive per-region sync states from local manifests and remote state."""
     entries = load_manifest(data_root.processed_manifests / "processed_pbfs.json")
     core_stems = {name.removesuffix(".osm.pbf") for name in entries}
     current_augmentation = _current_augmentation_for_plan(
@@ -412,24 +452,18 @@ def execute(
     _remote_inventory: RemoteInventory | None = None,
     _hub: HfHub | None = None,
 ) -> int:
-    """Run the ``sync-dir`` CLI command by wiring collaborators to
-    :func:`pipeline.sync_runner.run_sync`.
+    """Run the ``sync-dir`` CLI command.
 
-    The CLI shell owns the unified-plan count log line and
-    decides whether publication assembly runs. When
-    ``--push`` is disabled, both ``build_upload_files`` and
-    ``submit_upload`` are ``None`` and the runner never invokes
-    the publication assembly.
+    Prepares the unified sync plan (local states plus remote
+    reconciliation), builds the Wikimedia runtime, augmentation client
+    and optional upload queue, enqueues containment retirement, logs the
+    plan counts, and then delegates execution to
+    :class:`cli.sync_application.SyncApplication`, which decides whether
+    publication runs and calls :func:`pipeline.sync_runner.run_sync`.
 
-    When ``--push`` is enabled, the CLI shell builds the region
-    file list through
-    :func:`hf.publication.assemble_region_upload` (a pure assembler
-    that returns the ordered list) and the runner submits it via
-    the upload queue. The CLI shell and runner together produce
-    exactly ONE atomic commit per region: the assembler never
-    submits, and the runner submits the assembled list exactly
-    once. The unified-sync path silently swallows the legacy
-    world-land exception (the ``warning_callback`` is ``None``).
+    ``build_upload_files`` optionally replaces the default region
+    publication builder when ``--push`` is enabled; production passes
+    ``None``.
     """
     push_enabled = bool(getattr(args, "push", False))
     dry_run = bool(getattr(args, "dry_run", False))
@@ -489,6 +523,46 @@ def _run_sync_application(
     containment_enqueued: bool,
     publish_builder: Callable[..., list[PublicationOp]] | None,
 ) -> int:
+    application = SyncApplication(
+        context=SyncApplicationContext(
+            data_root=data_root,
+            settings=settings,
+            runtime=runtime,
+            augmentation_client=augmentation_client,
+            states=prepared.states,
+            push_enabled=push_enabled,
+            dry_run=dry_run,
+            pending_stems=prepared.all_pending_stems,
+            stems_with_gaps=prepared.remote_state.stems_with_gaps,
+            reconciliation_plan=prepared.remote_state.plan,
+            upload_queue=upload_queue,
+            publish_builder=publish_builder,
+            core_will_be_repaired=prepared.core_will_be_repaired,
+            core_repaired=prepared.remote_state.core_repaired,
+            containment_enqueued=containment_enqueued,
+        ),
+        services=_build_sync_services(
+            args,
+            data_root=data_root,
+            settings=settings,
+            runtime=runtime,
+        ),
+    )
+    return application.run().return_code
+
+
+def _build_sync_services(
+    args: argparse.Namespace,
+    *,
+    data_root: DataRoot,
+    settings: Settings,
+    runtime: Any,
+) -> SyncApplicationServices:
+    """Build the injected sync collaborators from this module's bindings.
+
+    Collaborators are resolved from ``run_sync`` module globals at call
+    time so tests that monkeypatch them here keep taking effect.
+    """
     wikidata_client = runtime.wikidata
     wikipedia_client = runtime.wikipedia
     runtime_cache = runtime.cache
@@ -526,53 +600,32 @@ def _run_sync_application(
         SyncHeartbeat,
     )
 
-    application = SyncApplication(
-        context=SyncApplicationContext(
-            data_root=data_root,
-            settings=settings,
-            runtime=runtime,
-            augmentation_client=augmentation_client,
-            states=prepared.states,
-            push_enabled=push_enabled,
-            dry_run=dry_run,
-            pending_stems=prepared.all_pending_stems,
-            stems_with_gaps=prepared.remote_state.stems_with_gaps,
-            reconciliation_plan=prepared.remote_state.plan,
-            upload_queue=upload_queue,
-            publish_builder=publish_builder,
-            core_will_be_repaired=prepared.core_will_be_repaired,
-            core_repaired=prepared.remote_state.core_repaired,
-            containment_enqueued=containment_enqueued,
-        ),
-        services=SyncApplicationServices(
-            extract_pbf=_extract,
-            process_extracted_pbf=_process,
-            augment_region=augment_region,
-            load_existing_augmentation=load_existing_augmentation_result,
-            recover_region=lambda state: None,
-            run_sync=sync_runner_mod.run_sync,
-            plan_link_migration=plan_link_migration,
-            apply_link_migration=apply_link_migration,
-            audit_wikidata_integrity=audit_wikidata_integrity,
-            ensure_recovery_audit_unblocked=_ensure_recovery_audit_unblocked,
-            repair_wikidata_region=repair_wikidata_region,
-            prepare_local_retirement=prepare_local_retirement,
-            add_pending_publications=add_pending_publications,
-            record_region_recovery_receipt=record_region_recovery_receipt,
-            assemble_region_upload=assemble_region_upload,
-            assemble_metadata_only_upload=assemble_metadata_only_upload,
-            load_existing_core_for_publication=_load_existing_core_for_publication,
-            commit_message=_commit_message(getattr(args, "commit_message", None)),
-            log_remote_reconciliation_summary=_log_remote_reconciliation_summary,
-            load_metadata_refresh_marker=load_metadata_refresh_marker,
-            set_metadata_refresh_marker=set_metadata_refresh_marker,
-            clear_metadata_refresh_marker=clear_metadata_refresh_marker,
-            augmentation_progress=AugmentationProgress,
-            sync_heartbeat=SyncHeartbeat,
-            logger=LOGGER,
-        ),
+    return SyncApplicationServices(
+        extract_pbf=_extract,
+        process_extracted_pbf=_process,
+        augment_region=augment_region,
+        load_existing_augmentation=load_existing_augmentation_result,
+        run_sync=sync_runner_mod.run_sync,
+        plan_link_migration=plan_link_migration,
+        apply_link_migration=apply_link_migration,
+        audit_wikidata_integrity=audit_wikidata_integrity,
+        ensure_recovery_audit_unblocked=_ensure_recovery_audit_unblocked,
+        repair_wikidata_region=repair_wikidata_region,
+        prepare_local_retirement=prepare_local_retirement,
+        add_pending_publications=add_pending_publications,
+        record_region_recovery_receipt=record_region_recovery_receipt,
+        assemble_region_upload=assemble_region_upload,
+        assemble_metadata_only_upload=assemble_metadata_only_upload,
+        load_existing_core_for_publication=_load_existing_core_for_publication,
+        commit_message=_commit_message(getattr(args, "commit_message", None)),
+        log_remote_reconciliation_summary=_log_remote_reconciliation_summary,
+        load_metadata_refresh_marker=load_metadata_refresh_marker,
+        set_metadata_refresh_marker=set_metadata_refresh_marker,
+        clear_metadata_refresh_marker=clear_metadata_refresh_marker,
+        augmentation_progress=AugmentationProgress,
+        sync_heartbeat=SyncHeartbeat,
+        logger=LOGGER,
     )
-    return application.run().return_code
 
 
 def _log_remote_reconciliation_summary(
@@ -721,6 +774,32 @@ def _prepare_remote_reconciliation(
         inventory=inventory,
         canonical_region_paths=canonical_region_paths,
     )
+    reconciliation_plan, stems_with_gaps, core_repaired = _plan_remote_reconciliation(
+        planner_cls,
+        data_root=data_root,
+        inventory=inventory,
+        input_stems=input_stems,
+        augmentation_current=augmentation_current,
+    )
+    return _RemoteReconciliation(
+        inventory,
+        reconciliation_plan,
+        augmentation_current,
+        stems_with_gaps,
+        containment_publications,
+        core_repaired,
+    )
+
+
+def _plan_remote_reconciliation(
+    planner_cls: Any,
+    *,
+    data_root: DataRoot,
+    inventory: RemoteInventory,
+    input_stems: set[str],
+    augmentation_current: dict[str, bool],
+) -> tuple[Any, set[str], bool]:
+    """Plan remote gaps, log their counts, and report whether core is repaired."""
     reconciliation_plan = planner_cls(
         data_root=data_root,
         inventory=inventory,
@@ -743,14 +822,7 @@ def _prepare_remote_reconciliation(
         missing_core_count,
         missing_aug_count,
     )
-    return _RemoteReconciliation(
-        inventory,
-        reconciliation_plan,
-        augmentation_current,
-        stems_with_gaps,
-        containment_publications,
-        core_repaired,
-    )
+    return reconciliation_plan, stems_with_gaps, core_repaired
 
 
 def _require_remote_helpers(

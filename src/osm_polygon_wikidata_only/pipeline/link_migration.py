@@ -978,6 +978,7 @@ def apply_link_migration(
     *,
     stems: set[str] | None = None,
     replacements: list[tuple[Path, Path]] | None = None,
+    plan: MigrationPlan | None = None,
     _crash_hook: Callable[[int, Path], None] | None = None,
 ) -> None:
     """Apply stage.
@@ -985,6 +986,10 @@ def apply_link_migration(
     * When ``replacements`` is ``None``, plans the migration and applies
       every legacy stem atomically. Each stem gets its own journaled
       transaction.
+    * When ``plan`` is supplied (from :func:`plan_link_migration` for the
+      same ``processed_dir``), it is applied instead of planning again;
+      ``stems`` is then ignored. Per-stem source fingerprints are still
+      re-validated before any file is replaced.
     * When ``replacements`` is supplied, runs the same ordered journaled
       transaction directly (used by tests via the public boundary).
     """
@@ -992,7 +997,8 @@ def apply_link_migration(
         _apply_replacements(processed_dir, replacements, _crash_hook=_crash_hook)
         return
 
-    plan = plan_link_migration(processed_dir, stems=stems)
+    if plan is None:
+        plan = plan_link_migration(processed_dir, stems=stems)
     _ensure_migration_plan_safe(plan)
     _apply_migratable_stems(
         processed_dir,

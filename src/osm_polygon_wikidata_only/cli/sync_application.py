@@ -43,7 +43,6 @@ class SyncApplicationServices:
     process_extracted_pbf: Callable[[Any], Any]
     augment_region: Callable[..., Any]
     load_existing_augmentation: Callable[..., Any]
-    recover_region: Callable[[RegionSyncState], Any]
     run_sync: Callable[..., int]
     plan_link_migration: Callable[..., Any]
     apply_link_migration: Callable[..., Any]
