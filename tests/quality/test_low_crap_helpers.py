@@ -70,7 +70,7 @@ from osm_polygon_wikidata_only.pipeline.row_construction import (
     _article_fetch_fields,
 )
 from osm_polygon_wikidata_only.v2.card import V2CardStats
-from osm_polygon_wikidata_only.v2.reuse import _normalize_link
+from osm_polygon_wikidata_only.v2.reuse_load import _normalize_link
 from osm_polygon_wikidata_only.v2.v1_index import (
     _group_title_rows,
     _normalized_title_keys,

@@ -9,7 +9,9 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
-from osm_polygon_wikidata_only.v2.reuse import _direct_inputs, _rows, load_v1_region
+from osm_polygon_wikidata_only.v2.reuse import load_v1_region
+from osm_polygon_wikidata_only.v2.reuse_load import _direct_inputs
+from osm_polygon_wikidata_only.v2.reuse_load import iter_parquet_rows as _rows
 
 
 def _write(path: Path, schema: pa.Schema, row: dict) -> None:
@@ -95,7 +97,7 @@ def test_rows_consumes_ordered_batches_without_reading_the_whole_file(
     ]
     batch_sizes: list[int] = []
 
-    import osm_polygon_wikidata_only.v2.reuse as reuse
+    import osm_polygon_wikidata_only.v2.reuse_load as reuse
 
     class BatchOnlyParquetFile:
         def __init__(self, _source: Path) -> None:
@@ -139,7 +141,7 @@ def test_rows_closes_parquet_file_after_iteration(
     schema = polygon_schema()
     _write(path, schema, _empty(schema))
 
-    import osm_polygon_wikidata_only.v2.reuse as reuse
+    import osm_polygon_wikidata_only.v2.reuse_load as reuse
 
     original = reuse.open_parquet
     opened: list[object] = []
@@ -196,3 +198,96 @@ def test_direct_inputs_are_sorted_and_skip_polygons_without_wikipedia_refs() -> 
     assert [(polygon_id, refs[0].language, refs[0].title) for polygon_id, _, refs in result] == [
         ("a", "en", "Alpha")
     ]
+
+
+class _SectionCheckpoint:
+    def __init__(self, rows: list[dict], completed: set[str]) -> None:
+        self._rows = rows
+        self._completed = completed
+
+    def load_section_state(self) -> tuple[list[dict], set[str]]:
+        return [dict(row) for row in self._rows], set(self._completed)
+
+
+def _reference_filtered_sections(
+    stored: list[dict],
+    checkpoint_rows: list[dict],
+    documents: dict[str, dict],
+) -> list[dict]:
+    """Pre-Arrow behaviour: load everything, dedupe by section id, then filter."""
+    merged = {str(row.get("section_id", "")): row for row in [*stored, *checkpoint_rows]}
+    return [row for row in merged.values() if str(row.get("document_id", "")) in documents]
+
+
+@pytest.mark.parametrize("with_checkpoint", [False, True])
+def test_filtered_section_load_matches_python_filter_exactly(
+    tmp_path: Path,
+    with_checkpoint: bool,
+) -> None:
+    from osm_polygon_wikidata_only.augmentation.schema import section_schema
+    from osm_polygon_wikidata_only.v2.reuse_direct import _load_section_rows
+
+    root = DataRoot(tmp_path)
+    root.ensure()
+    schema = section_schema()
+
+    def section(section_id: str | None, document_id: str | None, text: str) -> dict:
+        row = _empty(schema)
+        row.update({"section_id": section_id, "document_id": document_id, "text": text})
+        return row
+
+    stored = [
+        section("s1", "keep", "stored-1"),
+        section("s2", "drop", "stored-2"),
+        # Dropped document shadowed by a kept checkpoint row: keeps its position.
+        section("s3", "drop", "stored-3"),
+        section("s4", "keep", "stored-4"),
+        # Duplicate id inside the stored file, last occurrence is kept.
+        section("s5", "drop", "stored-5a"),
+        section("s6", None, "stored-6"),
+        section("s5", "keep", "stored-5b"),
+        # Kept document replaced by a dropped checkpoint row.
+        section("s7", "keep", "stored-7"),
+        section(None, "keep", "stored-null-id"),
+    ]
+    path = root.processed_v2 / "wikipedia" / "sections" / "region-latest.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(stored, schema=schema), path)
+    checkpoint_rows = [
+        section("s3", "keep", "checkpoint-3"),
+        section("s7", "drop", "checkpoint-7"),
+        section("s8", "keep", "checkpoint-8"),
+        section("s9", "drop", "checkpoint-9"),
+    ]
+    documents = {"keep": {"document_id": "keep"}, "None": {"document_id": "None"}}
+    checkpoint = _SectionCheckpoint(checkpoint_rows, {"keep"}) if with_checkpoint else None
+
+    rows, completed = _load_section_rows(
+        root,
+        "region-latest",
+        documents=documents,
+        fetch_checkpoint=checkpoint,  # ty: ignore[invalid-argument-type]
+        filter_document_ids=True,
+    )
+
+    if with_checkpoint:
+        expected = _reference_filtered_sections(stored, checkpoint_rows, documents)
+        assert completed == {"keep"}
+    else:
+        expected = [row for row in stored if str(row.get("document_id", "")) in documents]
+        assert completed == set()
+    assert rows == expected
+    assert [row["text"] for row in rows]
+
+
+def test_filtered_section_load_handles_missing_and_non_string_key_files(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.reuse_direct import _document_section_rows
+
+    documents = {"keep": {"document_id": "keep"}}
+    assert _document_section_rows(tmp_path / "missing.parquet", documents, []) == []
+
+    path = tmp_path / "legacy-sections.parquet"
+    rows = [{"section_id": 1, "document_id": "keep"}, {"section_id": 2, "document_id": "drop"}]
+    pq.write_table(pa.Table.from_pylist(rows), path)
+    # Non-string keys fall back to the full Python load; filtering happens later.
+    assert _document_section_rows(path, documents, []) == rows

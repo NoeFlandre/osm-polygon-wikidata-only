@@ -420,25 +420,6 @@ def _corpus_totals(augmentation_stats: Any, core_stats: Any) -> tuple[int, int, 
     return documents, sections, languages
 
 
-def write_minimal_v1_card(
-    data_root: DataRoot,
-    repo_id: str,
-    destination: Path,
-    *,
-    generated_on: str | None = None,
-    text_presence: TextPresenceSnapshot | None = None,
-) -> MinimalV1ReleaseSnapshot:
-    """Write the compact V1 card and return the prepared release snapshot."""
-    prepared = build_minimal_v1_release_snapshot(
-        data_root,
-        repo_id,
-        generated_on=generated_on,
-        text_presence=text_presence,
-    )
-    atomic_write_text(destination, render_minimal_card(prepared.card))
-    return prepared
-
-
 def _write_readme_snapshot(
     data_root: DataRoot,
     repo_id: str,

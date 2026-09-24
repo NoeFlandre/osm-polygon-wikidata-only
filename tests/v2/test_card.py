@@ -9,12 +9,12 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
-from osm_polygon_wikidata_only.v2 import card, card_sentences
+from osm_polygon_wikidata_only.v2 import card, card_metrics, card_sentences
 from osm_polygon_wikidata_only.v2.card import (
     _document_batch_columns,
-    _word_column,
     compute_v2_card_stats,
     render_v2_card,
+    word_column,
     write_v2_card,
 )
 from osm_polygon_wikidata_only.v2.schema import wikipedia_document_v2_schema
@@ -459,9 +459,9 @@ def test_card_text_metric_counts_linked_successful_document_text_by_osm_identity
 
 
 def test_word_column_prefers_article_length_and_has_legacy_fallback() -> None:
-    assert _word_column({"article_length_words", "text_length_words"}) == ("article_length_words")
-    assert _word_column({"text_length_words"}) == "text_length_words"
-    assert _word_column({"document_id"}) is None
+    assert word_column({"article_length_words", "text_length_words"}) == ("article_length_words")
+    assert word_column({"text_length_words"}) == "text_length_words"
+    assert word_column({"document_id"}) is None
 
 
 def test_document_batch_columns_decode_only_requested_columns() -> None:
@@ -486,20 +486,20 @@ def test_document_batch_columns_decode_only_requested_columns() -> None:
 
 def test_record_numeric_value_ignores_empty_ids_and_rejects_conflicts() -> None:
     values: dict[str, int] = {}
-    card._record_numeric_value(values, None, 7, "words")
-    card._record_numeric_value(values, "", 7, "words")
-    card._record_numeric_value(values, "doc", None, "words")
-    card._record_numeric_value(values, "doc", 0, "words")
+    card.record_numeric_value(values, None, 7, "words")
+    card.record_numeric_value(values, "", 7, "words")
+    card.record_numeric_value(values, "doc", None, "words")
+    card.record_numeric_value(values, "doc", 0, "words")
     assert values == {"doc": 0}
     with pytest.raises(ValueError, match="Inconsistent words"):
-        card._record_numeric_value(values, "doc", 1, "words")
+        card.record_numeric_value(values, "doc", 1, "words")
 
 
 def test_sum_first_available_file_uses_first_present_word_column(tmp_path: Path) -> None:
     path = tmp_path / "documents.parquet"
     pq.write_table(pa.table({"document_id": ["a", "b"], "article_length_words": [3, None]}), path)
-    assert card._sum_first_available_file(path, ("article_length_words", "text_length_words")) == 3
-    assert card._sum_first_available_file(path, ("missing",)) == 0
+    assert card.sum_first_available_file(path, ("article_length_words", "text_length_words")) == 3
+    assert card.sum_first_available_file(path, ("missing",)) == 0
 
 
 def test_card_metrics_scan_document_columns_once(
@@ -532,15 +532,15 @@ def test_card_metrics_scan_document_columns_once(
     def fail_if_document_scan_is_repeated(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("document columns must be scanned once")
 
-    monkeypatch.setattr(card, "_sum_first_available", fail_if_document_scan_is_repeated)
-    original_unique_values = card._unique_values
+    monkeypatch.setattr(card_metrics, "_sum_first_available", fail_if_document_scan_is_repeated)
+    original_unique_values = card.unique_values
 
     def fail_if_document_values_are_rescanned(paths, column):
         if path in tuple(paths):
             raise AssertionError("document columns must be scanned once")
         return original_unique_values(paths, column)
 
-    monkeypatch.setattr(card, "_unique_values", fail_if_document_values_are_rescanned)
+    monkeypatch.setattr(card_metrics, "_unique_values", fail_if_document_values_are_rescanned)
 
     metrics = card._compute_card_metrics(files)
 
@@ -580,7 +580,7 @@ def test_card_metrics_scan_polygon_columns_once(
     def fail_if_polygon_scan_is_repeated(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("polygon columns must be scanned once")
 
-    monkeypatch.setattr(card, "_unique_values", fail_if_polygon_scan_is_repeated)
+    monkeypatch.setattr(card_metrics, "_unique_values", fail_if_polygon_scan_is_repeated)
 
     metrics = card._compute_card_metrics(files)
 
@@ -605,7 +605,7 @@ def test_osm_polygon_identity_preserves_metric_input_boundaries(
     osm_id: object,
     expected: tuple[str, int] | None,
 ) -> None:
-    assert card._osm_polygon_identity(osm_type, osm_id) == expected
+    assert card.osm_polygon_identity(osm_type, osm_id) == expected
 
 
 def test_card_metrics_preserve_rows_when_metric_columns_are_missing(tmp_path: Path) -> None:
@@ -664,7 +664,7 @@ def test_build_card_stats_reuses_collected_row_counts(
     def fail_if_counts_are_read_again(*_args: object, **_kwargs: object) -> int:
         raise AssertionError("card row counts must not be read twice")
 
-    monkeypatch.setattr(card, "_sum_metadata", fail_if_counts_are_read_again)
+    monkeypatch.setattr(card_metrics, "_sum_metadata", fail_if_counts_are_read_again)
 
     snapshot = card._build_card_stats(files, metrics, card._V1Comparison())
 
@@ -689,15 +689,15 @@ def test_unique_values_reuses_the_open_parquet_file_for_schema_and_rows(
 
     monkeypatch.setattr(card.pq, "read_schema", fail_if_opened_separately)
 
-    assert card._unique_values_file(path, "language") == {"en", "fr"}
+    assert card.unique_values_file(path, "language") == {"en", "fr"}
 
 
 def test_validated_source_list_rejects_non_lists_and_non_strings() -> None:
-    assert card._validated_source_list(["wikidata"], "p1", "sources") == ["wikidata"]
+    assert card.validated_source_list(["wikidata"], "p1", "sources") == ["wikidata"]
     with pytest.raises(ValueError, match="Invalid sources"):
-        card._validated_source_list({"source": "wikidata"}, "p1", "sources")
+        card.validated_source_list({"source": "wikidata"}, "p1", "sources")
     with pytest.raises(ValueError, match="Invalid sources"):
-        card._validated_source_list(["wikidata", 1], "p1", "sources")
+        card.validated_source_list(["wikidata", 1], "p1", "sources")
 
 
 def test_write_v2_card_preserves_previous_card_when_atomic_write_fails(

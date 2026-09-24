@@ -89,127 +89,29 @@ from osm_polygon_wikidata_only.v2.card_rendering import (
     render_v2_card,
 )
 from osm_polygon_wikidata_only.v2.card_scanning import (
-    batch_column as _batch_column,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    batch_value as _batch_value,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    collect_card_files as _collect_card_files,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    field_values_for_ids as _field_values_for_ids,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    first_present_column as _first_present_column,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    has_non_empty_words as _has_non_empty_words,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    link_source_file as _link_source_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    load_polygon_index as _load_polygon_index,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    manifest_files as _manifest_files,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_field_values_batch as _merge_field_values_batch,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_field_values_file as _merge_field_values_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_link_sources as _merge_link_sources,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_numeric_batch as _merge_numeric_batch,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_numeric_batches as _merge_numeric_batches,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_numeric_file as _merge_numeric_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    merge_polygon_sources as _merge_polygon_sources,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    metadata_row_count as _metadata_row_count,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    non_empty_strings as _non_empty_strings,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    osm_polygon_identity as _osm_polygon_identity,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    parse_source_list as _parse_source_list,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    polygon_columns as _polygon_columns,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    polygon_ids_with_link_source as _polygon_ids_with_link_source,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    polygon_source_file as _polygon_source_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    polygon_source_sets as _polygon_source_sets,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    record_numeric_value as _record_numeric_value,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    record_polygon_row as _record_polygon_row,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    scan_polygon_batch as _scan_polygon_batch,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    scan_polygon_batches as _scan_polygon_batches,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    scan_polygon_file as _scan_polygon_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    scan_polygon_metrics as _scan_polygon_metrics,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    sum_first_available as _sum_first_available,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    sum_first_available_file as _sum_first_available_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    sum_metadata as _scan_sum_metadata,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    unique_numeric_values as _unique_numeric_values,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    unique_values as _unique_values,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    unique_values_file as _unique_values_file,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    v1_document_files as _v1_document_files,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    v1_section_files as _v1_section_files,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    v1_wikipedia_document_files as _v1_wikipedia_document_files,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    validated_source_list as _validated_source_list,
-)
-from osm_polygon_wikidata_only.v2.card_scanning import (
-    word_column as _word_column,
+    collect_card_files,
+    field_values_for_ids,
+    first_present_column,
+    has_non_empty_words,
+    manifest_files,
+    merge_field_values_batch,
+    merge_field_values_file,
+    merge_numeric_batch,
+    merge_numeric_batches,
+    merge_numeric_file,
+    metadata_row_count,
+    non_empty_strings,
+    record_numeric_value,
+    sum_first_available,
+    sum_first_available_file,
+    sum_metadata,
+    unique_numeric_values,
+    unique_values,
+    unique_values_file,
+    v1_document_files,
+    v1_section_files,
+    v1_wikipedia_document_files,
+    word_column,
 )
 from osm_polygon_wikidata_only.v2.card_scanning_documents import (
     document_batch_columns as _document_batch_columns,
@@ -274,6 +176,26 @@ from osm_polygon_wikidata_only.v2.card_scanning_links import (
 from osm_polygon_wikidata_only.v2.card_scanning_links import (
     text_metrics_from_scanned as _text_metrics_from_scanned,
 )
+from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
+    batch_column,
+    batch_value,
+    link_source_file,
+    load_polygon_index,
+    merge_link_sources,
+    merge_polygon_sources,
+    osm_polygon_identity,
+    parse_source_list,
+    polygon_columns,
+    polygon_ids_with_link_source,
+    polygon_source_file,
+    polygon_source_sets,
+    record_polygon_row,
+    scan_polygon_batch,
+    scan_polygon_batches,
+    scan_polygon_file,
+    scan_polygon_metrics,
+    validated_source_list,
+)
 from osm_polygon_wikidata_only.v2.card_sentences import (
     collect_sentence_polygon_ids as _collect_sentence_polygon_ids,
 )
@@ -311,7 +233,7 @@ from osm_polygon_wikidata_only.v2.card_sentences import (
 
 def _sum_metadata(paths: Iterable[Path]) -> int:
     """Preserve the historical patch seam for bounded metadata reads."""
-    return _scan_sum_metadata(paths, executor_factory=ThreadPoolExecutor)
+    return sum_metadata(paths, executor_factory=ThreadPoolExecutor)
 
 
 def write_v2_card(
