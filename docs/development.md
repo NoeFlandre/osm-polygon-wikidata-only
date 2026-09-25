@@ -227,6 +227,14 @@ Run `uv run pre-commit run --all-files` before opening a pull request. The
 hooks intentionally run the fast Ruff and `ty` subset; `just check` and
 GitHub Actions both use the complete `just quality-gauntlet` gate.
 
+In CI the `quality` job runs that gauntlet (which already includes the strict
+docs build, the wheel/sdist build, the package smoke install and the
+preprocessing checks), the `container` job builds and smoke-tests the images,
+and the `all-green` job fails unless every other job succeeded. Protect `main`
+with `all-green` as the only required status check. The Documentation
+workflow also builds on pull requests but deploys Pages only from `main`, and
+a new push to a pull request cancels its superseded runs.
+
 ## Test strength checks
 
 The normal gate already runs full-source CRAP and the scoped mutation gate.
