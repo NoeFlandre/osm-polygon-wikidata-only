@@ -2,8 +2,27 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.v2.language_splits_support import *
+from collections import defaultdict
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+
+import pyarrow as pa
+import pytest
+
+from osm_polygon_wikidata_only.hf.language_splits import (
+    DatasetContract,
+    LanguageBucket,
+    LanguageInventory,
+    LanguageTable,
+    LanguageTableInventory,
+    language_table_specs,
+)
+from osm_polygon_wikidata_only.v2 import language_splits
+from osm_polygon_wikidata_only.v2.language_splits import (
+    LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
+)
 
 
 def test_v2_partition_batch_returns_explicit_wide_row_indices() -> None:
