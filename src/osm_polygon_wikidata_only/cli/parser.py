@@ -239,7 +239,6 @@ def build_settings(args: argparse.Namespace) -> Settings:
         max_articles_per_qid=getattr(args, "max_articles_per_qid", None),
         enrichment_batch_size=getattr(args, "enrichment_batch_size", 50),
         enrichment_site_workers=getattr(args, "enrichment_site_workers", 8),
-        cache_ttl_s=86_400,
         skip_existing=getattr(args, "skip_existing", False),
         force=getattr(args, "force", False),
         limit=getattr(args, "limit", None),

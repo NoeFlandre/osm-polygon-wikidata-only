@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import urllib.error
 from email.message import Message
@@ -39,6 +38,7 @@ from osm_polygon_wikidata_only.augmentation.wikimedia import (
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from tests.helpers import sha256_file as _sha256
 
 
 class ThrottleThenSuccessSession:
@@ -354,12 +354,6 @@ def test_augment_region_reports_final_phase_progress(tmp_path) -> None:
     snapshot = progress.snapshot()
     assert snapshot.phase == "Writing sidecars"
     assert snapshot.completed == snapshot.total == 5
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    digest.update(path.read_bytes())
-    return digest.hexdigest()
 
 
 def test_augmentation_sidecars_are_deterministic_and_core_is_untouched(

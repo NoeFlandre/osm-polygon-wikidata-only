@@ -23,11 +23,11 @@ cache,models,parsing}`` must preserve. They lock down:
 from __future__ import annotations
 
 import logging
-import urllib.error
-from email.message import Message
 from typing import Any
 
 import pytest
+
+from tests.helpers import http_error as _http_error
 
 # ---------------------------------------------------------------------------
 # Fakes (mirror the style used by ``test_wikimedia_transport_clients.py``)
@@ -59,13 +59,6 @@ class _RecordingScheduler:
 
     def report_host_throttled(self, host: str, delay: float) -> None:
         self.throttle_calls.append((host, delay))
-
-
-def _http_error(code: int, *, retry_after: str | None = None) -> urllib.error.HTTPError:
-    headers = Message()
-    if retry_after is not None:
-        headers["Retry-After"] = retry_after
-    return urllib.error.HTTPError("https://example.test", code, "error", headers, None)
 
 
 def _make_settings(**overrides: Any) -> Any:

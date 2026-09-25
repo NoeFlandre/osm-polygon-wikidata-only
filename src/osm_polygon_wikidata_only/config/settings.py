@@ -6,7 +6,7 @@ populates it from argparse; tests build it directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 
@@ -24,17 +24,6 @@ WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
 MEDIAWIKI_API_URL_TEMPLATE = "https://{lang}.wikipedia.org/w/api.php"
 
 
-# Default language list when ``--all-languages`` is not passed.
-DEFAULT_LANGUAGES: tuple[str, ...] = ("en", "fr", "de", "es", "it")
-
-# Default cap on the number of Wikipedia articles fetched per QID.
-DEFAULT_MAX_ARTICLES_PER_QID: int = 5
-
-# Old names re-exported to keep earlier imports working.
-HF_REPO_ID = DEFAULT_REPO_ID
-WIKIMEDIA_USER_AGENT_DEFAULT = DEFAULT_USER_AGENT
-
-
 @dataclass(frozen=True)
 class Settings:
     """Pipeline-wide runtime settings.
@@ -44,7 +33,6 @@ class Settings:
 
     repo_id: str = DEFAULT_REPO_ID
     user_agent: str = DEFAULT_USER_AGENT
-    contact_email: str = ""
 
     # Language selection. ``None`` means "all available languages".
     languages: tuple[str, ...] | None = None
@@ -80,7 +68,6 @@ class Settings:
 
     # Cache.
     cache_enabled: bool = True
-    cache_ttl_s: int = 60 * 60 * 24 * 30  # 30 days
 
     # PBF processing.
     skip_existing: bool = False
@@ -90,9 +77,3 @@ class Settings:
     # Hugging Face authentication. ``None`` means "fall back to HF_TOKEN env
     # or the saved login token". An explicit value here wins over both.
     hf_token: str | None = None
-
-    # Compatibility field for callers that retain a preferred local root.
-    # CLI resolution intentionally requires --data-root or OSM_POLYGON_DATA_ROOT.
-    default_data_root: str = ""
-
-    extra: dict[str, str] = field(default_factory=dict)
