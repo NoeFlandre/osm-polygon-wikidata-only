@@ -48,7 +48,7 @@ def _pending_rules(retired: Collection[str]) -> tuple[ContainmentRule, ...]:
 
 
 def _audit_reports(processed: Path, rules: Sequence[ContainmentRule]) -> list[RuleAudit]:
-    return [report for rule in rules if rule.children for report in (audit_rule(processed, rule),)]
+    return [audit_rule(processed, rule) for rule in rules if rule.children]
 
 
 def main() -> int:

@@ -63,7 +63,7 @@ custom_css: |
   .slide--title-left .slide-content { max-width: 1080px; }
 ---
 
-# Wordlwide OSM polygons with linked knowledge
+# Worldwide OSM polygons with linked knowledge
 
 <p class="kicker">Dataset overview</p>
 
