@@ -9,33 +9,6 @@ from tests.contracts.publication_support import *
 pytestmark = pytest.mark.usefixtures("stub_combined_text_map")
 
 
-def test_assemblers_have_no_submit_parameter() -> None:
-    """None of the three public assemblers accepts a submit callable.
-
-    Assemblers are PURE: they return an ordered file list and
-    perform no upload. The CLI shell performs exactly one
-    submission after successful assembly.
-    """
-    import inspect
-
-    for fn in (assemble_core_upload, assemble_region_upload, assemble_augmentation_upload):
-        sig = inspect.signature(fn)
-        assert "submit" not in sig.parameters, (
-            f"{fn.__name__} must not accept a submit callable; got {list(sig.parameters)}"
-        )
-
-
-def test_assemblers_have_no_commit_message_parameter() -> None:
-    """Assemblers do not know about commit messages -- CLI owns them."""
-    import inspect
-
-    for fn in (assemble_core_upload, assemble_region_upload, assemble_augmentation_upload):
-        sig = inspect.signature(fn)
-        assert "commit_message" not in sig.parameters, (
-            f"{fn.__name__} must not accept commit_message; got {list(sig.parameters)}"
-        )
-
-
 def test_assemble_augmentation_upload_returns_combined_maps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

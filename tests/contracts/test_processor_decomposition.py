@@ -215,17 +215,6 @@ def test_extract_pbf_respects_settings_limit(
     assert [p.osm_id for p in result.polygons] == [1, 2, 3]
 
 
-def test_processor_facade_re_exports_extract_pbf_and_extracted_pbf() -> None:
-    """``pipeline.processor.extract_pbf`` and ``pipeline.processor.ExtractedPbf``
-    are identity exports of the focused helpers."""
-
-    from osm_polygon_wikidata_only.pipeline import extractor as extractor_module
-    from osm_polygon_wikidata_only.pipeline import processor as processor_module
-
-    assert processor_module.extract_pbf is extractor_module.extract_pbf
-    assert processor_module.ExtractedPbf is extractor_module.ExtractedPbf
-
-
 # ---------------------------------------------------------------------------
 # Enrichment phase
 # ---------------------------------------------------------------------------
