@@ -1889,16 +1889,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "h3", specifier = ">=4.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "huggingface-hub", specifier = ">=0.24" },
-    { name = "matplotlib", specifier = ">=3.8" },
+    { name = "h3", specifier = ">=4.5.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "huggingface-hub", specifier = ">=1.22.0" },
+    { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "onnxruntime-gpu", extras = ["cuda", "cudnn"], marker = "extra == 'sentence-splitting-gpu'", specifier = "==1.29.0" },
-    { name = "osmium", specifier = ">=3.7" },
-    { name = "pyarrow", specifier = ">=16" },
+    { name = "osmium", specifier = ">=4.3.1" },
+    { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "tqdm", specifier = ">=4.68.4" },
-    { name = "trackio", specifier = ">=0.21,<1" },
+    { name = "trackio", specifier = ">=0.34.0,<1" },
     { name = "typer", specifier = ">=0.27.0" },
     { name = "wtpsplit", extras = ["onnx-cpu"], marker = "extra == 'sentence-splitting'", specifier = "==2.2.1" },
     { name = "wtpsplit", extras = ["onnx-gpu"], marker = "extra == 'sentence-splitting-gpu'", specifier = "==2.2.1" },
@@ -1907,19 +1907,19 @@ provides-extras = ["sentence-splitting", "sentence-splitting-gpu"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "datasets", specifier = ">=3.0" },
-    { name = "hypothesis", specifier = ">=6,<7" },
-    { name = "mkdocs-material", specifier = ">=9.6,<10" },
-    { name = "mutmut", specifier = ">=3.7,<4" },
+    { name = "datasets", specifier = ">=5.0.0" },
+    { name = "hypothesis", specifier = ">=6.168.0,<7" },
+    { name = "mkdocs-material", specifier = ">=9.7.7,<10" },
+    { name = "mutmut", specifier = ">=3.7.0,<4" },
     { name = "pre-commit", specifier = ">=4.6.1" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-bdd", specifier = ">=8,<9" },
-    { name = "pytest-cov", specifier = ">=5" },
-    { name = "pytest-xdist", specifier = ">=3,<4" },
-    { name = "radon", specifier = ">=6,<7" },
-    { name = "ruff", specifier = ">=0.5" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-bdd", specifier = ">=8.1.0,<9" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0,<4" },
+    { name = "radon", specifier = ">=6.0.1,<7" },
+    { name = "ruff", specifier = ">=0.15.20,<0.16" },
     { name = "ty", specifier = "==0.0.64" },
-    { name = "types-pyyaml", specifier = ">=6.0" },
+    { name = "types-pyyaml", specifier = ">=6.0.12" },
 ]
 
 [[package]]

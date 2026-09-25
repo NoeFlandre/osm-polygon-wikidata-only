@@ -348,3 +348,62 @@ def test_package_smoke_helpers_are_quality_gated() -> None:
 
     assert "scripts/quality/package_smoke.py" in mutation["source_paths"]
     assert "tests/quality/test_package_smoke.py" in mutation["pytest_add_cli_args_test_selection"]
+
+
+def _floors(requirements: list[str]) -> dict[str, str]:
+    floors: dict[str, str] = {}
+    for requirement in requirements:
+        name, _, rest = requirement.partition(">=")
+        if rest:
+            floors[name.split("[")[0].strip()] = rest.split(",")[0].strip()
+    return floors
+
+
+def _locked_versions(lock_path: Path) -> dict[str, str]:
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    return {package["name"]: package["version"] for package in lock["package"]}
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split(".") if part.isdigit())
+
+
+@pytest.mark.repository
+@pytest.mark.parametrize("project", [".", "preprocessing"])
+def test_dependency_floors_are_the_tested_locked_versions(project: str) -> None:
+    """Floors must not trail uv.lock by more than the final version component."""
+    root = Path(__file__).parents[1] / project
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = [
+        *config["project"]["dependencies"],
+        *config.get("dependency-groups", {}).get("dev", []),
+    ]
+    locked = _locked_versions(root / "uv.lock")
+    for name, floor in _floors(requirements).items():
+        tested = _version_key(locked[name])
+        assert _version_key(floor) <= tested, name
+        assert _version_key(floor)[:2] == tested[:2], f"{name}>={floor} trails lock {tested}"
+
+
+@pytest.mark.repository
+def test_root_and_preprocessing_agree_on_pytest() -> None:
+    root = Path(__file__).parents[1]
+
+    def pytest_floor(path: Path) -> str:
+        config = tomllib.loads(path.read_text(encoding="utf-8"))
+        return _floors(config["dependency-groups"]["dev"])["pytest"]
+
+    assert pytest_floor(root / "pyproject.toml") == pytest_floor(
+        root / "preprocessing/pyproject.toml"
+    )
+
+
+@pytest.mark.repository
+def test_dependabot_covers_actions_and_both_uv_projects() -> None:
+    root = Path(__file__).parents[1]
+    text = (root / ".github/dependabot.yml").read_text(encoding="utf-8")
+    assert "package-ecosystem: github-actions" in text
+    assert text.count("package-ecosystem: uv") == 2
+    assert "directory: /preprocessing" in text
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "uv lock --check" in workflow

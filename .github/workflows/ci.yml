@@ -24,6 +24,10 @@ jobs:
           tool: just
       - name: Install Python
         run: uv python install 3.12
+      - name: Verify the lockfiles match pyproject.toml
+        run: |
+          uv lock --check
+          uv lock --check --directory preprocessing
       - name: Run the deterministic QA gauntlet
         env:
           # CI runners have more headroom than local Macs; keep the same
