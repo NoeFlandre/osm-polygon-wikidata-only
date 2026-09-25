@@ -199,7 +199,25 @@ uv run osm-polygon-wikidata-only language-splits         [--options]
 uv run osm-polygon-wikidata-only publish-language-splits [--options]
 uv run osm-polygon-wikidata-only split-v2-sentences       [--options]
 uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
+uv run osm-polygon-wikidata-only-enforce-integrity       [--data-root <path>] [--dry-run] [--json]
 ```
+
+### Join-integrity enforcement
+
+`osm-polygon-wikidata-only-enforce-integrity` drops `polygon_articles` rows
+whose Wikidata QID disagrees with the canonical polygons table, and Wikivoyage
+documents (with their sections) whose QID is absent from it, then writes
+`processed/integrity/integrity_audit.json`.
+
+| Flag | Purpose |
+|---|---|
+| `--dry-run` | Compute and log the rejection counts; rewrite no table and write no audit |
+| `--json` | Print the summary counts as one JSON object on stdout |
+| `--log-level <level>` | `DEBUG`, `INFO` (default), `WARNING` or `ERROR` |
+| `--audit-filename <name>` | Audit file name under `processed/integrity/` |
+
+A missing data root, an unreadable parquet or a data-contract violation is
+reported as one `error:` line on stderr with exit status 1.
 
 ### Common options
 
