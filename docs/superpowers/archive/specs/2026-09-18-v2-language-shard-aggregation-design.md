@@ -1,5 +1,9 @@
 # V2 language-shard aggregation design
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 ## Goal
 
 Publish row-level language partitions for both V1 and V2 as selectable

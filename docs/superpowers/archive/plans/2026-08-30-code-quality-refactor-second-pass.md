@@ -1,5 +1,9 @@
 # Code Quality Refactor Second Pass Implementation Plan
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reduce the remaining measured complexity in V2 comparison, sentence checkpoint loading, and centroid filtering without changing any public API, output, ordering, or restart behavior.

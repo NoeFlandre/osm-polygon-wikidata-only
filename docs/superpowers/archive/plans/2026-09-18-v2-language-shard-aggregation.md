@@ -1,5 +1,9 @@
 # V2 Language Shard Aggregation Implementation Plan
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task with checkpoints.
 
 **Goal:** Make both datasets' language partitions selectable in Dataset Viewer, replace V2's source-file-per-language output with deterministic bounded shards that fit one Hugging Face atomic commit, then publish and verify both targets.

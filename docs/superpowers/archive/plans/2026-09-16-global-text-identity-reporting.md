@@ -1,5 +1,9 @@
 # Global Text-Identity Reporting Implementation Plan
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make V1 and V2 text maps and public reporting count each text-bearing OSM polygon once by canonical `(osm_type, osm_id)` identity across overlapping regional extracts.

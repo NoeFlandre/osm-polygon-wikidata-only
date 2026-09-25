@@ -1,5 +1,9 @@
 # Grid5000 Sentence Splitting Implementation Plan
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Run all remaining V2 sentence splitting on reserved Grid5000 GPUs, publish one verified atomic Hugging Face commit after every successful GPU job, and preserve restartability and policy-compliant cleanup.

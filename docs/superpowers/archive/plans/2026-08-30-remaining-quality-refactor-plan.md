@@ -1,5 +1,9 @@
 # Remaining Quality Refactor Implementation Plan
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Lower the remaining tested complexity-B hotspots while preserving the Grid5000 preflight and Hugging Face inventory contracts.

@@ -1,5 +1,9 @@
 # Performance Optimization Design
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 ## Goal
 
 Reduce avoidable CPU, allocation, and peak-memory overhead in the paused V2

@@ -1,5 +1,9 @@
 # Sync Application Deep Module Refactor Implementation Plan
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Hide unified sync callback wiring and upload lifecycle behind a small `SyncApplication.run()` façade while preserving `cli.run_sync.execute(...)` and every existing execution contract.
