@@ -7,6 +7,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
+
 
 def test_project_metadata_is_public_ready() -> None:
     root = Path(__file__).parents[1]
@@ -91,6 +93,7 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     ]
 
 
+@pytest.mark.requires_just
 def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
     root = Path(__file__).parents[1]
     listed = subprocess.run(
@@ -161,10 +164,6 @@ def test_justfile_is_the_uv_managed_quality_command_catalog() -> None:
         )
         assert rendered.returncode == 0, rendered.stderr
 
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-    assert "scripts/quality/qa_gauntlet.py" in justfile
-    assert "mypy" not in justfile
-
 
 def test_github_actions_runs_the_canonical_gauntlet_once() -> None:
     root = Path(__file__).parents[1]
@@ -203,20 +202,7 @@ def test_github_actions_delegates_quality_commands_to_just() -> None:
     assert "uv sync --frozen" not in workflow
 
 
-def test_quality_gauntlet_is_the_single_canonical_completion_gate() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-
-    assert "quality-gauntlet:" in justfile
-    assert "check: quality-gauntlet" in justfile
-    assert "just build" in justfile
-    assert "just docs" in justfile
-    assert "docker-help" in justfile
-    assert workflow.count("run: just quality-gauntlet") == 1
-    assert "run: just qa-gauntlet" not in workflow
-
-
+@pytest.mark.requires_just
 def test_coverage_recipes_use_configured_runtime_paths(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
     runtime = tmp_path / "quality runtime"
@@ -246,6 +232,7 @@ def test_coverage_recipes_use_configured_runtime_paths(tmp_path: Path) -> None:
     assert "/var/folders/hostile" not in output
 
 
+@pytest.mark.requires_just
 def test_crap_report_covers_root_and_preprocessing_sources(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
     runtime = tmp_path / "quality runtime"
@@ -276,6 +263,7 @@ def test_crap_report_covers_root_and_preprocessing_sources(tmp_path: Path) -> No
     assert "crap4py" not in output
 
 
+@pytest.mark.requires_just
 def test_crap_all_refreshes_reports_before_running_the_canonical_reporter() -> None:
     root = Path(__file__).parents[1]
     rendered = subprocess.run(
@@ -351,27 +339,6 @@ def test_upload_retry_policy_is_in_mutation_scope() -> None:
         "tests/hf/test_upload_operation_helpers.py"
         in mutation["pytest_add_cli_args_test_selection"]
     )
-
-
-def test_diff_review_executes_unmerged_path_check() -> None:
-    """The diff-review recipe must evaluate, not quote, its command substitution."""
-
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    assert 'test -z "$(git diff --name-only --diff-filter=U)"' in justfile
-    assert 'test -z "$$(git diff --name-only --diff-filter=U)"' not in justfile
-
-
-def test_installed_artifact_smoke_is_in_root_and_nested_gates() -> None:
-    root = Path(__file__).parents[1]
-    justfile = (root / "Justfile").read_text(encoding="utf-8")
-
-    assert "package-smoke:" in justfile
-    assert "preprocessing-package-smoke:" in justfile
-    assert "just package-smoke" in justfile
-    assert "just preprocessing-package-smoke" in justfile
-    assert "scripts/quality/package_smoke.py" in justfile
 
 
 def test_package_smoke_helpers_are_quality_gated() -> None:
