@@ -31,7 +31,7 @@ from pathlib import Path
 import pyarrow as pa
 
 from osm_polygon_wikidata_only.augmentation.integrity import IntegrityReport, enforce_all_regions
-from osm_polygon_wikidata_only.config.paths import DataRootError, resolve_data_root
+from osm_polygon_wikidata_only.config.paths import DataRootError, repository_root, resolve_data_root
 from osm_polygon_wikidata_only.utils.logging import configure_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -126,9 +126,7 @@ def execute(args: argparse.Namespace, *, prog: str = PROG) -> int:
     """Run the integrity pass for already-parsed *args*."""
     configure_logging(args.log_level)
     try:
-        data_root = resolve_data_root(
-            explicit=args.data_root, repo_root=Path(__file__).resolve().parents[3]
-        )
+        data_root = resolve_data_root(explicit=args.data_root, repo_root=repository_root())
         LOGGER.info("Running integrity pass against data root: %s", data_root.path)
         report = enforce_all_regions(
             data_root,

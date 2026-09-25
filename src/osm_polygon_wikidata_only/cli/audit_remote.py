@@ -13,7 +13,7 @@ from rich.table import Table
 from tqdm import tqdm
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import augmentation_is_current
-from osm_polygon_wikidata_only.config.paths import DataRoot, resolve_data_root
+from osm_polygon_wikidata_only.config.paths import DataRoot, repository_root, resolve_data_root
 from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlan, ReconciliationPlanner
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 
@@ -93,7 +93,7 @@ def audit(
 
 
 def _resolve_root(console: Console, data_root: Path | None) -> DataRoot:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = repository_root()
     try:
         return resolve_data_root(data_root, repo_root=repo_root)
     except Exception as error:
