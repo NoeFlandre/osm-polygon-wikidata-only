@@ -8,7 +8,11 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
-from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
+from osm_polygon_wikidata_only.domain.schema import (
+    empty_row,
+    polygon_article_schema,
+    polygon_schema,
+)
 from osm_polygon_wikidata_only.v2.reuse import load_v1_region
 from osm_polygon_wikidata_only.v2.reuse_load import _direct_inputs
 from osm_polygon_wikidata_only.v2.reuse_load import iter_parquet_rows as _rows
@@ -291,3 +295,27 @@ def test_filtered_section_load_handles_missing_and_non_string_key_files(tmp_path
     pq.write_table(pa.Table.from_pylist(rows), path)
     # Non-string keys fall back to the full Python load; filtering happens later.
     assert _document_section_rows(path, documents, []) == rows
+
+
+def test_load_v1_region_resolves_legacy_links_through_their_article(tmp_path: Path) -> None:
+    root = DataRoot(tmp_path)
+    root.ensure()
+    polygon_schema_value = polygon_schema()
+    polygon = empty_row(tuple(field.name for field in polygon_schema_value))
+    polygon.update({"polygon_id": "region-latest:way:1", "wikidata": "Q42", "tags": "{}"})
+    _write(root.processed_polygons / "region-latest.parquet", polygon_schema_value, polygon)
+    document_schema = wikipedia_document_schema()
+    document = _empty(document_schema)
+    document.update({"document_id": "Q42:wikipedia:en:1:2", "article_id": "Q42:en:1:2"})
+    _write(root.processed / "wikipedia/documents/region-latest.parquet", document_schema, document)
+    link_schema = polygon_article_schema()
+    link = _empty(link_schema)
+    link.update({"polygon_id": polygon["polygon_id"], "article_id": "Q42:en:1:2"})
+    links_path = root.processed_links / "region-latest.parquet"
+    _write(links_path, link_schema, link)
+
+    assert load_v1_region(root, "region-latest").links[0]["document_id"] == ("Q42:wikipedia:en:1:2")
+
+    _write(links_path, link_schema, {**link, "article_id": "unknown-article"})
+    with pytest.raises(ValueError, match="no resolvable document identity"):
+        load_v1_region(root, "region-latest")

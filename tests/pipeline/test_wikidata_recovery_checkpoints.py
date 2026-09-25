@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_wikidata_only.augmentation.schema import fact_schema, section_schema
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.checkpoints import (
@@ -72,3 +74,17 @@ def test_clear_removes_only_the_region_checkpoint(tmp_path: Path) -> None:
 
     assert not (tmp_path / "first").exists()
     assert second.load(0, ("Q2",)) == _artifacts("Q2")
+
+
+def test_saving_a_completed_batch_again_is_idempotent_and_rejects_conflicts(
+    tmp_path: Path,
+) -> None:
+    store = RecoveryCheckpointStore(tmp_path, "region-latest", "plan")
+    first = store.save(0, _artifacts("Q1"))
+
+    assert store.save(0, _artifacts("Q1")) == first
+    conflicting = RecoveryBatchArtifacts(
+        qids=("Q1",), documents=({"document_id": "d1"},), sections=(), facts=()
+    )
+    with pytest.raises(RuntimeError, match="conflicts with completed batch 0"):
+        store.save(0, conflicting)

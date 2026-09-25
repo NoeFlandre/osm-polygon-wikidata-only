@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -229,3 +230,19 @@ def test_combined_languages_invalidates_cache_when_input_changes(tmp_path: Path)
     assert first.document_count == 1
     assert second.document_count == 2
     assert second.language_count == 2
+
+
+def test_combined_languages_recomputes_when_cached_stats_are_malformed(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write(
+        processed / "wikivoyage" / "documents" / "x.parquet",
+        [{"document_id": "v1", "wikidata": "Q1", "language": "en", "full_text": "route"}],
+    )
+    cache_dir = tmp_path / "cache"
+    first = compute_combined_language_stats(processed, cache_index_dir=cache_dir)
+    (cache_file,) = cache_dir.rglob("*.json")
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    payload["stats"]["document_count"] = "not-a-number"
+    cache_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert compute_combined_language_stats(processed, cache_index_dir=cache_dir) == first

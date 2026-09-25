@@ -1,18 +1,12 @@
-"""Characterization tests for the Phase 6 unified sync runner.
+"""Behaviour tests for the unified sync runner.
 
 These tests pin the exact behavior of the extracted
 :func:`pipeline.sync_runner.run_sync`:
 
-* The runner is a pure state executor. It receives injectable
-  collaborators and must NOT import argparse, cli.*, hf.*,
-  DataRoot, or Settings. There are no default production
-  collaborators; every callable is required and provided by
-  the caller.
-* The CLI shell lives in :mod:`cli.run_sync`. The runner does
-  not. The CLI shell emits the unified-plan count log line.
-* Public identities: :func:`run_sync_plan`,
-  :class:`SyncAction`, :class:`RegionSyncState` are exposed
-  from ``pipeline.sync_runner`` unchanged.
+* The runner is a pure state executor driven by injected
+  collaborators (its import boundary is checked in
+  ``tests/quality/test_import_boundaries.py``). The CLI shell in
+  :mod:`cli.run_sync` emits the unified-plan count log line.
 * The runner restores the documented execution sequence:
 
     1. Drain every RECOVERY state before extraction begins.
@@ -44,8 +38,6 @@ These tests pin the exact behavior of the extracted
 
 from __future__ import annotations
 
-import importlib
-import inspect
 import logging
 import threading
 from collections.abc import Iterable
@@ -108,74 +100,6 @@ def _data_root(tmp: Path) -> DataRoot:
     root = DataRoot(tmp / "data")
     root.ensure()
     return root
-
-
-# ---------------------------------------------------------------------------
-# Public identity: pipeline.sync_runner must expose run_sync and plan types
-# ---------------------------------------------------------------------------
-
-
-def test_sync_runner_re_exports_plan_types() -> None:
-    """The sync runner module must expose ``run_sync`` and the plan types
-    by identity with the underlying modules."""
-    from osm_polygon_wikidata_only.pipeline import sync_orchestrator as legacy
-    from osm_polygon_wikidata_only.pipeline import sync_planner as planner
-
-    assert hasattr(sync_runner_mod, "run_sync")
-    assert sync_runner_mod.SyncAction is planner.SyncAction
-    assert sync_runner_mod.RegionSyncState is planner.RegionSyncState
-    assert sync_runner_mod.run_sync_plan is legacy.run_sync_plan
-
-
-def test_cli_run_sync_shell_exists() -> None:
-    """The CLI shell for ``sync-dir`` must live in :mod:`cli.run_sync`."""
-    cli_run_sync = importlib.import_module("osm_polygon_wikidata_only.cli.run_sync")
-    assert callable(cli_run_sync.execute)
-
-
-def test_pipeline_sync_runner_does_not_import_cli_or_hf_or_argparse() -> None:
-    """The runner is a pure state executor. It must not import any
-    CLI framework, HF helper, argparse, DataRoot, Settings, or
-    replacement helpers."""
-    source = Path(sync_runner_mod.__file__).read_text(encoding="utf-8")
-    import re
-
-    forbidden_import_patterns = (
-        r"^\s*from\s+osm_polygon_wikidata_only\.cli\b",
-        r"^\s*import\s+osm_polygon_wikidata_only\.cli\b",
-        r"^\s*from\s+osm_polygon_wikidata_only\.hf\b",
-        r"^\s*import\s+osm_polygon_wikidata_only\.hf\b",
-        r"^\s*import\s+argparse\b",
-        r"^\s*from\s+argparse\b",
-        r"^\s*from\s+\S+\.hf\.upload_queue\b",
-        r"^\s*from\s+\S+\.hf\.uploader\b",
-        r"^\s*from\s+osm_polygon_wikidata_only\.config\.paths\b",
-        r"^\s*from\s+osm_polygon_wikidata_only\.config\.settings\b",
-        r"^\s*from\s+dataclasses\s+import\s+replace\b",
-    )
-    for needle in forbidden_import_patterns:
-        assert not re.search(needle, source, re.MULTILINE), (
-            f"pipeline.sync_runner must not match {needle!r}; "
-            "the CLI shell in cli.run_sync owns that boundary."
-        )
-    # The runner must not re-export any hf module name at all.
-    for leaked in ("StubHfHub", "BackgroundUploadQueue", "upload_files"):
-        assert not hasattr(sync_runner_mod, leaked), f"runner must not re-export {leaked}"
-
-
-def test_run_sync_signature_requires_collaborators() -> None:
-    """The runner must NOT have a default production collaborator for
-    ``extract_pbf``; all three core collaborators are required."""
-    sig = inspect.signature(sync_runner_mod.run_sync)
-    params = sig.parameters
-    assert params["extract_pbf"].default is inspect.Parameter.empty, (
-        "extract_pbf must be a required collaborator with no production default"
-    )
-    assert params["process_extracted_pbf"].default is inspect.Parameter.empty
-    assert params["augment_region"].default is inspect.Parameter.empty
-    # Optional collaborators default to None
-    for optional in ("build_upload_files", "submit_upload", "close_uploads", "on_complete"):
-        assert params[optional].default is None, optional
 
 
 # ---------------------------------------------------------------------------

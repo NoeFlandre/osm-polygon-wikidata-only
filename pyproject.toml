@@ -84,6 +84,7 @@ pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: tests that read a real PBF fixture",
+    "requires_just: tests that execute the `just` command runner; skipped when it is not installed",
     "repository: contracts that need a full source checkout, not a pruned build context",
 ]
 filterwarnings = [
@@ -164,17 +165,13 @@ pytest_add_cli_args_test_selection = [
     "tests/domain/test_qid_parser_boundary.py",
     "tests/io/test_pbf_reader_area_quality.py",
     "tests/io/test_pbf_reader_contracts.py",
-    "tests/io/test_upload_queue_amendment_8.py",
-    "tests/io/test_upload_queue_durability.py",
-    "tests/io/test_upload_queue_real_legacy.py",
+    "tests/io/test_upload_queue.py",
+    "tests/io/test_upload_queue_legacy_migration.py",
     "tests/hf/test_hf.py",
     "tests/hf/test_language_split_release.py",
     "tests/hf/test_upload_operation_helpers.py",
     "tests/hf/test_upload_state.py",
     "tests/v2/test_language_splits.py",
-    "tests/v2/test_language_splits_part1.py",
-    "tests/v2/test_language_splits_part2.py",
-    "tests/v2/test_language_splits_part3.py",
     "tests/v2/test_language_splits_partition_writing.py",
     "tests/v2/test_language_splits_resume_buffers.py",
     "tests/v2/test_pbf_reader_scope.py",

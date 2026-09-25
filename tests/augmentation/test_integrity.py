@@ -584,3 +584,45 @@ def test_enforce_all_regions_skips_shards_without_sidecars(tmp_path: Path):
     assert report.polygon_articles == ()
     assert report.wikivoyage == ()
     assert report.audit_path.exists()
+
+
+def test_polygon_articles_integrity_rejects_conflicting_polygon_wikidata(tmp_path: Path):
+    """A repeated polygon_id is tolerated only when it repeats the same QID."""
+    data_root = _make_data_root(tmp_path)
+    stem = "italy-latest"
+    polygon_id = "italy-latest:way:1"
+    _write_polygon_articles(
+        data_root.processed_links / f"{stem}.parquet", [_minimal_link_row(polygon_id, "Q1")]
+    )
+
+    _write_polygons(
+        data_root.processed_polygons / f"{stem}.parquet",
+        [_minimal_polygon_row(polygon_id, "Q1"), _minimal_polygon_row(polygon_id, "Q1")],
+    )
+    assert enforce_polygon_articles_integrity(data_root, stem).rejected_row_count == 0
+
+    _write_polygons(
+        data_root.processed_polygons / f"{stem}.parquet",
+        [_minimal_polygon_row(polygon_id, "Q1"), _minimal_polygon_row(polygon_id, "Q2")],
+    )
+    with pytest.raises(ValueError, match="conflicting wikidata"):
+        enforce_polygon_articles_integrity(data_root, stem)
+
+
+def test_integrity_report_serializes_every_shard_result(tmp_path: Path):
+    data_root = _make_data_root(tmp_path)
+    stem = "italy-latest"
+    polygon_id = "italy-latest:way:1"
+    _write_polygons(
+        data_root.processed_polygons / f"{stem}.parquet", [_minimal_polygon_row(polygon_id, "Q1")]
+    )
+    _write_polygon_articles(
+        data_root.processed_links / f"{stem}.parquet", [_minimal_link_row(polygon_id, "Q2")]
+    )
+
+    payload = enforce_all_regions(data_root).to_dict()
+
+    assert payload["contract_version"] == INTEGRITY_CONTRACT_VERSION
+    assert [entry["shard"] for entry in payload["polygon_articles"]] == [stem]
+    assert payload["polygon_articles"][0]["rejected_row_count"] == 1
+    assert payload["wikivoyage"] == []

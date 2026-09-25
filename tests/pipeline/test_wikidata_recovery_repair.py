@@ -805,3 +805,53 @@ def test_repair_change_flags_distinguish_map_inputs_from_sidecars(tmp_path: Path
         inputs.facts,
     )
     assert document_changed == (True, True)
+
+
+@pytest.mark.parametrize(
+    ("table", "label"),
+    [("polygons", "polygon_id"), ("documents", "article_id")],
+)
+def test_repair_revalidates_duplicate_identities_introduced_after_audit(
+    tmp_path: Path, table: str, label: str
+) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "late-duplicates"
+    _write_region(data_root, stem, ["Q1", "Q2"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    plan = _audit_plan(data_root, stem, "Q2")
+    path = {
+        "polygons": data_root.processed_polygons / f"{stem}.parquet",
+        "documents": data_root.processed / "wikipedia" / "documents" / f"{stem}.parquet",
+    }[table]
+    rows = pq.read_table(path)  # type: ignore[no-untyped-call]
+    pq.write_table(pa.concat_tables([rows, rows]), path)
+
+    with pytest.raises(RecoveryRepairError, match=f"duplicate {label}"):
+        repair_wikidata_region(
+            data_root,
+            plan,
+            wikidata_client=_RecordingWikidataClient({"Q2": _entity("Q2")}),
+            wikipedia_client=InMemoryWikipediaClient({}),
+            augmentation_client=_AugmentationClient({"Q2"}),
+            settings=_settings(),
+        )
+
+
+def test_repair_rejects_an_affected_qid_that_became_authoritatively_missing(
+    tmp_path: Path,
+) -> None:
+    data_root = _data_root(tmp_path)
+    stem = "vanished"
+    _write_region(data_root, stem, ["Q1", "Q2"], linked_qids={"Q1"})
+    _finish_region(data_root, stem)
+    plan = _audit_plan(data_root, stem, "Q2")
+
+    with pytest.raises(RecoveryRepairError, match="authoritatively missing: Q2"):
+        repair_wikidata_region(
+            data_root,
+            plan,
+            wikidata_client=_RecordingWikidataClient({"Q2": None}),
+            wikipedia_client=InMemoryWikipediaClient({}),
+            augmentation_client=_AugmentationClient({"Q2"}),
+            settings=_settings(),
+        )

@@ -4,20 +4,26 @@
 temporary sibling inside the destination directory, let a caller fill it, and
 install it over the target with a single :func:`os.replace`. These tests pin
 that mechanism directly so the writers built on it -- text, deterministic JSON,
-Parquet, byte copies -- do not each need to re-prove durability.
+Parquet, byte copies -- do not each need to re-prove durability; the writer
+tests below cover only writer-specific output.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.io.atomic import (
     atomic_copy_file,
     atomic_replacement,
     atomic_write_json,
+    atomic_write_parquet,
+    atomic_write_text,
 )
 
 
@@ -162,4 +168,37 @@ def test_atomic_copy_file_leaves_no_temporary_file_when_the_source_disappears(
         atomic_copy_file(source, target)
 
     assert not target.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_atomic_write_text_writes_utf8_text(tmp_path: Path) -> None:
+    target = tmp_path / "x.txt"
+
+    atomic_write_text(target, "héllo")
+
+    assert target.read_text(encoding="utf-8") == "héllo"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_write_parquet_replaces_an_existing_table(tmp_path: Path) -> None:
+    target = tmp_path / "artifact.parquet"
+    atomic_write_parquet(target, pa.table({"value": [1, 2]}))
+
+    atomic_write_parquet(target, pa.table({"value": [3]}))
+
+    assert pq.read_table(target).to_pylist() == [{"value": 3}]
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_save_png_leaves_no_temporary_file_when_savefig_raises(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf._geographic import rendering
+
+    target = tmp_path / "out.png"
+
+    class _FakeFig:
+        def savefig(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("simulated savefig failure")
+
+    with pytest.raises(RuntimeError, match="simulated savefig failure"):
+        rendering.atomic_save_png(_FakeFig(), target)
     assert list(tmp_path.iterdir()) == []

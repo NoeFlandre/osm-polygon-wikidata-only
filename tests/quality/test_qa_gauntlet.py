@@ -11,41 +11,25 @@ import scripts.quality.qa_gauntlet as qa_gauntlet
 from scripts.quality.qa_gauntlet import build_stages, run_gauntlet
 
 
-def test_gauntlet_stages_are_in_the_required_order() -> None:
-    assert [stage.name for stage in build_stages()] == [
-        "baseline",
-        "ruff",
-        "ty",
-        "tests",
-        "property tests",
-        "acceptance tests",
-        "architecture checks",
-        "CRAP",
-        "mutation tests",
-        "smoke test",
-        "diff review",
+def test_gauntlet_runs_the_required_stages_in_order_through_just() -> None:
+    assert [(stage.name, stage.command) for stage in build_stages()] == [
+        ("baseline", ("just", "baseline")),
+        ("ruff", ("just", "ruff")),
+        ("ty", ("just", "ty")),
+        ("tests", ("just", "tests")),
+        ("property tests", ("just", "property-tests")),
+        ("acceptance tests", ("just", "acceptance-tests")),
+        ("architecture checks", ("just", "architecture-checks")),
+        ("CRAP", ("just", "crap-report")),
+        ("mutation tests", ("just", "mutation")),
+        ("smoke test", ("just", "smoke-test")),
+        ("diff review", ("just", "diff-review")),
     ]
 
 
-def test_gauntlet_delegates_each_stage_to_just() -> None:
-    commands = [stage.command for stage in build_stages()]
-
-    assert commands == [
-        ("just", "baseline"),
-        ("just", "ruff"),
-        ("just", "ty"),
-        ("just", "tests"),
-        ("just", "property-tests"),
-        ("just", "acceptance-tests"),
-        ("just", "architecture-checks"),
-        ("just", "crap-report"),
-        ("just", "mutation"),
-        ("just", "smoke-test"),
-        ("just", "diff-review"),
-    ]
-
-
-def test_run_command_returns_exit_status_without_shell(monkeypatch) -> None:
+def test_main_runs_stage_commands_without_a_shell_and_returns_their_status(
+    monkeypatch, capsys
+) -> None:
     calls: list[tuple[Sequence[str], bool]] = []
 
     def fake_run(
@@ -56,11 +40,12 @@ def test_run_command_returns_exit_status_without_shell(monkeypatch) -> None:
 
     monkeypatch.setattr(qa_gauntlet.subprocess, "run", fake_run)
 
-    assert qa_gauntlet._run_command(("just", "ruff")) == 7
-    assert calls == [(("just", "ruff"), False)]
+    assert qa_gauntlet.main() == 7
+    assert calls == [(("just", "baseline"), False)]
+    assert capsys.readouterr().err == "QA gauntlet stopped at baseline (exit 7)\n"
 
 
-def test_run_command_reports_an_unstartable_command(monkeypatch, capsys) -> None:
+def test_main_reports_an_unstartable_command(monkeypatch, capsys) -> None:
     def raise_os_error(
         command: Sequence[str], *, check: bool
     ) -> subprocess.CompletedProcess[Sequence[str]]:
@@ -68,10 +53,11 @@ def test_run_command_reports_an_unstartable_command(monkeypatch, capsys) -> None
 
     monkeypatch.setattr(qa_gauntlet.subprocess, "run", raise_os_error)
 
-    assert qa_gauntlet._run_command(("just", "baseline")) == 127
-    output = capsys.readouterr()
-    assert output.out == ""
-    assert output.err == "Unable to start just baseline: just is unavailable\n"
+    assert qa_gauntlet.main() == 127
+    assert capsys.readouterr().err == (
+        "Unable to start just baseline: just is unavailable\n"
+        "QA gauntlet stopped at baseline (exit 127)\n"
+    )
 
 
 def test_gauntlet_stops_at_first_failed_stage(capsys) -> None:
@@ -166,30 +152,3 @@ def test_failure_message_is_flushed_before_run_returns() -> None:
         stream.flush()
 
     assert error_before_cleanup == "QA gauntlet stopped at baseline (exit 9)\n"
-
-
-def test_gauntlet_returns_zero_when_all_stages_pass(capsys) -> None:
-    calls: list[tuple[str, ...]] = []
-
-    def runner(command: Sequence[str]) -> int:
-        calls.append(tuple(command))
-        return 0
-
-    assert run_gauntlet(runner) == 0
-    assert len(calls) == len(build_stages())
-    output = capsys.readouterr()
-    assert output.out == (
-        "QA stage 1/11: baseline\n"
-        "QA stage 2/11: ruff\n"
-        "QA stage 3/11: ty\n"
-        "QA stage 4/11: tests\n"
-        "QA stage 5/11: property tests\n"
-        "QA stage 6/11: acceptance tests\n"
-        "QA stage 7/11: architecture checks\n"
-        "QA stage 8/11: CRAP\n"
-        "QA stage 9/11: mutation tests\n"
-        "QA stage 10/11: smoke test\n"
-        "QA stage 11/11: diff review\n"
-        "QA gauntlet passed: all stages completed\n"
-    )
-    assert output.err == ""

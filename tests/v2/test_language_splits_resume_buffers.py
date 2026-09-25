@@ -2,8 +2,29 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.v2.language_splits_support import *
+import logging
+from collections import defaultdict
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pyarrow as pa
+import pytest
+
+from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
+from osm_polygon_wikidata_only.hf.language_splits import (
+    DatasetContract,
+    language_table_specs,
+    normalize_language,
+)
+from osm_polygon_wikidata_only.v2 import language_splits
+from osm_polygon_wikidata_only.v2.language_splits import (
+    V2LanguageSplitFile,
+)
+from tests.v2.language_splits_support import (
+    _resume_file_record,
+    _resume_inventory,
+)
 
 
 def test_v2_partition_ids_are_int32_for_compactness() -> None:

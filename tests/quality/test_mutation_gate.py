@@ -1,93 +1,93 @@
-"""Tests for the zero-survivor mutation gate."""
+"""Fail-closed contracts for the mutation gate and its equivalence reviews."""
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import io
-import sys
+import json
+import tomllib
+from pathlib import Path
 
 import pytest
 
-from scripts.quality.mutation_gate import (
-    MutationGateError,
-    _non_killed,
-    ensure_all_killed,
-    main,
-    parse_results,
-)
+from scripts.quality import mutation_gate
+from scripts.quality.mutation_equivalents import reviewed_equivalents
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+NAME = "scripts.example.x_query__mutmut_1"
+SOURCE = "def query():\n    return False\n"
+GENERATED = "def x_query__mutmut_1():\n    return None\n"
 
 
-def test_parse_results_reads_mutmut_status_lines() -> None:
-    report = """
-    Mutant results
-    --------------
-        module.py:1:replace: killed
-        module.py:2:replace: survived
-    """
-
-    assert parse_results(report) == [
-        ("module.py:1:replace", "killed"),
-        ("module.py:2:replace", "survived"),
-    ]
+def _gate(report: str, monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
+    monkeypatch.setattr(mutation_gate.sys, "stdin", io.StringIO(report))
+    return mutation_gate.main(argv)
 
 
-def test_parse_results_rejects_unknown_statuses() -> None:
-    report = "future-mutant: changed behavior"
-
-    with pytest.raises(MutationGateError, match="Unknown mutation status"):
-        parse_results(report)
-
-
-@pytest.mark.parametrize("report", [": killed", "   : survived"])
-def test_parse_results_rejects_missing_mutant_names(report: str) -> None:
-    with pytest.raises(MutationGateError, match="missing mutant name"):
-        parse_results(report)
-
-
-def test_ensure_all_killed_accepts_only_killed_mutants() -> None:
-    ensure_all_killed([("one", "killed"), ("two", "killed")])
-
-
-def test_ensure_all_killed_reports_non_killed_mutants() -> None:
-    with pytest.raises(MutationGateError, match="two: survived"):
-        ensure_all_killed([("one", "killed"), ("two", "survived")])
+def test_mutation_gate_passes_only_when_every_mutant_is_killed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _gate("one: killed\n", monkeypatch) == 0
+    assert capsys.readouterr().out == "Mutation gate passed: 1 mutants killed\n"
+    for report, message in (
+        ("", "No mutants"),
+        ("one: killed\ntwo: survived\n", "two: survived"),
+        ("one: timeout\n", "one: timeout"),
+        ("one: changed behavior\n", "Unknown mutation status"),
+        (": killed\n", "missing mutant name"),
+    ):
+        with pytest.raises(mutation_gate.MutationGateError, match=message):
+            _gate(report, monkeypatch)
 
 
-def test_ensure_all_killed_rejects_empty_reports() -> None:
-    with pytest.raises(MutationGateError, match="No mutants"):
-        ensure_all_killed([])
+def test_equivalence_reviews_are_exact_and_source_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "scripts/example.py"
+    source.parent.mkdir()
+    source.write_text(SOURCE)
+    generated = tmp_path / "mutants/scripts/example.py"
+    generated.parent.mkdir(parents=True)
+    generated.write_text(GENERATED)
+    entry = {
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "mutant_sha256": hashlib.sha256(
+            ast.dump(ast.parse(GENERATED).body[0]).encode()
+        ).hexdigest(),
+        "reason": "Fixture only: the caller uses truthiness, so both values match.",
+    }
+    reviews = tmp_path / "reviews.json"
+    reviews.write_text(json.dumps({NAME: entry}))
+    monkeypatch.chdir(tmp_path)
 
+    assert (
+        _gate(f"other: killed\n{NAME}: survived\n", monkeypatch, "--equivalents", "reviews.json")
+        == 0
+    )
+    assert capsys.readouterr().out.endswith("1 mutants killed; 1 reviewed equivalents\n")
 
-def test_reviewed_survivor_is_not_confused_with_a_killed_mutant() -> None:
-    results = [("one", "killed"), ("equivalent", "survived")]
-    ensure_all_killed(results, equivalents=frozenset({"equivalent"}))
-    assert results[1] == ("equivalent", "survived")
-
-
-@pytest.mark.parametrize(
-    "status", ["timeout", "no tests", "not checked", "suspicious", "skipped", "segfault"]
-)
-def test_equivalence_cannot_excuse_an_incomplete_check(status) -> None:
-    with pytest.raises(MutationGateError, match=f"equivalent: {status}"):
-        ensure_all_killed([("equivalent", status)], equivalents=frozenset({"equivalent"}))
-
-
-def test_review_does_not_allow_a_different_survivor() -> None:
-    with pytest.raises(MutationGateError, match="different: survived"):
-        ensure_all_killed(
-            [("equivalent", "survived"), ("different", "survived")],
-            equivalents=frozenset({"equivalent"}),
+    def validate(results: list[tuple[str, str]]) -> frozenset[str]:
+        return reviewed_equivalents(
+            results, reviews, source_root=tmp_path, mutants_root=tmp_path / "mutants"
         )
 
+    with pytest.raises(ValueError, match="Stale"):
+        validate([(NAME, "killed")])
+    with pytest.raises(ValueError, match="Stale"):
+        validate([])
+    generated.write_text(GENERATED.replace("None", "True"))
+    with pytest.raises(ValueError, match="Mutation changed"):
+        validate([(NAME, "survived")])
+    source.write_text(SOURCE + "# changed caller\n")
+    with pytest.raises(ValueError):
+        validate([(NAME, "survived")])
 
-def test_non_killed_extracts_only_actionable_mutants() -> None:
-    assert _non_killed([("one", "killed"), ("two", "survived")]) == [("two", "survived")]
 
+def test_mutation_scope_names_only_existing_sources_and_tests() -> None:
+    mutation = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))["tool"][
+        "mutmut"
+    ]
+    configured = [*mutation["source_paths"], *mutation["pytest_add_cli_args_test_selection"]]
 
-def test_mutation_gate_main_accepts_a_killed_report(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(sys, "stdin", io.StringIO("one: killed\n"))
-
-    assert main() == 0
-    assert "1 mutants killed" in capsys.readouterr().out
+    assert [path for path in configured if not (REPOSITORY / path).is_file()] == []

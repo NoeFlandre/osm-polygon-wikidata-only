@@ -178,6 +178,19 @@ def test_retry_backoff_can_be_cancelled_cooperatively() -> None:
     assert type(failures[0]).__name__ == "_RetryCancelled"
 
 
+def test_cancelled_retries_do_not_start_another_attempt() -> None:
+    calls: list[int] = []
+    retry_mod.cancel_pending_retries()
+    try:
+        with pytest.raises(BaseException) as raised:
+            with_retries(lambda: calls.append(1), attempts=3)
+    finally:
+        retry_mod.reset_retry_cancellation()
+
+    assert type(raised.value).__name__ == "_RetryCancelled"
+    assert calls == []
+
+
 def test_transient_retry_warning_is_sparse_and_does_not_include_error_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -273,6 +273,21 @@ def test_plan_link_migration_classifies_legacy_stem_as_migratable(tmp_path: Path
     )
 
 
+def test_apply_link_migration_refuses_a_plan_with_blocked_stems(tmp_path: Path) -> None:
+    mod = _import_module()
+    pa = _pyarrow()
+    layout = _processed_layout(tmp_path)
+    layout["polygon_articles"].mkdir(parents=True, exist_ok=True)
+    links_path = layout["polygon_articles"] / "monaco-latest.parquet"
+    pa.parquet.write_table(pa.table({"polygon_id": ["p"], "article_id": ["x"]}), links_path)
+    original = links_path.read_bytes()
+
+    with pytest.raises(ValueError, match=r"blocked stems: \['monaco-latest'\]"):
+        mod.apply_link_migration(tmp_path, stems={"monaco-latest"})
+
+    assert links_path.read_bytes() == original
+
+
 def test_plan_link_migration_classifies_mixed_schema_exactly_blocked(
     tmp_path: Path,
 ) -> None:

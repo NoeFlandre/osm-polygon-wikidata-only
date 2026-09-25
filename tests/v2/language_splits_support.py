@@ -2,48 +2,21 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F401
-import errno
 import json
-import logging
-import subprocess
-import sys
-from collections import defaultdict
-from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
-from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
-    LanguageBucket,
-    LanguageInventory,
-    LanguageTable,
     LanguageTableInventory,
-    build_language_inventory,
     language_table_specs,
-    normalize_language,
 )
-from osm_polygon_wikidata_only.v2 import language_splits
 from osm_polygon_wikidata_only.v2.language_splits import (
-    DEFAULT_BATCH_SIZE,
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
-    V2_LANGUAGE_SPLIT_CONTRACT_VERSION,
-    V2LanguageSplitError,
     V2LanguageSplitFile,
-    V2LanguageSplitResult,
-    _file_sort_key,
-    _language_sort_key,
-    _manifest_partition_paths,
-    _validate_conservation,
-    build_v2_language_splits,
-    main,
 )
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
@@ -280,6 +253,3 @@ def _release_snapshot(root: Path) -> dict[str, bytes]:
     if manifest.is_file():
         paths.append(manifest)
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(paths)}
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
