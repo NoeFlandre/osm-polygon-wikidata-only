@@ -40,12 +40,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
 )
-
-
-def _import_module():
-    from osm_polygon_wikidata_only.pipeline import link_migration as mod
-
-    return mod
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 
 def _write_polygon(processed_dir: Path, stem: str) -> None:
@@ -216,7 +211,6 @@ def test_apply_does_not_create_link_manifest_json(tmp_path: Path) -> None:
     ``manifests/link_manifest.json`` -- the approved design updates the
     EXISTING ``processed_pbfs.json`` instead.
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
@@ -239,9 +233,9 @@ def test_apply_does_not_create_link_manifest_json(tmp_path: Path) -> None:
         )
     )
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     link_manifest = processed / "manifests" / "link_manifest.json"
     assert not link_manifest.exists(), (
@@ -259,7 +253,6 @@ def test_apply_writes_link_schema_version_and_count_to_processed_manifest(tmp_pa
     ``link_schema_version`` and ``link_count`` (with the actual local
     table row count), and other fields must be preserved.
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
@@ -279,7 +272,7 @@ def test_apply_writes_link_schema_version_and_count_to_processed_manifest(tmp_pa
         json.dumps({f"{stem}.osm.pbf": pre_existing}, indent=2, sort_keys=True) + "\n"
     )
 
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     payload = json.loads(processed_manifest.read_text())
     entry = payload[f"{stem}.osm.pbf"]
@@ -316,12 +309,11 @@ def test_apply_writes_link_schema_version_and_sha256_to_augmentation_manifest(
     include ``link_schema_version`` and ``link_artifact_sha256``
     (64-hex SHA-256 of the canonical link file).
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     aug_manifest = processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     payload = json.loads(aug_manifest.read_text())
@@ -366,7 +358,6 @@ def test_augmentation_manifest_merges_preserves_other_stems(tmp_path: Path) -> N
     """Updating the augmentation manifest for stem A must NOT erase
     prior entries for stem B.
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem_a = "alpha-latest"
     _setup_processed(processed, stem_a)
@@ -381,7 +372,7 @@ def test_augmentation_manifest_merges_preserves_other_stems(tmp_path: Path) -> N
     }
     aug_manifest.write_text(json.dumps(pre_existing, indent=2, sort_keys=True) + "\n")
 
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     payload = json.loads(aug_manifest.read_text())
     assert "beta-latest" in payload, (
@@ -399,13 +390,12 @@ def test_apply_writes_pending_publication_intent(tmp_path: Path) -> None:
     """After migration, the pending-publication manifest must include
     the migrated stem.
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
     # No prior pending manifest.
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     from osm_polygon_wikidata_only.config.paths import DataRoot
     from osm_polygon_wikidata_only.pipeline import pending_publications as pp
@@ -425,12 +415,11 @@ def test_apply_writes_metadata_refresh_marker(tmp_path: Path) -> None:
     migrated stem with the correct ``fingerprint_hashes`` entry
     (the augmentation manifest's link_artifact_sha256).
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     from osm_polygon_wikidata_only.config.paths import DataRoot
     from osm_polygon_wikidata_only.pipeline import pending_publications as pp
@@ -466,7 +455,6 @@ def test_malformed_processed_manifest_blocks_migration(tmp_path: Path) -> None:
     """A malformed existing ``processed_pbfs.json`` must block the
     migration -- never silently replace corruption with an empty manifest.
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
@@ -478,4 +466,4 @@ def test_malformed_processed_manifest_blocks_migration(tmp_path: Path) -> None:
     # file from the migration). The apply stage must refuse to
     # silently overwrite a malformed manifest.
     with pytest.raises((ValueError, json.JSONDecodeError)):
-        mod.apply_link_migration(processed)
+        link_migration.apply_link_migration(processed)

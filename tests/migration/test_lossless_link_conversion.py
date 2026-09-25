@@ -24,14 +24,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
-
-
-def _import_module():
-    try:
-        from osm_polygon_wikidata_only.pipeline import link_migration as mod
-    except ImportError:
-        pytest.fail("link_migration module must exist for lossless conversion")
-    return mod
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 
 def _write_legacy_links(
@@ -179,7 +172,6 @@ def test_no_cartesian_join_when_multiple_polygons_share_qid(tmp_path: Path) -> N
 
     This is the exact bug the amendment targets.
     """
-    mod = _import_module()
     stem = "alpha-latest"
     processed = tmp_path / "processed"
 
@@ -203,7 +195,7 @@ def test_no_cartesian_join_when_multiple_polygons_share_qid(tmp_path: Path) -> N
         [_legacy_row("p1", "a1", "Q1")],
     )
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply, (
         f"Stem should be migratable, plan: {[s.reason for s in plan.stems]}"
     )
@@ -211,7 +203,7 @@ def test_no_cartesian_join_when_multiple_polygons_share_qid(tmp_path: Path) -> N
     assert sp.row_count == 1, (
         f"|canonical| must equal |distinct legacy identities| = 1, got {sp.row_count}"
     )
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
     canonical = pq.read_table(  # type: ignore[no-untyped-call]
         processed / "polygon_articles" / f"{stem}.parquet"
     ).to_pylist()
@@ -234,7 +226,6 @@ def test_legacy_row_identity_preserved_byte_for_byte(tmp_path: Path) -> None:
     rows with different article_id but same polygon_id produce two
     canonical rows.
     """
-    mod = _import_module()
     stem = "alpha-latest"
     processed = tmp_path / "processed"
 
@@ -260,9 +251,9 @@ def test_legacy_row_identity_preserved_byte_for_byte(tmp_path: Path) -> None:
         ],
     )
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
     canonical = pq.read_table(  # type: ignore[no-untyped-call]
         processed / "polygon_articles" / f"{stem}.parquet"
     ).to_pylist()
@@ -282,7 +273,6 @@ def test_legacy_row_identity_preserved_byte_for_byte(tmp_path: Path) -> None:
 
 def test_cardinality_matches_unique_legacy_rows(tmp_path: Path) -> None:
     """Cardinality rule: |canonical| == |distinct legacy (polygon_id, article_id)|."""
-    mod = _import_module()
     stem = "alpha-latest"
     processed = tmp_path / "processed"
 
@@ -312,13 +302,13 @@ def test_cardinality_matches_unique_legacy_rows(tmp_path: Path) -> None:
         ],
     )
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
     sp = next(s for s in plan.stems if s.stem == stem)
     assert sp.row_count == 3, (
         f"plan row_count must equal |distinct legacy identities| = 3, got {sp.row_count}"
     )
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
     canonical = pq.read_table(  # type: ignore[no-untyped-call]
         processed / "polygon_articles" / f"{stem}.parquet"
     ).to_pylist()
@@ -332,7 +322,6 @@ def test_cardinality_matches_unique_legacy_rows(tmp_path: Path) -> None:
 
 def test_legacy_article_id_missing_from_documents_blocks_stem(tmp_path: Path) -> None:
     """A legacy article_id without a matching document MUST block the stem."""
-    mod = _import_module()
     stem = "alpha-latest"
     processed = tmp_path / "processed"
 
@@ -351,16 +340,15 @@ def test_legacy_article_id_missing_from_documents_blocks_stem(tmp_path: Path) ->
         ],
     )
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert not plan.is_safe_to_apply
     sp = next(s for s in plan.stems if s.stem == stem)
-    assert sp.classification == mod.StemClassification.BLOCKED
+    assert sp.classification == link_migration.StemClassification.BLOCKED
     assert "a-MISSING" in sp.reason
 
 
 def test_ambiguous_article_id_blocks_stem(tmp_path: Path) -> None:
     """An article_id mapping to multiple documents blocks the stem."""
-    mod = _import_module()
     stem = "alpha-latest"
     processed = tmp_path / "processed"
 
@@ -380,10 +368,10 @@ def test_ambiguous_article_id_blocks_stem(tmp_path: Path) -> None:
         [_legacy_row("p1", "a-AMBIG", "Q1")],
     )
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert not plan.is_safe_to_apply
     sp = next(s for s in plan.stems if s.stem == stem)
-    assert sp.classification == mod.StemClassification.BLOCKED
+    assert sp.classification == link_migration.StemClassification.BLOCKED
     assert "AMBIG" in sp.reason or "ambig" in sp.reason or "multiple" in sp.reason.lower()
 
 
@@ -391,20 +379,19 @@ def test_apply_reuses_supplied_plan_without_replanning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A plan from ``plan_link_migration`` can be applied directly."""
-    mod = _import_module()
     stem = "alpha-latest"
     processed = tmp_path / "processed"
     _write_polygons(processed, stem, [_poly_row("p1", "Q1")])
     _write_documents(processed, stem, [_doc_row("a1", "Q1:wikipedia:en:100:1", "Q1", 100, 1)])
     _write_legacy_links(processed, stem, [_legacy_row("p1", "a1", "Q1")])
 
-    plan = mod.plan_link_migration(processed, stems={stem})
+    plan = link_migration.plan_link_migration(processed, stems={stem})
 
     def _no_replan(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("apply_link_migration must not re-plan a supplied plan")
 
-    monkeypatch.setattr(mod, "plan_link_migration", _no_replan)
-    mod.apply_link_migration(processed, plan=plan)
+    monkeypatch.setattr(link_migration, "plan_link_migration", _no_replan)
+    link_migration.apply_link_migration(processed, plan=plan)
 
     canonical = pq.read_table(  # type: ignore[no-untyped-call]
         processed / "polygon_articles" / f"{stem}.parquet"

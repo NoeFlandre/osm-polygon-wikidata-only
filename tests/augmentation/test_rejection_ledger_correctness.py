@@ -17,11 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-
-def _import_module():
-    from osm_polygon_wikidata_only.augmentation import rejection_ledger as mod
-
-    return mod
+from osm_polygon_wikidata_only.augmentation import rejection_ledger
 
 
 def _write_documents(path: Path, rows: list[dict]) -> None:
@@ -167,7 +163,6 @@ def _sample_doc_row(document_id: str, qid: str, language: str = "en") -> dict:
 
 def test_apply_merges_with_existing_cumulative_ledger(tmp_path: Path) -> None:
     """A second apply for stem B must NOT erase prior rejections for stem A."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
@@ -183,8 +178,8 @@ def test_apply_merges_with_existing_cumulative_ledger(tmp_path: Path) -> None:
     )
     _write_sections(dr.processed / "wikivoyage" / "sections" / f"{stem_a}.parquet", [])
 
-    plan_a = mod.plan_integrity_normalization(dr, stem_a)
-    mod.apply_integrity_normalization(plan_a)
+    plan_a = rejection_ledger.plan_integrity_normalization(dr, stem_a)
+    rejection_ledger.apply_integrity_normalization(plan_a)
     ledger_path = dr.processed / "integrity" / "rejection_ledger.json"
     payload_a = json.loads(ledger_path.read_text())
     assert any(r["shard"] == stem_a for r in payload_a["records"])
@@ -197,8 +192,8 @@ def test_apply_merges_with_existing_cumulative_ledger(tmp_path: Path) -> None:
     )
     _write_sections(dr.processed / "wikivoyage" / "sections" / f"{stem_b}.parquet", [])
 
-    plan_b = mod.plan_integrity_normalization(dr, stem_b)
-    mod.apply_integrity_normalization(plan_b)
+    plan_b = rejection_ledger.plan_integrity_normalization(dr, stem_b)
+    rejection_ledger.apply_integrity_normalization(plan_b)
     payload_b = json.loads(ledger_path.read_text())
     shards_in_ledger = {r["shard"] for r in payload_b["records"]}
     assert stem_a in shards_in_ledger, (
@@ -210,7 +205,6 @@ def test_apply_merges_with_existing_cumulative_ledger(tmp_path: Path) -> None:
 def test_apply_is_recoverable_after_mid_flight_crash(tmp_path: Path) -> None:
     """A crash before the cumulative-ledger write must allow a fresh
     apply to complete (idempotent roll-forward)."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
@@ -223,7 +217,7 @@ def test_apply_is_recoverable_after_mid_flight_crash(tmp_path: Path) -> None:
     )
     _write_sections(dr.processed / "wikivoyage" / "sections" / f"{stem}.parquet", [])
 
-    plan = mod.plan_integrity_normalization(dr, stem)
+    plan = rejection_ledger.plan_integrity_normalization(dr, stem)
     # Patch save_ledger to crash once on first call, then succeed.
     import osm_polygon_wikidata_only.augmentation.rejection_ledger as rl
 
@@ -239,13 +233,13 @@ def test_apply_is_recoverable_after_mid_flight_crash(tmp_path: Path) -> None:
     rl.save_ledger = _crash_once
     try:
         with pytest.raises(RuntimeError, match="simulated crash"):
-            mod.apply_integrity_normalization(plan)
+            rejection_ledger.apply_integrity_normalization(plan)
     finally:
         rl.save_ledger = real_save_ledger
 
     # The documents/sections may already be on disk; re-running apply
     # with the original plan should reach ledger commit.
-    mod.apply_integrity_normalization(plan)
+    rejection_ledger.apply_integrity_normalization(plan)
     ledger_path = dr.processed / "integrity" / "rejection_ledger.json"
     payload = json.loads(ledger_path.read_text())
     assert any(r["shard"] == stem for r in payload["records"]), (
@@ -256,7 +250,6 @@ def test_apply_is_recoverable_after_mid_flight_crash(tmp_path: Path) -> None:
 def test_rejection_history_is_deterministic_across_runs(tmp_path: Path) -> None:
     """Two identical runs (same plan twice) must produce the same
     ledger bytes -- idempotent re-apply."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
@@ -269,13 +262,13 @@ def test_rejection_history_is_deterministic_across_runs(tmp_path: Path) -> None:
     )
     _write_sections(dr.processed / "wikivoyage" / "sections" / f"{stem}.parquet", [])
 
-    plan = mod.plan_integrity_normalization(dr, stem)
-    mod.apply_integrity_normalization(plan)
+    plan = rejection_ledger.plan_integrity_normalization(dr, stem)
+    rejection_ledger.apply_integrity_normalization(plan)
     first = (dr.processed / "integrity" / "rejection_ledger.json").read_bytes()
 
     # Run again -- idempotent re-apply must produce the same bytes
     # (apply on a stem whose plan is already applied).
-    mod.apply_integrity_normalization(plan)
+    rejection_ledger.apply_integrity_normalization(plan)
     second = (dr.processed / "integrity" / "rejection_ledger.json").read_bytes()
     assert first == second, (
         f"Re-applying the same plan must not change the cumulative ledger bytes; "

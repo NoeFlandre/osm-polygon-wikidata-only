@@ -25,13 +25,9 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-
-def _import_modules():
-    from osm_polygon_wikidata_only.augmentation import rejection_ledger as rl
-    from osm_polygon_wikidata_only.config.paths import DataRoot
-    from osm_polygon_wikidata_only.pipeline import link_migration as lm
-
-    return lm, rl, DataRoot
+from osm_polygon_wikidata_only.augmentation import rejection_ledger as rl
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.pipeline import link_migration as lm
 
 
 def _seed_polygons(path: Path, polygon_id: str, qids: list[str]) -> None:
@@ -147,7 +143,6 @@ def test_invalid_wikipedia_relationships_are_rejected(tmp_path: Path) -> None:
     the wikidata QID is NOT in the polygon's resolved QID set) must be
     rejected and recorded in the cumulative ledger.
     """
-    lm, _rl, _DataRoot = _import_modules()
 
     # Polygon p1 has Q1 AND Q2 in its resolved QID set. The legacy
     # polygon_articles file references Q99 for p1 (not in {Q1,Q2}).
@@ -187,7 +182,6 @@ def test_valid_wikipedia_relationships_are_not_rejected(tmp_path: Path) -> None:
     """A valid legacy Wikipedia relationship (where the wikidata QID
     IS in the polygon's resolved QID set) must NOT be rejected.
     """
-    lm, _rl, _DataRoot = _import_modules()
 
     stem = "alpha-latest"
     processed = tmp_path / "processed"
@@ -221,7 +215,6 @@ def test_invalid_wikivoyage_relationships_are_rejected(tmp_path: Path) -> None:
     absent from polygons) must be rejected by
     ``plan_integrity_normalization``.
     """
-    _lm, rl, DataRoot = _import_modules()
 
     stem = "alpha-latest"
     processed = tmp_path / "processed"

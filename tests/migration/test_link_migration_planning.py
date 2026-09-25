@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_COLUMNS,
     polygon_schema,
 )
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 EXPECTED_CANONICAL_COLUMNS: tuple[str, ...] = (
     "polygon_id",
@@ -32,17 +33,6 @@ EXPECTED_CANONICAL_COLUMNS: tuple[str, ...] = (
 )
 
 
-def _import_module():
-    try:
-        from osm_polygon_wikidata_only.pipeline import link_migration as mod
-    except ImportError as exc:
-        pytest.fail(
-            "Expected osm_polygon_wikidata_only.pipeline.link_migration to exist "
-            f"(Phase 2 group B: schema detection/planning); got ImportError: {exc}"
-        )
-    return mod
-
-
 def _pyarrow():
     pa = pytest.importorskip("pyarrow")
     pytest.importorskip("pyarrow.parquet")
@@ -55,9 +45,8 @@ def _pyarrow():
 
 
 def test_module_exposes_planner_and_classifier() -> None:
-    mod = _import_module()
     for name in ("plan_link_migration", "apply_link_migration", "classify_stem_schema"):
-        assert hasattr(mod, name), f"Missing public API: link_migration.{name}"
+        assert hasattr(link_migration, name), f"Missing public API: link_migration.{name}"
 
 
 # ---------------------------------------------------------------------------
@@ -66,27 +55,24 @@ def test_module_exposes_planner_and_classifier() -> None:
 
 
 def test_classify_stem_schema_recognizes_legacy() -> None:
-    mod = _import_module()
-    classification = mod.classify_stem_schema(list(POLYGON_ARTICLE_COLUMNS))
+    classification = link_migration.classify_stem_schema(list(POLYGON_ARTICLE_COLUMNS))
     assert classification == "legacy", (
         f"Expected legacy schema classification for POLYGON_ARTICLE_COLUMNS, got {classification!r}"
     )
 
 
 def test_classify_stem_schema_recognizes_canonical() -> None:
-    mod = _import_module()
-    classification = mod.classify_stem_schema(list(EXPECTED_CANONICAL_COLUMNS))
+    classification = link_migration.classify_stem_schema(list(EXPECTED_CANONICAL_COLUMNS))
     assert classification == "canonical", (
         f"Expected canonical schema classification, got {classification!r}"
     )
 
 
 def test_classify_stem_schema_rejects_mixed_or_unknown() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.classify_stem_schema((*list(POLYGON_ARTICLE_COLUMNS), "junk"))
+        link_migration.classify_stem_schema((*list(POLYGON_ARTICLE_COLUMNS), "junk"))
     with pytest.raises(ValueError):
-        mod.classify_stem_schema([])
+        link_migration.classify_stem_schema([])
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +231,7 @@ def _seed_full_legacy_stem(
 
 def test_plan_link_migration_produces_empty_plan_for_no_stems(tmp_path: Path) -> None:
     """Empty stems list is a normal no-op: planner returns an empty plan."""
-    mod = _import_module()
-    plan = mod.plan_link_migration(tmp_path, stems=[])
+    plan = link_migration.plan_link_migration(tmp_path, stems=[])
     assert plan.stems == (), f"Empty stems must yield empty plan, got {plan.stems}"
     # And no writes happened.
     assert not (tmp_path / "polygon_articles").exists() or not any(
@@ -255,17 +240,15 @@ def test_plan_link_migration_produces_empty_plan_for_no_stems(tmp_path: Path) ->
 
 
 def test_plan_link_migration_rejects_path_traversal(tmp_path: Path) -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.plan_link_migration(tmp_path, stems=["../escape"])
+        link_migration.plan_link_migration(tmp_path, stems=["../escape"])
 
 
 def test_plan_link_migration_classifies_legacy_stem_as_migratable(tmp_path: Path) -> None:
-    mod = _import_module()
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = mod.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
     stem_plans = {s.stem: s for s in plan.stems}
     assert stem_plans["monaco-latest"].classification == "migratable", (
         f"Legacy stem with matching document must be migratable, got "
@@ -274,7 +257,6 @@ def test_plan_link_migration_classifies_legacy_stem_as_migratable(tmp_path: Path
 
 
 def test_apply_link_migration_refuses_a_plan_with_blocked_stems(tmp_path: Path) -> None:
-    mod = _import_module()
     pa = _pyarrow()
     layout = _processed_layout(tmp_path)
     layout["polygon_articles"].mkdir(parents=True, exist_ok=True)
@@ -283,7 +265,7 @@ def test_apply_link_migration_refuses_a_plan_with_blocked_stems(tmp_path: Path) 
     original = links_path.read_bytes()
 
     with pytest.raises(ValueError, match=r"blocked stems: \['monaco-latest'\]"):
-        mod.apply_link_migration(tmp_path, stems={"monaco-latest"})
+        link_migration.apply_link_migration(tmp_path, stems={"monaco-latest"})
 
     assert links_path.read_bytes() == original
 
@@ -292,7 +274,6 @@ def test_plan_link_migration_classifies_mixed_schema_exactly_blocked(
     tmp_path: Path,
 ) -> None:
     """Mixed schema must be classified exactly BLOCKED, never 'incomplete'."""
-    mod = _import_module()
     pa = _pyarrow()
     layout = _processed_layout(tmp_path)
     layout["polygons"].mkdir(parents=True, exist_ok=True)
@@ -300,7 +281,7 @@ def test_plan_link_migration_classifies_mixed_schema_exactly_blocked(
     # An incomplete schema: only "polygon_id" and "article_id".
     mixed_table = pa.table({"polygon_id": ["p"], "article_id": ["x"]})
     pa.parquet.write_table(mixed_table, layout["polygon_articles"] / "monaco-latest.parquet")
-    plan = mod.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
     stem_plans = {s.stem: s for s in plan.stems}
     assert stem_plans["monaco-latest"].classification == "BLOCKED", (
         f"Mixed schema must be classified exactly BLOCKED, got "
@@ -322,7 +303,6 @@ def test_plan_link_migration_within_stem_isolation_alpha_migratable_beta_blocked
     alpha matches) -> beta must be BLOCKED, and beta must NOT resolve
     from alpha's documents.
     """
-    mod = _import_module()
     pa = _pyarrow()
     from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 
@@ -361,7 +341,7 @@ def test_plan_link_migration_within_stem_isolation_alpha_migratable_beta_blocked
     )
     # Beta's directory exists but has no document file.
 
-    plan = mod.plan_link_migration(tmp_path, stems=["alpha", "beta"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["alpha", "beta"])
     buckets = {s.stem: s.classification for s in plan.stems}
     assert buckets["alpha"] == "migratable", (
         f"alpha has matching legacy document -> must be migratable, got {buckets['alpha']!r}"
@@ -377,7 +357,6 @@ def test_plan_link_migration_keys_resolution_within_stem_unique_document_id(
 ) -> None:
     """The same article_id appearing in two stems must map to the SAME
     document_id revision (the document_id is the canonical identity)."""
-    mod = _import_module()
     pa = _pyarrow()
     from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 
@@ -415,7 +394,7 @@ def test_plan_link_migration_keys_resolution_within_stem_unique_document_id(
             [_legacy_document_row(document_id, shared_article_id, "Q1")],
         )
 
-    plan = mod.plan_link_migration(tmp_path, stems=["alpha", "beta"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["alpha", "beta"])
     buckets = {s.stem: s.classification for s in plan.stems}
     assert buckets["alpha"] == "migratable"
     assert buckets["beta"] == "migratable"
@@ -430,51 +409,47 @@ def test_apply_link_migration_aborts_when_polygons_change_after_planning(
     tmp_path: Path,
 ) -> None:
     """If the polygons file is mutated after planning, apply must abort."""
-    mod = _import_module()
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = mod.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
     # Tamper with the polygons file after planning.
     polygons_path = tmp_path / "polygons" / "monaco-latest.parquet"
     polygons_path.write_bytes(polygons_path.read_bytes() + b"corrupt")
     with pytest.raises(Exception):
-        mod.apply_link_migration(plan)
+        link_migration.apply_link_migration(plan)
 
 
 def test_apply_link_migration_aborts_when_legacy_links_change_after_planning(
     tmp_path: Path,
 ) -> None:
     """If the legacy links file is mutated after planning, apply must abort."""
-    mod = _import_module()
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = mod.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
     links_path = tmp_path / "polygon_articles" / "monaco-latest.parquet"
     links_path.write_bytes(links_path.read_bytes() + b"corrupt")
     with pytest.raises(Exception):
-        mod.apply_link_migration(plan)
+        link_migration.apply_link_migration(plan)
 
 
 def test_apply_link_migration_aborts_when_legacy_documents_change_after_planning(
     tmp_path: Path,
 ) -> None:
     """If the legacy documents file is mutated after planning, apply must abort."""
-    mod = _import_module()
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = mod.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
     docs_path = tmp_path / "wikipedia" / "documents" / "monaco-latest.parquet"
     docs_path.write_bytes(docs_path.read_bytes() + b"corrupt")
     with pytest.raises(Exception):
-        mod.apply_link_migration(plan)
+        link_migration.apply_link_migration(plan)
 
 
 def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> None:
     """Second migration run must be a no-op (canonical shards are skipped)."""
-    mod = _import_module()
     processed = tmp_path / "processed"
     _seed_full_legacy_stem(
         processed,
@@ -483,11 +458,11 @@ def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> Non
         article_id="Q1:en:1:1",
         document_id="Q1:wikipedia:en:1:1",
     )
-    mod.apply_link_migration(processed, stems=["monaco-latest"])
+    link_migration.apply_link_migration(processed, stems=["monaco-latest"])
     first_hash = hashlib.sha256(
         (processed / "polygon_articles" / "monaco-latest.parquet").read_bytes()
     ).hexdigest()
-    mod.apply_link_migration(processed, stems=["monaco-latest"])
+    link_migration.apply_link_migration(processed, stems=["monaco-latest"])
     second_hash = hashlib.sha256(
         (processed / "polygon_articles" / "monaco-latest.parquet").read_bytes()
     ).hexdigest()

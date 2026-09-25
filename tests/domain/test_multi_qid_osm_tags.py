@@ -15,18 +15,8 @@ from __future__ import annotations
 import inspect
 import re
 
-import pytest
-
-
-def _import_module(path: str, name: str):
-    try:
-        import importlib
-
-        mod = importlib.import_module(path)
-    except ImportError as exc:
-        pytest.fail(f"{path} import failed: {exc}")
-    return mod
-
+from osm_polygon_wikidata_only.domain import polygon_document_links
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 # ---------------------------------------------------------------------------
 # 1. No new QID regex inside the domain layer
@@ -34,9 +24,7 @@ def _import_module(path: str, name: str):
 
 
 def test_domain_layer_does_not_define_its_own_qid_regex() -> None:
-    src = inspect.getsource(
-        _import_module("osm_polygon_wikidata_only.domain.polygon_document_links", "pdl")
-    )
+    src = inspect.getsource(polygon_document_links)
     # The module must not define a fresh QID regex like ^Q\\d+$.
     assert not re.search(r"_VALID_QID\\s*=\\s*re\\.compile", src), (
         "polygon_document_links must not define a private QID regex; "
@@ -45,9 +33,8 @@ def test_domain_layer_does_not_define_its_own_qid_regex() -> None:
 
 
 def test_domain_layer_imports_canonical_qid_parser() -> None:
-    mod = _import_module("osm_polygon_wikidata_only.domain.polygon_document_links", "pdl")
     # The module should expose or use the canonical parser symbols.
-    src = inspect.getsource(mod)
+    src = inspect.getsource(polygon_document_links)
     assert "qids_from_osm_tag" in src or "is_valid_qid" in src, (
         "polygon_document_links must import the canonical qids_from_osm_tag / is_valid_qid"
     )
@@ -102,8 +89,7 @@ def _doc(document_id: str, wikidata: str) -> dict:
 
 def test_builder_accepts_multi_qid_polygon_tag() -> None:
     """A polygon tagged ``Q1;Q2`` is joinable to a Q1 document AND a Q2 document."""
-    mod = _import_module("osm_polygon_wikidata_only.domain.polygon_document_links", "pdl")
-    rows = mod.build_polygon_document_links(
+    rows = polygon_document_links.build_polygon_document_links(
         polygons=[_poly("p1", "Q1;Q2")],
         wikipedia_documents=[
             _doc("Q1:wikipedia:en:100:1", "Q1"),
@@ -116,8 +102,7 @@ def test_builder_accepts_multi_qid_polygon_tag() -> None:
 
 def test_builder_rejects_document_qid_not_in_polygon_set() -> None:
     """A document with Q3 (absent from polygon tag) must not produce a link."""
-    mod = _import_module("osm_polygon_wikidata_only.domain.polygon_document_links", "pdl")
-    rows = mod.build_polygon_document_links(
+    rows = polygon_document_links.build_polygon_document_links(
         polygons=[_poly("p1", "Q1;Q2")],
         wikipedia_documents=[
             _doc("Q1:wikipedia:en:100:1", "Q1"),
@@ -134,8 +119,7 @@ def test_builder_rejects_document_qid_not_in_polygon_set() -> None:
 
 
 def test_migration_uses_canonical_qid_parser() -> None:
-    mod = _import_module("osm_polygon_wikidata_only.pipeline.link_migration", "lm")
-    src = inspect.getsource(mod)
+    src = inspect.getsource(link_migration)
     assert "qids_from_osm_tag" in src, (
         "link_migration must use the canonical qids_from_osm_tag parser"
     )

@@ -16,6 +16,7 @@ import hashlib
 import json
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -36,7 +37,7 @@ def _marker_helpers():
     return mod
 
 
-def _data_root(tmp_path: Path):
+def _data_root(tmp_path: Path) -> Any:
     class _DR:
         def __init__(self, p: Path) -> None:
             self.processed = p

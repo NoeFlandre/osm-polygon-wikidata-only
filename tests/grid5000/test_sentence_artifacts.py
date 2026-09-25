@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
@@ -19,14 +17,7 @@ from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
 )
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
-
-
-def _write_table(path: Path, schema: pa.Schema, *, text: str = "First.") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {field.name: None for field in schema}
-    if "text" in schema.names:
-        row["text"] = text
-    pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
+from tests.helpers import write_single_text_row as _write_table
 
 
 def _manifest(

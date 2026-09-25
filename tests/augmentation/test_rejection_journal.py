@@ -22,17 +22,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.augmentation import rejection_ledger
 from osm_polygon_wikidata_only.augmentation.rejection_ledger import (
     LEDGER_FILENAME,
 )
 from osm_polygon_wikidata_only.augmentation.schema import document_schema, section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
-
-
-def _import_module():
-    from osm_polygon_wikidata_only.augmentation import rejection_ledger as mod
-
-    return mod
 
 
 def _write_documents(path: Path, rows: list[dict]) -> None:
@@ -159,32 +154,31 @@ def test_crash_after_documents_write_resumes(tmp_path: Path) -> None:
     safely. After resume, the cumulative ledger must include the
     rejected Q99 record.
     """
-    mod = _import_module()
     data_root = _fresh_data_root(tmp_path)
     data_root.ensure()
     stem = "alpha-latest"
     _seed(data_root, stem)
 
-    plan = mod.plan_integrity_normalization(data_root, stem)
+    plan = rejection_ledger.plan_integrity_normalization(data_root, stem)
     assert len(plan.rejections) == 1
 
     # Patch save_ledger to crash on first call (cumulative ledger
     # write).
-    real_save = mod.save_ledger
+    real_save = rejection_ledger.save_ledger
 
     def _crash_save(*args, **kwargs):
         raise RuntimeError("simulated crash before cumulative ledger commit")
 
-    mod.save_ledger = _crash_save
+    rejection_ledger.save_ledger = _crash_save
     try:
         with pytest.raises(RuntimeError, match="simulated crash"):
-            mod.apply_integrity_normalization(plan)
+            rejection_ledger.apply_integrity_normalization(plan)
     finally:
-        mod.save_ledger = real_save
+        rejection_ledger.save_ledger = real_save
 
     # Documents may have been written; cumulative ledger NOT.
     # A fresh apply with the same plan must complete the transaction.
-    mod.apply_integrity_normalization(plan)
+    rejection_ledger.apply_integrity_normalization(plan)
 
     ledger_path = data_root.processed / "integrity" / LEDGER_FILENAME
     payload = json.loads(ledger_path.read_text())
@@ -198,14 +192,13 @@ def test_crash_after_documents_write_resumes(tmp_path: Path) -> None:
 
 
 def test_crash_after_sections_write_resumes(tmp_path: Path) -> None:
-    mod = _import_module()
     data_root = _fresh_data_root(tmp_path)
     data_root.ensure()
     stem = "alpha-latest"
     _seed(data_root, stem)
 
-    plan = mod.plan_integrity_normalization(data_root, stem)
-    real_save = mod.save_ledger
+    plan = rejection_ledger.plan_integrity_normalization(data_root, stem)
+    real_save = rejection_ledger.save_ledger
 
     call_count = {"n": 0}
 
@@ -215,14 +208,14 @@ def test_crash_after_sections_write_resumes(tmp_path: Path) -> None:
             raise RuntimeError("simulated crash after sections write")
         return real_save(*args, **kwargs)
 
-    mod.save_ledger = _crash_after_sections
+    rejection_ledger.save_ledger = _crash_after_sections
     try:
         with pytest.raises(RuntimeError, match="simulated crash after sections"):
-            mod.apply_integrity_normalization(plan)
+            rejection_ledger.apply_integrity_normalization(plan)
     finally:
-        mod.save_ledger = real_save
+        rejection_ledger.save_ledger = real_save
 
-    mod.apply_integrity_normalization(plan)
+    rejection_ledger.apply_integrity_normalization(plan)
 
     ledger_path = data_root.processed / "integrity" / LEDGER_FILENAME
     payload = json.loads(ledger_path.read_text())
@@ -236,14 +229,13 @@ def test_crash_after_sections_write_resumes(tmp_path: Path) -> None:
 
 
 def test_crash_after_per_stem_ledger_resumes(tmp_path: Path) -> None:
-    mod = _import_module()
     data_root = _fresh_data_root(tmp_path)
     data_root.ensure()
     stem = "alpha-latest"
     _seed(data_root, stem)
 
-    plan = mod.plan_integrity_normalization(data_root, stem)
-    real_save = mod.save_ledger
+    plan = rejection_ledger.plan_integrity_normalization(data_root, stem)
+    real_save = rejection_ledger.save_ledger
 
     # First save_ledger is the per-stem ledger (we want to crash on
     # the SECOND call -- the cumulative ledger merge).
@@ -255,14 +247,14 @@ def test_crash_after_per_stem_ledger_resumes(tmp_path: Path) -> None:
             return real_save(*args, **kwargs)
         raise RuntimeError("simulated crash after per-stem ledger")
 
-    mod.save_ledger = _crash_after_per_stem
+    rejection_ledger.save_ledger = _crash_after_per_stem
     try:
         with pytest.raises(RuntimeError, match="simulated crash after per-stem"):
-            mod.apply_integrity_normalization(plan)
+            rejection_ledger.apply_integrity_normalization(plan)
     finally:
-        mod.save_ledger = real_save
+        rejection_ledger.save_ledger = real_save
 
-    mod.apply_integrity_normalization(plan)
+    rejection_ledger.apply_integrity_normalization(plan)
 
     ledger_path = data_root.processed / "integrity" / LEDGER_FILENAME
     payload = json.loads(ledger_path.read_text())
@@ -281,30 +273,29 @@ def test_fresh_process_resume_after_crash_converges(tmp_path: Path) -> None:
     re-running the plan against the source artifacts that have NOT
     yet been normalized.
     """
-    mod = _import_module()
     data_root = _fresh_data_root(tmp_path)
     data_root.ensure()
     stem = "alpha-latest"
     _seed(data_root, stem)
 
-    plan = mod.plan_integrity_normalization(data_root, stem)
-    real_save = mod.save_ledger
+    plan = rejection_ledger.plan_integrity_normalization(data_root, stem)
+    real_save = rejection_ledger.save_ledger
 
     def _always_crash(*args, **kwargs):
         raise RuntimeError("crash")
 
-    mod.save_ledger = _always_crash
+    rejection_ledger.save_ledger = _always_crash
     try:
         with pytest.raises(RuntimeError):
-            mod.apply_integrity_normalization(plan)
+            rejection_ledger.apply_integrity_normalization(plan)
     finally:
-        mod.save_ledger = real_save
+        rejection_ledger.save_ledger = real_save
 
     # Documents/sections may have been overwritten by the failed
     # apply. Re-seed the SOURCE artifacts and re-apply with the
     # original plan to simulate a fresh process restart.
     _seed(data_root, stem)
-    mod.apply_integrity_normalization(plan)
+    rejection_ledger.apply_integrity_normalization(plan)
 
     ledger_path = data_root.processed / "integrity" / LEDGER_FILENAME
     payload = json.loads(ledger_path.read_text())

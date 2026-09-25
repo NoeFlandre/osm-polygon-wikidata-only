@@ -10,8 +10,6 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from types import ModuleType
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
@@ -30,6 +28,7 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, Remote
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
+from tests.helpers import write_single_text_row as _write_table
 
 
 @pytest.mark.parametrize(
@@ -82,14 +81,6 @@ def test_ledger_baselines_reject_invalid_values(
 
     with pytest.raises(sentence_controller.ControllerRunError, match=message):
         sentence_controller_policy.validate_ledger_baselines(ledger)
-
-
-def _write_table(path: Path, schema: pa.Schema, text: str = "First.") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {field.name: None for field in schema}
-    if "text" in schema.names:
-        row["text"] = text
-    pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
 
 
 def _sentence_manifest(regions: list[dict[str, object]] | None = None) -> dict[str, object]:

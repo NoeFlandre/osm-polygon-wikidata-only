@@ -22,13 +22,7 @@ from pathlib import Path
 
 import pytest
 
-
-def _import_module():
-    try:
-        from osm_polygon_wikidata_only.pipeline import link_migration as mod
-    except ImportError:
-        pytest.fail("link_migration module must exist")
-    return mod
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 
 def _file_hash(path: Path) -> str:
@@ -49,7 +43,6 @@ def test_staged_files_preserved_after_mid_flight_crash(tmp_path: Path) -> None:
     """After a crash at index 1 of 4, staged files for indices 2 and 3
     must remain on disk for roll-forward recovery.
     """
-    mod = _import_module()
     targets_staged: list[tuple[Path, Path]] = []
     for index in range(4):
         target, staged = _make_pair(
@@ -67,7 +60,7 @@ def test_staged_files_preserved_after_mid_flight_crash(tmp_path: Path) -> None:
             raise RuntimeError(f"simulated crash at index {index}")
 
     with pytest.raises(RuntimeError, match="simulated crash"):
-        mod._commit_ordered_replacements(
+        link_migration._commit_ordered_replacements(
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
@@ -92,7 +85,6 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
     """After a crash, a fresh call to apply_link_migration must complete
     the roll-forward -- every target ends at its staged hash.
     """
-    mod = _import_module()
     targets_staged: list[tuple[Path, Path]] = []
     expected: dict[Path, str] = {}
     for index in range(4):
@@ -112,7 +104,7 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
             raise RuntimeError(f"simulated crash at index {index}")
 
     with pytest.raises(RuntimeError, match="simulated crash"):
-        mod._commit_ordered_replacements(
+        link_migration._commit_ordered_replacements(
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
@@ -127,7 +119,7 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
     assert journal.is_file(), "Journal must persist after mid-flight crash"
 
     # Replay by calling the public API again.
-    mod._commit_ordered_replacements(
+    link_migration._commit_ordered_replacements(
         directory=directory,
         stem="alpha-latest",
         replacements=targets_staged,
@@ -141,7 +133,6 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
 
 def test_target_staged_journal_paths_remain_inside_roots(tmp_path: Path) -> None:
     """All paths in the journal must be inside their declared roots."""
-    mod = _import_module()
     targets_staged: list[tuple[Path, Path]] = []
     for index in range(2):
         target, staged = _make_pair(tmp_path, f"file{index}.parquet")
@@ -160,7 +151,7 @@ def test_target_staged_journal_paths_remain_inside_roots(tmp_path: Path) -> None
     import pytest as _pytest
 
     with _pytest.raises(RuntimeError, match="simulated crash"):
-        mod._commit_ordered_replacements(
+        link_migration._commit_ordered_replacements(
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
@@ -188,8 +179,7 @@ def test_manifest_update_failure_is_not_swallowed(tmp_path: Path) -> None:
     """The apply stage's augmentation-manifest update must propagate
     exceptions -- they are NOT logged-and-continued.
     """
-    mod = _import_module()
-    src = open(mod.__file__).read()
+    src = open(link_migration.__file__).read()
     assert "except Exception" not in src or "raise" in src, (
         "link_migration must not swallow manifest-update failures with a broad except + log"
     )
