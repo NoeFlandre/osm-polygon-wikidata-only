@@ -21,12 +21,13 @@ Two-phase testing:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
 
 import pytest
+
+from tests.helpers import sha256_file as _sha256
 
 
 def _import_module():
@@ -44,10 +45,6 @@ def _pyarrow():
     pa = pytest.importorskip("pyarrow")
     pytest.importorskip("pyarrow.parquet")
     return pa
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _make_text_pair(tmp_path: Path, name: str, old: str, new: str) -> tuple[Path, Path]:

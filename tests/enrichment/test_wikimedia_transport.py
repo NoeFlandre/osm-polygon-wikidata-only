@@ -6,10 +6,11 @@ import gzip
 import json
 import logging
 import urllib.error
-from email.message import Message
 from typing import Any
 
 import pytest
+
+from tests.helpers import http_error as _http_error
 
 
 class _StubSession:
@@ -29,13 +30,6 @@ class _StubSession:
         if isinstance(response, BaseException):
             raise response
         return response
-
-
-def _http_error(code: int, retry_after: str | None = None) -> urllib.error.HTTPError:
-    headers = Message()
-    if retry_after is not None:
-        headers["Retry-After"] = retry_after
-    return urllib.error.HTTPError("https://example.test", code, "error", headers, None)
 
 
 def _req(url: str) -> Any:

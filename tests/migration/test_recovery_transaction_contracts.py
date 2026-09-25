@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -14,10 +13,7 @@ from osm_polygon_wikidata_only.pipeline._wikidata_recovery.transaction import (
     recover_interrupted_transactions,
     transaction_directory,
 )
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.helpers import sha256_file as _sha256
 
 
 def _write_journal(
