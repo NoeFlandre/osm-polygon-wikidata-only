@@ -43,6 +43,22 @@ jobs:
           MUTMUT_MAX_CHILDREN: "4"
         run: just quality-gauntlet
 
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - uses: taiki-e/install-action@cb30b4c9cca98bbd320daf128741850f83d8a99f # v2 (just)
+        with:
+          tool: just
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Audit both lockfiles for known vulnerabilities
+        run: just audit
+
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -60,7 +76,7 @@ jobs:
   # The single required status check: it fails unless every needed job succeeded.
   all-green:
     if: always()
-    needs: [quality, container]
+    needs: [quality, security, container]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

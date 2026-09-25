@@ -235,6 +235,11 @@ with `all-green` as the only required status check. The Documentation
 workflow also builds on pull requests but deploys Pages only from `main`, and
 a new push to a pull request cancels its superseded runs.
 
+The `security` CI job runs `just audit`, which exports both lockfiles with
+hashes and fails on any known vulnerability reported by `pip-audit --strict`;
+run it locally before bumping dependencies. The CodeQL workflow analyses the
+Python sources on pull requests, pushes to `main` and weekly.
+
 ## Test strength checks
 
 The normal gate already runs full-source CRAP and the scoped mutation gate.
