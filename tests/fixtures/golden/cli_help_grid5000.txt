@@ -1,0 +1,9 @@
+usage: PROG grid5000 [-h] {controller,job} ...
+
+positional arguments:
+ {controller,job}
+ controller Run and resume the local Grid5000 sentence-splitting controller.
+ job Run one CUDA-required sentence batch on a reserved Grid5000 node.
+
+options:
+ -h, --help show this help message and exit

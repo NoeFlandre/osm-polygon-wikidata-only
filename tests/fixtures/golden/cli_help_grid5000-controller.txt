@@ -1,0 +1,25 @@
+usage: PROG grid5000 controller [-h] --data-root DATA_ROOT [--site SITE]
+ [--queue QUEUE] [--gpu-model GPU_MODEL]
+ [--repo-id REPO_ID] [--max-stems MAX_STEMS]
+ [--max-input-bytes MAX_INPUT_BYTES]
+ [--batch-size BATCH_SIZE]
+ [--inference-batch-size INFERENCE_BATCH_SIZE]
+ [--walltime WALLTIME] [--run-id RUN_ID]
+ [--hf-token HF_TOKEN]
+
+Run and resume the local Grid5000 sentence-splitting controller.
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT
+ --site SITE
+ --queue QUEUE
+ --gpu-model GPU_MODEL
+ --repo-id REPO_ID
+ --max-stems MAX_STEMS
+ --max-input-bytes MAX_INPUT_BYTES
+ --batch-size BATCH_SIZE
+ --inference-batch-size INFERENCE_BATCH_SIZE
+ --walltime WALLTIME
+ --run-id RUN_ID
+ --hf-token HF_TOKEN

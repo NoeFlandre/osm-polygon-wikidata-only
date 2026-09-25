@@ -7,6 +7,8 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
 
+from osm_polygon_wikidata_only.cli import audit_containment
+from osm_polygon_wikidata_only.cli.grid5000 import add_grid5000_parser
 from osm_polygon_wikidata_only.config.settings import (
     DEFAULT_REPO_ID,
     DEFAULT_USER_AGENT,
@@ -112,6 +114,15 @@ def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
         default=None,
         help="Hugging Face Space receiving the run (default: the version's public Space)",
     )
+
+    add_grid5000_parser(sub)
+
+    containment = sub.add_parser(
+        "audit-containment",
+        help="Read-only JSON audit of whole-file containment retirements (exit 2 if blocked)",
+        description=audit_containment.DESCRIPTION,
+    )
+    audit_containment.add_arguments(containment)
 
 
 def _common_parser() -> argparse.ArgumentParser:

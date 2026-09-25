@@ -33,6 +33,8 @@ def test_parser_has_documented_subcommands() -> None:
         "enforce-integrity",
         "audit-remote",
         "trackio-snapshot",
+        "grid5000",
+        "audit-containment",
     }
 
 

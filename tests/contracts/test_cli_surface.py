@@ -26,6 +26,8 @@ EXPECTED_COMMANDS = {
     "enforce-integrity",
     "audit-remote",
     "trackio-snapshot",
+    "grid5000",
+    "audit-containment",
 }
 
 EXPECTED_COMMON_FLAGS = {

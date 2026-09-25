@@ -42,7 +42,7 @@ The default run is intentionally bounded and serial:
 From the repository checkout, start or resume the operation with:
 
 ```bash
-UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run python scripts/grid5000_sentence_controller.py \
+UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run osm-polygon-wikidata-only grid5000 controller \
     --data-root "$OSM_POLYGON_DATA_ROOT" \
     --site rennes \
     --queue besteffort \
@@ -56,10 +56,11 @@ UV_CACHE_DIR=/tmp/osm-polygon-wikidata-only-uv uv run python scripts/grid5000_se
 ```
 
 The compute-node entry point is separate and is intended to be invoked by
-the controller inside the reservation:
+the controller inside the reservation (the controller stages and runs the
+equivalent `scripts/grid5000_sentence_job.py` compatibility shim):
 
 ```bash
-uv run --no-sync python scripts/grid5000_sentence_job.py \
+uv run --no-sync osm-polygon-wikidata-only grid5000 job \
     --data-root /path/to/result/data \
     --stems REGION_STEM \
     --model-cache /path/to/run/model-cache \

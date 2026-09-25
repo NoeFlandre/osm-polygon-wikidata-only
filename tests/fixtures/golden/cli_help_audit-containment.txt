@@ -1,0 +1,10 @@
+usage: PROG audit-containment [-h] [--output OUTPUT] data_root
+
+Read-only audit of configured whole-file containment retirements.
+
+positional arguments:
+ data_root Data root containing processed/
+
+options:
+ -h, --help show this help message and exit
+ --output OUTPUT Write the JSON report here instead of stdout

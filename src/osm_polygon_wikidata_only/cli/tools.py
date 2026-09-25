@@ -13,7 +13,8 @@ from collections.abc import Callable
 
 import typer
 
-from osm_polygon_wikidata_only.cli import audit_remote, enforce_integrity
+from osm_polygon_wikidata_only.cli import audit_containment, audit_remote, enforce_integrity
+from osm_polygon_wikidata_only.cli.grid5000 import run_grid5000
 from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID
 
@@ -55,6 +56,8 @@ TOOL_HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "enforce-integrity": _run_enforce_integrity,
     "audit-remote": _run_audit_remote,
     "trackio-snapshot": _run_trackio_snapshot,
+    "grid5000": run_grid5000,
+    "audit-containment": audit_containment.run,
 }
 
 

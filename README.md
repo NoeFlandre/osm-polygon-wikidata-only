@@ -204,13 +204,18 @@ uv run osm-polygon-wikidata-only release-stats            [--options]
 uv run osm-polygon-wikidata-only enforce-integrity        [--data-root <path>] [--dry-run] [--json]
 uv run osm-polygon-wikidata-only audit-remote             [--data-root <path>] [--repo-id <id>]
 uv run osm-polygon-wikidata-only trackio-snapshot         [--dataset-version v1|v2] [--data-root <path>]
+uv run osm-polygon-wikidata-only grid5000 controller|job  [--options]
+uv run osm-polygon-wikidata-only audit-containment        <data-root> [--output <file>]
 ```
 
 The standalone executables `osm-polygon-wikidata-only-enforce-integrity`,
 `osm-polygon-wikidata-only-audit-remote`, `osm-polygon-wikidata-only-trackio`
 and `osm-polygon-wikidata-and-wikipedia-trackio` remain installed as
 deprecated aliases of `enforce-integrity`, `audit-remote`,
-`trackio-snapshot` and `trackio-snapshot --dataset-version v2`.
+`trackio-snapshot` and `trackio-snapshot --dataset-version v2`. The
+`scripts/grid5000_sentence_*.py` and `scripts/audit_containment.py` files are
+thin compatibility shims over `grid5000 controller|job` and
+`audit-containment` (see [Grid5000 sentence splitting](docs/grid5000-sentence-splitting.md)).
 
 ### Join-integrity enforcement
 

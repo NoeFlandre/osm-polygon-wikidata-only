@@ -190,6 +190,8 @@ package-smoke: quality-runtime
         --resource hf/ne_110m_admin_0_countries.geojson \
         --resource assets/dataset_hero.png \
         --resource assets/dataset_hero_v2.png \
+        --resource cli/grid5000.py \
+        --resource cli/audit_containment.py \
         --entry-point osm-polygon-wikidata-only \
         --entry-point osm-polygon-wikidata-only-enforce-integrity \
         --entry-point osm-polygon-wikidata-only-audit-remote \

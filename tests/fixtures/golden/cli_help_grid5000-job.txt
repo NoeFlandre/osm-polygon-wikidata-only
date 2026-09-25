@@ -1,0 +1,19 @@
+usage: PROG grid5000 job [-h] --data-root DATA_ROOT --stems STEMS [STEMS ...]
+ --model-cache MODEL_CACHE --source-commit
+ SOURCE_COMMIT --job-id JOB_ID
+ [--batch-size BATCH_SIZE]
+ [--inference-batch-size INFERENCE_BATCH_SIZE]
+ --receipt RECEIPT
+
+Run one CUDA-required sentence batch on a reserved Grid5000 node.
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT
+ --stems STEMS [STEMS ...]
+ --model-cache MODEL_CACHE
+ --source-commit SOURCE_COMMIT
+ --job-id JOB_ID
+ --batch-size BATCH_SIZE
+ --inference-batch-size INFERENCE_BATCH_SIZE
+ --receipt RECEIPT
