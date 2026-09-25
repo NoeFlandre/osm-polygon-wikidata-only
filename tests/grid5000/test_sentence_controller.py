@@ -1,27 +1,34 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import ModuleType
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.grid5000 import sentence_controller, sentence_controller_policy
+from osm_polygon_wikidata_only.grid5000 import (
+    sentence_controller,
+    sentence_controller_policy,
+    sentence_publication,
+)
 from osm_polygon_wikidata_only.grid5000.sentence_job import GpuIdentity, JobReceipt
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
     FileDigest,
     sha256_manifest,
 )
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteFileInfo, RemoteInventory
+from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
+from tests.helpers import write_single_text_row as _write_table
 
 
 @pytest.mark.parametrize(
@@ -36,20 +43,20 @@ from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
     ],
 )
 def test_source_commit_batch_safety_is_explicit(batch: object, expected: bool) -> None:
-    assert sentence_controller._source_commit_batch_is_safe(batch) is expected
+    assert sentence_controller_policy.source_commit_batch_is_safe(batch) is expected
 
 
 def test_receipt_artifact_decoder_preserves_fields() -> None:
-    assert sentence_controller._receipt_artifact(
+    assert sentence_controller_policy.receipt_artifact(
         {"relative_path": "processed_v2/file.parquet", "size": 7, "sha256": "digest"}
     ) == FileDigest("processed_v2/file.parquet", 7, "digest")
 
 
 def test_receipt_value_normalizes_stem_lists() -> None:
-    assert sentence_controller._normalized_receipt_value("stems", ["alpha-latest"]) == (
+    assert sentence_controller_policy.normalized_receipt_value("stems", ["alpha-latest"]) == (
         "alpha-latest",
     )
-    assert sentence_controller._normalized_receipt_value("job_id", "123") == "123"
+    assert sentence_controller_policy.normalized_receipt_value("job_id", "123") == "123"
 
 
 @pytest.mark.parametrize(
@@ -73,15 +80,7 @@ def test_ledger_baselines_reject_invalid_values(
     ledger[key] = value
 
     with pytest.raises(sentence_controller.ControllerRunError, match=message):
-        sentence_controller._validate_ledger_baselines(ledger)
-
-
-def _write_table(path: Path, schema: pa.Schema, text: str = "First.") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {field.name: None for field in schema}
-    if "text" in schema.names:
-        row["text"] = text
-    pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
+        sentence_controller_policy.validate_ledger_baselines(ledger)
 
 
 def _sentence_manifest(regions: list[dict[str, object]] | None = None) -> dict[str, object]:
@@ -128,7 +127,7 @@ def test_rsync_resolves_remote_home_placeholder(tmp_path: Path, monkeypatch) -> 
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -152,7 +151,7 @@ def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
         calls.append(tuple(args))
         return CompletedProcess(args, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
 
     sentence_controller.SubprocessGrid5000Transport("grenoble").run_frontend(
@@ -173,7 +172,7 @@ def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
             "ssh",
             "grenoble",
             " ".join(
-                sentence_controller.shlex.quote(argument)
+                shlex.quote(argument)
                 for argument in (
                     "oarsub",
                     "-q",
@@ -341,7 +340,7 @@ class _FakeTransport:
             "contract_version": "v2-sentence-checkpoints-v1",
             "stem": "alpha-latest",
             "project": "wikipedia",
-            "input_fingerprint": sentence_controller.sha256_file(source),
+            "input_fingerprint": sha256_file(source),
             "model_id": "segment-any-text/sat-3l-sm",
             "model_revision": "137da05",
             "batch_size": 256,
@@ -729,16 +728,14 @@ def test_hf_sentence_verification_uses_lfs_metadata_without_download(
     )
     expected_paths = [
         operation.path_in_repo
-        for operation in sentence_controller.sentence_publication_ops(
-            data_root.processed_v2, ("alpha-latest",)
-        )
+        for operation in sentence_publication_ops(data_root.processed_v2, ("alpha-latest",))
     ]
     expected_paths.append("assets/v2_added_wikipedia_tag_documents.png")
     metadata = {
         path: RemoteFileInfo(
             path=path,
             size=(data_root.processed_v2 / path).stat().st_size,
-            sha256=sentence_controller.sha256_file(data_root.processed_v2 / path),
+            sha256=sha256_file(data_root.processed_v2 / path),
         )
         for path in expected_paths
     }
@@ -769,7 +766,7 @@ def test_sentence_verification_plan_includes_the_comparison_map(tmp_path: Path) 
         sentence_schema(),
     )
 
-    expected = sentence_controller._expected_sentence_files(
+    expected = sentence_publication.expected_sentence_files(
         data_root.processed_v2,
         ("alpha-latest",),
     )
@@ -788,18 +785,14 @@ def test_hf_sentence_verification_downloads_files_without_lfs_metadata(
     )
     expected_paths = [
         operation.path_in_repo
-        for operation in sentence_controller.sentence_publication_ops(
-            data_root.processed_v2, ("alpha-latest",)
-        )
+        for operation in sentence_publication_ops(data_root.processed_v2, ("alpha-latest",))
     ]
     expected_paths.append("assets/v2_added_wikipedia_tag_documents.png")
     metadata = {
         path: RemoteFileInfo(
             path=path,
             size=(data_root.processed_v2 / path).stat().st_size,
-            sha256=None
-            if path == "README.md"
-            else sentence_controller.sha256_file(data_root.processed_v2 / path),
+            sha256=None if path == "README.md" else sha256_file(data_root.processed_v2 / path),
         )
         for path in expected_paths
     }
@@ -834,18 +827,14 @@ def test_hf_sentence_verification_rejects_lfs_digest_mismatch(tmp_path: Path, mo
     )
     expected_paths = [
         operation.path_in_repo
-        for operation in sentence_controller.sentence_publication_ops(
-            data_root.processed_v2, ("alpha-latest",)
-        )
+        for operation in sentence_publication_ops(data_root.processed_v2, ("alpha-latest",))
     ]
     expected_paths.append("assets/v2_added_wikipedia_tag_documents.png")
     metadata = {
         path: RemoteFileInfo(
             path=path,
             size=(data_root.processed_v2 / path).stat().st_size,
-            sha256="0" * 64
-            if path == "README.md"
-            else sentence_controller.sha256_file(data_root.processed_v2 / path),
+            sha256="0" * 64 if path == "README.md" else sha256_file(data_root.processed_v2 / path),
         )
         for path in expected_paths
     }
@@ -921,7 +910,7 @@ def test_rsync_download_tree_creates_destination_and_uses_resolved_source(
             stderr="",
         )
 
-    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
     local_root = tmp_path / "received"
 
@@ -946,7 +935,7 @@ def test_rsync_download_tree_reports_transfer_failure(
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, 23, stdout="", stderr="connection lost")
 
-    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
 
     with pytest.raises(
@@ -976,7 +965,7 @@ def test_remove_tree_runs_only_inside_run_namespace_and_reports_failure(
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, returncode, stdout="", stderr="cleanup unavailable")
 
-    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
     transport = sentence_controller.SubprocessGrid5000Transport("grenoble")
 
@@ -1023,7 +1012,7 @@ def test_infer_job_state_maps_known_status_words_and_unknown_output(
     text: str,
     expected: str,
 ) -> None:
-    assert sentence_controller._infer_job_state(text) == expected
+    assert sentence_controller_policy.infer_job_state(text) == expected
 
 
 def test_git_source_commit_returns_the_trimmed_revision(
@@ -1036,7 +1025,7 @@ def test_git_source_commit_returns_the_trimmed_revision(
         calls.append(tuple(args))
         return CompletedProcess(args, 0, stdout="abc123\n", stderr="")
 
-    monkeypatch.setattr(sentence_controller.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: f"/fake/{name}")
 
     assert sentence_controller._git_source_commit(tmp_path / "repo") == "abc123"
@@ -1056,7 +1045,7 @@ def test_git_source_commit_rejects_failed_or_empty_revision(
     stdout: str,
 ) -> None:
     monkeypatch.setattr(
-        sentence_controller.subprocess,
+        subprocess,
         "run",
         lambda args, **_kwargs: CompletedProcess(args, returncode, stdout=stdout, stderr="fatal"),
     )
@@ -1186,12 +1175,13 @@ def test_verified_incoming_artifact_accepts_matching_digest(tmp_path: Path) -> N
         "data/payload.txt": FileDigest(
             "data/payload.txt",
             path.stat().st_size,
-            sentence_controller.sha256_file(path),
+            sha256_file(path),
         )
     }
 
     assert (
-        sentence_controller._verified_incoming_artifact(root, artifacts, "data/payload.txt") == path
+        sentence_controller_policy.verified_incoming_artifact(root, artifacts, "data/payload.txt")
+        == path
     )
 
 
@@ -1215,7 +1205,7 @@ def test_verified_incoming_artifact_rejects_untrusted_or_mismatched_files(
     path = root / "data/payload.txt"
     path.parent.mkdir(parents=True)
     path.write_bytes(b"verified payload")
-    actual_hash = sentence_controller.sha256_file(path)
+    actual_hash = sha256_file(path)
     artifacts = {
         relative: FileDigest(
             relative,
@@ -1225,4 +1215,4 @@ def test_verified_incoming_artifact_rejects_untrusted_or_mismatched_files(
     }
 
     with pytest.raises(sentence_controller.ControllerRunError, match=message):
-        sentence_controller._verified_incoming_artifact(root, artifacts, relative)
+        sentence_controller_policy.verified_incoming_artifact(root, artifacts, relative)

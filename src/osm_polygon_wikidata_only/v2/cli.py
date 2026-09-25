@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
@@ -127,7 +128,7 @@ def _build_uploader(
     repo_id: str,
     settings: Settings,
     hub: StubHfHub | None,
-):
+) -> Callable[[list[PublicationOp], str], None] | None:
     if not args.push:
         return None
 
@@ -144,7 +145,9 @@ def _build_uploader(
     return upload
 
 
-def _build_trackio_publisher(args: argparse.Namespace, data_root: DataRoot):
+def _build_trackio_publisher(
+    args: argparse.Namespace, data_root: DataRoot
+) -> Callable[[V2CardStats], None] | None:
     if not args.push or args.dry_run:
         return None
 

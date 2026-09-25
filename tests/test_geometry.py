@@ -15,9 +15,7 @@ from osm_polygon_wikidata_only.domain.geometry import (
     GeometryError,
     area_km2,
     centroid_geojson,
-    centroid_wkt,
     compute_polygon_geometry,
-    merge_multi_polygon,
 )
 
 
@@ -128,21 +126,3 @@ def test_invalid_geometry_fails_with_actionable_error(
 
 def test_centroid_serializers_preserve_longitude_then_latitude() -> None:
     assert centroid_geojson(2.5, 48.1) == '{"coordinates": [2.5, 48.1], "type": "Point"}'
-    assert centroid_wkt(2.5, 48.1) == "POINT(2.5000000000 48.1000000000)"
-
-
-def test_merge_multi_polygon_flattens_polygon_and_multipolygon_parts() -> None:
-    merged = merge_multi_polygon(
-        [
-            {"type": "Polygon", "coordinates": [_square(0, 0)]},
-            {"type": "MultiPolygon", "coordinates": [[_square(2, 0)], [_square(4, 0)]]},
-        ]
-    )
-
-    assert merged["type"] == "MultiPolygon"
-    assert len(merged["coordinates"]) == 3
-
-
-def test_merge_multi_polygon_rejects_non_polygon_geometry() -> None:
-    with pytest.raises(GeometryError, match="Cannot merge geometry"):
-        merge_multi_polygon([{"type": "Point", "coordinates": [0, 0]}])

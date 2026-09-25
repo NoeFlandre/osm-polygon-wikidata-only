@@ -5,12 +5,13 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Sequence
 from contextlib import suppress
-from typing import Any
 
 from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
     ACTIVE_STATES,
+    BatchDict,
     ControllerRunError,
+    LedgerDict,
     baseline_hashes,
     batch_stems,
     publication_message,
@@ -21,7 +22,7 @@ from .sentence_controller_policy import (
 class SentenceControllerLifecycleMixin(SentenceControllerContext):
     """Coordinate batches and keep remote cleanup resumable and safe."""
 
-    def run(self) -> dict[str, Any]:
+    def run(self) -> LedgerDict:
         """Process batches serially until all finalized V2 stems are published."""
         ledger = self.initialize()
         try:
@@ -36,7 +37,7 @@ class SentenceControllerLifecycleMixin(SentenceControllerContext):
             self._handle_interrupt()
             raise
 
-    def _publish_batch(self, batch: dict[str, Any]) -> None:
+    def _publish_batch(self, batch: BatchDict) -> None:
         try:
             self._assert_baseline()
         except Exception as error:
@@ -74,7 +75,7 @@ class SentenceControllerLifecycleMixin(SentenceControllerContext):
         if map_hash != self._ledger["baseline_map_sha256"]:
             raise ValueError("comparison-map baseline hash changed")
 
-    def _cleanup_remote_job(self, batch: dict[str, Any]) -> None:
+    def _cleanup_remote_job(self, batch: BatchDict) -> None:
         remote_job_root = batch.get("remote_job_root")
         expected_prefix = f"{self.remote_run_root}/jobs/"
         if not isinstance(remote_job_root, str) or not remote_job_root.startswith(expected_prefix):

@@ -14,8 +14,3 @@ def has_wikidata(tags: Mapping[str, str]) -> bool:
     Whitespace-only values are treated as missing.
     """
     return bool(tags.get("wikidata", "").strip())
-
-
-def is_polygon_relation(tags: Mapping[str, str]) -> bool:
-    """True for relations of type ``multipolygon``."""
-    return tags.get("type", "").strip() == "multipolygon"

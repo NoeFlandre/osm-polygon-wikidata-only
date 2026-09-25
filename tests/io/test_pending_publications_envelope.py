@@ -22,11 +22,7 @@ from pathlib import Path
 
 import pytest
 
-
-def _import_module():
-    from osm_polygon_wikidata_only.pipeline import pending_publications as mod
-
-    return mod
+from osm_polygon_wikidata_only.pipeline import pending_publications
 
 
 def _sha256(seed: str) -> str:
@@ -35,27 +31,26 @@ def _sha256(seed: str) -> str:
 
 def test_add_pending_publications_preserves_metadata_refresh(tmp_path: Path) -> None:
     """Adding stems must NOT erase the ``metadata_refresh`` field."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
     dr.ensure()
 
     # Pre-seed the envelope with a metadata_refresh field.
-    path = dr.processed_manifests / mod.FILENAME
+    path = dr.processed_manifests / pending_publications.FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     pre_existing_marker = {
         "stems": ["monaco-latest"],
         "fingerprint_hashes": {"monaco-latest": _sha256("monaco")},
     }
     initial_envelope = {
-        "contract_version": mod.CONTRACT_VERSION,
+        "contract_version": pending_publications.CONTRACT_VERSION,
         "stems": [],
         "metadata_refresh": pre_existing_marker,
     }
     path.write_text(json.dumps(initial_envelope, indent=2, sort_keys=True) + "\n")
 
-    mod.add_pending_publications(dr, {"alpha-latest", "beta-latest"})
+    pending_publications.add_pending_publications(dr, {"alpha-latest", "beta-latest"})
 
     envelope = json.loads(path.read_text())
     assert envelope["metadata_refresh"] == pre_existing_marker, (
@@ -66,26 +61,25 @@ def test_add_pending_publications_preserves_metadata_refresh(tmp_path: Path) -> 
 
 def test_remove_pending_publications_preserves_metadata_refresh(tmp_path: Path) -> None:
     """Removing stems must NOT erase the ``metadata_refresh`` field."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
     dr.ensure()
 
-    path = dr.processed_manifests / mod.FILENAME
+    path = dr.processed_manifests / pending_publications.FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     pre_existing_marker = {
         "stems": ["monaco-latest"],
         "fingerprint_hashes": {"monaco-latest": _sha256("monaco")},
     }
     initial_envelope = {
-        "contract_version": mod.CONTRACT_VERSION,
+        "contract_version": pending_publications.CONTRACT_VERSION,
         "stems": ["alpha-latest", "beta-latest"],
         "metadata_refresh": pre_existing_marker,
     }
     path.write_text(json.dumps(initial_envelope, indent=2, sort_keys=True) + "\n")
 
-    mod.remove_pending_publications(dr, {"alpha-latest"})
+    pending_publications.remove_pending_publications(dr, {"alpha-latest"})
 
     envelope = json.loads(path.read_text())
     assert envelope["metadata_refresh"] == pre_existing_marker, (
@@ -97,26 +91,27 @@ def test_remove_pending_publications_preserves_metadata_refresh(tmp_path: Path) 
 def test_marker_and_stems_round_trip(tmp_path: Path) -> None:
     """Setting a marker then adding stems then removing stems must keep
     the marker intact at every step."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
     dr.ensure()
 
-    mod.add_pending_publications(dr, {"alpha-latest", "beta-latest"})
-    mod.set_metadata_refresh_marker(dr, ["alpha-latest"], {"alpha-latest": _sha256("alpha")})
+    pending_publications.add_pending_publications(dr, {"alpha-latest", "beta-latest"})
+    pending_publications.set_metadata_refresh_marker(
+        dr, ["alpha-latest"], {"alpha-latest": _sha256("alpha")}
+    )
 
     # Save the bytes once the marker is set.
-    path = dr.processed_manifests / mod.FILENAME
+    path = dr.processed_manifests / pending_publications.FILENAME
     payload_with_marker = json.loads(path.read_text())
 
     # Add more stems; the marker must survive.
-    mod.add_pending_publications(dr, {"gamma-latest"})
+    pending_publications.add_pending_publications(dr, {"gamma-latest"})
     payload_after_add = json.loads(path.read_text())
     assert payload_after_add["metadata_refresh"] == payload_with_marker["metadata_refresh"]
 
     # Remove stems; the marker must survive.
-    mod.remove_pending_publications(dr, {"alpha-latest"})
+    pending_publications.remove_pending_publications(dr, {"alpha-latest"})
     payload_after_remove = json.loads(path.read_text())
     assert payload_after_remove["metadata_refresh"] == payload_with_marker["metadata_refresh"]
 
@@ -124,27 +119,26 @@ def test_marker_and_stems_round_trip(tmp_path: Path) -> None:
 def test_save_pending_publications_preserves_other_fields(tmp_path: Path) -> None:
     """``save_pending_publications`` itself (not just add/remove) must
     merge with other envelope fields."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
     dr.ensure()
 
-    path = dr.processed_manifests / mod.FILENAME
+    path = dr.processed_manifests / pending_publications.FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     pre_existing_marker = {
         "stems": ["monaco-latest"],
         "fingerprint_hashes": {"monaco-latest": _sha256("monaco")},
     }
     initial_envelope = {
-        "contract_version": mod.CONTRACT_VERSION,
+        "contract_version": pending_publications.CONTRACT_VERSION,
         "stems": ["alpha-latest"],
         "metadata_refresh": pre_existing_marker,
         "extra_field": {"key": "value"},
     }
     path.write_text(json.dumps(initial_envelope, indent=2, sort_keys=True) + "\n")
 
-    mod.save_pending_publications(dr, {"beta-latest"})
+    pending_publications.save_pending_publications(dr, {"beta-latest"})
 
     envelope = json.loads(path.read_text())
     assert envelope["metadata_refresh"] == pre_existing_marker
@@ -154,12 +148,11 @@ def test_save_pending_publications_preserves_other_fields(tmp_path: Path) -> Non
 
 def test_non_utf8_envelope_raises_actionable_value_error(tmp_path: Path) -> None:
     """Corrupt UTF-8 state must fail as a malformed envelope, not decode raw bytes."""
-    mod = _import_module()
     from osm_polygon_wikidata_only.config.paths import DataRoot
 
     dr = DataRoot(tmp_path)
     dr.ensure()
-    (dr.processed_manifests / mod.FILENAME).write_bytes(b"\xff\xfe")
+    (dr.processed_manifests / pending_publications.FILENAME).write_bytes(b"\xff\xfe")
 
     with pytest.raises(ValueError, match="Malformed pending publication manifest"):
-        mod.load_pending_publications(dr)
+        pending_publications.load_pending_publications(dr)

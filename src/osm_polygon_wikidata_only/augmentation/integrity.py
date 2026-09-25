@@ -69,7 +69,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import POLYGON_ARTICLE_COLUMNS
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
 from osm_polygon_wikidata_only.io.parquet import write_polygon_articles
-from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso_impl
+from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 
 INTEGRITY_CONTRACT_VERSION = "join-integrity-v1"
 
@@ -657,10 +657,6 @@ def enforce_all_regions(
     audit_payload = _integrity_audit_payload(report, polygon_results, wikivoyage_results)
     atomic_write_text(report.audit_path, json.dumps(audit_payload, indent=2, sort_keys=True) + "\n")
     return report
-
-
-def _utc_now_iso() -> str:
-    return _utc_now_iso_impl()
 
 
 __all__ = [

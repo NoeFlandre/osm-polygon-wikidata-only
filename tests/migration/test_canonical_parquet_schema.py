@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
@@ -24,14 +23,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-
-
-def _import_module():
-    try:
-        from osm_polygon_wikidata_only.pipeline import link_migration as mod
-    except ImportError:
-        pytest.fail("link_migration module must exist")
-    return mod
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 
 def _write_minimal_stem(processed_dir: Path, stem: str) -> None:
@@ -92,7 +84,6 @@ def _write_minimal_stem(processed_dir: Path, stem: str) -> None:
 
 def test_classify_rejects_lookalike_with_extra_metadata(tmp_path: Path) -> None:
     """A table with the canonical column names but extra field metadata is NOT canonical."""
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _write_minimal_stem(processed, stem)
@@ -130,16 +121,15 @@ def test_classify_rejects_lookalike_with_extra_metadata(tmp_path: Path) -> None:
     )
     pq.write_table(table, rows_path)  # type: ignore[no-untyped-call]
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     sp = next(s for s in plan.stems if s.stem == stem)
-    assert sp.classification == mod.StemClassification.BLOCKED, (
+    assert sp.classification == link_migration.StemClassification.BLOCKED, (
         f"Schema with extra metadata must not be classified canonical; got {sp.classification}"
     )
 
 
 def test_classify_rejects_reordered_canonical(tmp_path: Path) -> None:
     """Reordering canonical columns produces a lookalike schema that must be BLOCKED."""
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _write_minimal_stem(processed, stem)
@@ -169,16 +159,15 @@ def test_classify_rejects_reordered_canonical(tmp_path: Path) -> None:
     )
     pq.write_table(table, rows_path)  # type: ignore[no-untyped-call]
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     sp = next(s for s in plan.stems if s.stem == stem)
-    assert sp.classification == mod.StemClassification.BLOCKED, (
+    assert sp.classification == link_migration.StemClassification.BLOCKED, (
         f"Reordered schema must not be classified canonical; got {sp.classification}"
     )
 
 
 def test_classify_rejects_mistyped_field(tmp_path: Path) -> None:
     """A column with the wrong type is not canonical."""
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _write_minimal_stem(processed, stem)
@@ -210,9 +199,9 @@ def test_classify_rejects_mistyped_field(tmp_path: Path) -> None:
     )
     pq.write_table(table, rows_path)  # type: ignore[no-untyped-call]
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     sp = next(s for s in plan.stems if s.stem == stem)
-    assert sp.classification == mod.StemClassification.BLOCKED
+    assert sp.classification == link_migration.StemClassification.BLOCKED
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +211,6 @@ def test_classify_rejects_mistyped_field(tmp_path: Path) -> None:
 
 def test_apply_writes_canonical_schema_exactly(tmp_path: Path) -> None:
     """The migrated table must have schema == polygon_document_link_schema() (with metadata)."""
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _write_minimal_stem(processed, stem)
@@ -291,9 +279,9 @@ def test_apply_writes_canonical_schema_exactly(tmp_path: Path) -> None:
     )
     pq.write_table(doc, processed / "wikipedia" / "documents" / f"{stem}.parquet")  # type: ignore[no-untyped-call]
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
     written = pq.read_table(processed / "polygon_articles" / f"{stem}.parquet")  # type: ignore[no-untyped-call]
     assert written.schema.equals(polygon_document_link_schema(), check_metadata=True), (
         f"Migrated table must have canonical schema (with metadata); got {written.schema}"

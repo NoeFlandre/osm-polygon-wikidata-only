@@ -53,6 +53,7 @@ from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryAuditResult,
     RegionAuditResult,
 )
+from tests.helpers import ensured_data_root
 
 
 def _empty_recovery_audit(*args: object, **kwargs: object) -> RecoveryAuditResult:
@@ -97,9 +98,7 @@ def _settings() -> Settings:
 
 
 def _data_root(tmp: Path) -> DataRoot:
-    root = DataRoot(tmp / "data")
-    root.ensure()
-    return root
+    return ensured_data_root(tmp / "data")
 
 
 # ---------------------------------------------------------------------------

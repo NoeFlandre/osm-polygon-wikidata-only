@@ -78,7 +78,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
-from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
+from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import dumps
 
 
@@ -122,11 +122,6 @@ class WikipediaSourcePaths:
     canonical: Path
     legacy: Path
 
-    @property
-    def either_exists(self) -> bool:
-        """True when either source file is present."""
-        return self.legacy.exists() or self.canonical.exists()
-
 
 def wikipedia_source_paths(data_root: DataRoot, stem: str) -> WikipediaSourcePaths:
     """Return the canonical-document and legacy-article paths for *stem*.
@@ -166,16 +161,6 @@ def _canonical_source_is_valid(sources: WikipediaSourcePaths) -> bool:
     except (OSError, pa.ArrowInvalid):
         return False
     return schema.equals(wikipedia_document_schema(), check_metadata=True)
-
-
-def sha256_file(path: Path) -> str:
-    """SHA-256 of *path* streamed in 1 MiB chunks.
-
-    Single shared implementation used for the initial core hash
-    capture, the post-write drift check inside the orchestrator, and
-    the resumability check in :func:`augmentation_is_current`.
-    """
-    return _sha256_file(path)
 
 
 @dataclass(frozen=True, slots=True)

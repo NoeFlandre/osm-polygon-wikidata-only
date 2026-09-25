@@ -85,7 +85,7 @@ def _index_columns(legacy_articles: bool) -> tuple[str, ...]:
     )
 
 
-def validated_parquet_file(path: Path, *, legacy_articles: bool):
+def validated_parquet_file(path: Path, *, legacy_articles: bool) -> pq.ParquetFile:
     """Open and schema-check one V1 shard, closing handles on failure."""
     parquet_file: pq.ParquetFile | None = None
     try:

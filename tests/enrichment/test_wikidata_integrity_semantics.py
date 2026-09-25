@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import urllib.error
-from email.message import Message
 from typing import Any
 
 import pytest
@@ -13,6 +12,9 @@ from osm_polygon_wikidata_only.enrichment.wikidata.transport import (
     InMemoryWikidataClient,
     WikidataError,
 )
+from tests.helpers import http_error
+
+_WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 
 
 class _StubSession:
@@ -52,12 +54,6 @@ def _settings(**overrides: Any) -> Any:
     }
     values.update(overrides)
     return type("Settings", (), values)()
-
-
-def _http_error(code: int) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(
-        "https://www.wikidata.org/w/api.php", code, "error", Message(), None
-    )
 
 
 def _client(responses: list[Any], **settings: Any) -> tuple[HttpWikidataClient, _StubSession]:
@@ -105,7 +101,7 @@ def _entity(qid: str) -> WikidataEntity:
 
 
 def test_failed_fifty_qid_transport_batch_propagates_and_caches_nothing() -> None:
-    client, _ = _client([_http_error(503)])
+    client, _ = _client([http_error(503, url=_WIKIDATA_API)])
     cache = _Cache()
     cached = CachedWikidataClient(client, cache)  # type: ignore[arg-type]
 
@@ -126,7 +122,7 @@ def test_exhausted_finite_transient_retry_propagates() -> None:
 
 
 def test_permanent_http_failure_propagates_without_retry() -> None:
-    client, session = _client([_http_error(400)], request_max_retries=None)
+    client, session = _client([http_error(400, url=_WIKIDATA_API)], request_max_retries=None)
 
     with pytest.raises(urllib.error.HTTPError, match="HTTP Error 400"):
         client.get_entities(["Q1"])

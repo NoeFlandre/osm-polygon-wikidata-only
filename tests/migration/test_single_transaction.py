@@ -28,12 +28,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
 )
-
-
-def _import_module():
-    from osm_polygon_wikidata_only.pipeline import link_migration as mod
-
-    return mod
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 
 def _write_polygon(processed_dir: Path, stem: str) -> None:
@@ -206,7 +201,6 @@ def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
     (link parquet, processed manifest, augmentation manifest,
     pending intent, metadata marker).
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
@@ -238,7 +232,7 @@ def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
     lm._commit_ordered_replacements = _crashing_commit
     try:
         with pytest.raises(RuntimeError, match="simulated crash"):
-            mod.apply_link_migration(processed, stems={stem})
+            link_migration.apply_link_migration(processed, stems={stem})
     finally:
         lm._commit_ordered_replacements = real_commit
 
@@ -258,7 +252,7 @@ def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
     )
 
     # Now run a fresh apply (simulating a restarted process).
-    mod.apply_link_migration(processed, stems={stem})
+    link_migration.apply_link_migration(processed, stems={stem})
 
     # Now the stem must be current.
     assert augmentation_is_current(data_root, stem) is True, (
@@ -287,7 +281,6 @@ def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
     )
     from osm_polygon_wikidata_only.pipeline import link_migration as lm
 
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
@@ -301,7 +294,7 @@ def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
     lm._commit_ordered_replacements = _always_crash
     try:
         with pytest.raises(RuntimeError, match="simulated pre-commit crash"):
-            mod.apply_link_migration(processed, stems={stem})
+            link_migration.apply_link_migration(processed, stems={stem})
     finally:
         lm._commit_ordered_replacements = real_commit
 
@@ -309,7 +302,7 @@ def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
     assert augmentation_is_current(data_root, stem) is False
 
     # Fresh apply converges (using the now-restored real function).
-    mod.apply_link_migration(processed, stems={stem})
+    link_migration.apply_link_migration(processed, stems={stem})
     assert augmentation_is_current(data_root, stem) is True
 
 
@@ -322,12 +315,11 @@ def test_journal_paths_are_inside_data_root(tmp_path: Path) -> None:
     """The journal target/staged/backup paths must resolve inside the
     processed/ subdirectory (not anywhere outside).
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
-    mod.apply_link_migration(processed, stems={stem})
+    link_migration.apply_link_migration(processed, stems={stem})
 
     # The link parquet and manifests must all live under processed/.
     data_root = _fresh_process(tmp_path)
@@ -347,12 +339,11 @@ def test_manifest_failure_cannot_leave_canonical_link_without_manifest_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every durable state change belongs to the same recoverable transaction."""
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
-    mod.apply_link_migration(processed, stems={stem})
+    link_migration.apply_link_migration(processed, stems={stem})
 
     links = pq.read_table(processed / "polygon_articles" / f"{stem}.parquet")  # type: ignore[no-untyped-call]
     assert "document_id" in links.column_names
@@ -367,12 +358,11 @@ def test_transaction_replacements_include_every_durable_migration_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
     captured: list[Path] = []
-    real_commit = mod._commit_ordered_replacements
+    real_commit = link_migration._commit_ordered_replacements
 
     def capture(
         directory: Path,
@@ -389,8 +379,8 @@ def test_transaction_replacements_include_every_durable_migration_artifact(
             _crash_hook=_crash_hook,
         )
 
-    monkeypatch.setattr(mod, "_commit_ordered_replacements", capture)
-    mod.apply_link_migration(processed, stems={stem})
+    monkeypatch.setattr(link_migration, "_commit_ordered_replacements", capture)
+    link_migration.apply_link_migration(processed, stems={stem})
 
     relative = {path.relative_to(processed).as_posix() for path in captured}
     assert f"polygon_articles/{stem}.parquet" in relative

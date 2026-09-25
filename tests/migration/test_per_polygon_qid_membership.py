@@ -19,15 +19,9 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-
-def _import_modules():
-    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-        wikipedia_document_schema,
-    )
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-    from osm_polygon_wikidata_only.pipeline import link_migration as lm
-
-    return lm, wikipedia_document_schema, polygon_article_schema
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
+from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
+from osm_polygon_wikidata_only.pipeline import link_migration as lm
 
 
 def _seed_polygons(path: Path, polygon_id: str, qids: list[str]) -> None:
@@ -45,7 +39,6 @@ def _seed_polygons(path: Path, polygon_id: str, qids: list[str]) -> None:
 
 
 def _seed_wiki_doc(path: Path, document_id: str, qid: str, page_id: int = 1) -> None:
-    _, wikipedia_document_schema, _ = _import_modules()
     pq.write_table(  # type: ignore[no-untyped-call]
         pa.Table.from_pylist(
             [
@@ -90,7 +83,6 @@ def _seed_wiki_doc(path: Path, document_id: str, qid: str, page_id: int = 1) -> 
 
 
 def _seed_legacy(path: Path, polygon_id: str, qid: str, page_id: int = 1) -> None:
-    _, _, polygon_article_schema = _import_modules()
     pq.write_table(  # type: ignore[no-untyped-call]
         pa.Table.from_pylist(
             [
@@ -126,7 +118,6 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
     row referencing Q2 on polygon p1 must be rejected (Q2 is in
     the region's set but not in p1's set).
     """
-    lm, _, _ = _import_modules()
 
     processed = tmp_path / "processed"
     for sub in (
@@ -197,7 +188,6 @@ def test_conflicting_duplicate_legacy_rows_block_migration(tmp_path: Path) -> No
     different wikidata values must BLOCK the migration -- they cannot
     silently collapse.
     """
-    lm, _, polygon_article_schema = _import_modules()
 
     processed = tmp_path / "processed"
     for sub in (
@@ -293,7 +283,6 @@ def test_byte_identical_duplicate_legacy_rows_collapse(tmp_path: Path) -> None:
     """Two byte-identical legacy rows for the same
     (polygon_id, article_id) MUST collapse to a single canonical row.
     """
-    lm, _, polygon_article_schema = _import_modules()
 
     processed = tmp_path / "processed"
     for sub in (

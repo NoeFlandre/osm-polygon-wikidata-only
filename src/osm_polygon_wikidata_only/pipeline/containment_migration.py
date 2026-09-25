@@ -13,7 +13,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation import steps as augmentation_steps
-from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import (
+    atomic_replacement,
+    atomic_write_parquet,
+    atomic_write_text,
+)
 from osm_polygon_wikidata_only.utils.json import dumps
 
 from .containment_policy import (
@@ -203,11 +207,6 @@ def audit_rule(processed_dir: Path, rule: ContainmentRule) -> RuleAudit:
         children.append(child)
         blockers.extend(child_blockers)
     return RuleAudit(parent, tuple(children), tuple(sorted(blockers)))
-
-
-def _atomic_write_parquet(path: Path, table: pa.Table) -> None:
-    with atomic_replacement(path) as temporary:
-        pq.write_table(table, temporary)
 
 
 def _identity(row: dict[str, Any], contract: TableContract) -> tuple[Any, ...]:
@@ -403,7 +402,7 @@ def _stage_contract_artifact(
     )
     staged_table = pa.Table.from_pylist(rows, schema=schema)
     target = cache_dir / parent_stem / contract.subdir / f"{parent_stem}.parquet"
-    _atomic_write_parquet(target, staged_table)
+    atomic_write_parquet(target, staged_table)
     return contract.subdir, target
 
 

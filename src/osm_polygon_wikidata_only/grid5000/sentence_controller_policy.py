@@ -9,13 +9,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 
 from .sentence_protocol import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_INFERENCE_BATCH_SIZE,
     DEFAULT_MAX_INPUT_BYTES,
     DEFAULT_MAX_STEMS,
     DEFAULT_WALLTIME,
@@ -37,6 +39,45 @@ _STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
 _EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
 
 
+class BatchDict(TypedDict, total=False):
+    """One batch record inside the persisted sentence-controller ledger."""
+
+    index: int
+    stems: list[str]
+    input_bytes: int
+    state: str
+    attempt: int
+    oar_job_id: str | None
+    remote_job_root: str | None
+    hf_commit: str | None
+    error: str | None
+    published_at: str
+    remote_cleaned: bool
+
+
+class LedgerDict(TypedDict, total=False):
+    """Shape of the persisted sentence-controller ledger JSON document."""
+
+    contract_version: str
+    run_id: str | None
+    repo_id: str
+    source_commit: str
+    source_commit_updates: list[dict[str, str]]
+    model_id: str
+    model_revision: str
+    segmenter_version: str
+    site: str
+    queue: str
+    gpu_model: str
+    baseline_readme_sha256: str | None
+    baseline_map_sha256: str | None
+    limits: dict[str, object]
+    created_at: str
+    updated_at: str
+    cleanup_state: str
+    batches: list[BatchDict]
+
+
 class ControllerRunError(RuntimeError):
     """Raised when a batch needs operator-visible resume or retry handling."""
 
@@ -47,8 +88,8 @@ class ControllerLimits:
 
     max_stems: int = DEFAULT_MAX_STEMS
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES
-    batch_size: int = 256
-    inference_batch_size: int = 16
+    batch_size: int = DEFAULT_BATCH_SIZE
+    inference_batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE
     walltime: str = DEFAULT_WALLTIME
 
     def as_payload(self) -> dict[str, object]:
@@ -294,8 +335,10 @@ __all__ = [
     "SEGMENTER_VERSION",
     "SUCCESS_STATES",
     "TERMINAL_STATES",
+    "BatchDict",
     "ControllerLimits",
     "ControllerRunError",
+    "LedgerDict",
     "baseline_hashes",
     "batch_stems",
     "copy_required",

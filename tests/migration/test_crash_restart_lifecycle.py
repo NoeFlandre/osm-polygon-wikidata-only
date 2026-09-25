@@ -170,7 +170,6 @@ def test_restart_selects_canonical_only_source(tmp_path: Path) -> None:
 
     sources = wikipedia_source_paths(data_root, STEM)
     assert sources.canonical == canonical
-    assert sources.either_exists
     assert read_source_path(data_root, STEM) == canonical
 
     _run_pre_publication_migration(data_root, {STEM})

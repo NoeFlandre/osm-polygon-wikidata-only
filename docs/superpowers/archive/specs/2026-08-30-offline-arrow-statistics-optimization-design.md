@@ -1,5 +1,9 @@
 # Offline Arrow Statistics Optimization Design
 
+> **Historical, archived.** This document records a completed plan or design and
+> may not match the current code (paths, names, unchecked boxes). Do not execute
+> it; see `docs/adr/` and the code for the current record.
+
 ## Goal
 
 Reduce the CPU time, allocations, and temporary Python objects created by the

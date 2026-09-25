@@ -16,16 +16,7 @@ from pathlib import Path
 
 import pytest
 
-
-def _import_module():
-    try:
-        from osm_polygon_wikidata_only.augmentation import rejection_ledger as mod
-    except ImportError as exc:
-        pytest.fail(
-            "Expected osm_polygon_wikidata_only.augmentation.rejection_ledger to exist "
-            f"(Phase 2 group D: cumulative rejection ledger); got ImportError: {exc}"
-        )
-    return mod
+from osm_polygon_wikidata_only.augmentation import rejection_ledger
 
 
 def _pyarrow():
@@ -49,7 +40,6 @@ def _valid_qid(value: str | None) -> bool:
 
 
 def test_module_exposes_ledger_api() -> None:
-    mod = _import_module()
     for name in (
         "merge_records",
         "merge_ledger_files",
@@ -59,7 +49,7 @@ def test_module_exposes_ledger_api() -> None:
         "LEDGER_CONTRACT_VERSION",
         "supported_source_tables",
     ):
-        assert hasattr(mod, name), f"Missing ledger API: rejection_ledger.{name}"
+        assert hasattr(rejection_ledger, name), f"Missing ledger API: rejection_ledger.{name}"
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +73,8 @@ def _base_record(**overrides) -> dict:
 
 def test_full_identity_includes_observed_and_expected_qid() -> None:
     """The full stable identity is (shard, source_table, identifier, wikidata, expected)."""
-    mod = _import_module()
-    rec_a = mod.RejectionRecord(**_base_record())
-    rec_b = mod.RejectionRecord(**_base_record(expected="Q3"))
+    rec_a = rejection_ledger.RejectionRecord(**_base_record())
+    rec_b = rejection_ledger.RejectionRecord(**_base_record(expected="Q3"))
     assert rec_a.identity != rec_b.identity, (
         "Two records that differ only in expected QID must have distinct identities"
     )
@@ -93,28 +82,25 @@ def test_full_identity_includes_observed_and_expected_qid() -> None:
 
 def test_merge_dedups_same_full_identity() -> None:
     """Two records with the same full identity must merge into one."""
-    mod = _import_module()
-    rec_a = mod.RejectionRecord(**_base_record())
-    rec_b = mod.RejectionRecord(**_base_record())
-    merged = mod.merge_records([rec_a, rec_b])
+    rec_a = rejection_ledger.RejectionRecord(**_base_record())
+    rec_b = rejection_ledger.RejectionRecord(**_base_record())
+    merged = rejection_ledger.merge_records([rec_a, rec_b])
     assert len(merged) == 1, f"Expected 1 record after merging duplicates, got {len(merged)}"
 
 
 def test_merge_keeps_record_with_different_observed_qid_separate() -> None:
     """Two records with different observed QIDs are NOT the same identity."""
-    mod = _import_module()
-    rec_a = mod.RejectionRecord(**_base_record(wikidata="Q1"))
-    rec_b = mod.RejectionRecord(**_base_record(wikidata="Q99"))
-    merged = mod.merge_records([rec_a, rec_b])
+    rec_a = rejection_ledger.RejectionRecord(**_base_record(wikidata="Q1"))
+    rec_b = rejection_ledger.RejectionRecord(**_base_record(wikidata="Q99"))
+    merged = rejection_ledger.merge_records([rec_a, rec_b])
     assert len(merged) == 2, f"Expected 2 records for different observed QIDs, got {len(merged)}"
 
 
 def test_merge_uses_max_cascaded_sections_for_same_identity() -> None:
     """Same identity, different cascaded_sections -> keep the max."""
-    mod = _import_module()
-    rec_a = mod.RejectionRecord(**_base_record(cascaded_sections=2))
-    rec_b = mod.RejectionRecord(**_base_record(cascaded_sections=5))
-    merged = mod.merge_records([rec_a, rec_b])
+    rec_a = rejection_ledger.RejectionRecord(**_base_record(cascaded_sections=2))
+    rec_b = rejection_ledger.RejectionRecord(**_base_record(cascaded_sections=5))
+    merged = rejection_ledger.merge_records([rec_a, rec_b])
     assert len(merged) == 1
     assert merged[0].cascaded_sections == 5, (
         f"Expected max cascaded_sections=5, got {merged[0].cascaded_sections}"
@@ -122,57 +108,48 @@ def test_merge_uses_max_cascaded_sections_for_same_identity() -> None:
 
 
 def test_validate_rejects_unsupported_source_table() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(source_table="not_a_real_table"))
+        rejection_ledger.RejectionRecord(**_base_record(source_table="not_a_real_table"))
 
 
 def test_validate_rejects_empty_shard() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(shard=""))
+        rejection_ledger.RejectionRecord(**_base_record(shard=""))
 
 
 def test_validate_rejects_empty_identifier() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(identifier=""))
+        rejection_ledger.RejectionRecord(**_base_record(identifier=""))
 
 
 def test_validate_rejects_empty_reason() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(reason=""))
+        rejection_ledger.RejectionRecord(**_base_record(reason=""))
 
 
 def test_validate_rejects_invalid_observed_qid() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(wikidata="not-a-qid"))
+        rejection_ledger.RejectionRecord(**_base_record(wikidata="not-a-qid"))
 
 
 def test_validate_accepts_null_expected_qid() -> None:
-    mod = _import_module()
-    rec = mod.RejectionRecord(**_base_record(expected=None))
+    rec = rejection_ledger.RejectionRecord(**_base_record(expected=None))
     assert rec.expected is None
 
 
 def test_validate_rejects_invalid_expected_qid() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(expected="not-a-qid"))
+        rejection_ledger.RejectionRecord(**_base_record(expected="not-a-qid"))
 
 
 def test_validate_rejects_negative_cascaded_sections() -> None:
-    mod = _import_module()
     with pytest.raises(ValueError):
-        mod.RejectionRecord(**_base_record(cascaded_sections=-1))
+        rejection_ledger.RejectionRecord(**_base_record(cascaded_sections=-1))
 
 
 def test_ledger_has_no_timestamps() -> None:
     """The ledger record and ledger file must not contain any timestamp fields."""
-    mod = _import_module()
-    rec = mod.RejectionRecord(**_base_record())
+    rec = rejection_ledger.RejectionRecord(**_base_record())
     payload = rec.to_dict()
     for forbidden in ("requested_at", "created_at", "updated_at", "timestamp"):
         assert forbidden not in payload, (
@@ -190,16 +167,15 @@ def test_two_stem_merge_preserves_both_stems_records(tmp_path: Path) -> None:
 
     Neither stem's entries must be erased.
     """
-    mod = _import_module()
-    rec_a = mod.RejectionRecord(**_base_record(shard="monaco-latest"))
-    rec_b = mod.RejectionRecord(**_base_record(shard="italy-latest"))
+    rec_a = rejection_ledger.RejectionRecord(**_base_record(shard="monaco-latest"))
+    rec_b = rejection_ledger.RejectionRecord(**_base_record(shard="italy-latest"))
     save_ledger_a = tmp_path / "a.json"
     save_ledger_b = tmp_path / "b.json"
-    mod.save_ledger(save_ledger_a, [rec_a])
-    mod.save_ledger(save_ledger_b, [rec_b])
+    rejection_ledger.save_ledger(save_ledger_a, [rec_a])
+    rejection_ledger.save_ledger(save_ledger_b, [rec_b])
     merged_path = tmp_path / "merged.json"
-    mod.merge_ledger_files([save_ledger_a, save_ledger_b], merged_path)
-    merged = mod.load_ledger(merged_path)
+    rejection_ledger.merge_ledger_files([save_ledger_a, save_ledger_b], merged_path)
+    merged = rejection_ledger.load_ledger(merged_path)
     shards = sorted(record.shard for record in merged)
     assert shards == ["italy-latest", "monaco-latest"], (
         f"Both stems must remain in the merged ledger, got {shards}"
@@ -213,15 +189,14 @@ def test_two_stem_merge_aggregate_last_word(tmp_path: Path) -> None:
     This is a structural test: after a planned integrity apply, the
     cumulative ledger file's mtime must be later than the per-stem
     documents and sections files. (Test uses tmp_path; no real-data.)"""
-    mod = _import_module()
     # Seed two stems' worth of fake wiki documents (so the aggregate
     # contains at least one merged record).
-    rec_a = mod.RejectionRecord(**_base_record(shard="monaco-latest"))
-    rec_b = mod.RejectionRecord(**_base_record(shard="italy-latest"))
+    rec_a = rejection_ledger.RejectionRecord(**_base_record(shard="monaco-latest"))
+    rec_b = rejection_ledger.RejectionRecord(**_base_record(shard="italy-latest"))
     save_ledger_a = tmp_path / "a.json"
     save_ledger_b = tmp_path / "b.json"
-    mod.save_ledger(save_ledger_a, [rec_a])
-    mod.save_ledger(save_ledger_b, [rec_b])
+    rejection_ledger.save_ledger(save_ledger_a, [rec_a])
+    rejection_ledger.save_ledger(save_ledger_b, [rec_b])
     merged_path = tmp_path / "merged.json"
     import os
     import time
@@ -230,7 +205,7 @@ def test_two_stem_merge_aggregate_last_word(tmp_path: Path) -> None:
     older = time.time_ns() - 10_000_000
     os.utime(save_ledger_a, ns=(older, older))
     os.utime(save_ledger_b, ns=(older, older))
-    mod.merge_ledger_files([save_ledger_a, save_ledger_b], merged_path)
+    rejection_ledger.merge_ledger_files([save_ledger_a, save_ledger_b], merged_path)
     assert merged_path.stat().st_mtime_ns > save_ledger_a.stat().st_mtime_ns, (
         "Cumulative ledger must be written AFTER (later mtime than) the per-stem ledgers"
     )
@@ -243,10 +218,9 @@ def test_two_stem_merge_aggregate_last_word(tmp_path: Path) -> None:
 
 def test_ledger_survives_noop_second_run_byte_for_byte(tmp_path: Path) -> None:
     """A no-op second pass must NOT rewrite the cumulative ledger."""
-    mod = _import_module()
-    rec = mod.RejectionRecord(**_base_record())
+    rec = rejection_ledger.RejectionRecord(**_base_record())
     path = tmp_path / "ledger.json"
-    mod.save_ledger(path, [rec])
+    rejection_ledger.save_ledger(path, [rec])
     first_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     import os
 
@@ -254,7 +228,7 @@ def test_ledger_survives_noop_second_run_byte_for_byte(tmp_path: Path) -> None:
     older = path.stat().st_mtime_ns - 1_000_000
     os.utime(path, ns=(older, older))
     # A second save with the same record must not change the file.
-    mod.save_ledger(path, [rec])
+    rejection_ledger.save_ledger(path, [rec])
     second_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     assert first_hash == second_hash, (
         f"Identical ledger must produce byte-identical file; first={first_hash}, second={second_hash}"
@@ -266,12 +240,17 @@ def test_ledger_survives_noop_second_run_byte_for_byte(tmp_path: Path) -> None:
 
 def test_ledger_orders_entries_deterministically(tmp_path: Path) -> None:
     """The ledger must serialize entries in a fixed order."""
-    mod = _import_module()
-    rec_a = mod.RejectionRecord(**_base_record(shard="monaco-latest", identifier="monaco:1"))
-    rec_b = mod.RejectionRecord(**_base_record(shard="italy-latest", identifier="italy:1"))
-    rec_c = mod.RejectionRecord(**_base_record(shard="monaco-latest", identifier="monaco:2"))
+    rec_a = rejection_ledger.RejectionRecord(
+        **_base_record(shard="monaco-latest", identifier="monaco:1")
+    )
+    rec_b = rejection_ledger.RejectionRecord(
+        **_base_record(shard="italy-latest", identifier="italy:1")
+    )
+    rec_c = rejection_ledger.RejectionRecord(
+        **_base_record(shard="monaco-latest", identifier="monaco:2")
+    )
     path = tmp_path / "ledger.json"
-    mod.save_ledger(path, [rec_b, rec_a, rec_c])
+    rejection_ledger.save_ledger(path, [rec_b, rec_a, rec_c])
     raw = json.loads(path.read_text())
     identifiers = [entry["identifier"] for entry in raw["records"]]
     assert identifiers == sorted(identifiers), (
@@ -281,8 +260,7 @@ def test_ledger_orders_entries_deterministically(tmp_path: Path) -> None:
 
 def test_ledger_records_serialize_expected_none_as_null() -> None:
     """expected=None must serialize as JSON null, not the string 'None'."""
-    mod = _import_module()
-    rec = mod.RejectionRecord(**_base_record(expected=None))
+    rec = rejection_ledger.RejectionRecord(**_base_record(expected=None))
     payload = rec.to_dict()
     assert payload["expected"] is None
     raw = json.dumps(payload)
@@ -291,11 +269,10 @@ def test_ledger_records_serialize_expected_none_as_null() -> None:
 
 def test_ledger_serialize_record_with_revision_id(tmp_path: Path) -> None:
     """Round-tripping a record must preserve the full identity."""
-    mod = _import_module()
-    rec = mod.RejectionRecord(**_base_record())
+    rec = rejection_ledger.RejectionRecord(**_base_record())
     path = tmp_path / "ledger.json"
-    mod.save_ledger(path, [rec])
-    loaded = mod.load_ledger(path)
+    rejection_ledger.save_ledger(path, [rec])
+    loaded = rejection_ledger.load_ledger(path)
     assert len(loaded) == 1
     assert loaded[0].identity == rec.identity
 

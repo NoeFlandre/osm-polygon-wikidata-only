@@ -6,8 +6,6 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from types import ModuleType
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
@@ -22,14 +20,7 @@ from osm_polygon_wikidata_only.v2.sentence_runner import (
     SentenceRegionSummary,
     SentenceRunResult,
 )
-
-
-def _write_table(path: Path, schema: pa.Schema) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {field.name: None for field in schema}
-    if "text" in schema.names:
-        row["text"] = "First."
-    pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
+from tests.helpers import write_single_text_row as _write_table
 
 
 def _data_root(tmp_path: Path) -> DataRoot:

@@ -33,6 +33,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.domain.schema import article_schema
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
+from osm_polygon_wikidata_only.io.hashing import sha256_file_uncached
 
 __all__ = [
     "ApplyResult",
@@ -140,12 +141,8 @@ class MigrationError(Exception):
 
 
 def _file_content_hash(path: Path) -> str:
-    """Compute SHA-256 of file bytes."""
-    hasher = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    """Compute SHA-256 of file bytes, bypassing the digest cache."""
+    return sha256_file_uncached(path)
 
 
 def _table_digest(table: pa.Table) -> str:

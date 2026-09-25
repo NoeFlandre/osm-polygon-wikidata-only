@@ -129,6 +129,8 @@ def _legacy_polygon_identity(polygon_id: str) -> PolygonIdentity:
         try:
             return parts[1], int(parts[2])
         except ValueError:
+            # A non-numeric OSM id is not a structured identity; fall back
+            # to the opaque legacy identity below.
             pass
     return "legacy", polygon_id
 

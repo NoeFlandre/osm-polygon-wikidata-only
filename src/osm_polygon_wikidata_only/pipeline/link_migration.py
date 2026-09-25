@@ -65,7 +65,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
     qids_from_osm_tag as _qids_from_osm_tag,
 )
-from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
+from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
 from osm_polygon_wikidata_only.pipeline._link_migration.conversion import (
     build_canonical_rows as _build_canonical_rows,
 )
@@ -75,7 +75,13 @@ from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemPlan,
 )
 from osm_polygon_wikidata_only.pipeline._link_migration.transaction import (
+    atomic_write_journal_json as _atomic_write_json,
+)
+from osm_polygon_wikidata_only.pipeline._link_migration.transaction import (
     commit_ordered_replacements as _commit_ordered_replacements,
+)
+from osm_polygon_wikidata_only.pipeline._link_migration.transaction import (
+    file_content_hash as _file_content_hash,
 )
 from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 
@@ -121,21 +127,6 @@ def _is_valid_stem(stem: str) -> bool:
     if not stem or stem in {".", ".."}:
         return False
     return "/" not in stem and "\\" not in stem
-
-
-def _file_content_hash(path: Path) -> str:
-    if not path.is_file():
-        return ""
-    hasher = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Publish a migration journal in its readable, indented JSON format."""
-    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def _read_table(path: Path) -> pa.Table:

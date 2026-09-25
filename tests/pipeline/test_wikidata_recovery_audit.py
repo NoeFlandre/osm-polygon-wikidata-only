@@ -34,6 +34,7 @@ from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     audit_wikidata_integrity,
 )
 from osm_polygon_wikidata_only.utils import retry as retry_mod
+from tests.helpers import ensured_data_root
 
 
 class _RecordingWikidataClient(WikidataClient):
@@ -158,9 +159,7 @@ def _write_region(
 
 
 def _data_root(tmp_path: Path) -> DataRoot:
-    root = DataRoot(tmp_path / "dataset")
-    root.ensure()
-    return root
+    return ensured_data_root(tmp_path / "dataset")
 
 
 def _entity(qid: str, *, sitelinks: bool = True) -> WikidataEntity:

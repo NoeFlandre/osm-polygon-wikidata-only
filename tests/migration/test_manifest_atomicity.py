@@ -26,12 +26,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
 )
-
-
-def _import_module():
-    from osm_polygon_wikidata_only.pipeline import link_migration as mod
-
-    return mod
+from osm_polygon_wikidata_only.pipeline import link_migration
 
 
 def _write_polygon(processed_dir: Path, stem: str) -> None:
@@ -216,7 +211,6 @@ def test_processed_pbf_manifest_preserves_other_pbfs(tmp_path: Path) -> None:
     """Migrating PBF A must NOT erase an existing entry for PBF B in
     manifests/processed_pbfs.json.
     """
-    mod = _import_module()
     processed = tmp_path / "processed"
     stem_a = "alpha-latest"
     _setup_processed(processed, stem_a)
@@ -237,9 +231,9 @@ def test_processed_pbf_manifest_preserves_other_pbfs(tmp_path: Path) -> None:
     current[other_pbf] = existing_entry
     manifest_path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n")
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     payload = json.loads(manifest_path.read_text())
     assert other_pbf in payload, (
@@ -260,7 +254,6 @@ def test_processed_pbf_manifest_preserves_other_pbfs(tmp_path: Path) -> None:
 
 
 def test_augmentation_manifest_preserves_other_stem_entries(tmp_path: Path) -> None:
-    mod = _import_module()
     processed = tmp_path / "processed"
     data_root = tmp_path
     stem_a = "alpha-latest"
@@ -281,9 +274,9 @@ def test_augmentation_manifest_preserves_other_stem_entries(tmp_path: Path) -> N
     }
     aug_manifest.write_text(json.dumps(pre_existing, indent=2, sort_keys=True) + "\n")
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     payload = json.loads(aug_manifest.read_text())
     assert stem_b in payload, f"Augmentation manifest must preserve stem {stem_b!r}"
@@ -305,15 +298,14 @@ def test_stem_classified_current_only_after_all_writes(tmp_path: Path) -> None:
     """
     from osm_polygon_wikidata_only.augmentation.orchestrator import augmentation_is_current
 
-    mod = _import_module()
     data_root_path = tmp_path
     processed = data_root_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
-    plan = mod.plan_link_migration(processed)
+    plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply
-    mod.apply_link_migration(processed)
+    link_migration.apply_link_migration(processed)
 
     # After apply, all required writes have succeeded -> current.
     from osm_polygon_wikidata_only.config.paths import DataRoot

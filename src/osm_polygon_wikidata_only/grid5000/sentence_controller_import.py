@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELAT
 
 from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
+    BatchDict,
     ControllerRunError,
     batch_stems,
     load_json_mapping,
@@ -38,7 +39,7 @@ class SentenceControllerImportMixin(SentenceControllerContext):
 
     def _read_valid_receipt(
         self,
-        batch: dict[str, Any],
+        batch: BatchDict,
         received: Path,
         received_data: DataRoot,
     ) -> dict[str, Any]:
@@ -62,7 +63,7 @@ class SentenceControllerImportMixin(SentenceControllerContext):
 
     def _mark_batch_failed(
         self,
-        batch: dict[str, Any],
+        batch: BatchDict,
         received_data: DataRoot,
         receipt: Mapping[str, object],
     ) -> None:

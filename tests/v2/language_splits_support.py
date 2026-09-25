@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import pyarrow as pa
@@ -23,6 +24,7 @@ from osm_polygon_wikidata_only.v2.schema import (
     polygon_v2_schema,
     wikipedia_document_v2_schema,
 )
+from tests.helpers import write_rows
 
 
 def _row_for_schema(schema: pa.Schema, **values: object) -> dict[str, object]:
@@ -40,14 +42,7 @@ def _row_for_schema(schema: pa.Schema, **values: object) -> dict[str, object]:
     return row
 
 
-def _write_table(path: Path, rows: list[dict[str, object]], schema: pa.Schema) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        pa.Table.from_pylist(rows, schema=schema),
-        path,
-        compression="snappy",
-        row_group_size=1,
-    )
+_write_table = partial(write_rows, compression="snappy", row_group_size=1)
 
 
 def _polygon(polygon_id: str, *, best_language: str) -> dict[str, object]:

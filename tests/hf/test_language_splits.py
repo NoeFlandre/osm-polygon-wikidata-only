@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import fact_schema, section_schema
@@ -51,6 +50,7 @@ from osm_polygon_wikidata_only.v2.schema import (
     polygon_v2_schema,
     wikipedia_document_v2_schema,
 )
+from tests.helpers import write_rows as _write_table
 
 
 @pytest.mark.parametrize(
@@ -348,11 +348,6 @@ def test_hugging_face_names_are_additive_and_address_one_language() -> None:
     )
     assert language_split_name(" FR ") == "lang-fr"
     assert language_split_name("be_x_old") == "lang-be-tarask"
-
-
-def _write_table(path: Path, rows: list[dict[str, object]], schema: pa.Schema) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(rows, schema=schema), path)
 
 
 def _row_for_schema(schema: pa.Schema, **values: object) -> dict[str, object]:
