@@ -88,39 +88,6 @@ def test_read_source_falls_back_to_canonical_when_neither_present(tmp_path: Path
 
 
 # ---------------------------------------------------------------------------
-# either_exists property
-# ---------------------------------------------------------------------------
-
-
-def test_either_exists_true_when_legacy_only(tmp_path: Path) -> None:
-    data_root = DataRoot(tmp_path)
-    _make_file(data_root.processed_articles / f"{STEM}.parquet")
-
-    assert wikipedia_source_paths(data_root, STEM).either_exists
-
-
-def test_either_exists_true_when_canonical_only(tmp_path: Path) -> None:
-    data_root = DataRoot(tmp_path)
-    _make_file(data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet")
-
-    assert wikipedia_source_paths(data_root, STEM).either_exists
-
-
-def test_either_exists_true_when_both_present(tmp_path: Path) -> None:
-    data_root = DataRoot(tmp_path)
-    _make_file(data_root.processed_articles / f"{STEM}.parquet")
-    _make_file(data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet")
-
-    assert wikipedia_source_paths(data_root, STEM).either_exists
-
-
-def test_either_exists_false_when_neither_present(tmp_path: Path) -> None:
-    data_root = DataRoot(tmp_path)
-
-    assert not wikipedia_source_paths(data_root, STEM).either_exists
-
-
-# ---------------------------------------------------------------------------
 # Stem validation
 # ---------------------------------------------------------------------------
 

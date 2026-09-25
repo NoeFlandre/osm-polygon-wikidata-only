@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -189,28 +188,3 @@ def centroid_geojson(lon: float, lat: float) -> str:
         ensure_ascii=False,
         sort_keys=True,
     )
-
-
-def centroid_wkt(lon: float, lat: float) -> str:
-    """Serialize a centroid as a WKT string (GeoJSON axis order: lon, lat)."""
-    return f"POINT({lon:.10f} {lat:.10f})"
-
-
-def merge_multi_polygon(geometries: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Concatenate several GeoJSON Polygon/MultiPolygon geometries into one MultiPolygon."""
-    parts: list[list[list[list[float]]]] = []
-    for geom in geometries:
-        parts.extend(_geometry_parts(geom))
-    return {"type": "MultiPolygon", "coordinates": parts}
-
-
-def _geometry_parts(geom: dict[str, Any]) -> list[list[list[list[float]]]]:
-    geometry_type = geom.get("type")
-    coords = geom.get("coordinates")
-    if geometry_type == "Polygon":
-        assert isinstance(coords, list)
-        return [coords]
-    if geometry_type == "MultiPolygon":
-        assert isinstance(coords, list)
-        return coords
-    raise GeometryError(f"Cannot merge geometry of type {geometry_type!r}.")

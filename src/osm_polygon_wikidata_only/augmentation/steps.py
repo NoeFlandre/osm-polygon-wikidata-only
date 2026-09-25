@@ -122,11 +122,6 @@ class WikipediaSourcePaths:
     canonical: Path
     legacy: Path
 
-    @property
-    def either_exists(self) -> bool:
-        """True when either source file is present."""
-        return self.legacy.exists() or self.canonical.exists()
-
 
 def wikipedia_source_paths(data_root: DataRoot, stem: str) -> WikipediaSourcePaths:
     """Return the canonical-document and legacy-article paths for *stem*.

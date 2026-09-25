@@ -1,154 +1,43 @@
 """Resumable local controller for Grid5000 sentence-splitting jobs.
 
-The imported private helpers intentionally remain available as compatibility
-seams for callers and tests while their implementations live in focused
-modules.
+The controller composes focused mixins; helper implementations live in the
+``sentence_controller_*`` and ``sentence_*`` modules that define them.
 """
-
-# ruff: noqa: F401
 
 from __future__ import annotations
 
 import re
-import shlex
 import shutil
-import subprocess
-import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
-from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
-from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.run_lock import exclusive_run_lock
 from osm_polygon_wikidata_only.v2.config import (
-    V2_ADDED_WIKIPEDIA_TAG_MAP_PATH,
     V2_REPO_ID,
 )
-from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
-from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION
-from osm_polygon_wikidata_only.v2.sentence_logic import SAT_MODEL_ID
-from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
 
 from .sentence_controller_batches import SentenceControllerBatchMixin
 from .sentence_controller_import import SentenceControllerImportMixin
 from .sentence_controller_ledger import SentenceControllerLedgerMixin
 from .sentence_controller_lifecycle import SentenceControllerLifecycleMixin
 from .sentence_controller_policy import (
-    ACTIVE_STATES as _ACTIVE_STATES,
-)
-from .sentence_controller_policy import (
-    EXOTIC_GRID5000_GPU_MODELS as _EXOTIC_GRID5000_GPU_MODELS,
-)
-from .sentence_controller_policy import (
-    GRID5000_UV_VERSION as _GRID5000_UV_VERSION,
-)
-from .sentence_controller_policy import (
     REMOTE_NAMESPACE as _REMOTE_NAMESPACE,
-)
-from .sentence_controller_policy import (
-    RETRYABLE_ARTIFACT_FAILURES as _RETRYABLE_ARTIFACT_FAILURES,
-)
-from .sentence_controller_policy import (
-    SEGMENTER_VERSION as _SEGMENTER_VERSION,
-)
-from .sentence_controller_policy import (
-    SUCCESS_STATES as _SUCCESS_STATES,
-)
-from .sentence_controller_policy import (
-    TERMINAL_STATES as _TERMINAL_STATES,
 )
 from .sentence_controller_policy import (
     ControllerLimits,
     ControllerRunError,
 )
 from .sentence_controller_policy import (
-    baseline_hashes as _baseline_hashes,
-)
-from .sentence_controller_policy import (
-    batch_stems as _batch_stems,
-)
-from .sentence_controller_policy import (
-    copy_required as _copy_required,
-)
-from .sentence_controller_policy import (
     git_source_commit as _git_source_commit_impl,
-)
-from .sentence_controller_policy import (
-    infer_job_state as _infer_job_state,
-)
-from .sentence_controller_policy import (
-    is_safe_run_id as _is_safe_run_id,
-)
-from .sentence_controller_policy import (
-    is_source_commit_migration_safe as _is_source_commit_migration_safe,
-)
-from .sentence_controller_policy import (
-    load_json_mapping as _load_json_mapping,
-)
-from .sentence_controller_policy import (
-    new_run_id as _new_run_id,
-)
-from .sentence_controller_policy import (
-    normalized_receipt_value as _normalized_receipt_value,
-)
-from .sentence_controller_policy import (
-    parse_job_id as _parse_job_id,
-)
-from .sentence_controller_policy import (
-    parse_job_status as _parse_job_status,
-)
-from .sentence_controller_policy import (
-    publication_message as _publication_message,
-)
-from .sentence_controller_policy import (
-    read_json_mapping as _read_json_mapping,
-)
-from .sentence_controller_policy import (
-    receipt_artifact as _receipt_artifact,
-)
-from .sentence_controller_policy import (
-    receipt_artifacts as _receipt_artifacts,
-)
-from .sentence_controller_policy import (
-    receipt_digest as _receipt_digest,
-)
-from .sentence_controller_policy import (
-    remote_batch_succeeded as _remote_batch_succeeded,
-)
-from .sentence_controller_policy import (
-    remote_job_root as _remote_job_root,
-)
-from .sentence_controller_policy import (
-    source_commit_batch_is_safe as _source_commit_batch_is_safe,
-)
-from .sentence_controller_policy import (
-    source_projects as _source_projects,
-)
-from .sentence_controller_policy import (
-    timestamp as _timestamp,
-)
-from .sentence_controller_policy import (
-    validate_ledger_baselines as _validate_ledger_baselines,
-)
-from .sentence_controller_policy import (
-    verified_incoming_artifact as _verified_incoming_artifact,
 )
 from .sentence_protocol import (
     DEFAULT_MAX_INPUT_BYTES,
     DEFAULT_MAX_STEMS,
     DEFAULT_WALLTIME,
-    GRID5000_SENTENCE_CONTRACT_VERSION,
-    FileDigest,
-    import_checkpoint_tree,
-    plan_sentence_batches,
-    sentence_source_paths,
-    validate_manifest_extension,
-    validate_sentence_output,
 )
 from .sentence_publication import (
     HfHubSentencePublisher as _HfHubSentencePublisher,
@@ -159,35 +48,11 @@ from .sentence_publication import (
 from .sentence_publication import (
     download_hf_file as _download_hf_file_impl,
 )
-from .sentence_publication import (
-    expected_sentence_files as _expected_sentence_files,
-)
-from .sentence_publication import (
-    missing_remote_files as _missing_remote_files,
-)
-from .sentence_publication import (
-    validate_expected_sentence_files as _validate_expected_sentence_files,
-)
-from .sentence_publication import (
-    verify_expected_sentence_files as _verify_expected_sentence_files,
-)
-from .sentence_publication import (
-    verify_known_sentence_file as _verify_known_sentence_file,
-)
-from .sentence_publication import (
-    verify_sentence_file as _verify_sentence_file,
-)
 from .sentence_transport import (
     Grid5000Transport,
 )
 from .sentence_transport import (
     SubprocessGrid5000Transport as _SubprocessGrid5000Transport,
-)
-from .sentence_transport import (
-    validate_remote_home as _validate_remote_home,
-)
-from .sentence_transport import (
-    validated_remote_home as _validated_remote_home,
 )
 
 _LEDGER_FILENAME = "grid5000_sentence_run.json"
