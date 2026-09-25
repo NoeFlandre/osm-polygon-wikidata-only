@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.hashing import sha256_file_uncached
 
 TRANSACTION_VERSION = "link-migration-transaction-v1"
 
@@ -85,13 +85,13 @@ def _commit_new_transaction(
             for entry in entries
         ],
     }
-    _atomic_write_json(journal_path, journal)
+    atomic_write_journal_json(journal_path, journal)
 
     index_ref = [0]
     try:
         _apply_entries(entries, crash_hook, index_ref)
         journal["phase"] = "committed"
-        _atomic_write_json(journal_path, journal)
+        atomic_write_journal_json(journal_path, journal)
     except BaseException:
         _record_transaction_failure(directory, journal_path, journal, entries, index_ref[0])
         raise
@@ -109,12 +109,12 @@ def _record_transaction_failure(
     if index == 0:
         _rollback_entries(entries)
         journal["phase"] = "rolled_back"
-        _atomic_write_json(journal_path, journal)
+        atomic_write_journal_json(journal_path, journal)
         _cleanup(directory)
         return
     journal["phase"] = "interrupted"
     journal["interrupted_at_index"] = int(index)
-    _atomic_write_json(journal_path, journal)
+    atomic_write_journal_json(journal_path, journal)
 
 
 def _apply_entries(
@@ -128,7 +128,7 @@ def _apply_entries(
         _apply_single(entry)
         if crash_hook is not None:
             crash_hook(index, entry.target)
-        if _file_content_hash(entry.target) != entry.staged_hash:
+        if file_content_hash(entry.target) != entry.staged_hash:
             raise RuntimeError(f"Link migration post-hook hash mismatch for {entry.target}")
 
 
@@ -140,14 +140,14 @@ def _prepare_entry(directory: Path, target: Path, staged: Path) -> _TransactionE
     original_hash = ""
     if existed:
         shutil.copyfile(target, backup)
-        original_hash = _file_content_hash(target)
+        original_hash = file_content_hash(target)
     return _TransactionEntry(
         target=target,
         staged=staged,
         backup=backup if existed else None,
         existed=existed,
         original_hash=original_hash,
-        staged_hash=_file_content_hash(staged),
+        staged_hash=file_content_hash(staged),
     )
 
 
@@ -161,13 +161,13 @@ def _apply_single(entry: _TransactionEntry) -> None:
         os.replace(entry.staged, entry.target)
     else:
         shutil.move(str(entry.staged), str(entry.target))
-    if _file_content_hash(entry.target) != entry.staged_hash:
+    if file_content_hash(entry.target) != entry.staged_hash:
         raise RuntimeError(f"Link migration verification failed: {entry.target}")
 
 
 def _file_matches_hash(path: Path, expected_hash: str) -> bool:
     """Return whether a regular file has the expected content hash."""
-    return path.is_file() and _file_content_hash(path) == expected_hash
+    return path.is_file() and file_content_hash(path) == expected_hash
 
 
 def _rollback_entries(entries: list[_TransactionEntry]) -> None:
@@ -189,7 +189,7 @@ def _restore_existing_entry(entry: _TransactionEntry) -> None:
     if backup is None or not backup.is_file():
         raise RuntimeError(f"Link migration backup is unavailable: {backup}")
     os.replace(backup, entry.target)
-    if _file_content_hash(entry.target) != entry.original_hash:
+    if file_content_hash(entry.target) != entry.original_hash:
         raise RuntimeError(f"Link migration rollback verification failed: {entry.target}")
 
 
@@ -228,7 +228,7 @@ def _recover_entry(entry: dict[str, Any]) -> None:
     if not _file_matches_hash(staged, staged_hash):
         raise RuntimeError(f"Link migration recovery: staged file unavailable: {staged}")
     _prepare_recovery_target(entry, target, staged)
-    if _file_content_hash(target) != staged_hash:
+    if file_content_hash(target) != staged_hash:
         raise RuntimeError(f"Link migration recovery verification failed: {target}")
 
 
@@ -262,19 +262,15 @@ def _cleanup(directory: Path) -> None:
         directory.rmdir()
 
 
-def _file_content_hash(path: Path) -> str:
+def file_content_hash(path: Path) -> str:
     if not path.is_file():
         return ""
-    hasher = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    return sha256_file_uncached(path)
 
 
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+def atomic_write_journal_json(path: Path, payload: dict[str, Any]) -> None:
     """Publish a migration journal in its readable, indented JSON format."""
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-__all__ = ["commit_ordered_replacements"]
+__all__ = ["atomic_write_journal_json", "commit_ordered_replacements", "file_content_hash"]

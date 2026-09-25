@@ -55,6 +55,15 @@ def sha256_file(path: Path) -> str:
     return digest
 
 
+def sha256_file_uncached(path: Path) -> str:
+    """Return the SHA-256 digest of *path* without consulting the cache.
+
+    Migration journals compare digests of files that may be rewritten within
+    one mtime tick, so they must always read the bytes.
+    """
+    return _digest(path)
+
+
 def _digest(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -126,4 +135,4 @@ def flush_hash_cache() -> None:
         LOGGER.warning("Could not persist the hash cache: %s", error)
 
 
-__all__ = ["enable_hash_cache", "flush_hash_cache", "sha256_file"]
+__all__ = ["enable_hash_cache", "flush_hash_cache", "sha256_file", "sha256_file_uncached"]
