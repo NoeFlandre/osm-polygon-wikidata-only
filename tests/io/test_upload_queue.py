@@ -1,26 +1,16 @@
-"""Phase 2 / Group E: durable upload-queue snapshots/order.
-
-Red tests for snapshot durability, monotonic sequence allocation, and
-SHA-256 verification in the upload queue.
+"""Durable background upload queue: snapshots, sequencing, resume, and cleanup.
 
 Key invariants:
 
-* The snapshot is an INDEPENDENT copy (or copy-on-write reflink) of the
-  canonical file -- never a hard link sharing the same inode. A hard
-  link would mutate when the canonical file is modified, defeating the
-  snapshot's purpose.
-* Each envelope has a contract version recorded.
-* Each snapshot has a unique filename even when two ops share a
-  basename (``foo.parquet`` from op A and op B must not collide).
-* Sequence allocation is monotonic across queue construction
-  (re-running ``resume_pending`` appends new envelopes after the
-  highest existing sequence).
-* A malformed envelope fails validation BEFORE any upload is attempted.
-* SHA-256 mismatch on resume aborts without calling the upload callback
-  and the failure is exposed by ``close_and_wait``.
-* Successful upload removes the envelope AND the snapshot directory.
+* Submit snapshots each local file into an independent copy, so later
+  mutation of the canonical file never changes what gets uploaded, and
+  the recorded SHA-256 describes the snapshot bytes.
+* Sequence allocation is monotonic across queue restarts; resume
+  ordering follows the envelope sequence, not the filename.
+* Malformed, non-UTF-8 or duplicate-sequence envelopes fail before any
+  upload; a snapshot hash mismatch fails loudly and keeps the envelope.
+* Envelopes and snapshot directories are removed only after success.
 * Delete ops carry no snapshot or hash.
-* Resume ordering is by envelope sequence, not filename.
 """
 
 from __future__ import annotations
@@ -29,6 +19,7 @@ import hashlib
 import json
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -58,75 +49,6 @@ def _block_until(release: threading.Event):
 
 def _make_op(action: str, path_in_repo: str, local_path: Path | None = None) -> object:
     return _op()(action=action, path_in_repo=path_in_repo, local_path=local_path)
-
-
-# ---------------------------------------------------------------------------
-# State file naming
-# ---------------------------------------------------------------------------
-
-
-def test_state_file_is_sequence_named_after_submit(tmp_path: Path) -> None:
-    BgUploadQueue = _queue()
-    release = threading.Event()
-    queue = BgUploadQueue(upload=_block_until(release), max_pending=2, state_dir=tmp_path)
-    try:
-        queue.submit(
-            [_make_op("delete", "articles/old")],
-            "msg-1",
-        )
-        state_files = sorted(tmp_path.glob("*.json"))
-        assert state_files, "State file must exist immediately after submit"
-        # Sequence-named means an unambiguous monotonically sortable name.
-        # Allow any width of zero-padded digits.
-        assert state_files[0].stem.isdigit(), (
-            f"State file must be sequence-named (zero-padded digits), got {state_files[0].name}"
-        )
-        assert int(state_files[0].stem) >= 1, "First sequence must be 1 or higher"
-    finally:
-        release.set()
-        queue.close_and_wait()
-
-
-def test_state_files_have_contract_version_in_envelope(tmp_path: Path) -> None:
-    BgUploadQueue = _queue()
-    release = threading.Event()
-    queue = BgUploadQueue(upload=_block_until(release), max_pending=2, state_dir=tmp_path)
-    try:
-        queue.submit([_make_op("delete", "articles/old")], "msg-1")
-        state_files = sorted(tmp_path.glob("*.json"))
-        assert state_files
-        envelope = json.loads(state_files[0].read_text())
-        assert "contract_version" in envelope, (
-            f"Envelope must carry a contract version; got keys: {list(envelope.keys())}"
-        )
-        assert isinstance(envelope["contract_version"], str)
-        assert envelope["contract_version"], "contract_version must be non-empty"
-    finally:
-        release.set()
-        queue.close_and_wait()
-
-
-def test_job_envelope_contains_sequence_field(tmp_path: Path) -> None:
-    BgUploadQueue = _queue()
-    release = threading.Event()
-    queue = BgUploadQueue(upload=_block_until(release), max_pending=2, state_dir=tmp_path)
-    try:
-        queue.submit([_make_op("delete", "articles/old")], "msg-1")
-        state_files = sorted(tmp_path.glob("*.json"))
-        assert state_files
-        envelope = json.loads(state_files[0].read_text())
-        assert "sequence" in envelope, (
-            f"Envelope must contain a 'sequence' field; got keys: {list(envelope.keys())}"
-        )
-        assert isinstance(envelope["sequence"], int)
-    finally:
-        release.set()
-        queue.close_and_wait()
-
-
-# ---------------------------------------------------------------------------
-# Snapshot is an INDEPENDENT copy / reflink, not a hard link
-# ---------------------------------------------------------------------------
 
 
 def test_local_file_copied_to_snapshot_directory_at_submit(tmp_path: Path) -> None:
@@ -226,11 +148,6 @@ def test_canonical_mutation_after_submit_does_not_affect_pending_job(
         raise
 
 
-# ---------------------------------------------------------------------------
-# Snapshot filenames don't collide when two ops share a basename
-# ---------------------------------------------------------------------------
-
-
 def test_two_ops_with_same_basename_get_distinct_snapshots(tmp_path: Path) -> None:
     """Two ops with the same ``local_path.basename`` must not collide
     inside the snapshots directory."""
@@ -262,11 +179,6 @@ def test_two_ops_with_same_basename_get_distinct_snapshots(tmp_path: Path) -> No
     finally:
         release.set()
         queue.close_and_wait()
-
-
-# ---------------------------------------------------------------------------
-# SHA-256 verification
-# ---------------------------------------------------------------------------
 
 
 def test_snapshot_sha256_recorded_in_envelope(tmp_path: Path) -> None:
@@ -317,37 +229,27 @@ def test_delete_op_persists_without_local_file_or_hash(tmp_path: Path) -> None:
         queue.close_and_wait()
 
 
-# ---------------------------------------------------------------------------
-# Sequence allocation: monotonic across restart
-# ---------------------------------------------------------------------------
-
-
 def test_sequence_allocation_is_monotonic_across_restart(tmp_path: Path) -> None:
-    """After a previous queue's last persisted sequence, the next queue
-    must allocate sequence numbers strictly after it."""
+    """A restarted queue allocates sequences strictly after the previous
+    queue's highest one, even after its envelopes were removed."""
     BgUploadQueue = _queue()
 
-    # First queue: submit two jobs, but block the worker so they stay
-    # in state files.
-    release1 = threading.Event()
-    queue1 = BgUploadQueue(upload=_block_until(release1), max_pending=2, state_dir=tmp_path)
-    queue1.submit([_make_op("delete", "articles/old")], "msg-1")
-    queue1.submit([_make_op("delete", "articles/older")], "msg-2")
-    release1.set()
-    queue1.close_and_wait()
-    # After success, state files are removed. Reconstruct and confirm
-    # the next sequence is fresh (not 1).
-    release2 = threading.Event()
-    queue2 = BgUploadQueue(upload=_block_until(release2), max_pending=2, state_dir=tmp_path)
-    try:
-        queue2.submit([_make_op("delete", "articles/newest")], "msg-3")
-        state_files = sorted(tmp_path.glob("*.json"))
-        assert state_files, "After submit, a state file must exist"
-        envelope = json.loads(state_files[0].read_text())
-        assert envelope["sequence"] >= 1, "Sequence must be at least 1 after restart"
-    finally:
-        release2.set()
-        queue2.close_and_wait()
+    def submitted_sequence(queue_state: Path, message: str) -> int:
+        release = threading.Event()
+        queue = BgUploadQueue(upload=_block_until(release), max_pending=2, state_dir=queue_state)
+        try:
+            queue.submit([_make_op("delete", f"articles/{message}")], message)
+            (state_file,) = queue_state.glob("*.json")
+            return json.loads(state_file.read_text())["sequence"]
+        finally:
+            release.set()
+            assert queue.close_and_wait() == []
+
+    first = submitted_sequence(tmp_path, "first")
+    assert list(tmp_path.glob("*.json")) == []
+    second = submitted_sequence(tmp_path, "second")
+
+    assert second > first
 
 
 def test_resume_pending_rejects_duplicate_sequence_ids(tmp_path: Path) -> None:
@@ -435,11 +337,6 @@ def test_resume_pending_rejects_non_utf8_envelope_before_upload(tmp_path: Path) 
         queue.close_and_wait()
 
 
-# ---------------------------------------------------------------------------
-# Resume ordering is by envelope sequence, not filename
-# ---------------------------------------------------------------------------
-
-
 def test_resume_sorts_by_sequence_not_filename(tmp_path: Path) -> None:
     """Hand-crafted envelopes with sequence=2 named 'a' and sequence=1
     named 'b' must still process in sequence order [1, 2]."""
@@ -494,11 +391,6 @@ def test_resume_sorts_by_sequence_not_filename(tmp_path: Path) -> None:
     assert done.wait(timeout=5), f"Expected both jobs to upload; got {order}"
     queue.close_and_wait()
     assert order == ["1", "2"], f"Expected sequence-ordered resume [1, 2]; got {order}"
-
-
-# ---------------------------------------------------------------------------
-# SHA-256 mismatch on resume
-# ---------------------------------------------------------------------------
 
 
 def test_snapshot_sha256_mismatch_on_resume_fails_loudly(tmp_path: Path) -> None:
@@ -558,11 +450,6 @@ def test_snapshot_sha256_mismatch_on_resume_fails_loudly(tmp_path: Path) -> None
         queue.close_and_wait()
 
 
-# ---------------------------------------------------------------------------
-# Successful upload removes envelope and snapshot directory
-# ---------------------------------------------------------------------------
-
-
 def test_successful_upload_removes_envelope_and_snapshot_directory(
     tmp_path: Path,
 ) -> None:
@@ -581,3 +468,254 @@ def test_successful_upload_removes_envelope_and_snapshot_directory(
     assert not snapshots_dir.exists() or list(snapshots_dir.rglob("*")) == [], (
         f"Snapshot directory must be removed after success, got {list(snapshots_dir.rglob('*'))}"
     )
+
+
+def _write(path: Path, content: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
+def test_submit_failure_cleans_up_partial_artifacts(tmp_path: Path) -> None:
+    """If the snapshot copy itself fails (e.g. the canonical file
+    disappears mid-submit), the queue must clean up the partial
+    envelope and partial snapshot directory.
+    """
+    mod = _queue()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    canonical = _write(tmp_path / "canonical" / "data.parquet", b"DATA")
+
+    # Replace upload_queue's snapshot copy with a flaky one BEFORE
+    # constructing the queue, so the worker also sees the patched copy.
+    from osm_polygon_wikidata_only.hf import upload_queue as uq_mod
+
+    real_copy = uq_mod._independent_copy
+
+    def _flaky_copy(source, target):
+        raise RuntimeError("simulated copy failure")
+
+    uq_mod._independent_copy = _flaky_copy
+    try:
+        q = mod(upload=lambda ops, msg: None, state_dir=state_dir)
+        with pytest.raises(RuntimeError, match="simulated copy failure"):
+            q.submit(
+                [_op()(action="add", path_in_repo="data.parquet", local_path=canonical)],
+                "flaky",
+            )
+        # Close queue and wait for worker to finish.
+        q.close_and_wait()
+    finally:
+        uq_mod._independent_copy = real_copy
+
+    # State directory must NOT contain a leftover envelope file for
+    # this submission.
+    leftover_envelopes = [p for p in state_dir.glob("*.json") if p.name != ".highwater"]
+    assert leftover_envelopes == [], f"submit failure left envelopes on disk: {leftover_envelopes}"
+    # Snapshots directory must be empty.
+    snapshots_dir = state_dir / "snapshots"
+    if snapshots_dir.is_dir():
+        leftovers = [p for p in snapshots_dir.iterdir() if p.is_dir()]
+        assert leftovers == [], f"submit failure left snapshot directories: {leftovers}"
+
+
+def test_snapshot_hash_is_computed_after_copy_during_race(tmp_path: Path) -> None:
+    """Mutate the canonical file DURING the snapshot copy. The
+    recorded hash in the envelope must describe the snapshot bytes
+    (post-copy), not the source bytes (pre-copy).
+    """
+    mod = _queue()
+    state_dir = tmp_path / "state"
+    canonical = tmp_path / "canonical.parquet"
+    canonical.write_bytes(b"INITIAL")
+
+    # Patch ``_independent_copy`` to mutate the source during the
+    # copy, simulating a race where another process writes to the
+    # canonical file while we are snapshotting.
+    from osm_polygon_wikidata_only.hf import upload_queue as uq_mod
+
+    real_copy = uq_mod._independent_copy
+
+    snapshot_seen: dict[str, bytes] = {}
+
+    def _racy_copy(source, target):
+        # Start the copy, mutate the source mid-stream.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Read-then-write with a race window.
+        with open(source, "rb") as src, open(target, "wb") as dst:
+            chunk = src.read(4)  # Read just part of the file
+            source.write_bytes(b"RACED")  # Mutate source mid-copy
+            dst.write(chunk)
+            dst.write(src.read())  # Rest of source after mutation
+        snapshot_seen["bytes"] = target.read_bytes()
+
+    uq_mod._independent_copy = _racy_copy
+    captured_envelope: dict[str, Any] = {}
+
+    def upload(ops, message):
+        # The envelope file on disk is what the worker sees; copy it
+        # before the worker deletes it.
+        envelope_files = [p for p in state_dir.glob("*.json") if p.name != ".highwater"]
+        if envelope_files:
+            captured_envelope["payload"] = json.loads(envelope_files[0].read_text())
+
+    try:
+        q = mod(upload=upload, state_dir=state_dir)
+        q.submit(
+            [_op()(action="add", path_in_repo="data.parquet", local_path=canonical)],
+            "race",
+        )
+        q.close_and_wait()
+    finally:
+        uq_mod._independent_copy = real_copy
+
+    assert "payload" in captured_envelope, (
+        "Upload callback must be invoked; the test failed to capture the envelope"
+    )
+    envelope = captured_envelope["payload"]
+    recorded_sha = envelope["ops"][0]["sha256"]
+    # The recorded sha must equal the hash of the SNAPSHOT bytes, not
+    # the canonical source bytes.
+    snapshot_bytes = snapshot_seen["bytes"]
+    snapshot_sha = hashlib.sha256(snapshot_bytes).hexdigest()
+    assert recorded_sha == snapshot_sha, (
+        f"Recorded sha must describe snapshot bytes; recorded={recorded_sha}, snapshot_sha={snapshot_sha}"
+    )
+    # And the recorded sha must NOT equal the (mutated) canonical bytes.
+    canonical_sha = hashlib.sha256(canonical.read_bytes()).hexdigest()
+    assert recorded_sha != canonical_sha, (
+        f"Recorded sha must NOT describe canonical bytes; recorded={recorded_sha}, canonical={canonical_sha}"
+    )
+
+
+def test_resumed_snapshot_directory_is_removed_after_success(tmp_path: Path) -> None:
+    """A successful resume must remove BOTH the envelope AND the
+    queue-owned snapshot directory derived from the envelope's
+    sequence.
+    """
+    mod = _queue()
+    state_dir = tmp_path / "state"
+    canonical = tmp_path / "canonical.parquet"
+    canonical.write_bytes(b"DATA")
+
+    # Pre-seed a fully-formed bg-upload-v1 envelope that resume()
+    # picks up -- the snapshot directory will be derived from the
+    # envelope's sequence.
+    sequence = 42
+    envelope_path = state_dir / f"{sequence:06d}.json"
+    snapshot_dir = state_dir / "snapshots" / f"{sequence:06d}"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_file = snapshot_dir / "000" / "canonical.parquet"
+    snapshot_file.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_file.write_bytes(b"DATA")
+
+    envelope = {
+        "contract_version": "bg-upload-v1",
+        "sequence": sequence,
+        "message": "resume success",
+        "ops": [
+            {
+                "action": "add",
+                "path_in_repo": "data.parquet",
+                "local_path": str(canonical),
+                "snapshot_path": str(snapshot_file),
+                "sha256": hashlib.sha256(b"DATA").hexdigest(),
+            }
+        ],
+    }
+    envelope_path.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n")
+
+    q = mod(upload=lambda ops, msg: None, state_dir=state_dir)
+    try:
+        q.resume_pending()
+    finally:
+        q.close_and_wait()
+
+    assert not envelope_path.is_file(), "Successful resume must remove the envelope"
+    assert not snapshot_dir.is_dir(), (
+        f"Successful resume must remove the snapshot directory; still at {snapshot_dir}"
+    )
+
+
+def test_resume_rejects_snapshot_path_outside_state_dir(tmp_path: Path) -> None:
+    """A resume envelope that records a snapshot_path outside
+    ``state_dir/snapshots`` must be rejected -- never trust an
+    envelope's path to delete an arbitrary location.
+    """
+    mod = _queue()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try to get the resume to delete a path outside state_dir.
+    evil = tmp_path / "evil.parquet"
+    evil.write_bytes(b"EVIL")
+
+    envelope = {
+        "contract_version": "bg-upload-v1",
+        "sequence": 1,
+        "message": "evil",
+        "ops": [
+            {
+                "action": "add",
+                "path_in_repo": "data.parquet",
+                "local_path": str(evil),
+                "snapshot_path": str(evil),
+                "sha256": hashlib.sha256(b"EVIL").hexdigest(),
+            }
+        ],
+    }
+    envelope_path = state_dir / "000001.json"
+    envelope_path.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n")
+
+    q = mod(upload=lambda ops, msg: None, state_dir=state_dir)
+    try:
+        q.resume_pending()
+    finally:
+        q.close_and_wait()
+    failures = q._failures
+
+    # The evil file must NOT be deleted.
+    assert evil.is_file(), "Resume must not delete files outside state_dir/snapshots"
+    assert any(
+        "snapshot" in failure.lower() or "outside" in failure.lower() for failure in failures
+    ), f"Outside-state-dir snapshot path must be reported; got {failures}"
+
+
+def test_tampered_snapshot_is_not_uploaded_and_its_envelope_is_kept(tmp_path: Path) -> None:
+    """A queue-owned snapshot whose bytes no longer match the recorded
+    SHA-256 must fail the job before upload and keep the envelope for retry."""
+    BgUploadQueue = _queue()
+    state_dir = tmp_path / "state"
+    canonical = _write(tmp_path / "canonical" / "data.parquet", b"DATA")
+    snapshot_file = _write(state_dir / "snapshots" / "000001" / "000" / "data.parquet", b"MUTATED")
+    state_file = state_dir / "000001.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "contract_version": "bg-upload-v1",
+                "sequence": 1,
+                "message": "tampered",
+                "ops": [
+                    {
+                        "action": "add",
+                        "path_in_repo": "data.parquet",
+                        "local_path": str(canonical),
+                        "snapshot_path": str(snapshot_file),
+                        "sha256": hashlib.sha256(b"DATA").hexdigest(),
+                    }
+                ],
+            }
+        )
+    )
+    uploads: list[str] = []
+
+    queue = BgUploadQueue(upload=lambda _ops, message: uploads.append(message), state_dir=state_dir)
+    try:
+        queue.resume_pending()
+    finally:
+        failures = queue.close_and_wait()
+
+    assert uploads == []
+    assert any("tampered" in failure and "SHA mismatch" in failure for failure in failures)
+    assert state_file.is_file()
+    assert snapshot_file.is_file()
