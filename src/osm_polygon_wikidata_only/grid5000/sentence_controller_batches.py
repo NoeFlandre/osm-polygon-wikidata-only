@@ -7,7 +7,6 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELATIVE_PATH
@@ -17,6 +16,7 @@ from .sentence_controller_policy import (
     ACTIVE_STATES,
     EXOTIC_GRID5000_GPU_MODELS,
     GRID5000_UV_VERSION,
+    BatchDict,
     ControllerRunError,
     batch_stems,
     copy_required,
@@ -32,7 +32,7 @@ from .sentence_protocol import sentence_source_paths
 class SentenceControllerBatchMixin(SentenceControllerContext):
     """Run one deterministic batch through remote execution and retrieval."""
 
-    def _process_batch(self, batch: dict[str, Any]) -> None:
+    def _process_batch(self, batch: BatchDict) -> None:
         state = str(batch["state"])
         if state == "published":
             return
@@ -48,11 +48,11 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
             raise ControllerRunError(f"Batch {batch['index']} is in unsupported state {state!r}")
         self._publish_if_ready(batch)
 
-    def _publish_if_ready(self, batch: dict[str, Any]) -> None:
+    def _publish_if_ready(self, batch: BatchDict) -> None:
         if batch["state"] == "ready_to_publish":
             self._publish_batch(batch)
 
-    def _submit_batch(self, batch: dict[str, Any]) -> None:
+    def _submit_batch(self, batch: BatchDict) -> None:
         batch["attempt"] = int(batch.get("attempt", 0)) + 1
         batch["state"] = "submitted"
         batch["oar_job_id"] = None
@@ -182,7 +182,7 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
             f'--receipt "{receipt}" --stems {stems}'
         )
 
-    def _reconcile_batch(self, batch: dict[str, Any]) -> None:
+    def _reconcile_batch(self, batch: BatchDict) -> None:
         job_id = batch.get("oar_job_id")
         if not isinstance(job_id, str) or not job_id:
             raise ControllerRunError(
@@ -199,7 +199,7 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
 
     def _retrieve_batch(
         self,
-        batch: dict[str, Any],
+        batch: BatchDict,
         *,
         state: str,
         exit_code: int | None,

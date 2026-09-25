@@ -11,7 +11,6 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
@@ -28,13 +27,18 @@ from .sentence_controller_policy import (
     REMOTE_NAMESPACE as _REMOTE_NAMESPACE,
 )
 from .sentence_controller_policy import (
+    BatchDict,
     ControllerLimits,
     ControllerRunError,
+    LedgerDict,
 )
 from .sentence_controller_policy import (
     git_source_commit as _git_source_commit_impl,
 )
 from .sentence_protocol import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_GRID5000_SITE,
+    DEFAULT_INFERENCE_BATCH_SIZE,
     DEFAULT_MAX_INPUT_BYTES,
     DEFAULT_MAX_STEMS,
     DEFAULT_WALLTIME,
@@ -74,7 +78,7 @@ class Grid5000SentenceController(
         self,
         data_root: DataRoot,
         *,
-        site: str = "grenoble",
+        site: str = DEFAULT_GRID5000_SITE,
         queue: str = DEFAULT_GRID5000_QUEUE,
         gpu_model: str = DEFAULT_GRID5000_GPU_MODEL,
         repo_id: str = V2_REPO_ID,
@@ -82,8 +86,8 @@ class Grid5000SentenceController(
         publisher: HubPublisher,
         max_stems: int = DEFAULT_MAX_STEMS,
         max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
-        batch_size: int = 256,
-        inference_batch_size: int = 16,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        inference_batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE,
         walltime: str = DEFAULT_WALLTIME,
         run_id: str | None = None,
         source_commit: str | None = None,
@@ -114,8 +118,8 @@ class Grid5000SentenceController(
         )
         self._sleep = sleep
         self.poll_interval_s = poll_interval_s
-        self._ledger: dict[str, Any] | None = None
-        self._current_batch: dict[str, Any] | None = None
+        self._ledger: LedgerDict | None = None
+        self._current_batch: BatchDict | None = None
 
     @property
     def ledger_path(self) -> Path:
@@ -155,19 +159,19 @@ class HfHubSentencePublisher(_HfHubSentencePublisher):
 def run_grid5000_sentence_controller(
     data_root: DataRoot,
     *,
-    site: str = "grenoble",
+    site: str = DEFAULT_GRID5000_SITE,
     queue: str = DEFAULT_GRID5000_QUEUE,
     gpu_model: str = DEFAULT_GRID5000_GPU_MODEL,
     repo_id: str = V2_REPO_ID,
     max_stems: int = DEFAULT_MAX_STEMS,
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
-    batch_size: int = 256,
-    inference_batch_size: int = 16,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    inference_batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE,
     walltime: str = DEFAULT_WALLTIME,
     run_id: str | None = None,
     hf_token: str | None = None,
     repo_root: Path | None = None,
-) -> dict[str, Any]:
+) -> LedgerDict:
     """Run the controller under its non-blocking local lock."""
     transport = SubprocessGrid5000Transport(site)
     publisher = HfHubSentencePublisher(

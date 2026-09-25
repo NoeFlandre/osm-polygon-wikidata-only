@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json
 from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION
@@ -13,7 +13,9 @@ from osm_polygon_wikidata_only.v2.sentence_runner import SENTENCE_MANIFEST_RELAT
 from .sentence_controller_context import SentenceControllerContext
 from .sentence_controller_policy import (
     SEGMENTER_VERSION,
+    BatchDict,
     ControllerRunError,
+    LedgerDict,
     baseline_hashes,
     is_safe_run_id,
     is_source_commit_migration_safe,
@@ -31,7 +33,7 @@ _LEDGER_FILENAME = "grid5000_sentence_run.json"
 class SentenceControllerLedgerMixin(SentenceControllerContext):
     """Create, validate, update, and persist the durable run ledger."""
 
-    def initialize(self) -> dict[str, Any]:
+    def initialize(self) -> LedgerDict:
         """Load and validate the ledger, or persist a new deterministic plan."""
         if self._ledger is not None:
             return self._ledger
@@ -41,8 +43,8 @@ class SentenceControllerLedgerMixin(SentenceControllerContext):
         self._ledger = ledger
         return ledger
 
-    def _load_existing_ledger(self) -> dict[str, Any]:
-        ledger = read_json_mapping(self.ledger_path)
+    def _load_existing_ledger(self) -> LedgerDict:
+        ledger = cast(LedgerDict, read_json_mapping(self.ledger_path))
         stored_run_id = ledger.get("run_id")
         if not isinstance(stored_run_id, str):
             raise ControllerRunError("Sentence ledger has no valid run_id")
@@ -53,7 +55,7 @@ class SentenceControllerLedgerMixin(SentenceControllerContext):
         self._validate_immutable_ledger(ledger)
         return ledger
 
-    def _create_ledger(self) -> dict[str, Any]:
+    def _create_ledger(self) -> LedgerDict:
         if self.run_id is None:
             self.run_id = new_run_id()
         if not is_safe_run_id(self.run_id):
@@ -62,7 +64,7 @@ class SentenceControllerLedgerMixin(SentenceControllerContext):
         self._write_ledger(ledger)
         return ledger
 
-    def _refresh_resumable_source_commit(self, ledger: dict[str, Any]) -> None:
+    def _refresh_resumable_source_commit(self, ledger: LedgerDict) -> None:
         stored_commit = ledger.get("source_commit")
         if stored_commit == self.source_commit or not is_source_commit_migration_safe(ledger):
             return
@@ -83,7 +85,7 @@ class SentenceControllerLedgerMixin(SentenceControllerContext):
         ]
         self._write_ledger(ledger)
 
-    def _new_ledger(self) -> dict[str, Any]:
+    def _new_ledger(self) -> LedgerDict:
         sentence_manifest = load_json_mapping(
             self.data_root.processed_v2 / SENTENCE_MANIFEST_RELATIVE_PATH
         )
@@ -114,7 +116,7 @@ class SentenceControllerLedgerMixin(SentenceControllerContext):
             "batches": [self._new_batch_record(batch) for batch in batches],
         }
 
-    def _new_batch_record(self, batch: Any) -> dict[str, Any]:
+    def _new_batch_record(self, batch: Any) -> BatchDict:
         return {
             "index": batch.index,
             "stems": list(batch.stems),
@@ -147,7 +149,7 @@ class SentenceControllerLedgerMixin(SentenceControllerContext):
             "limits": self.limits.as_payload(),
         }
 
-    def _write_ledger(self, ledger: dict[str, Any] | None = None) -> None:
+    def _write_ledger(self, ledger: LedgerDict | None = None) -> None:
         if ledger is not None:
             self._ledger = ledger
         if self._ledger is None:

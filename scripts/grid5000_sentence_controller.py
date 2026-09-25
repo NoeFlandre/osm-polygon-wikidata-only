@@ -12,21 +12,29 @@ from osm_polygon_wikidata_only.grid5000.sentence_controller import (
     DEFAULT_GRID5000_QUEUE,
     run_grid5000_sentence_controller,
 )
+from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_GRID5000_SITE,
+    DEFAULT_INFERENCE_BATCH_SIZE,
+    DEFAULT_MAX_INPUT_BYTES,
+    DEFAULT_MAX_STEMS,
+    DEFAULT_WALLTIME,
+)
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--site", default="grenoble")
+    parser.add_argument("--site", default=DEFAULT_GRID5000_SITE)
     parser.add_argument("--queue", default=DEFAULT_GRID5000_QUEUE)
     parser.add_argument("--gpu-model", default=DEFAULT_GRID5000_GPU_MODEL)
     parser.add_argument("--repo-id", default=V2_REPO_ID)
-    parser.add_argument("--max-stems", type=int, default=4)
-    parser.add_argument("--max-input-bytes", type=int, default=256 * 1024 * 1024)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--inference-batch-size", type=int, default=16)
-    parser.add_argument("--walltime", default="0:30")
+    parser.add_argument("--max-stems", type=int, default=DEFAULT_MAX_STEMS)
+    parser.add_argument("--max-input-bytes", type=int, default=DEFAULT_MAX_INPUT_BYTES)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--inference-batch-size", type=int, default=DEFAULT_INFERENCE_BATCH_SIZE)
+    parser.add_argument("--walltime", default=DEFAULT_WALLTIME)
     parser.add_argument("--run-id")
     parser.add_argument("--hf-token")
     return parser
