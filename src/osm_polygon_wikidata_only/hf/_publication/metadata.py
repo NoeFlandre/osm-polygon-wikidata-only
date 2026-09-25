@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf._publication.hooks import PublicationHooks
@@ -133,7 +134,7 @@ def _child_delete_operations(children: tuple[str, ...]) -> list[PublicationOp]:
     ]
 
 
-def _require_retirement_manifest(data_root: DataRoot):
+def _require_retirement_manifest(data_root: DataRoot) -> Path:
     retirement_manifest = data_root.processed / "manifests" / "containment_retirements.json"
     if not retirement_manifest.is_file():
         raise FileNotFoundError("Local containment retirement manifest is missing")

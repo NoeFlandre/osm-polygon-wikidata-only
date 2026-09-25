@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 import h3
@@ -168,7 +168,7 @@ def _clip_longitude(
     return output
 
 
-def _inside_boundary(boundary: float, keep_greater: bool):
+def _inside_boundary(boundary: float, keep_greater: bool) -> Callable[[tuple[float, float]], bool]:
     return lambda point: point[0] >= boundary if keep_greater else point[0] <= boundary
 
 

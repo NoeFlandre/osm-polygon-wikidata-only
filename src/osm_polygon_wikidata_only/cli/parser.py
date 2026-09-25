@@ -21,6 +21,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    common = _common_parser()
+    _add_process_parsers(sub, common)
+    _add_sentence_parser(sub, _sentence_common_parser())
+    _add_augment_parsers(sub, common)
+    _add_language_splits_parser(sub)
+    _add_publish_language_splits_parser(sub)
+    _add_release_stats_parser(sub)
+    return parser
+
+
+def _common_parser() -> argparse.ArgumentParser:
+    """Return the shared options of the processing and augmentation commands."""
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--data-root", type=Path, default=None, help="Data root directory")
     common.add_argument(
@@ -60,6 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     common.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
+    return common
+
+
+def _sentence_common_parser() -> argparse.ArgumentParser:
+    """Return the shared options of the V2 sentence-splitting command."""
     sentence_common = argparse.ArgumentParser(add_help=False)
     sentence_common.add_argument("--data-root", type=Path, default=None, help="Data root directory")
     sentence_common.add_argument(
@@ -79,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
     sentence_common.add_argument(
         "--dry-run", action="store_true", help="Use a stub HF client (no network)"
     )
+    return sentence_common
+
+
+def _add_process_parsers(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -> None:
+    """Register the PBF processing and sync commands."""
     p_pbf = sub.add_parser("process-pbf", parents=[common], help="Process one PBF file")
     p_pbf.add_argument("input", type=Path, help="Path to a .osm.pbf file")
     p_dir = sub.add_parser("process-dir", parents=[common], help="Process every PBF in a directory")
@@ -93,17 +115,31 @@ def build_parser() -> argparse.ArgumentParser:
         default="v1",
         help="Select the isolated dataset contract (default: v1)",
     )
+
+
+def _add_sentence_parser(
+    sub: argparse._SubParsersAction, sentence_common: argparse.ArgumentParser
+) -> None:
+    """Register the V2 sentence-splitting command."""
     p_sentence = sub.add_parser(
         "split-v2-sentences",
         parents=[sentence_common],
         help="Materialize resumable V2 sentence sidecars",
     )
     p_sentence.set_defaults(dataset_version="v2")
+
+
+def _add_augment_parsers(sub: argparse._SubParsersAction, common: argparse.ArgumentParser) -> None:
+    """Register the augmentation-only commands."""
     p_augment = sub.add_parser(
         "augment-region", parents=[common], help="Augment one completed region without reading PBF"
     )
     p_augment.add_argument("stem", help="Completed region stem, e.g. andorra-latest")
     sub.add_parser("augment-dir", parents=[common], help="Augment every completed core region")
+
+
+def _add_language_splits_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the local language-split generation command."""
     p_language = sub.add_parser(
         "language-splits",
         help="Generate deterministic V1/V2 language partitions without reading PBF files",
@@ -130,6 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     p_language.set_defaults(push=False)
+
+
+def _add_publish_language_splits_parser(sub: argparse._SubParsersAction) -> None:
+    """Register the language-split publication command."""
     p_publish_language = sub.add_parser(
         "publish-language-splits",
         help="Generate and publish exact-target V1/V2 language partitions",
@@ -168,8 +208,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     p_publish_language.set_defaults(push=False)
-    _add_release_stats_parser(sub)
-    return parser
 
 
 def _add_release_stats_parser(sub: argparse._SubParsersAction) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .models import (
     DATASET_PRESENTATION_URL,
@@ -11,6 +12,9 @@ from .models import (
     TRACKIO_SPACE_URL,
     FinalDatasetSnapshot,
 )
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 def render_snapshot_markdown(
@@ -69,7 +73,7 @@ def render_snapshot_charts(
     return paths
 
 
-def _new_figure():
+def _new_figure() -> tuple[Figure, Any]:
     # Matplotlib is loaded only when a snapshot actually renders charts.
     import matplotlib  # noqa: PLC0415
 

@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
@@ -35,6 +35,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
 from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import (
     MigrationError,
     MigrationOperation,
+    StemPlan,
     apply_migration,
     plan_migration,
 )
@@ -45,7 +46,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_retirement import (
 from osm_polygon_wikidata_only.cli._sync.retirement import (
     paired_retirement_stems as _paired_retirement_stems,
 )
-from osm_polygon_wikidata_only.cli.dependencies import build_wikimedia_runtime
+from osm_polygon_wikidata_only.cli.dependencies import WikimediaRuntime, build_wikimedia_runtime
 from osm_polygon_wikidata_only.cli.sync_application import (
     SyncApplication,
     SyncApplicationContext,
@@ -78,7 +79,7 @@ from osm_polygon_wikidata_only.pipeline.pending_publications import (
     remove_pending_publications,
     set_metadata_refresh_marker,
 )
-from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf
+from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf, ProcessResult
 from osm_polygon_wikidata_only.pipeline.sync_planner import (
     RegionSyncState,
     SyncAction,
@@ -90,6 +91,19 @@ from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     repair_wikidata_region,
 )
 
+if TYPE_CHECKING:
+    from osm_polygon_wikidata_only.hf.reconciliation import (
+        ReconciliationPlan,
+        ReconciliationPlanner,
+    )
+    from osm_polygon_wikidata_only.pipeline._link_migration.models import (
+        MigrationPlan as LinkMigrationPlan,
+    )
+    from osm_polygon_wikidata_only.pipeline.containment_migration import (
+        PreparedRule,
+        RuleAudit,
+    )
+
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
 
@@ -98,7 +112,7 @@ class _RemoteReconciliation:
     """Remote inputs computed once before sync-state planning."""
 
     inventory: RemoteInventory | None
-    plan: Any | None
+    plan: ReconciliationPlan | None
     augmentation_current: dict[str, bool]
     stems_with_gaps: set[str]
     containment_publications: dict[str, tuple[str, ...]]
@@ -329,7 +343,7 @@ def _plan_prepared_sync(
 
 def _remote_reconciliation_helpers(
     enabled: bool,
-) -> tuple[Any, Callable[[str], dict[str, str]] | None]:
+) -> tuple[type[ReconciliationPlanner] | None, Callable[[str], dict[str, str]] | None]:
     if not enabled:
         return None, None
     # Keep these imports lazy so local-only callers do not capture temporary
@@ -370,7 +384,7 @@ def _pending_stems_for_plan(
 
 def _core_will_be_repaired(
     states: list[RegionSyncState],
-    reconciliation_plan: Any | None,
+    reconciliation_plan: ReconciliationPlan | None,
     *,
     push_enabled: bool,
 ) -> bool:
@@ -380,7 +394,9 @@ def _core_will_be_repaired(
     return any(_core_repair_required(state.action, state.stem, missing) for state in states)
 
 
-def _build_augmentation_client(data_root: DataRoot, runtime: Any) -> AugmentationWikimediaClient:
+def _build_augmentation_client(
+    data_root: DataRoot, runtime: WikimediaRuntime
+) -> AugmentationWikimediaClient:
     return AugmentationWikimediaClient(
         runtime.settings,
         JsonFileCache(data_root.cache / "augmentation", contract_version="text-sidecars-v1"),
@@ -514,7 +530,7 @@ def _run_sync_application(
     *,
     data_root: DataRoot,
     settings: Settings,
-    runtime: Any,
+    runtime: WikimediaRuntime,
     augmentation_client: AugmentationWikimediaClient,
     prepared: _PreparedSyncPlan,
     push_enabled: bool,
@@ -556,7 +572,7 @@ def _build_sync_services(
     *,
     data_root: DataRoot,
     settings: Settings,
-    runtime: Any,
+    runtime: WikimediaRuntime,
 ) -> SyncApplicationServices:
     """Build the injected sync collaborators from this module's bindings.
 
@@ -577,7 +593,7 @@ def _build_sync_services(
     def _extract(pbf_path: Path) -> ExtractedPbf:
         return _extract_pbf(pbf_path, settings=settings)
 
-    def _process(extracted: ExtractedPbf) -> Any:
+    def _process(extracted: ExtractedPbf) -> ProcessResult:
         return _process_extracted_pbf(
             extracted,
             data_root=data_root,
@@ -681,7 +697,7 @@ def _active_pbfs(pbfs: list[Path], retired_children: Collection[str]) -> list[Pa
     return [pbf for pbf in pbfs if pbf.name.removesuffix(".osm.pbf") not in retired_children]
 
 
-def _migration_stems_to_persist(stems: Iterable[Any]) -> set[str]:
+def _migration_stems_to_persist(stems: Iterable[StemPlan]) -> set[str]:
     """Select migration operations whose canonical output must be published."""
     return {
         stem_plan.stem
@@ -752,7 +768,7 @@ def _prepare_remote_reconciliation(
     validate_augmentation: Callable[[DataRoot, list[str]], dict[str, bool]],
     load_retired_parent_children: Callable[[Path], dict[str, tuple[str, ...]]],
     canonical_region_paths: Callable[[str], dict[str, str]] | None = None,
-    planner_cls: Any = None,
+    planner_cls: type[ReconciliationPlanner] | None = None,
 ) -> _RemoteReconciliation:
     """Prepare remote reconciliation inputs without work on local-only runs."""
     if not enabled:
@@ -792,13 +808,13 @@ def _prepare_remote_reconciliation(
 
 
 def _plan_remote_reconciliation(
-    planner_cls: Any,
+    planner_cls: type[ReconciliationPlanner],
     *,
     data_root: DataRoot,
     inventory: RemoteInventory,
     input_stems: set[str],
     augmentation_current: dict[str, bool],
-) -> tuple[Any, set[str], bool]:
+) -> tuple[ReconciliationPlan, set[str], bool]:
     """Plan remote gaps, log their counts, and report whether core is repaired."""
     reconciliation_plan = planner_cls(
         data_root=data_root,
@@ -827,8 +843,8 @@ def _plan_remote_reconciliation(
 
 def _require_remote_helpers(
     canonical_region_paths: Callable[[str], dict[str, str]] | None,
-    planner_cls: Any,
-) -> tuple[Callable[[str], dict[str, str]], Any]:
+    planner_cls: type[ReconciliationPlanner] | None,
+) -> tuple[Callable[[str], dict[str, str]], type[ReconciliationPlanner]]:
     if canonical_region_paths is None or planner_cls is None:
         raise RuntimeError("Remote reconciliation helpers are required when push is enabled")
     return canonical_region_paths, planner_cls
@@ -851,7 +867,7 @@ def _prepare_containment_rules(
     enabled: bool,
     data_path: Path,
     dry_run: bool,
-    prepare_safe_rules: Callable[..., tuple[Collection[Any], Collection[Any]]],
+    prepare_safe_rules: Callable[..., tuple[Collection[PreparedRule], Collection[RuleAudit]]],
     log_info: Callable[..., None] = LOGGER.info,
     log_warning: Callable[..., None] = LOGGER.warning,
 ) -> None:
@@ -895,7 +911,7 @@ def _plan_sync_states(
     pending_stems: set[str],
     recovery_stems: set[str],
     processed_path: Path,
-    plan_link_migration: Callable[..., Any],
+    plan_link_migration: Callable[..., LinkMigrationPlan],
 ) -> list[RegionSyncState]:
     """Build the deterministic action plan, including link migrations."""
     recovery = set(recovery_stems)
