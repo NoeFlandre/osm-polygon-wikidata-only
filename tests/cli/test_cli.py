@@ -30,6 +30,9 @@ def test_parser_has_documented_subcommands() -> None:
         "release-stats",
         "sync-dir",
         "split-v2-sentences",
+        "enforce-integrity",
+        "audit-remote",
+        "trackio-snapshot",
     }
 
 

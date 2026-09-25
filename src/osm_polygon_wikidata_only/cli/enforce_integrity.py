@@ -26,18 +26,17 @@ import argparse
 import json
 import logging
 import sys
-from pathlib import Path
 
 import pyarrow as pa
 
 from osm_polygon_wikidata_only.augmentation.integrity import IntegrityReport, enforce_all_regions
+from osm_polygon_wikidata_only.cli.parser import add_enforce_integrity_arguments
 from osm_polygon_wikidata_only.config.paths import DataRootError, repository_root, resolve_data_root
 from osm_polygon_wikidata_only.utils.logging import configure_logging
 
 LOGGER = logging.getLogger(__name__)
 
 PROG = "osm-polygon-wikidata-only-enforce-integrity"
-LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 EXIT_FAILURE = 1
 
 # Expected operator-facing failures: an unusable data root, missing or
@@ -62,37 +61,8 @@ def _build_parser(prog: str = PROG) -> argparse.ArgumentParser:
             "drops). Emits an audit JSON."
         ),
     )
-    add_arguments(parser)
+    add_enforce_integrity_arguments(parser)
     return parser
-
-
-def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register the enforce-integrity options on *parser*."""
-    parser.add_argument(
-        "--data-root",
-        type=Path,
-        default=None,
-        help=(
-            "Path to the data root. Falls back to the OSM_POLYGON_DATA_ROOT environment variable."
-        ),
-    )
-    parser.add_argument(
-        "--audit-filename",
-        type=str,
-        default="integrity_audit.json",
-        help="Name of the audit JSON inside <data-root>/processed/integrity/.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Compute and report rejections without rewriting tables or writing the audit",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Print the report summary as JSON on stdout",
-    )
-    parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
 
 
 def _summary(report: IntegrityReport, *, dry_run: bool) -> dict[str, object]:

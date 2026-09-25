@@ -1,0 +1,14 @@
+usage: PROG enforce-integrity [-h] [--data-root DATA_ROOT]
+ [--audit-filename AUDIT_FILENAME] [--dry-run]
+ [--json] [--log-level {DEBUG,INFO,WARNING,ERROR}]
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT Path to the data root. Falls back to the OSM_POLYGON_DATA_ROOT
+ environment variable.
+ --audit-filename AUDIT_FILENAME
+ Name of the audit JSON inside <data-root>/processed/integrity/.
+ --dry-run Compute and report rejections without rewriting tables or writing the
+ audit
+ --json Print the report summary as JSON on stdout
+ --log-level {DEBUG,INFO,WARNING,ERROR}

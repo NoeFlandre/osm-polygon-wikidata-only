@@ -1,0 +1,9 @@
+usage: PROG trackio-snapshot [-h] [--dataset-version {v1,v2}]
+ [--data-root DATA_ROOT] [--space-id SPACE_ID]
+
+options:
+ -h, --help show this help message and exit
+ --dataset-version {v1,v2} Which dataset snapshot to publish (default: v1)
+ --data-root DATA_ROOT Local data root for artifact storage
+ --space-id SPACE_ID Hugging Face Space receiving the run (default: the version's public
+ Space)

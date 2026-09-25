@@ -23,6 +23,9 @@ EXPECTED_COMMANDS = {
     "language-splits",
     "publish-language-splits",
     "release-stats",
+    "enforce-integrity",
+    "audit-remote",
+    "trackio-snapshot",
 }
 
 EXPECTED_COMMON_FLAGS = {

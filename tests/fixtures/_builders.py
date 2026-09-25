@@ -451,6 +451,9 @@ def build_golden_help(out: Path) -> dict[str, Path]:
         "language-splits": ["language-splits"],
         "publish-language-splits": ["publish-language-splits"],
         "release-stats": ["release-stats"],
+        "enforce-integrity": ["enforce-integrity"],
+        "audit-remote": ["audit-remote"],
+        "trackio-snapshot": ["trackio-snapshot"],
     }
     for name, prog_args in targets.items():
         path = out / "golden" / f"cli_help_{name}.txt"

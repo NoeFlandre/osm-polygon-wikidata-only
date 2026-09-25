@@ -1,0 +1,8 @@
+usage: PROG audit-remote [-h] [--data-root DATA_ROOT] [--repo-id REPO_ID]
+ [--hf-token HF_TOKEN]
+
+options:
+ -h, --help show this help message and exit
+ --data-root DATA_ROOT Local dataset root; defaults to env var
+ --repo-id REPO_ID Hugging Face dataset repository
+ --hf-token HF_TOKEN Hugging Face token
