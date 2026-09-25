@@ -351,6 +351,14 @@ def test_parser_process_pbf_no_full_text_disables_field(tmp_path: Path) -> None:
     assert args.languages == "en,fr"
 
 
+def test_languages_option_is_trimmed_deduplicated_and_sorted(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        ["process-pbf", str(tmp_path / "x.osm.pbf"), "--languages", " fr, en,fr ,, de "]
+    )
+
+    assert _build_settings(args).languages == ("de", "en", "fr")
+
+
 def test_parser_process_dir_default_skip() -> None:
     parser = build_parser()
     args = parser.parse_args(["process-dir", "/tmp/abc"])

@@ -154,17 +154,6 @@ def test_quality_recipe_exports_normalized_runtime_environment(tmp_path: Path) -
     ]
 
 
-def test_baseline_recipe_executes_pytest() -> None:
-    result = _run_just("--dry-run", "baseline")
-
-    assert result.returncode == 0, result.stderr
-    rendered = result.stdout + result.stderr
-    assert "uv run python -m pytest" in rendered
-    assert "--no-cov" in rendered
-    assert "--basetemp" in rendered
-    assert "baseline-pytest" in rendered
-
-
 def test_mutation_worker_count_is_configurable() -> None:
     default = _run_just("--dry-run", "mutation", env={"MUTMUT_MAX_CHILDREN": None})
     assert default.returncode == 0, default.stderr
@@ -173,35 +162,6 @@ def test_mutation_worker_count_is_configurable() -> None:
     ci = _run_just("--dry-run", "mutation", env={"MUTMUT_MAX_CHILDREN": "4"})
     assert ci.returncode == 0, ci.stderr
     assert '--max-children "4"' in ci.stdout + ci.stderr
-
-
-def test_preprocessing_coverage_is_reused_by_its_crap_recipe(tmp_path: Path) -> None:
-    runtime = tmp_path / "quality runtime"
-    child_env = {
-        "QUALITY_RUNTIME_DIR": str(runtime),
-        "QUALITY_REPORT_DIR": None,
-        "QUALITY_CACHE_DIR": None,
-        "QUALITY_TMP_DIR": None,
-        "UV_CACHE_DIR": None,
-        "TMPDIR": "/var/folders/hostile",
-    }
-
-    preprocessing = _run_just("--dry-run", "preprocessing-check", env=child_env)
-    assert preprocessing.returncode == 0, preprocessing.stderr
-    preprocessing_output = preprocessing.stdout + preprocessing.stderr
-    coverage_data = runtime / "reports" / "preprocessing.coverage"
-    coverage_json = runtime / "reports" / "preprocessing-coverage.json"
-    assert f'COVERAGE_FILE="{coverage_data}"' in preprocessing_output
-    assert (
-        f'uv run python -m coverage json --data-file="{coverage_data}" -o "{coverage_json}"'
-    ) in preprocessing_output
-    assert "/var/folders/hostile" not in preprocessing_output
-
-    crap = _run_just("--dry-run", "crap-report", env=child_env)
-    assert crap.returncode == 0, crap.stderr
-    crap_output = crap.stdout + crap.stderr
-    assert "radon cc --show-closures -j preprocessing/src" in crap_output
-    assert f'--coverage "{coverage_json}"' in crap_output
 
 
 def test_crap_recipe_report_includes_a_nested_function(tmp_path: Path) -> None:

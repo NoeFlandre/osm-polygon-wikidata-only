@@ -208,3 +208,55 @@ def test_prepare_is_idempotent_after_success(tmp_path: Path) -> None:
     second = prepare_local_rule(tmp_path, audit)
     assert first == second
     assert load_retired_children(processed) == frozenset({CHILD})
+
+
+def test_stage_remaps_child_polygon_articles_to_parent_provenance(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _seed(processed)
+    polygon_schema = pa.schema(
+        [
+            pa.field("osm_type", pa.string()),
+            pa.field("osm_id", pa.int64()),
+            pa.field("polygon_id", pa.string()),
+            pa.field("region", pa.string()),
+            pa.field("source_pbf", pa.string()),
+        ]
+    )
+    link_schema = polygon_schema.append(pa.field("article_id", pa.string()))
+    parent_polygon = {
+        "osm_type": "way",
+        "osm_id": 1,
+        "polygon_id": "parent:way:1",
+        "region": "parent",
+        "source_pbf": "parent-latest.osm.pbf",
+    }
+    child_polygon = {
+        **parent_polygon,
+        "polygon_id": "child:way:1",
+        "region": "child",
+        "source_pbf": "child-latest.osm.pbf",
+    }
+    for stem, polygon, article_id in (
+        (PARENT, parent_polygon, "article-parent"),
+        (CHILD, child_polygon, "article-child"),
+    ):
+        pq.write_table(
+            pa.Table.from_pylist([polygon], schema=polygon_schema),
+            processed / "polygons" / f"{stem}.parquet",
+        )
+        pq.write_table(
+            pa.Table.from_pylist([{**polygon, "article_id": article_id}], schema=link_schema),
+            processed / "polygon_articles" / f"{stem}.parquet",
+        )
+
+    audit = audit_rule(processed, ContainmentRule(PARENT, (CHILD,)))
+    staged = stage_rule(processed, tmp_path / "cache", audit)
+    links = pq.read_table(staged.artifact("polygon_articles")).to_pylist()
+
+    assert {row["article_id"]: row["polygon_id"] for row in links} == {
+        "article-parent": "parent:way:1",
+        "article-child": "parent:way:1",
+    }
+    assert {(row["region"], row["source_pbf"]) for row in links} == {
+        ("parent", "parent-latest.osm.pbf")
+    }

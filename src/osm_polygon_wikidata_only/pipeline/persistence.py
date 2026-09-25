@@ -187,18 +187,14 @@ def _integrity_metadata(result: PolygonArticlesIntegrityResult) -> dict[str, Any
     }
 
 
-def _enforce_integrity_if_needed(
+def _enforce_integrity(
     data_root: DataRoot,
     stem: str,
     source_pbf: str,
-    links_path: Path,
-    polygons_path: Path,
     manifest_path_value: Path,
     entry: dict[str, Any],
-) -> tuple[PolygonArticlesIntegrityResult | None, dict[str, Any]]:
-    """Run reject-only link integrity enforcement when both artifacts exist."""
-    if not links_path.is_file() or not polygons_path.is_file():
-        return None, entry
+) -> tuple[PolygonArticlesIntegrityResult, dict[str, Any]]:
+    """Run reject-only link integrity enforcement on the just-written shard."""
     result = enforce_polygon_articles_integrity(data_root, stem)
     if result.rejected_row_count <= 0:
         return result, entry
@@ -251,15 +247,7 @@ def run_persistence_phase(
         len(links),
     )
 
-    integrity_result, entry = _enforce_integrity_if_needed(
-        data_root,
-        stem,
-        source_pbf,
-        links_path,
-        polygons_path,
-        mpath,
-        entry,
-    )
+    integrity_result, entry = _enforce_integrity(data_root, stem, source_pbf, mpath, entry)
 
     return PersistenceOutcome(
         polygons_path=polygons_path,

@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.io.manifest import (
     make_entry,
     manifest_path,
     save_manifest,
+    update_entry,
     upsert_entry,
 )
 
@@ -144,3 +145,16 @@ def test_iter_entries_is_sorted(tmp_path: Path) -> None:
 def test_manifest_path_helper(tmp_path: Path) -> None:
     p = manifest_path(tmp_path)
     assert p.name == "processed_pbfs.json"
+
+
+def test_update_entry_changes_named_fields_and_preserves_the_rest(tmp_path: Path) -> None:
+    p = tmp_path / "manifest.json"
+    save_manifest(p, {"monaco-latest.osm.pbf": _entry()})
+
+    updated = update_entry(p, source_pbf="monaco-latest.osm.pbf", polygon_count=2)
+
+    assert updated["polygon_count"] == 2
+    assert updated["region"] == "monaco"
+    assert load_manifest(p)["monaco-latest.osm.pbf"] == updated
+    with pytest.raises(KeyError, match="no entry"):
+        update_entry(p, source_pbf="missing.osm.pbf", polygon_count=1)

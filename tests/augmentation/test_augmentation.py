@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.augmentation.models import (
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augment_region,
     augmentation_is_current,
+    completed_region_stems,
     sidecar_paths,
 )
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
@@ -406,3 +407,21 @@ def test_augmentation_sidecars_are_deterministic_and_core_is_untouched(
         str(articles_path): core_before[0],
         str(polygons_path): core_before[1],
     }
+
+
+def test_completed_region_stems_intersects_polygon_and_article_shards(tmp_path: Path) -> None:
+    root = DataRoot(tmp_path)
+    documents = root.processed / "wikipedia" / "documents"
+    for directory in (root.processed_articles, root.processed_polygons, documents):
+        directory.mkdir(parents=True)
+    for path in (
+        root.processed_articles / "legacy-latest.parquet",
+        root.processed_articles / "article-only.parquet",
+        documents / "canonical-latest.parquet",
+        root.processed_polygons / "legacy-latest.parquet",
+        root.processed_polygons / "canonical-latest.parquet",
+        root.processed_polygons / "polygon-only.parquet",
+    ):
+        path.touch()
+
+    assert completed_region_stems(root) == ["canonical-latest", "legacy-latest"]

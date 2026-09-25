@@ -40,124 +40,135 @@ def test_verify_resources_splits_resource_paths_for_traversables() -> None:
     assert calls == [("assets", "hero.png")]
 
 
-def test_top_level_names_cover_entry_point_bindings() -> None:
-    source = """
-import os.path as path
-import os.path
-import sys
-from typing import Final as TypeAlias
-from package import *
-from package import value
-
-async def async_main():
-    pass
-
-class Container:
-    pass
-
-value = 1
-typed: str = "value"
-(first, second) = (1, 2)
-"""
-
-    assert package_smoke._top_level_names(source, "package.cli") == {
-        "path",
-        "os",
-        "sys",
-        "TypeAlias",
-        "value",
-        "async_main",
-        "Container",
-        "typed",
-    }
+def _verify_entry_point(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    modules: dict[str, str],
+    entry_point: object,
+    *,
+    package_name: str = "package",
+) -> None:
+    """Run ``verify_distribution`` against a fake installed package tree."""
+    package_root = tmp_path / "package"
+    for relative, source in modules.items():
+        module = package_root / relative
+        module.parent.mkdir(parents=True, exist_ok=True)
+        module.write_text(source, encoding="utf-8")
+    package_root.mkdir(exist_ok=True)
+    distribution = SimpleNamespace(entry_points=(entry_point,))
+    monkeypatch.setattr(package_smoke.metadata, "distribution", lambda _name: distribution)
+    monkeypatch.setattr(package_smoke.resources, "files", lambda _name: package_root)
+    package_smoke.verify_distribution("distribution", package_name, (), ("cli",))
 
 
-def test_top_level_names_reports_invalid_source() -> None:
+def _console(value: str) -> EntryPoint:
+    return EntryPoint("cli", value, "console_scripts")
+
+
+@pytest.mark.parametrize(
+    ("source", "attr"),
+    [
+        ("import os.path as path\n", "path"),
+        ("import os.path\n", "os"),
+        ("from typing import Final as TypeAlias\n", "TypeAlias"),
+        ("from package import value\n", "value"),
+        ("async def async_main():\n    pass\n", "async_main"),
+        ("class Container:\n    pass\n", "Container"),
+        ("value = 1\n", "value"),
+        ("typed: str = 'value'\n", "typed"),
+        ("def main():\n    return 0\n", "main.wrapper.call"),
+    ],
+)
+def test_entry_point_target_may_be_any_top_level_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, attr: str
+) -> None:
+    _verify_entry_point(tmp_path, monkeypatch, {"cli.py": source}, _console(f"package.cli:{attr}"))
+
+
+@pytest.mark.parametrize(
+    ("source", "attr"),
+    [
+        ("(first, second) = (1, 2)\n", "first"),
+        ("from package import *\n", "*"),
+        ("XXXX = object()\n", None),
+        ("import os.path\n", "path"),
+    ],
+)
+def test_entry_point_target_must_be_a_top_level_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, attr: str | None
+) -> None:
+    entry_point = SimpleNamespace(
+        name="cli", value=f"package.cli:{attr or ''}", module="package.cli", attr=attr
+    )
+    with pytest.raises(package_smoke.PackageSmokeError, match="target unavailable"):
+        _verify_entry_point(tmp_path, monkeypatch, {"cli.py": source}, entry_point)
+
+
+@pytest.mark.parametrize(
+    ("package_name", "module", "path"),
+    [
+        ("package", "package", "__init__.py"),
+        ("package", "package.nested", "nested/__init__.py"),
+        ("package.nested", "package.nested.cli", "cli.py"),
+        ("package", "package.nested.cli", "nested/cli.py"),
+    ],
+)
+def test_entry_point_module_resolves_inside_the_installed_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package_name: str, module: str, path: str
+) -> None:
+    _verify_entry_point(
+        tmp_path,
+        monkeypatch,
+        {path: "def main():\n    return 0\n"},
+        _console(f"{module}:main"),
+        package_name=package_name,
+    )
+
+
+def test_entry_point_module_outside_the_package_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(package_smoke.PackageSmokeError, match="module unavailable"):
+        _verify_entry_point(
+            tmp_path, monkeypatch, {"cli.py": "def main(): pass\n"}, _console("other.cli:main")
+        )
+
+
+def test_entry_point_module_must_be_valid_utf8_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with pytest.raises(
         package_smoke.PackageSmokeError, match="Invalid entry-point module"
     ) as raised:
-        package_smoke._top_level_names("def broken(", "package.cli")
+        _verify_entry_point(
+            tmp_path, monkeypatch, {"cli.py": "def broken("}, _console("package.cli:main")
+        )
     assert isinstance(raised.value.__cause__, SyntaxError)
     assert raised.value.__cause__.filename == "package.cli"
 
-
-def test_module_resource_resolves_package_modules_and_rejects_other_packages(
-    tmp_path: Path,
-) -> None:
-    package_root = tmp_path / "package"
-    package_root.mkdir()
-    package_init = package_root / "__init__.py"
-    package_init.write_text("", encoding="utf-8")
-    nested = package_root / "nested"
-    nested.mkdir()
-    nested_init = nested / "__init__.py"
-    nested_init.write_text("", encoding="utf-8")
-    dotted_module = package_root / "cli.py"
-    dotted_module.write_text("", encoding="utf-8")
-    nested_dotted_module = nested / "cli.py"
-    nested_dotted_module.write_text("", encoding="utf-8")
-
-    assert package_smoke._module_resource(package_root, "package", "package") == package_init
-    assert package_smoke._module_resource(package_root, "package", "package.nested") == nested_init
-    assert (
-        package_smoke._module_resource(package_root, "package.nested", "package.nested.cli")
-        == dotted_module
-    )
-    assert (
-        package_smoke._module_resource(package_root, "package", "package.nested.cli")
-        == nested_dotted_module
-    )
-    assert package_smoke._module_resource(package_root, "package", "other.cli") is None
+    (tmp_path / "package" / "cli.py").write_bytes(b"main = '\xff'\n")
+    with pytest.raises(package_smoke.PackageSmokeError, match="module unreadable"):
+        _verify_entry_point(tmp_path, monkeypatch, {}, _console("package.cli:main"))
 
 
-def test_read_entry_point_source_requires_utf8_encoding() -> None:
+def test_entry_point_module_is_read_as_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
     encodings: list[str | None] = []
 
-    class Resource:
-        def read_text(self, *, encoding: str | None) -> str:
+    class Module:
+        def is_file(self) -> bool:
+            return True
+
+        def read_text(self, *, encoding: str | None = None) -> str:
             encodings.append(encoding)
-            return "source"
+            return "def main():\n    return 0\n"
 
-    entry_point = EntryPoint("cli", "package.cli:main", "console_scripts")
-    assert package_smoke._read_entry_point_source(Resource(), entry_point) == "source"
+    package_root = SimpleNamespace(joinpath=lambda *_parts: Module())
+    distribution = SimpleNamespace(entry_points=(_console("package.cli:main"),))
+    monkeypatch.setattr(package_smoke.metadata, "distribution", lambda _name: distribution)
+    monkeypatch.setattr(package_smoke.resources, "files", lambda _name: package_root)
+
+    package_smoke.verify_distribution("distribution", "package", (), ("cli",))
     assert encodings == ["utf-8"]
-
-
-def test_verify_entry_point_target_preserves_metadata_and_uses_first_attr_part(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    package_root = tmp_path / "package"
-    package_root.mkdir()
-    (package_root / "cli.py").write_text("", encoding="utf-8")
-    entry_point = EntryPoint("cli", "package.cli:main.wrapper.call", "console_scripts")
-    seen: list[EntryPoint] = []
-
-    def read_source(_resource: object, received: EntryPoint) -> str:
-        seen.append(received)
-        return "def main():\n    return 0\n"
-
-    monkeypatch.setattr(package_smoke, "_read_entry_point_source", read_source)
-
-    package_smoke._verify_entry_point_target(package_root, "package", entry_point)
-    assert seen == [entry_point]
-
-
-def test_verify_entry_point_target_rejects_empty_attr_even_if_fallback_name_exists(
-    tmp_path: Path,
-) -> None:
-    package_root = tmp_path / "package"
-    package_root.mkdir()
-    (package_root / "cli.py").write_text("XXXX = object()\n", encoding="utf-8")
-    entry_point = SimpleNamespace(
-        name="cli",
-        value="package.cli:",
-        module="package.cli",
-        attr=None,
-    )
-
-    with pytest.raises(package_smoke.PackageSmokeError, match="target"):
-        package_smoke._verify_entry_point_target(package_root, "package", entry_point)
 
 
 def test_verify_entry_points_requires_expected_names_and_targets() -> None:

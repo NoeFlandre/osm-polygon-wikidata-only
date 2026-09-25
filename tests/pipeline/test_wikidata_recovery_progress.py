@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from osm_polygon_wikidata_only.pipeline._wikidata_recovery.progress import RecoveryProgress
+import threading
+import time
+
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery.progress import (
+    RecoveryHeartbeat,
+    RecoveryProgress,
+)
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 
 
@@ -59,3 +65,35 @@ def test_progress_includes_existing_scheduler_telemetry_when_supplied() -> None:
     assert "in-flight 7/8" in message
     assert "429s 4" in message
     assert "cooling hosts 2" in message
+
+
+def test_recovery_heartbeat_logs_periodically_until_exit() -> None:
+    progress = RecoveryProgress("region-latest", 1, clock=lambda: 0.0)
+    logged = threading.Event()
+    messages: list[str] = []
+
+    def log(message: str) -> None:
+        messages.append(message)
+        logged.set()
+
+    with RecoveryHeartbeat(progress, log, interval_s=0.001):
+        assert logged.wait(timeout=5)
+
+    assert messages[0].startswith("Wikidata recovery progress region-latest")
+
+
+def test_recovery_heartbeat_stops_quietly_when_logging_fails() -> None:
+    progress = RecoveryProgress("region-latest", 1, clock=lambda: 0.0)
+    attempts: list[int] = []
+    attempted = threading.Event()
+
+    def failing_log(_message: str) -> None:
+        attempts.append(1)
+        attempted.set()
+        raise RuntimeError("log sink unavailable")
+
+    with RecoveryHeartbeat(progress, failing_log, interval_s=0.001):
+        assert attempted.wait(timeout=5)
+        time.sleep(0.05)
+
+    assert attempts == [1]
