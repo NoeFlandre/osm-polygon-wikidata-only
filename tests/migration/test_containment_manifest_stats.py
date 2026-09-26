@@ -85,6 +85,110 @@ def test_polygon_manifest_stats_count_values_and_ignore_bad_tag_json() -> None:
     }
 
 
+def test_top_tag_keys_parse_each_distinct_serialized_value_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_loads = json.loads
+    parsed_values: list[str] = []
+
+    def track_loads(value: str) -> object:
+        parsed_values.append(value)
+        return original_loads(value)
+
+    monkeypatch.setattr(containment_migration.json, "loads", track_loads)
+
+    assert containment_migration._top_tag_keys_from_values(
+        ['["name", "name"]'] * 4 + ['["amenity"]'] * 2 + ["not-json"] * 3
+    ) == {"name": 8, "amenity": 2}
+    assert parsed_values == ['["name", "name"]', '["amenity"]', "not-json"]
+
+
+def test_canonical_stats_project_polygon_columns_without_changing_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    polygon_rows = [
+        {
+            "wikidata": "Q42",
+            "has_wikipedia": True,
+            "text_available": True,
+            "area_bucket": "small",
+            "tag_keys": '["wikidata", "name"]',
+        },
+        {
+            "wikidata": "",
+            "has_wikipedia": False,
+            "text_available": False,
+            "area_bucket": "large",
+            "tag_keys": "not-json",
+        },
+        {
+            "wikidata": "Q42",
+            "has_wikipedia": True,
+            "text_available": False,
+            "area_bucket": "small",
+            "tag_keys": '["name"]',
+        },
+        {
+            "wikidata": None,
+            "has_wikipedia": None,
+            "text_available": None,
+            "area_bucket": None,
+            "tag_keys": None,
+        },
+    ]
+    for index, row in enumerate(polygon_rows):
+        row.update({f"unused_{column:02}": f"value-{index}" for column in range(26)})
+    polygons_path = tmp_path / "polygons.parquet"
+    documents_path = tmp_path / "documents.parquet"
+    pq.write_table(pa.Table.from_pylist(polygon_rows), polygons_path)
+    pq.write_table(
+        pa.table(
+            {
+                "language": ["fr", "en", "fr"],
+                "article_length_chars": [12, 30, 8],
+            }
+        ),
+        documents_path,
+    )
+    staged = StagedRule(
+        PARENT,
+        (),
+        (("polygons", polygons_path), ("wikipedia/documents", documents_path)),
+    )
+    original_read_table = pq.read_table
+    polygon_columns: list[list[str] | None] = []
+
+    def read_table(
+        path: str | Path,
+        *args: object,
+        columns: list[str] | None = None,
+        **kwargs: object,
+    ) -> pa.Table:
+        if Path(path) == polygons_path:
+            polygon_columns.append(columns)
+        return original_read_table(path, *args, columns=columns, **kwargs)
+
+    monkeypatch.setattr(containment_migration.pq, "read_table", read_table)
+
+    stats = containment_migration._canonical_manifest_stats(staged)
+
+    assert polygon_columns == [
+        ["wikidata", "has_wikipedia", "text_available", "area_bucket", "tag_keys"]
+    ]
+    assert stats == {
+        "polygon_count": 4,
+        "unique_wikidata_count": 1,
+        "rows_with_wikipedia": 2,
+        "rows_with_full_text": 1,
+        "area_bucket_counts": {"small": 2, "large": 1, None: 1},
+        "top_tag_keys": {"wikidata": 1, "name": 2},
+        "article_count": 3,
+        "language_count": 2,
+        "languages": ["en", "fr"],
+        "total_full_text_chars": 50,
+    }
+
+
 def test_document_manifest_stats_sort_languages_and_sum_characters() -> None:
     rows = [
         {"language": "fr", "article_length_chars": 12},
