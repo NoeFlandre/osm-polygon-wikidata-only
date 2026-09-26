@@ -11,6 +11,14 @@ from typing import cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.config.defaults import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_GRID5000_SITE,
+    DEFAULT_INFERENCE_BATCH_SIZE,
+    DEFAULT_MAX_INPUT_BYTES,
+    DEFAULT_MAX_STEMS,
+    DEFAULT_WALLTIME,
+)
 from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -18,12 +26,6 @@ from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
 GRID5000_SENTENCE_CONTRACT_VERSION = "grid5000-sentence-v1"
-DEFAULT_MAX_STEMS = 4
-DEFAULT_MAX_INPUT_BYTES = 256 * 1024 * 1024
-DEFAULT_WALLTIME = "0:30"
-DEFAULT_GRID5000_SITE = "grenoble"
-DEFAULT_BATCH_SIZE = 256
-DEFAULT_INFERENCE_BATCH_SIZE = 16
 
 _RUN_ID_PATTERN = re.compile(r"[a-z0-9_-]+")
 _CHECKPOINT_BATCH_PATTERN = re.compile(r"batch-(\d{8})\.parquet")

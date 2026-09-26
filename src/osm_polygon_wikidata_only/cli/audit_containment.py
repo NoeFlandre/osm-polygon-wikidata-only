@@ -23,6 +23,13 @@ from osm_polygon_wikidata_only.pipeline.containment_policy import (
     ContainmentRule,
 )
 
+from .parser import (
+    AUDIT_CONTAINMENT_DESCRIPTION as DESCRIPTION,
+)
+from .parser import (
+    add_audit_containment_arguments as add_arguments,
+)
+
 
 def _audit_payload(retired: Collection[str], reports: Sequence[RuleAudit]) -> dict[str, object]:
     safe_parents: list[str] = []
@@ -56,14 +63,7 @@ def _audit_reports(processed: Path, rules: Sequence[ContainmentRule]) -> list[Ru
     return [audit_rule(processed, rule) for rule in rules if rule.children]
 
 
-DESCRIPTION = "Read-only audit of configured whole-file containment retirements."
 EXIT_BLOCKED = 2
-
-
-def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register the audit options on *parser*."""
-    parser.add_argument("data_root", type=Path, help="Data root containing processed/")
-    parser.add_argument("--output", type=Path, help="Write the JSON report here instead of stdout")
 
 
 def run(args: argparse.Namespace) -> int:

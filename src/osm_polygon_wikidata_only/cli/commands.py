@@ -843,15 +843,20 @@ def _dispatch_existing_command(
     return _run_processing_command(args, data_root=data_root, settings=settings)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def run_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Dispatch already-parsed arguments after the app's lightweight startup."""
     tool_status = dispatch_tool(args)
     if tool_status is not None:
         return tool_status
     data_root, settings = _prepare_runtime(args)
     _authenticate_for_push(parser, args, settings)
     return _dispatch_command(parser, args, data_root=data_root, settings=settings)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return run_parsed(parser, args)
 
 
 if __name__ == "__main__":  # pragma: no cover

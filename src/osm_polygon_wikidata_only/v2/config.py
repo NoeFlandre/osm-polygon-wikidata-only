@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from osm_polygon_wikidata_only.config.defaults import V2_REPO_ID
+
 V2_CONTRACT_VERSION = "wikipedia-tags-v2"
 # Hugging Face Dataset Viewer requires ``dataset_info.version`` to use
 # semantic-version syntax.  Keep the storage contract above separate from
 # this public card version so the viewer can load the dataset reliably.
 V2_DATASET_CARD_VERSION = "2.0.0"
 V2_CACHE_CONTRACT_VERSION = "wikipedia-tags-v2-cache"
-V2_REPO_ID = "NoeFlandre/osm-polygon-wikidata-and-wikipedia"
 V2_TRACKIO_PROJECT = "osm-polygon-wikidata-and-wikipedia"
 V2_TRACKIO_RUN_NAME = "final-dataset-snapshot-v2"
 V2_TRACKIO_SPACE_ID = "NoeFlandre/osm-polygon-wikidata-and-wikipedia-trackio"
