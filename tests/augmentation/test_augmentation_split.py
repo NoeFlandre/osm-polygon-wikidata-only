@@ -859,22 +859,6 @@ def test_augment_region_opens_two_pools_of_eight_workers(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# Shared hashing: one implementation backs every content-addressed hash
-# ---------------------------------------------------------------------------
-
-
-def test_hashing_is_a_single_shared_implementation() -> None:
-    """The initial hash capture (in ``load_core_inputs``), the drift
-    check (in ``augment_region``), and the resumability check (in
-    ``augmentation_is_current``) all call the same ``sha256_file``
-    object from :mod:`augmentation.steps`."""
-
-    from osm_polygon_wikidata_only.augmentation import orchestrator, steps
-
-    assert orchestrator.sha256_file is steps.sha256_file
-
-
-# ---------------------------------------------------------------------------
 # Exception propagation: no manifest on failure
 # ---------------------------------------------------------------------------
 

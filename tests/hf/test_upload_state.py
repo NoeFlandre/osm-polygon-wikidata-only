@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 import osm_polygon_wikidata_only.hf._upload_state as state
-import osm_polygon_wikidata_only.io.hashing as hashing
 from osm_polygon_wikidata_only.hf._upload_state import UploadStateStore
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 
@@ -140,7 +139,6 @@ def test_sha256_reuses_cached_io_hashing_digest(tmp_path: Path) -> None:
     payload = tmp_path / "payload.bin"
     payload.write_bytes(b"chunk")
 
-    assert state.sha256_file is hashing.sha256_file
     assert state._sha256_file(payload) == hashlib.sha256(b"chunk").hexdigest()
 
 

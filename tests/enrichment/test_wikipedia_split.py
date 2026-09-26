@@ -80,28 +80,6 @@ def _make_settings(**overrides: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def test_wikipedia_facade_class_identity_after_split() -> None:
-    from osm_polygon_wikidata_only.enrichment.wikipedia import (
-        cache as focused_cache,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikipedia import (
-        transport as focused_transport,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
-        CachedWikipediaClient as FacadeCached,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
-        HttpWikipediaClient as FacadeHttp,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
-        InMemoryWikipediaClient as FacadeInMemory,
-    )
-
-    assert FacadeHttp is focused_transport.HttpWikipediaClient
-    assert FacadeInMemory is focused_transport.InMemoryWikipediaClient
-    assert FacadeCached is focused_cache.CachedWikipediaClient
-
-
 def test_wikipedia_facade_does_not_leak_new_helpers() -> None:
     import osm_polygon_wikidata_only.enrichment.wikipedia_client as facade
 

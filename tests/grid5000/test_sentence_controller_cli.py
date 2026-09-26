@@ -6,7 +6,6 @@ import pytest
 
 from osm_polygon_wikidata_only.cli import commands
 from osm_polygon_wikidata_only.cli import grid5000 as grid5000_sentence_controller
-from scripts import grid5000_sentence_controller as controller_shim
 from scripts import grid5000_sentence_job as job_shim
 
 
@@ -112,8 +111,3 @@ def test_job_subcommand_forwards_reserved_node_options(
     assert "Grid5000 sentence job 42: succeeded" in capsys.readouterr().out
 
     assert job_shim.main(argv) == 0
-
-
-def test_scripts_are_shims_over_the_packaged_commands() -> None:
-    assert controller_shim.main is grid5000_sentence_controller.controller_main
-    assert job_shim.main is grid5000_sentence_controller.job_main

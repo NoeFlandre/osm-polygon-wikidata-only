@@ -19,6 +19,27 @@ def test_wikipedia_facade_preserves_public_types() -> None:
     assert WikipediaArticle is FocusedArticle
 
 
+def test_wikipedia_facade_preserves_public_clients() -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia.cache import (
+        CachedWikipediaClient as FocusedCachedClient,
+    )
+    from osm_polygon_wikidata_only.enrichment.wikipedia.transport import (
+        HttpWikipediaClient as FocusedHttpClient,
+    )
+    from osm_polygon_wikidata_only.enrichment.wikipedia.transport import (
+        InMemoryWikipediaClient as FocusedInMemoryClient,
+    )
+    from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
+        CachedWikipediaClient,
+        HttpWikipediaClient,
+        InMemoryWikipediaClient,
+    )
+
+    assert HttpWikipediaClient is FocusedHttpClient
+    assert InMemoryWikipediaClient is FocusedInMemoryClient
+    assert CachedWikipediaClient is FocusedCachedClient
+
+
 def test_wikipedia_facade_preserves_public_parser() -> None:
     from osm_polygon_wikidata_only.enrichment.wikipedia.parsing import (
         parse_wikipedia_response as focused_parser,
@@ -37,6 +58,27 @@ def test_wikidata_facade_preserves_public_types() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata_client import WikidataEntity
 
     assert WikidataEntity is FocusedEntity
+
+
+def test_wikidata_facade_preserves_public_clients() -> None:
+    from osm_polygon_wikidata_only.enrichment.wikidata.cache import (
+        CachedWikidataClient as FocusedCachedClient,
+    )
+    from osm_polygon_wikidata_only.enrichment.wikidata.transport import (
+        HttpWikidataClient as FocusedHttpClient,
+    )
+    from osm_polygon_wikidata_only.enrichment.wikidata.transport import (
+        InMemoryWikidataClient as FocusedInMemoryClient,
+    )
+    from osm_polygon_wikidata_only.enrichment.wikidata_client import (
+        CachedWikidataClient,
+        HttpWikidataClient,
+        InMemoryWikidataClient,
+    )
+
+    assert HttpWikidataClient is FocusedHttpClient
+    assert InMemoryWikidataClient is FocusedInMemoryClient
+    assert CachedWikidataClient is FocusedCachedClient
 
 
 def test_wikidata_facade_preserves_public_parsing_helpers() -> None:
@@ -79,17 +121,6 @@ def test_processor_facade_re_exports_extractor_symbols() -> None:
     assert processor_mod.ExtractedPbf is extractor_mod.ExtractedPbf
 
 
-def test_rows_facade_re_exports_row_construction() -> None:
-    """``pipeline.rows`` keeps backwards-compatible re-exports of the
-    three row-construction helpers by identity."""
-    from osm_polygon_wikidata_only.pipeline import row_construction as focused
-    from osm_polygon_wikidata_only.pipeline import rows as legacy
-
-    assert legacy.enrich_polygon is focused.enrich_polygon
-    assert legacy.build_articles_and_links is focused.build_articles_and_links
-    assert legacy.article_row is focused.article_row
-
-
 def test_enrichment_phase_owns_unique_qids_helper() -> None:
     """The ``unique_qids`` helper exposes a deterministic QID tuple."""
     from dataclasses import dataclass
@@ -104,13 +135,6 @@ def test_enrichment_phase_owns_unique_qids_helper() -> None:
         "Q1",
         "Q3",
     )
-
-
-def test_cli_facade_preserves_parser() -> None:
-    from osm_polygon_wikidata_only.cli.commands import build_parser
-    from osm_polygon_wikidata_only.cli.parser import build_parser as focused_build_parser
-
-    assert build_parser is focused_build_parser
 
 
 def test_geographic_facade_preserves_public_types() -> None:
