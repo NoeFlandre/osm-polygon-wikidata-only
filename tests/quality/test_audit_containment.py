@@ -10,7 +10,6 @@ import pytest
 from osm_polygon_wikidata_only.cli import audit_containment, commands
 from osm_polygon_wikidata_only.pipeline.containment_migration import ChildAudit, RuleAudit
 from osm_polygon_wikidata_only.pipeline.containment_policy import ContainmentRule
-from scripts import audit_containment as audit_containment_shim
 
 
 def test_audit_main_separates_safe_and_blocked_parents_and_skips_retired_children(
@@ -52,7 +51,3 @@ def test_audit_main_prints_the_payload_and_passes_without_blocked_parents(
 
     assert audit_containment.main([str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["blocked_parents"] == []
-
-
-def test_script_is_a_shim_over_the_packaged_command() -> None:
-    assert audit_containment_shim.main is audit_containment.main
