@@ -295,6 +295,30 @@ def test_load_core_inputs_preserves_canonical_superset_when_legacy_coexists(
     assert result.core_paths[0] == canonical_path
 
 
+def test_sidecar_document_table_wraps_unreadable_parquet(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.augmentation.steps import _sidecar_document_table
+
+    articles_path = tmp_path / "articles.parquet"
+    articles_path.write_bytes(b"NOT PARQUET")
+
+    with pytest.raises(ValueError, match="Failed to read core article Parquet"):
+        _sidecar_document_table(articles_path, [])
+
+
+def test_sidecar_document_table_propagates_unexpected_parquet_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.augmentation import steps
+
+    error = RuntimeError("unexpected parquet reader bug")
+    monkeypatch.setattr(
+        steps.pq, "read_table", lambda *_args, **_kwargs: (_ for _ in ()).throw(error)
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected parquet reader bug"):
+        steps._sidecar_document_table(tmp_path / "articles.parquet", [])
+
+
 # ---------------------------------------------------------------------------
 # resolve_entities
 # ---------------------------------------------------------------------------

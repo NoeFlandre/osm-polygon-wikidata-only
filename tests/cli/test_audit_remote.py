@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 
@@ -103,11 +104,13 @@ def test_audit_reports_inventory_failure_without_traceback(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     module = _module()
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+
     data_root = SimpleNamespace(processed_polygons=tmp_path)
     monkeypatch.setattr(module, "resolve_data_root", lambda *_args, **_kwargs: data_root)
 
     def fail(**_kwargs: object) -> object:
-        raise RuntimeError("inventory unavailable")
+        raise UploadError("inventory unavailable")
 
     monkeypatch.setattr(module.RemoteInventory, "fetch", fail)
     result = CliRunner().invoke(module.app, ["--data-root", str(tmp_path)])
@@ -116,3 +119,50 @@ def test_audit_reports_inventory_failure_without_traceback(
     assert "Failed to fetch remote inventory" in result.stdout
     assert "inventory unavailable" in result.stdout
     assert "Traceback" not in result.stdout
+
+
+def test_audit_does_not_suppress_unexpected_data_root_errors(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    module = _module()
+    error = TypeError("data-root programming bug")
+    monkeypatch.setattr(module, "repository_root", lambda: tmp_path)
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(module, "resolve_data_root", fail)
+
+    with pytest.raises(TypeError, match="data-root programming bug"):
+        module._resolve_root(module.Console(), tmp_path)
+
+
+def test_audit_does_not_suppress_unexpected_inventory_errors(monkeypatch: Any) -> None:
+    module = _module()
+
+    def fail(**_kwargs: object) -> object:
+        raise RuntimeError("inventory programming bug")
+
+    monkeypatch.setattr(module.RemoteInventory, "fetch", fail)
+
+    with pytest.raises(RuntimeError, match="inventory programming bug"):
+        module._fetch_inventory(module.Console(), "owner/repo", None)
+
+
+def test_audit_does_not_suppress_unexpected_reconciliation_errors(
+    monkeypatch: Any,
+) -> None:
+    module = _module()
+    error = KeyError("reconciliation programming bug")
+
+    class BrokenPlanner:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def plan(self) -> object:
+            raise error
+
+    monkeypatch.setattr(module, "ReconciliationPlanner", BrokenPlanner)
+
+    with pytest.raises(KeyError, match="reconciliation programming bug"):
+        module._build_plan(module.Console(), object(), object(), [], {})
