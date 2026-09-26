@@ -204,7 +204,7 @@ def write_merged_region(
         inputs.stem,
         polygons=sorted(inputs.polygons.values(), key=lambda row: str(row["polygon_id"])),
         documents=sorted(documents.values(), key=lambda row: str(row["document_id"])),
-        links=sorted(links.values(), key=lambda row: _link_key(row)),
+        links=sorted(links.values(), key=_link_key),
         sections=sections,
         v1_index_reconciled=wait_for_index or not inputs.direct_inputs,
     )

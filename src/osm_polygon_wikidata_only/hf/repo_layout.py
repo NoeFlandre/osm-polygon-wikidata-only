@@ -104,7 +104,7 @@ def remote_dataset_card_path() -> str:
     return "README.md"
 
 
-def local_to_remote(local_path: Path, processed_subdir: str) -> str:
+def local_to_remote(local_path: Path, processed_subdir: str) -> str:  # noqa: ARG001 -- public argument kept for API compatibility
     """Convert a local path under the processed dir to its remote equivalent."""
     parts = local_path.parts
     # Last two: <subdir>/<stem>.parquet

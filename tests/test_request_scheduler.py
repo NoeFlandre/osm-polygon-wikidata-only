@@ -241,7 +241,7 @@ def test_pace_host_rechecks_cooldown_after_waking() -> None:
         return now[0]
 
     scheduler = AdaptiveRequestScheduler(
-        requests_per_minute=100_000, clock=clock, sleep=lambda s: sleeps.append(s)
+        requests_per_minute=100_000, clock=clock, sleep=sleeps.append
     )
     # Start a 5s cooldown so the first pace_host sleeps.
     scheduler.report_host_throttled("a.wikipedia.org", 5.0)

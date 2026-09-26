@@ -488,7 +488,7 @@ def refresh_coverage_assets(
     # ``socket.timeout``, ``OSError``). Documented fallback: render
     # the map without continents + invoke ``world_land_warning`` when
     # not ``None``.
-    except Exception:
+    except Exception:  # noqa: BLE001 -- documented map fallback, see comment above
         if world_land_warning is not None:
             world_land_warning("Could not fetch world land data; map will omit continents")
         land_path = None

@@ -70,7 +70,7 @@ def _metadata_columns(parquet_path: Path) -> tuple[set[str], bool]:
     # ``except Exception`` retained: PyArrow's metadata API raises
     # across several unstable exception types depending on the
     # corruption mode. The ParquetFile schema remains the fallback.
-    except Exception:
+    except Exception:  # noqa: BLE001 -- PyArrow raises unstable types, see comment above
         return set(), False
     return set(metadata.schema.names) - PYARROW_INTERNAL_COLUMNS, True
 

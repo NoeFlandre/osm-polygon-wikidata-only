@@ -114,7 +114,7 @@ class RecoveryHeartbeat:
         while not self._stop.wait(self._interval):
             try:
                 self._log(self._progress.message())
-            except Exception:
+            except Exception:  # noqa: BLE001 -- heartbeat thread must never crash the run
                 return
 
     def __enter__(self) -> RecoveryHeartbeat:

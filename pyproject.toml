@@ -97,7 +97,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "TID", "PLC0415"]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "TID", "PLC0415", "BLE", "ARG", "PLW", "T20"]
 ignore = [
     "S101",  # asserts are fine in tests
     "S104",  # binding to all interfaces is fine for local-only services
@@ -107,7 +107,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S", "B", "SIM", "PLC0415"]
+"tests/**/*.py" = ["S", "B", "SIM", "PLC0415", "ARG", "T20", "BLE001"]
+"preprocessing/tests/**/*.py" = ["ARG", "T20", "BLE001"]
+"src/osm_polygon_wikidata_only/cli/**/*.py" = ["T201"]
+"scripts/**/*.py" = ["T201"]
+"preprocessing/scripts/**/*.py" = ["T201"]
+"preprocessing/src/osm_polygon_wikidata_only_preprocessing/cli.py" = ["T201"]
 "preprocessing/tests/test_article_deduplication.py" = ["S608"]  # Fixture SQL escapes paths
 "src/osm_polygon_wikidata_only/enrichment/*.py" = ["S310"]
 "src/osm_polygon_wikidata_only/hf/coverage_map.py" = ["S310"]

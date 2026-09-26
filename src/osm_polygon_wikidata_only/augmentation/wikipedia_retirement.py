@@ -106,9 +106,7 @@ def _validate_retirement_inputs(data_root: DataRoot, stem: str) -> tuple[Path, P
     return canonical, legacy
 
 
-def _update_processed_manifest(
-    data_root: DataRoot, stem: str, canonical: Path, legacy: Path
-) -> None:
+def _update_processed_manifest(data_root: DataRoot, stem: str) -> None:
     processed_manifest = data_root.processed_manifests / "processed_pbfs.json"
     if not processed_manifest.exists():
         return
@@ -140,7 +138,7 @@ def _update_augmentation_manifest(
 def prepare_local_retirement(data_root: DataRoot, stem: str) -> None:
     """Verify losslessness and atomically repoint manifests to canonical data."""
     canonical, legacy = _validate_retirement_inputs(data_root, stem)
-    _update_processed_manifest(data_root, stem, canonical, legacy)
+    _update_processed_manifest(data_root, stem)
     _update_augmentation_manifest(data_root, stem, canonical, legacy)
 
 

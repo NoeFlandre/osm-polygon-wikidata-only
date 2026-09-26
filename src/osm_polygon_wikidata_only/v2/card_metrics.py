@@ -166,7 +166,7 @@ def _compute_v1_comparison(
         return _V1Comparison()
     baseline = _load_v1_baseline(v1_processed)
     polygon_comparison = _compare_polygon_sources(files, metrics, baseline)
-    document_comparison = _compare_document_content(files, metrics, baseline)
+    document_comparison = _compare_document_content(files, baseline)
     unique_sections = _compare_unique_sections(files, v1_processed)
     new_polygon_ids = metrics.polygon_ids - baseline.polygon_ids
     new_document_ids = metrics.document_ids - baseline.document_ids
@@ -218,7 +218,6 @@ def _compare_polygon_sources(
 
 def _compare_document_content(
     files: _CardFiles,
-    metrics: _CardMetrics,
     baseline: _V1Baseline,
 ) -> tuple[int, int]:
     v2_words = _unique_numeric_values(

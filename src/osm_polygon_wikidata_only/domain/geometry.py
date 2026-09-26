@@ -59,7 +59,7 @@ def _rings(geom: dict[str, Any]) -> list[list[list[float]]]:
 
 
 def _ring_signed_area_and_centroid(
-    ring: list[list[float]], lat0_rad: float, cos_lat0: float
+    ring: list[list[float]], cos_lat0: float
 ) -> tuple[float, float, float, float]:
     """Compute signed area and projected centroid accumulators for one ring.
 
@@ -117,8 +117,8 @@ def _area_and_centroid_for_geom(
     if not rings:
         raise GeometryError("Geometry has no rings.")
 
-    ref_lat, lat0_rad, cos_lat0 = _projection_for_rings(rings)
-    total_cross, total_sx, total_sy = _ring_moments(rings, lat0_rad, cos_lat0)
+    ref_lat, _lat0_rad, cos_lat0 = _projection_for_rings(rings)
+    total_cross, total_sx, total_sy = _ring_moments(rings, cos_lat0)
 
     # ``total_cross`` is 2 * signed_area_in_m2.
     signed_area_m2 = 0.5 * total_cross
@@ -138,10 +138,8 @@ def _projection_for_rings(rings: list[list[list[float]]]) -> tuple[float, float,
     return ref_lat, lat0_rad, cos_lat0 if abs(cos_lat0) >= 1e-12 else 1e-12
 
 
-def _ring_moments(
-    rings: list[list[list[float]]], lat0_rad: float, cos_lat0: float
-) -> tuple[float, float, float]:
-    moments = [_ring_signed_area_and_centroid(ring, lat0_rad, cos_lat0) for ring in rings]
+def _ring_moments(rings: list[list[list[float]]], cos_lat0: float) -> tuple[float, float, float]:
+    moments = [_ring_signed_area_and_centroid(ring, cos_lat0) for ring in rings]
     return (
         sum(moment[0] for moment in moments),
         sum(moment[1] for moment in moments),

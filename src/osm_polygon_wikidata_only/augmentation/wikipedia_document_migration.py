@@ -472,7 +472,7 @@ def _existing_document_plan(
         )
     try:
         document_table = pq.read_table(doc_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any unreadable parquet blocks the stem instead of aborting
         return _blocked_plan(
             stem,
             f"unreadable document file ({type(exc).__name__})",

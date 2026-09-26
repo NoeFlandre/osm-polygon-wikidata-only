@@ -94,7 +94,7 @@ class EnrichmentHeartbeat:
                     f"Wikipedia {snapshot.sites_completed}/{snapshot.sites_total} sites, "
                     f"{snapshot.articles_attempted} articles attempted"
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- heartbeat thread must never crash the run
                 self._debug(f"Enrichment heartbeat stopped: {error}")
                 self._stop.set()
                 return

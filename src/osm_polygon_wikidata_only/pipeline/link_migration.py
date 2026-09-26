@@ -136,7 +136,7 @@ def _read_table(path: Path) -> pa.Table:
 def _read_table_safely(path: Path) -> pa.Table | None:
     try:
         return _read_table(path)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any unreadable table is treated as absent
         return None
 
 
@@ -229,7 +229,7 @@ def _legacy_stem_plan(
     docs_table = _read_table(docs_path)
     try:
         canonical_rows = _build_canonical_rows(stem, legacy_table, polygons_table, docs_table)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any conversion failure blocks the stem instead of aborting
         return _blocked_stem(stem, f"legacy conversion failed: {exc}", fingerprints)
     canonical_table = pa.Table.from_pylist(canonical_rows, schema=polygon_document_link_schema())
     return StemPlan(

@@ -52,7 +52,7 @@ def build_hf_http_client(
 
 def configure_hf_http_transport(*, _set_factory: Any = None) -> None:
     """Install the bounded client factory once for this process."""
-    global _configured
+    global _configured  # noqa: PLW0603 -- process-wide one-shot configuration flag
     with _lock:
         if _configured:
             return

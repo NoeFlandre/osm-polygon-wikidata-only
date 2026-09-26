@@ -25,7 +25,7 @@ class _RenderedTextParser(HTMLParser):
         self.parts: list[str] = []
         self._ignored_depth = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002 -- HTMLParser override signature
         if tag in self._IGNORED:
             self._ignored_depth += 1
         elif tag in {"br", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr"}:

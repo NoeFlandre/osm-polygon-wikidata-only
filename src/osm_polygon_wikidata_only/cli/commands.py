@@ -175,7 +175,7 @@ def _refresh_repository_metadata(
     # broad, unstable set of types. The documented behavior is to report
     # the refresh as a failed upload and keep its marker for the next run,
     # never to escape the caller's ``finally`` block.
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- documented fail-soft refresh, see comment above
         LOGGER.error("Repository metadata refresh failed: %s", error)
         return [f"Refresh repository metadata and maps: {error}"]
     if not dry_run:

@@ -151,8 +151,8 @@ class HfHubSentencePublisher(_HfHubSentencePublisher):
             cache_dir=cache_dir,
             # Resolve these names when the operation runs so the historical
             # controller-level monkeypatch seams remain usable after init.
-            upload_function=lambda *args, **kwargs: upload_files(*args, **kwargs),
-            download_function=lambda *args, **kwargs: _download_hf_file(*args, **kwargs),
+            upload_function=lambda *args, **kwargs: upload_files(*args, **kwargs),  # noqa: PLW0108 -- late binding keeps the monkeypatch seam
+            download_function=lambda *args, **kwargs: _download_hf_file(*args, **kwargs),  # noqa: PLW0108 -- late binding keeps the monkeypatch seam
         )
 
 

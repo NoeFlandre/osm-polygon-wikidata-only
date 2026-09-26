@@ -78,7 +78,7 @@ class StreamingStats:
         self._languages.add(a.language)
         self._total_chars += a.article_length_chars
 
-    def add_link(self, link: PolygonArticleLink) -> None:
+    def add_link(self, link: PolygonArticleLink) -> None:  # noqa: ARG002 -- collector interface: only the count is tracked
         self._links_count += 1
 
     def finalize(self) -> ManifestStats:

@@ -164,7 +164,7 @@ def _fetch_one(row: dict[str, Any], section_client: SectionClient) -> list[dict[
 def _future_result(future: Future[list[dict[str, Any]]]) -> list[dict[str, Any]] | Exception:
     try:
         return future.result()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- exception is returned to the caller, which re-raises it
         return error
 
 
