@@ -188,7 +188,18 @@ def _canonical_stem_plan(
     fingerprints: tuple[str, str, str],
 ) -> StemPlan:
     """Validate and describe an already canonical link table."""
-    links_table = _read_table(links_path)
+    try:
+        links_table = _read_table(links_path)
+    except (OSError, pa.ArrowInvalid) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOGGER.warning(
+            "Could not read canonical polygon_articles data at %s: %s", links_path, detail
+        )
+        return _blocked_stem(
+            stem,
+            f"polygon_articles file unreadable: {detail}",
+            fingerprints,
+        )
     if not is_canonical_table_schema(links_table):
         return _blocked_stem(
             stem,
@@ -215,15 +226,38 @@ def _legacy_stem_plan(
     fingerprints: tuple[str, str, str],
 ) -> StemPlan:
     """Convert a legacy table in memory and describe its planned result."""
-    legacy_table = _read_table(links_path)
-    polygons_table = _read_table(polygons_path)
+    try:
+        legacy_table = _read_table(links_path)
+    except (OSError, pa.ArrowInvalid) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOGGER.warning("Could not read legacy polygon_articles data at %s: %s", links_path, detail)
+        return _blocked_stem(
+            stem,
+            f"polygon_articles file unreadable: {detail}",
+            fingerprints,
+        )
+    try:
+        polygons_table = _read_table(polygons_path)
+    except (OSError, pa.ArrowInvalid) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOGGER.warning("Could not read polygon data at %s: %s", polygons_path, detail)
+        return _blocked_stem(stem, f"polygons file unreadable: {detail}", fingerprints)
     if not docs_path.is_file():
         return _blocked_stem(
             stem,
             "legacy schema requires wikipedia/documents/<stem>.parquet",
             fingerprints,
         )
-    docs_table = _read_table(docs_path)
+    try:
+        docs_table = _read_table(docs_path)
+    except (OSError, pa.ArrowInvalid) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOGGER.warning("Could not read wikipedia document data at %s: %s", docs_path, detail)
+        return _blocked_stem(
+            stem,
+            f"wikipedia documents file unreadable: {detail}",
+            fingerprints,
+        )
     try:
         canonical_rows = _build_canonical_rows(stem, legacy_table, polygons_table, docs_table)
     except Exception as exc:  # noqa: BLE001 -- any conversion failure blocks the stem instead of aborting

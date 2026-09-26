@@ -70,15 +70,20 @@ def test_wikidata_facade_preserves_public_clients() -> None:
     from osm_polygon_wikidata_only.enrichment.wikidata.transport import (
         InMemoryWikidataClient as FocusedInMemoryClient,
     )
+    from osm_polygon_wikidata_only.enrichment.wikidata.transport import (
+        WikidataError as FocusedWikidataError,
+    )
     from osm_polygon_wikidata_only.enrichment.wikidata_client import (
         CachedWikidataClient,
         HttpWikidataClient,
         InMemoryWikidataClient,
+        WikidataError,
     )
 
     assert HttpWikidataClient is FocusedHttpClient
     assert InMemoryWikidataClient is FocusedInMemoryClient
     assert CachedWikidataClient is FocusedCachedClient
+    assert WikidataError is FocusedWikidataError
 
 
 def test_wikidata_facade_preserves_public_parsing_helpers() -> None:
