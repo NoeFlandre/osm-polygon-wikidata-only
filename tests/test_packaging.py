@@ -42,8 +42,13 @@ def test_project_uses_ty_as_its_only_static_type_checker() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     development = config["dependency-groups"]["dev"]
+    locked = _locked_versions(root / "uv.lock")
+    ty_pins = [
+        dependency.partition("==")[2] for dependency in development if dependency.startswith("ty==")
+    ]
 
-    assert "ty==0.0.64" in development
+    assert len(ty_pins) == 1
+    assert ty_pins[0] == locked["ty"]
     assert not any(dependency.startswith("mypy") for dependency in development)
     assert "mypy" not in config["tool"]
 
@@ -87,9 +92,10 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     assert config["project"]["optional-dependencies"]["sentence-splitting"] == [
         "wtpsplit[onnx-cpu]==2.2.1"
     ]
+    locked = _locked_versions(Path(__file__).parents[1] / "uv.lock")
     assert config["project"]["optional-dependencies"]["sentence-splitting-gpu"] == [
         "wtpsplit[onnx-gpu]==2.2.1",
-        "onnxruntime-gpu[cuda,cudnn]==1.29.0",
+        f"onnxruntime-gpu[cuda,cudnn]=={locked['onnxruntime-gpu']}",
     ]
 
 
