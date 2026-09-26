@@ -37,6 +37,7 @@ output/
 # Credentials and other private material.
 .env
 .env.*
+!.env.example
 .huggingface/
 .aws/
 *.pem

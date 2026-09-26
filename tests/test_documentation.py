@@ -165,6 +165,7 @@ def test_readme_is_a_concise_first_run_guide_with_factual_project_scope() -> Non
     for target in (
         "docs/architecture.md",
         "docs/api.md",
+        "docs/cli-reference.md",
         "docs/development.md",
         "docs/dataset-snapshot.md",
         "docs/citations/osm-polygon-wikidata-only.cff",

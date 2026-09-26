@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID
 
 README = Path(__file__).resolve().parents[2] / "README.md"
+CLI_REFERENCE = README.parent / "docs/cli-reference.md"
 
 
 def test_version_prints_package_version_and_exits_zero(
@@ -90,7 +91,7 @@ def _subcommands() -> set[str]:
     return set(sub_action.choices)
 
 
-def test_readme_lists_every_subcommand() -> None:
-    text = README.read_text(encoding="utf-8")
+def test_public_cli_docs_list_every_subcommand() -> None:
+    text = "\n".join(path.read_text(encoding="utf-8") for path in (README, CLI_REFERENCE))
     listed = set(re.findall(r"uv run osm-polygon-wikidata-only ([a-z0-9-]+)", text))
     assert _subcommands() <= listed

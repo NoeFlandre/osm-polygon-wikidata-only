@@ -136,6 +136,10 @@ def test_dockerignore_excludes_local_data_secrets_and_presentations() -> None:
         ".DS_Store",
     ):
         assert pattern in dockerignore
+    patterns = dockerignore.splitlines()
+    assert ".env.*" in patterns
+    assert "!.env.example" in patterns
+    assert patterns.index(".env.*") < patterns.index("!.env.example")
 
 
 def test_justfile_documents_safe_docker_targets_and_opt_in_pipeline() -> None:

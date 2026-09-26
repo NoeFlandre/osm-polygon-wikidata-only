@@ -86,6 +86,7 @@ host UID/GID mapping and bind-mount permissions.
 ## Documentation
 
 [Architecture](docs/architecture.md) · [Python API](docs/api.md) ·
+[CLI reference](docs/cli-reference.md) ·
 [Development and Docker](docs/development.md) ·
 [Dataset snapshots](docs/dataset-snapshot.md) ·
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
