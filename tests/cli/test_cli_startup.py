@@ -94,3 +94,34 @@ def test_metadata_cli_invocations_skip_command_implementation_imports(argument: 
         assert not parser_loaded, "--version should not construct the command parser"
     else:
         assert parser_loaded, "--help should use the command parser"
+
+
+def test_app_version_shortcut_reports_the_shared_package_version(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only import __version__
+    from osm_polygon_wikidata_only.cli.app import run
+
+    monkeypatch.setattr(sys, "argv", ["osm-polygon-wikidata-only", "--version"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        run()
+
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == f"osm-polygon-wikidata-only {__version__}\n"
+
+
+def test_app_dispatches_tool_and_regular_command_statuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.cli import app, commands, tools
+
+    monkeypatch.setattr(
+        sys, "argv", ["osm-polygon-wikidata-only", "audit-containment", str(tmp_path)]
+    )
+    monkeypatch.setattr(tools, "dispatch_tool", lambda _args: 17)
+    assert app.run() == 17
+
+    monkeypatch.setattr(tools, "dispatch_tool", lambda _args: None)
+    monkeypatch.setattr(commands, "run_parsed", lambda _parser, _args: 23)
+    assert app.run() == 23
