@@ -206,7 +206,7 @@ def _read_article_table(path: Path, stem: str) -> pa.Table:
     """Read and strictly validate an article parquet file."""
     try:
         table = pq.read_table(path)
-    except Exception as exc:
+    except (OSError, pa.ArrowException) as exc:
         raise MigrationError(
             f"Stem '{stem}': unreadable article file ({type(exc).__name__})"
         ) from exc
@@ -472,7 +472,7 @@ def _existing_document_plan(
         )
     try:
         document_table = pq.read_table(doc_path)
-    except Exception as exc:  # noqa: BLE001 -- any unreadable parquet blocks the stem instead of aborting
+    except (OSError, pa.ArrowException) as exc:
         return _blocked_plan(
             stem,
             f"unreadable document file ({type(exc).__name__})",

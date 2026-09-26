@@ -6,6 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+from huggingface_hub.errors import HfHubHTTPError
+
 from osm_polygon_wikidata_only.hf._uploader.operations import (
     build_hf_api as _build_hf_api,
 )
@@ -56,7 +59,7 @@ class RemoteInventory:
         try:
             files = client.list_repo_files(repo_id=repo_id, repo_type="dataset")
             return cls(set(files))
-        except Exception as error:
+        except (HfHubHTTPError, httpx.HTTPError) as error:
             raise _translate_hf_error(error, repo_id=repo_id) from error
 
     @classmethod
@@ -92,7 +95,7 @@ class RemoteInventory:
                 if (info := _remote_file_info(entry)) is not None
             }
             return cls(set(metadata), metadata)
-        except Exception as error:
+        except (HfHubHTTPError, httpx.HTTPError) as error:
             raise _translate_hf_error(error, repo_id=repo_id) from error
 
     def contains(self, path_in_repo: str) -> bool:

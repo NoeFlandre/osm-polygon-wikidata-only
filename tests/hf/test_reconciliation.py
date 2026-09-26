@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -78,7 +79,7 @@ def test_remote_inventory_fetch_paths_uses_stub_metadata_for_existing_paths() ->
 def test_remote_inventory_fetch_failure() -> None:
     class FailingHub(StubHfHub):
         def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
-            raise RuntimeError("Network timeout")
+            raise httpx.ConnectError("Network timeout")
 
     with pytest.raises(UploadError, match="Network timeout"):
         RemoteInventory.fetch(repo_id="test/repo", hub=FailingHub())
