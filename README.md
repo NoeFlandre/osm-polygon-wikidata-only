@@ -67,19 +67,21 @@ and stay outside the source checkout. `HF_TOKEN` is needed only for an
 explicit Hub upload. Keep credentials in an untracked `.env`, never in source
 control.
 
-The Compose runtime builds the non-root `runtime` target, mounts the data root
-at `/data`, and defaults to `--help`:
+The Compose `pipeline` service builds the non-root `runtime` target, mounts the
+data root at `/data`, and defaults to `--help`:
 
 ```bash
 cp .env.example .env
 mkdir -p ../osm-polygon-data/raw
-docker compose run --rm runtime
-docker compose run --rm runtime sync-dir /data/raw --data-root /data --skip-existing
+docker compose run --rm pipeline --help
+docker compose run --rm pipeline sync-dir /data/raw --data-root /data --skip-existing
 ```
 
 The second command writes locally. Add `--push` only when you intend to
-publish. See the [Docker guide](docs/development.md#docker-compose-runtime)
-for host UID/GID mapping and bind-mount permissions.
+publish. `HF_TOKEN` is passed from the untracked `.env` at runtime; for direct
+`docker run`, use `--env-file .env`. Never bake the token into a Dockerfile or
+image. See the [Docker guide](docs/development.md#docker-compose-runtime) for
+host UID/GID mapping and bind-mount permissions.
 
 ## Documentation
 
@@ -88,11 +90,13 @@ for host UID/GID mapping and bind-mount permissions.
 [Dataset snapshots](docs/dataset-snapshot.md) ·
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-## Citation and licenses
+## Citation
 
 Cite the software with [`CITATION.cff`](CITATION.cff); cite a dataset with its
 versioned metadata file: [V1 citation](docs/citations/osm-polygon-wikidata-only.cff)
 or [V2 citation](docs/citations/osm-polygon-wikidata-and-wikipedia.cff).
+
+## License
 
 The software is licensed under [Apache-2.0](LICENSE). Dataset content has
 source-specific terms: [OpenStreetMap data](https://www.openstreetmap.org/copyright)

@@ -59,17 +59,17 @@ def test_runtime_image_has_current_oci_metadata_and_a_cli_health_check() -> None
     assert 'CMD ["osm-polygon-wikidata-only", "--version"]' in dockerfile
 
 
-def test_compose_runtime_uses_the_safe_runtime_contract() -> None:
+def test_compose_pipeline_uses_the_safe_runtime_contract() -> None:
     compose = yaml.safe_load(_read("compose.yaml"))
-    runtime = compose["services"]["runtime"]
+    pipeline = compose["services"]["pipeline"]
 
-    assert runtime["build"] == {"context": ".", "target": "runtime"}
-    assert runtime["image"] == "osm-polygon-wikidata-only:local"
-    assert runtime["command"] == ["--help"]
-    assert runtime["user"] == "${HOST_UID:-1000}:${HOST_GID:-1000}"
-    assert runtime["env_file"] == [{"path": ".env", "required": False}]
-    assert runtime["environment"]["OSM_POLYGON_DATA_ROOT"] == "/data"
-    assert runtime["volumes"] == [
+    assert pipeline["build"] == {"context": ".", "target": "runtime"}
+    assert pipeline["image"] == "osm-polygon-wikidata-only:local"
+    assert pipeline["command"] == ["--help"]
+    assert pipeline["user"] == "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    assert pipeline["env_file"] == [{"path": ".env", "required": False}]
+    assert pipeline["environment"]["OSM_POLYGON_DATA_ROOT"] == "/data"
+    assert pipeline["volumes"] == [
         {
             "type": "bind",
             "source": "${OSM_POLYGON_DATA_ROOT:-../osm-polygon-data}",
@@ -187,8 +187,12 @@ def test_ci_builds_and_smoke_tests_the_runtime_image() -> None:
 
     assert "run: just quality-gauntlet" in workflow
     assert "docker build --target runtime" in workflow
-    assert "docker compose run --rm --no-deps --network none runtime" in workflow
+    assert "docker compose run --rm --no-deps --network none pipeline --help" in workflow
     assert "docker compose config --quiet" in workflow
+    assert 'HOST_UID="$(id -u)" HOST_GID="$(id -g)"' in workflow
+    assert "--entrypoint /bin/sh pipeline" in workflow
+    assert "touch /data/.compose-writable-check" in workflow
+    assert "touch /data/raw/.compose-readonly-check" in workflow
     assert "smoke-test:" in justfile
     assert "uv run osm-polygon-wikidata-only --help" in justfile
     assert "uv run osm-polygon-wikidata-only sync-dir --help" in justfile
@@ -231,7 +235,7 @@ def test_ci_container_job_runs_development_pytest_and_runtime_help() -> None:
     assert "docker run --rm osm-polygon-wikidata-only:ci-development" in container_job
     assert "docker build --target runtime" in container_job
     assert "docker compose config --quiet" in container_job
-    assert "docker compose run --rm --no-deps --network none runtime" in container_job
+    assert "docker compose run --rm --no-deps --network none pipeline --help" in container_job
     assert "HF_TOKEN" not in container_job
     assert "--push" not in container_job
 

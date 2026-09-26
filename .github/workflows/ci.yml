@@ -75,7 +75,19 @@ jobs:
       - name: Create the Compose bind-mount data root
         run: mkdir -p ../osm-polygon-data/raw
       - name: Smoke-test the Compose default without network access
-        run: docker compose run --rm --no-deps --network none runtime
+        run: docker compose run --rm --no-deps --network none pipeline --help
+      - name: Verify Compose bind-mount permissions without network access
+        run: |
+          HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
+            docker compose run --rm --no-deps --network none \
+              --entrypoint /bin/sh pipeline \
+              -ec 'touch /data/.compose-writable-check
+              if touch /data/raw/.compose-readonly-check 2>/dev/null; then
+                rm -f /data/raw/.compose-readonly-check
+                echo "raw bind mount unexpectedly allows writes" >&2
+                exit 1
+              fi
+              rm /data/.compose-writable-check'
 
   # The single required status check: it fails unless every needed job succeeded.
   all-green:

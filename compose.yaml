@@ -1,5 +1,5 @@
 services:
-  runtime:
+  pipeline:
     image: osm-polygon-wikidata-only:local
     build:
       context: .

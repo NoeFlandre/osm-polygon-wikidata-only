@@ -71,6 +71,21 @@ def test_superpowers_archive_is_removed_ignored_and_not_excluded() -> None:
     assert all("superpowers" not in pattern for pattern in config["exclude_docs"].split())
 
 
+def test_atomic_publication_decision_is_preserved_as_an_adr() -> None:
+    decision_path = REPOSITORY / "docs/adr/0003-atomic-publication-boundary.md"
+    decision = decision_path.read_text(encoding="utf-8")
+
+    assert "# ADR 0003: Atomic publication boundary" in decision
+    assert "- Status: Accepted" in decision
+    for invariant in ("schema", "join", "atomic hugging face commit", "retry"):
+        assert invariant in decision.lower()
+
+    config = yaml.safe_load((REPOSITORY / "mkdocs.yml").read_text(encoding="utf-8"))
+    assert any(
+        "adr/0003-atomic-publication-boundary.md" in entry.values() for entry in config["nav"]
+    )
+
+
 def test_public_docs_never_contain_test_password() -> None:
     documents = [
         REPOSITORY / "README.md",
@@ -159,7 +174,9 @@ def test_readme_is_a_concise_first_run_guide_with_factual_project_scope() -> Non
         assert target in readme
     assert "OSM_POLYGON_DATA_ROOT" in readme
     assert "HF_TOKEN" in readme
-    assert "docker compose run" in readme
+    assert "docker compose run --rm pipeline --help" in readme
+    assert "## Citation\n" in readme
+    assert "## License\n" in readme
     assert "Apache-2.0" in readme
     assert "ODbL 1.0" in readme
     assert "CC0 1.0" in readme

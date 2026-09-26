@@ -48,6 +48,7 @@ nav:
   - Architecture: architecture.md
   - Quality boundary ADR: adr/0001-quality-boundaries.md
   - Language-split contract ADR: adr/0002-language-split-contract.md
+  - Atomic publication ADR: adr/0003-atomic-publication-boundary.md
   - Language-split release: language-splits.md
   - Dataset snapshot: dataset-snapshot.md
   - Development: development.md

@@ -99,7 +99,7 @@ On Linux, the values are `id -u` and `id -g`; Compose environment
 variables can override the example defaults for one command:
 
 ```bash
-HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm runtime
+HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm pipeline --help
 ```
 
 To process local Geofabrik files, place them in `$OSM_POLYGON_DATA_ROOT/raw`
@@ -107,13 +107,15 @@ and override the harmless default command:
 
 ```bash
 HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
-  docker compose run --rm runtime sync-dir /data/raw --data-root /data --skip-existing
+  docker compose run --rm pipeline sync-dir /data/raw --data-root /data --skip-existing
 ```
 
 Set `HF_TOKEN` in `.env` only when a command explicitly includes `--push`.
-The token is not copied into the image, and Compose does not add `--push` to
-commands. The image's health check runs the local CLI version command; it does
-not contact Hugging Face, Wikimedia, or another service.
+Compose passes it through the optional `env_file` at runtime. For direct
+`docker run`, pass it with `--env-file .env`; never bake it into a Dockerfile
+or image. Compose does not add `--push` to commands. The image's health check
+runs the local CLI version command; it does not contact Hugging Face,
+Wikimedia, or another service.
 
 To run the opt-in workflow, provide a host data root containing `raw/`:
 
