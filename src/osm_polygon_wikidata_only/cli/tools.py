@@ -15,7 +15,6 @@ import typer
 
 from osm_polygon_wikidata_only.cli import audit_containment, audit_remote, enforce_integrity
 from osm_polygon_wikidata_only.cli.grid5000 import run_grid5000
-from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID
 
 
@@ -32,6 +31,14 @@ def _run_audit_remote(args: argparse.Namespace) -> int:
 
 
 def _run_trackio_snapshot(args: argparse.Namespace) -> int:
+    # Imported lazily: the snapshot modules pull in numpy/matplotlib, which
+    # must not load at CLI import time (mutmut re-imports the CLI module and
+    # numpy cannot be loaded twice in one process).
+    from osm_polygon_wikidata_only.hf import (  # noqa: PLC0415
+        trackio_snapshot,
+        v2_trackio_snapshot,
+    )
+
     if args.dataset_version == "v2":
         space_id = args.space_id or V2_TRACKIO_SPACE_ID
         return _typer_status(

@@ -12,6 +12,7 @@ import typer
 
 from osm_polygon_wikidata_only.cli import commands, parser, tools
 from osm_polygon_wikidata_only.cli.parser import build_parser
+from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID
 
 README = Path(__file__).resolve().parents[2] / "README.md"
@@ -62,9 +63,9 @@ def test_audit_remote_subcommand_forwards_options(monkeypatch: pytest.MonkeyPatc
 @pytest.mark.parametrize(
     ("argv", "module", "space_id"),
     [
-        ([], tools.trackio_snapshot, tools.trackio_snapshot.TRACKIO_SPACE_ID),
-        (["--dataset-version", "v2"], tools.v2_trackio_snapshot, V2_TRACKIO_SPACE_ID),
-        (["--space-id", "me/space"], tools.trackio_snapshot, "me/space"),
+        ([], trackio_snapshot, trackio_snapshot.TRACKIO_SPACE_ID),
+        (["--dataset-version", "v2"], v2_trackio_snapshot, V2_TRACKIO_SPACE_ID),
+        (["--space-id", "me/space"], trackio_snapshot, "me/space"),
     ],
 )
 def test_trackio_snapshot_subcommand_selects_the_dataset_version(
