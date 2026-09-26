@@ -11,6 +11,7 @@ export RUFF_CACHE_DIR := absolute_path(env_var_or_default("RUFF_CACHE_DIR", QUAL
 export HYPOTHESIS_STORAGE_DIRECTORY := absolute_path(env_var_or_default("HYPOTHESIS_STORAGE_DIRECTORY", QUALITY_CACHE_DIR + "/hypothesis"))
 export MPLCONFIGDIR := absolute_path(env_var_or_default("MPLCONFIGDIR", QUALITY_CACHE_DIR + "/matplotlib"))
 export UV_PYTHON_INSTALL_DIR := absolute_path(env_var_or_default("UV_PYTHON_INSTALL_DIR", QUALITY_CACHE_DIR + "/python"))
+COVERAGE_FLOOR_EXEMPTIONS := ""
 MUTMUT_MAX_CHILDREN := env_var_or_default("MUTMUT_MAX_CHILDREN", "2")
 
 default:
@@ -58,6 +59,13 @@ coverage: quality-runtime
 
 tests: quality-runtime
     COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile
+
+# Per-file line-coverage floor over the root coverage produced by `just tests`.
+# Exemptions are thin entry points that only run in a subprocess, where
+# in-process coverage cannot observe them.
+coverage-floor: quality-runtime
+    @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
+    uv run python scripts/quality/coverage_floor.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --minimum 85 {{ COVERAGE_FLOOR_EXEMPTIONS }}
 
 property-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property

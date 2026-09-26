@@ -175,6 +175,7 @@ just baseline
 just ruff
 just ty
 just tests
+just coverage-floor
 just property-tests
 just acceptance-tests
 just architecture-checks
@@ -183,6 +184,10 @@ just mutation
 just smoke-test
 just diff-review
 ```
+
+`just coverage-floor` reads the root `coverage.json` written by `just tests`
+and fails when any measured file is below 85% line coverage, so a healthy
+aggregate cannot hide a barely exercised module.
 
 `just property-tests` runs deterministic Hypothesis properties for lossless
 sentence routing and batch-boundary invariance. `just acceptance-tests` runs
