@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import sys
 
+from osm_polygon_wikidata_only.version import PACKAGE_VERSION
+
 
 def run() -> int:
     """Parse the lightweight CLI surface before loading a command handler."""
     if len(sys.argv) > 1 and sys.argv[1] == "--version":
-        from osm_polygon_wikidata_only import __version__ as package_version  # noqa: PLC0415
-
-        print(f"osm-polygon-wikidata-only {package_version}")
+        print(f"osm-polygon-wikidata-only {PACKAGE_VERSION}")
         raise SystemExit(0)
 
     from .parser import build_parser  # noqa: PLC0415

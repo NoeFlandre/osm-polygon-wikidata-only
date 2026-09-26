@@ -14,22 +14,11 @@ Subpackages:
 
 from __future__ import annotations
 
-import sys
+from .version import PACKAGE_VERSION
 
-__all__ = ["__version__", "main"]
+__all__ = ["__version__"]
 
-__version__ = "0.1.0"
+__version__ = PACKAGE_VERSION
 # Public spelling used by implementation modules that need the package version
 # without importing the dunder attribute across module boundaries.
 VERSION = __version__
-
-
-def main() -> int:
-    """Handle the console version flag before importing the CLI package."""
-    if len(sys.argv) > 1 and sys.argv[1] == "--version":
-        sys.stdout.write(f"osm-polygon-wikidata-only {__version__}\n")
-        return 0
-
-    from .cli.app import run  # noqa: PLC0415
-
-    return run()
