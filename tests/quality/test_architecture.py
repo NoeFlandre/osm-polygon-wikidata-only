@@ -54,6 +54,31 @@ def test_resolves_absolute_relative_from_and_nested_imports(tmp_path: Path) -> N
         ("pkg.domain.reader", "pkg.support"),
         ("pkg.domain.reader", "pkg.io.reader"),
     }
+    assert graph["pkg"] == ()
+    assert graph["pkg.domain"] == ()
+
+
+def test_resolves_from_dot_imports_against_the_importing_package(tmp_path: Path) -> None:
+    package_root = _write_package(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "domain/__init__.py": "",
+            "domain/sibling.py": "",
+            "domain/subpackage/__init__.py": "",
+            "domain/subpackage/reader.py": (
+                "from . import sibling\nfrom .. import sibling as parent_sibling\n"
+            ),
+            "domain/subpackage/sibling.py": "",
+        },
+    )
+
+    graph = build_import_graph(package_root, "pkg")
+
+    assert [(edge.source, edge.target) for edge in graph["pkg.domain.subpackage.reader"]] == [
+        ("pkg.domain.subpackage.reader", "pkg.domain.subpackage.sibling"),
+        ("pkg.domain.subpackage.reader", "pkg.domain.sibling"),
+    ]
 
 
 def test_reports_import_cycles_with_a_stable_cycle_rule(tmp_path: Path) -> None:

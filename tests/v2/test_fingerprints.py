@@ -1,8 +1,37 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
+
+
+def test_file_stat_fingerprint_reads_distinct_metadata_from_one_stat_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values = {
+        "st_size": 101,
+        "st_mtime_ns": 202,
+        "st_ctime_ns": 303,
+        "st_ino": 404,
+        "st_dev": 505,
+        "st_birthtime_ns": 606,
+    }
+    calls = 0
+
+    def fake_stat(_path: Path) -> SimpleNamespace:
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+
+    fingerprint = FileStatFingerprint.from_path(tmp_path / "not-created.parquet")
+
+    assert fingerprint == FileStatFingerprint(101, 202, 303, 404, 505, 606)
+    assert calls == 1
 
 
 def test_file_stat_fingerprint_captures_required_metadata(tmp_path: Path) -> None:

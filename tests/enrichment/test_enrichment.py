@@ -28,6 +28,7 @@ from osm_polygon_wikidata_only.enrichment.text_cleaning import (
     normalize_whitespace,
     strip_template_markers,
 )
+from osm_polygon_wikidata_only.enrichment.wikidata.parsing import _language_sitelink_title
 from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     BatchWikidataClient,
     CachedWikidataClient,
@@ -212,6 +213,21 @@ def test_parse_wikidata_entity_drops_non_wikipedia_wikifunctions_sitelink() -> N
     entity = parse_wikidata_entity("Q150", data)
     assert entity is not None
     assert entity.sitelinks == {"enwiki": "Universe"}
+
+
+@pytest.mark.parametrize(
+    ("site", "info", "expected"),
+    [
+        ("enwiki", {"title": "A title"}, "A title"),
+        ("enwiki", {"title": ""}, None),
+        ("enwiki", {}, None),
+        ("commonswiki", {"title": "Not a language article"}, None),
+    ],
+)
+def test_language_sitelink_title_requires_language_wiki_and_nonempty_title(
+    site: str, info: dict[str, object], expected: str | None
+) -> None:
+    assert _language_sitelink_title(site, info) == expected  # type: ignore[arg-type]
 
 
 # --- InMemoryWikidataClient ---------------------------------------------

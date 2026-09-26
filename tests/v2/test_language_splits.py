@@ -1348,6 +1348,20 @@ def test_v2_previous_manifest_reader_requires_utf8(
     assert encodings == ["utf-8"]
 
 
+@pytest.mark.parametrize("payload", [b"{", b"[]", b"null", b"\xff"])
+def test_v2_previous_manifest_reader_ignores_invalid_or_non_object_json(
+    tmp_path: Path, payload: bytes
+) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_bytes(payload)
+
+    assert language_splits._read_previous_manifest(path) is None
+
+
+def test_v2_previous_manifest_reader_ignores_missing_path(tmp_path: Path) -> None:
+    assert language_splits._read_previous_manifest(tmp_path / "missing.json") is None
+
+
 def test_v2_output_directories_are_derived_only_from_owned_paths(tmp_path: Path) -> None:
     destination = tmp_path / "language_splits"
     owned_path = destination / "configuration/lang-en/source.parquet"

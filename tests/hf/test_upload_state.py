@@ -121,6 +121,19 @@ def test_scanned_sequences_only_include_json_and_support_envelope_sequences(
     assert state._scanned_sequence(state_dir) == 11
 
 
+@pytest.mark.parametrize(
+    ("filename", "envelope_sequence"),
+    [("prefix-000007.json", 3), ("000009.json.backup", 4)],
+)
+def test_sequence_scan_uses_envelope_for_noncanonical_filenames(
+    tmp_path: Path, filename: str, envelope_sequence: int
+) -> None:
+    path = tmp_path / filename
+    path.write_text(json.dumps({"sequence": envelope_sequence}), encoding="utf-8")
+
+    assert state._sequence_from_state_path(path) == envelope_sequence
+
+
 @pytest.mark.parametrize("sequence", [0, -1, True, "1"])
 def test_sequence_from_non_numeric_envelope_returns_zero(tmp_path: Path, sequence: object) -> None:
     path = tmp_path / "legacy-id.json"

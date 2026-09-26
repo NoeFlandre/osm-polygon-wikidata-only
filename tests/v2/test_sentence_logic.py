@@ -302,7 +302,7 @@ def test_split_sections_uses_source_text_when_source_hash_is_missing() -> None:
     )
 
 
-@pytest.mark.parametrize(("value", "expected"), [(None, ""), (123, "123")])
+@pytest.mark.parametrize(("value", "expected"), [(None, ""), (123, "123"), (True, "True"), (0, "")])
 def test_split_sections_normalizes_non_string_source_text(value: object, expected: str) -> None:
     section = _section("text-value", "xx", "")
     section["text"] = value
@@ -337,6 +337,13 @@ def test_split_sections_uses_empty_section_id_fallback_for_sentence_id() -> None
 
 def test_normalize_pieces_converts_non_string_model_output() -> None:
     assert _normalize_pieces([123]) == ["123"]  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(("piece", "expected"), [(0, "0"), (False, "False"), (None, "None")])
+def test_normalize_pieces_preserves_falsey_and_none_model_output(
+    piece: object, expected: str
+) -> None:
+    assert _normalize_pieces([piece]) == [expected]  # type: ignore[list-item]
 
 
 def test_split_sections_rejects_model_output_that_loses_source_text() -> None:
