@@ -174,8 +174,7 @@ def legacy_wikipedia_links_to_canonical(
     """Restore Wikipedia rows while preserving Wikivoyage rows exactly."""
     documents_by_article = {str(row["article_id"]): row for row in documents}
     canonical = [dict(row) for row in preserved_wikivoyage_links]
-    for link in links:
-        canonical.append(_canonical_link_row(link, documents_by_article))
+    canonical.extend(_canonical_link_row(link, documents_by_article) for link in links)
     try:
         return validate_polygon_document_links(canonical)
     except (TypeError, ValueError) as error:

@@ -74,7 +74,7 @@ def test_process_failure_does_not_augment_or_complete_later_states(tmp_path: Pat
             process_extracted_pbf=fail,
             augment_region=lambda state: events.append(f"augment:{state.stem}"),
             on_complete=lambda state, _result: events.append(f"complete:{state.stem}"),
-            close_uploads=lambda: [],
+            close_uploads=list,
         )
 
     assert events[0] == "extract:first"

@@ -247,7 +247,7 @@ def missing_link_target(
 ) -> None:
     if canonical_links:
         # A canonical link can outlive its document after an interrupted run.
-        return None
+        return
     raise ScanError(f"polygon_articles references absent {reference_key} {reference_id!r}")
 
 

@@ -56,7 +56,7 @@ class StemAuditResult:
         return {
             "stem": self.stem,
             "state": self.state,
-            "discrepancies": sorted(list(self.discrepancies)),
+            "discrepancies": sorted(self.discrepancies),
             "article_rows": self.article_rows,
             "document_rows": self.document_rows,
             "section_rows": self.section_rows,
@@ -84,7 +84,7 @@ class AuditReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "safe_to_migrate": self.safe_to_migrate,
-            "blocking_reasons": sorted(list(self.blocking_reasons)),
+            "blocking_reasons": sorted(self.blocking_reasons),
             "aggregate_counts": self.aggregate_counts,
             "byte_totals": self.byte_totals,
             "per_stem": self.per_stem,
@@ -95,7 +95,7 @@ class AuditReport:
 def compute_sha256(path: Path) -> str:
     """Compute the SHA-256 hash of a file."""
     hasher = hashlib.sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             hasher.update(chunk)
     return hasher.hexdigest()
@@ -113,8 +113,7 @@ def sanitize_error(e: Exception, data_root: Path) -> str:
     # Mask absolute user and system paths
     err_str = re.sub(r"/Users/[^/\s\)\']+", "USER_HOME", err_str)
     err_str = re.sub(r"/private/var/folders/[^/\s\)\']+", "TEMP_DIR", err_str)
-    err_str = re.sub(r"/var/folders/[^/\s\)\']+", "TEMP_DIR", err_str)
-    return err_str
+    return re.sub(r"/var/folders/[^/\s\)\']+", "TEMP_DIR", err_str)
 
 
 def capture_dataset_fingerprint(data_root: Path) -> dict[str, dict[str, Any]]:
@@ -159,7 +158,7 @@ def validate_parquet_schema(
     expected_schema = expected_schema_fn()
 
     # Missing columns
-    missing_cols = sorted(list(set(expected_cols) - set(actual_cols)))
+    missing_cols = sorted(set(expected_cols) - set(actual_cols))
     if missing_cols:
         discrepancies.append(f"Missing column(s) in {table_type}: {missing_cols}")
 
@@ -167,11 +166,11 @@ def validate_parquet_schema(
     extra_cols = set(actual_cols) - set(expected_cols)
     if extra_cols:
         if allow_canonical_upgrades:
-            unknown_cols = sorted(list(extra_cols - CANONICAL_UPGRADE_SET))
+            unknown_cols = sorted(extra_cols - CANONICAL_UPGRADE_SET)
             if unknown_cols:
                 discrepancies.append(f"Unknown extra column(s) in {table_type}: {unknown_cols}")
         else:
-            unknown_cols = sorted(list(extra_cols))
+            unknown_cols = sorted(extra_cols)
             discrepancies.append(f"Unknown extra column(s) in {table_type}: {unknown_cols}")
 
     # PyArrow Type Mismatches
@@ -219,11 +218,11 @@ def run_audit(data_root: Path) -> dict[str, Any]:
             for p in d.glob("*.parquet"):
                 stems.add(p.name[:-8])  # strip .parquet
 
-    sorted_stems = sorted(list(stems))
+    sorted_stems = sorted(stems)
     per_stem_results: dict[str, Any] = {}
 
     shared_cols_set = set(ARTICLE_COLUMNS) & set(DOCUMENT_COLUMNS)
-    shared_columns = sorted(list(shared_cols_set))
+    shared_columns = sorted(shared_cols_set)
 
     # Metrics
     article_files_count = 0
@@ -427,7 +426,7 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                 )
 
             if art_ids_set != doc_art_ids_set:
-                diff = sorted(list(art_ids_set ^ doc_art_ids_set))
+                diff = sorted(art_ids_set ^ doc_art_ids_set)
                 stem_discrepancies.append(
                     f"Article ID set mismatch: articles has {len(art_ids_set)} unique, "
                     f"documents has {len(doc_art_ids_set)} unique, symmetric difference: {diff}"
@@ -477,7 +476,7 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                             )
 
                 # Compare shared columns
-                common_ids = sorted(list(art_ids_set & doc_art_ids_set))
+                common_ids = sorted(art_ids_set & doc_art_ids_set)
                 shared_rows_count = len(common_ids)
                 total_shared_rows += shared_rows_count
 
@@ -798,14 +797,14 @@ def run_audit(data_root: Path) -> dict[str, Any]:
         blocking_reasons.append(f"Found {total_discrepancies} schema or metadata discrepancies.")
 
     # Sort blocking reasons deterministically
-    blocking_reasons = sorted(list(set(blocking_reasons)))
+    blocking_reasons = sorted(set(blocking_reasons))
 
     schema_overlap_summary = {
         "articles_columns_count": len(ARTICLE_COLUMNS),
         "documents_columns_count": len(DOCUMENT_COLUMNS),
         "shared_columns_count": len(shared_cols_set),
-        "articles_only_columns": sorted(list(set(ARTICLE_COLUMNS) - set(DOCUMENT_COLUMNS))),
-        "documents_only_columns": sorted(list(set(DOCUMENT_COLUMNS) - set(ARTICLE_COLUMNS))),
+        "articles_only_columns": sorted(set(ARTICLE_COLUMNS) - set(DOCUMENT_COLUMNS)),
+        "documents_only_columns": sorted(set(DOCUMENT_COLUMNS) - set(ARTICLE_COLUMNS)),
     }
 
     aggregate_counts = {

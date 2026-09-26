@@ -226,8 +226,7 @@ def _collect_artifacts(
             if output_path.is_file():
                 paths.append(output_path)
             checkpoint_root = data_root.v2_cache / _CHECKPOINT_DIRECTORY / stem / project
-            for checkpoint_path in sorted(checkpoint_root.glob("metadata.json")):
-                paths.append(checkpoint_path)
+            paths.extend(sorted(checkpoint_root.glob("metadata.json")))
             paths.extend(sorted(checkpoint_root.glob("batch-*.parquet")))
     return sha256_manifest(paths, root=data_root.path)
 

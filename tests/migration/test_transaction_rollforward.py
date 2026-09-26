@@ -179,7 +179,7 @@ def test_manifest_update_failure_is_not_swallowed(tmp_path: Path) -> None:
     """The apply stage's augmentation-manifest update must propagate
     exceptions -- they are NOT logged-and-continued.
     """
-    src = open(link_migration.__file__).read()
+    src = Path(link_migration.__file__).read_text()
     assert "except Exception" not in src or "raise" in src, (
         "link_migration must not swallow manifest-update failures with a broad except + log"
     )

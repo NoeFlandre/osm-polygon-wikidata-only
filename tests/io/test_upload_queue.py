@@ -542,7 +542,7 @@ def test_snapshot_hash_is_computed_after_copy_during_race(tmp_path: Path) -> Non
         # Start the copy, mutate the source mid-stream.
         target.parent.mkdir(parents=True, exist_ok=True)
         # Read-then-write with a race window.
-        with open(source, "rb") as src, open(target, "wb") as dst:
+        with source.open("rb") as src, target.open("wb") as dst:
             chunk = src.read(4)  # Read just part of the file
             source.write_bytes(b"RACED")  # Mutate source mid-copy
             dst.write(chunk)

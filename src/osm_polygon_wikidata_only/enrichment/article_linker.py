@@ -101,7 +101,7 @@ def link_qid(
         return LinkSummary(qid=qid, entity=None)
 
     summary = LinkSummary(qid=qid, entity=entity)
-    allow = {lang for lang in languages} if languages is not None else None
+    allow = set(languages) if languages is not None else None
     _link_entity_articles(
         summary,
         wikipedia_client,
@@ -241,7 +241,7 @@ def _build_site_requests(
     languages: Iterable[str] | None,
 ) -> tuple[dict[SiteKey, list[SiteRequest]], set[str] | None]:
     requests: dict[SiteKey, list[SiteRequest]] = {}
-    allow = {lang for lang in languages} if languages is not None else None
+    allow = set(languages) if languages is not None else None
     for index, summary in enumerate(summaries):
         for key, rows in _summary_site_requests(index, summary, allow).items():
             requests.setdefault(key, []).extend(rows)

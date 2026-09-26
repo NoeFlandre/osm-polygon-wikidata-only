@@ -216,8 +216,4 @@ def _boundary_points(boundary: object) -> list[tuple[float, float]]:
     if not boundary:
         return []
     pairs = cast(Sequence[Sequence[float]], boundary)
-    points: list[tuple[float, float]] = []
-    for pair in pairs:
-        if len(pair) >= 2:
-            points.append((float(pair[1]), float(pair[0])))
-    return points
+    return [(float(pair[1]), float(pair[0])) for pair in pairs if len(pair) >= 2]

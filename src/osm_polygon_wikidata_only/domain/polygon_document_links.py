@@ -221,8 +221,7 @@ def build_polygon_document_links(
     for doc in list(wikipedia_documents) + list(wikivoyage_documents):
         _validate_document(doc)
         qid = str(doc["wikidata"])
-        for polygon_fields in by_qid.get(qid, ()):
-            links.append(_build_link_row(polygon_fields, doc))
+        links.extend(_build_link_row(polygon_fields, doc) for polygon_fields in by_qid.get(qid, ()))
     return validate_polygon_document_links(links)
 
 

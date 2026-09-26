@@ -196,7 +196,7 @@ def _build_processed_dir(
 
 def _file_sha256(path: Path) -> str:
     hasher = hashlib.sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             hasher.update(chunk)
     return hasher.hexdigest()

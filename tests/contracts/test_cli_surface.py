@@ -63,7 +63,7 @@ def _flag_names(parser: argparse.ArgumentParser) -> set[str]:
     flags: set[str] = set()
     for action in parser._actions:
         flags.update(action.option_strings)
-        for sub_action in getattr(action, "_get_kwargs_actions", lambda: [])():
+        for sub_action in getattr(action, "_get_kwargs_actions", list)():
             flags.update(getattr(sub_action, "option_strings", []))
     sub_action = next(
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)

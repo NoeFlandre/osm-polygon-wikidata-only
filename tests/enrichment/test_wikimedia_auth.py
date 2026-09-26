@@ -650,7 +650,7 @@ def test_session_uses_authenticated_pacing_only_for_verified_hosts() -> None:
         min_interval_authenticated_s=0.05,
     )
 
-    by_host = {host: interval for host, interval in observed}
+    by_host = dict(observed)
     # ru.wikipedia.org rejected authentication -> anonymous pacing (0.5).
     assert by_host["ru.wikipedia.org"] == 0.5
     # en.wikipedia.org verified authentication -> authenticated pacing (0.05).

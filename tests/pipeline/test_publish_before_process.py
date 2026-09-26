@@ -36,7 +36,7 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 
 def compute_sha256(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()

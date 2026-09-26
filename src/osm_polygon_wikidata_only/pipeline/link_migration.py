@@ -587,8 +587,7 @@ def _load_processed_entries(path: Path) -> dict[str, dict[str, Any]]:
     """Read processed PBF entries, refusing malformed existing state."""
     if not path.is_file():
         return {}
-    payload = _load_json_object(path, "processed_pbfs.json")
-    return payload
+    return _load_json_object(path, "processed_pbfs.json")
 
 
 def _new_processed_entry(

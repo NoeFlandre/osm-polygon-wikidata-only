@@ -66,8 +66,7 @@ def clean_article_text(text: str) -> str:
     """
     out = normalize_unicode(text)
     out = strip_template_markers(out)
-    out = normalize_whitespace(out)
-    return out
+    return normalize_whitespace(out)
 
 
 def html_to_plain_text(html: str) -> str:

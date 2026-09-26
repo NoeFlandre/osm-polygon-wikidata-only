@@ -121,10 +121,10 @@ def _run_simulation(
     all_hosts = [*_HOSTS_HEALTHY, _HOST_BAD]
     if include_anon_host:
         all_hosts.append(_HOST_ANON)
-    completions: dict[str, int] = {host: 0 for host in all_hosts}
+    completions: dict[str, int] = dict.fromkeys(all_hosts, 0)
     bad_counter = [0]
     workers = all_hosts
-    host_min_interval = {h: _AUTH_MIN_INTERVAL_S for h in _HOSTS_HEALTHY}
+    host_min_interval = dict.fromkeys(_HOSTS_HEALTHY, _AUTH_MIN_INTERVAL_S)
     host_min_interval[_HOST_BAD] = _AUTH_MIN_INTERVAL_S
     if include_anon_host:
         host_min_interval[_HOST_ANON] = _ANON_MIN_INTERVAL_S
@@ -453,8 +453,8 @@ def test_production_topology_proportional_vs_fixed_improvement(tmp_path) -> None
     for host in all_hosts:
         sched_fixed.pace_host(host, min_interval_s=0.0)
 
-    completions_fixed: dict[str, int] = {h: 0 for h in all_hosts}
-    bad_counter_fixed: dict[str, int] = {h: 0 for h in throttled_hosts}
+    completions_fixed: dict[str, int] = dict.fromkeys(all_hosts, 0)
+    bad_counter_fixed: dict[str, int] = dict.fromkeys(throttled_hosts, 0)
     idx = 0
     while clock_fixed.now() < _SIM_DURATION_S:
         host = all_hosts[idx % len(all_hosts)]
@@ -499,8 +499,8 @@ def test_production_topology_proportional_vs_fixed_improvement(tmp_path) -> None
     for host in all_hosts:
         sched_prop.pace_host(host, min_interval_s=0.0)
 
-    completions_prop: dict[str, int] = {h: 0 for h in all_hosts}
-    bad_counter_prop: dict[str, int] = {h: 0 for h in throttled_hosts}
+    completions_prop: dict[str, int] = dict.fromkeys(all_hosts, 0)
+    bad_counter_prop: dict[str, int] = dict.fromkeys(throttled_hosts, 0)
     idx = 0
     while clock_prop.now() < _SIM_DURATION_S:
         host = all_hosts[idx % len(all_hosts)]

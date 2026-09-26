@@ -199,20 +199,18 @@ def load_ledger(path: Path) -> list[RejectionRecord]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if raw.get("contract_version") != LEDGER_CONTRACT_VERSION:
         raise ValueError(f"Invalid ledger contract version: {raw.get('contract_version')!r}")
-    out: list[RejectionRecord] = []
-    for entry in raw.get("records", []):
-        out.append(
-            RejectionRecord(
-                shard=entry["shard"],
-                source_table=entry["source_table"],
-                identifier=entry["identifier"],
-                wikidata=entry["wikidata"],
-                expected=entry.get("expected"),
-                reason=entry["reason"],
-                cascaded_sections=int(entry.get("cascaded_sections", 0)),
-            )
+    return [
+        RejectionRecord(
+            shard=entry["shard"],
+            source_table=entry["source_table"],
+            identifier=entry["identifier"],
+            wikidata=entry["wikidata"],
+            expected=entry.get("expected"),
+            reason=entry["reason"],
+            cascaded_sections=int(entry.get("cascaded_sections", 0)),
         )
-    return out
+        for entry in raw.get("records", [])
+    ]
 
 
 def merge_ledger_files(sources: Iterable[Path], target: Path) -> None:
@@ -227,8 +225,7 @@ def merge_ledger_files(sources: Iterable[Path], target: Path) -> None:
     for source in sources:
         if not source.is_file():
             continue
-        for record in load_ledger(source):
-            records.append(record)
+        records.extend(load_ledger(source))
     merged = merge_records(records)
     save_ledger(target, merged)
 

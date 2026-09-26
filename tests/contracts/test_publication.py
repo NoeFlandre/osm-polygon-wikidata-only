@@ -1076,7 +1076,7 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
         build_upload_files=_build_region_publication,
         commit_message=lambda state: f"Sync complete region {state.stem}",
         submit_upload=_submit_upload,
-        close_uploads=lambda: [],
+        close_uploads=list,
     )
     # The submission-COUNT contract is the regression: the runner
     # must submit EXACTLY once per region. ``rc`` is unrelated.

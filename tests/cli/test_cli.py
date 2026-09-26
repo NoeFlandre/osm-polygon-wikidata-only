@@ -778,7 +778,7 @@ def _marker(stems: list[str]) -> dict[str, object]:
     """Return a metadata-refresh marker payload shaped like the real one."""
     return {
         "stems": sorted(stems),
-        "fingerprint_hashes": {stem: "a" * 64 for stem in sorted(stems)},
+        "fingerprint_hashes": dict.fromkeys(sorted(stems), "a" * 64),
     }
 
 

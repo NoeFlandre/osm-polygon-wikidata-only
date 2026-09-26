@@ -355,13 +355,12 @@ def _compute_uncached_stats(processed_root: Path) -> CombinedLanguageStats:
     polygon_counts = Counter(
         {language: len(polygon_ids) for language, polygon_ids in polygons_by_language.items()}
     )
-    result = CombinedLanguageStats(
+    return CombinedLanguageStats(
         document_count=len(documents),
         language_count=len(document_counts),
         documents_per_language=_sorted_counts(document_counts),
         polygons_per_language=_sorted_counts(polygon_counts),
     )
-    return result
 
 
 __all__ = ["compute_combined_language_stats"]

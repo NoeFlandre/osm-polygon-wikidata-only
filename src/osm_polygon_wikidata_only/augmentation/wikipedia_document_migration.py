@@ -675,12 +675,10 @@ def plan_migration(processed_dir: Path, stems: set[str] | None = None) -> Migrat
     MigrationPlan
         Immutable, validated plan with per-stem classifications.
     """
-    stems_data: list[StemPlan] = []
     discovered = _discover_all_stems(processed_dir)
     if stems is not None:
         discovered = [s for s in discovered if s in stems]
-    for stem in discovered:
-        stems_data.append(_classify_stem(stem, processed_dir))
+    stems_data = [_classify_stem(stem, processed_dir) for stem in discovered]
 
     return MigrationPlan(
         processed_dir=processed_dir,
