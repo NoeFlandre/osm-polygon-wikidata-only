@@ -1894,7 +1894,7 @@ dev = [
 requires-dist = [
     { name = "h3", specifier = ">=4.5.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "huggingface-hub", specifier = ">=1.22.0" },
+    { name = "huggingface-hub", specifier = ">=1.32.0" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "onnxruntime-gpu", extras = ["cuda", "cudnn"], marker = "extra == 'sentence-splitting-gpu'", specifier = "==1.30.0" },
     { name = "osmium", specifier = ">=4.3.1" },
