@@ -231,7 +231,13 @@ def _manifest_entries(manifest: Path, payload: dict[str, Any]) -> list[tuple[str
 def _refuse_duplicate_stems(manifest: Path, entries: list[tuple[str, int]]) -> None:
     """Two source keys must never collapse onto one polygon file."""
     seen: set[str] = set()
-    duplicates = sorted({stem for stem, _ in entries if stem in seen or seen.add(stem)})
+    duplicate_stems: set[str] = set()
+    for stem, _ in entries:
+        if stem in seen:
+            duplicate_stems.add(stem)
+        else:
+            seen.add(stem)
+    duplicates = sorted(duplicate_stems)
     if duplicates:
         raise PolygonStatsInputError(
             f"Processed manifest maps several sources to one polygon file "
