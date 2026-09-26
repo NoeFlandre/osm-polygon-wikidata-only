@@ -521,7 +521,7 @@ def _sidecar_document_table(
         )
     try:
         source_table = pq.read_table(articles_path)
-    except Exception as exc:
+    except (OSError, pa.ArrowException) as exc:
         raise ValueError(
             f"Failed to read core article Parquet from {articles_path}: {exc}"
         ) from exc

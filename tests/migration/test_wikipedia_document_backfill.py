@@ -487,6 +487,50 @@ class TestPlanningBlockers:
         assert sp.operation == MigrationOperation.BLOCKED
         assert "unreadable" in sp.reason.lower()
 
+    def test_unexpected_article_reader_errors_propagate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import osm_polygon_wikidata_only.augmentation.wikipedia_document_migration as migration
+
+        processed = _build_processed_dir(
+            tmp_path,
+            articles={"stem-a": [_make_article_row()]},
+        )
+        original_read = pq.read_table
+
+        def fail_for_article(path: str | Path, *args: Any, **kwargs: Any) -> pa.Table:
+            if Path(path).parent.name == "articles":
+                raise RuntimeError("unexpected article reader bug")
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(migration.pq, "read_table", fail_for_article)
+
+        with pytest.raises(RuntimeError, match="unexpected article reader bug"):
+            plan_migration(processed)
+
+    def test_unexpected_document_reader_errors_propagate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import osm_polygon_wikidata_only.augmentation.wikipedia_document_migration as migration
+
+        article = _make_article_row()
+        processed = _build_processed_dir(
+            tmp_path,
+            articles={"stem-a": [article]},
+            documents={"stem-a": _make_legacy_document_table([article])},
+        )
+        original_read = pq.read_table
+
+        def fail_for_document(path: str | Path, *args: Any, **kwargs: Any) -> pa.Table:
+            if Path(path).parent.name == "documents":
+                raise RuntimeError("unexpected document reader bug")
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(migration.pq, "read_table", fail_for_document)
+
+        with pytest.raises(RuntimeError, match="unexpected document reader bug"):
+            plan_migration(processed)
+
     def test_shared_value_conflict_blocks(self, tmp_path: Path) -> None:
         row = _make_article_row()
         legacy_table = _make_legacy_document_table([row])

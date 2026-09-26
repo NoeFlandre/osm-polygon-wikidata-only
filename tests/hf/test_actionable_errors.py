@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -110,7 +111,7 @@ def test_remote_inventory_failure_raises_sanitized_error() -> None:
     class FailingHub(StubHfHub):
         def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
             # Simulate HF 401 with a body that includes sensitive-looking content
-            raise RuntimeError(
+            raise httpx.HTTPError(
                 "401 Unauthorized: token=hf_secretXYZ; request_id=abc-123; "
                 "body={u'error': u'invalid user token'}"
             )
@@ -136,7 +137,7 @@ def test_remote_inventory_failure_preserves_chaining() -> None:
 
     class FailingHub(StubHfHub):
         def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
-            raise ConnectionError("connection refused")
+            raise httpx.ConnectError("connection refused")
 
     with pytest.raises(Exception) as excinfo:
         RemoteInventory.fetch(repo_id="user/repo", hub=FailingHub())
@@ -149,7 +150,7 @@ def test_remote_inventory_failure_message_does_not_contain_user_paths() -> None:
 
     class FailingHub(StubHfHub):
         def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
-            raise RuntimeError(
+            raise httpx.HTTPError(
                 "OSError: [Errno 2] No such file or directory: '/Users/alice/private/x.json'"
             )
 

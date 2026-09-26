@@ -13,9 +13,15 @@ from rich.table import Table
 from tqdm import tqdm
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import augmentation_is_current
-from osm_polygon_wikidata_only.config.paths import DataRoot, repository_root, resolve_data_root
+from osm_polygon_wikidata_only.config.paths import (
+    DataRoot,
+    DataRootError,
+    repository_root,
+    resolve_data_root,
+)
 from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlan, ReconciliationPlanner
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.uploader import UploadError
 
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 CORPORA = (
@@ -96,7 +102,7 @@ def _resolve_root(console: Console, data_root: Path | None) -> DataRoot:
     repo_root = repository_root()
     try:
         return resolve_data_root(data_root, repo_root=repo_root)
-    except Exception as error:  # noqa: BLE001 -- CLI boundary reports any failure and exits 1
+    except (DataRootError, OSError) as error:
         console.print(f"[bold red]Error resolving data root:[/] {error}")
         raise typer.Exit(1) from None
 
@@ -105,7 +111,7 @@ def _fetch_inventory(console: Console, repo_id: str, hf_token: str | None) -> Re
     console.print(f"Fetching remote inventory for [bold]{repo_id}[/]…")
     try:
         return RemoteInventory.fetch(repo_id=repo_id, token=hf_token)
-    except Exception as error:  # noqa: BLE001 -- CLI boundary reports any failure and exits 1
+    except UploadError as error:
         console.print(f"[bold red]Failed to fetch remote inventory:[/] {error}")
         raise typer.Exit(1) from None
 
@@ -136,7 +142,7 @@ def _build_plan(
             stems=set(local_stems),
             augmentation_current=augmentation_current,
         ).plan()
-    except Exception as error:  # noqa: BLE001 -- CLI boundary reports any failure and exits 1
+    except (OSError, ValueError) as error:
         console.print(f"[bold red]Failed to compute reconciliation plan:[/] {error}")
         raise typer.Exit(1) from None
 
