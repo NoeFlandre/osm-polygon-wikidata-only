@@ -11,6 +11,7 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from osm_polygon_wikidata_only.config.defaults import (
     DEFAULT_BATCH_SIZE,
@@ -149,10 +150,8 @@ class HfHubSentencePublisher(_HfHubSentencePublisher):
             repo_id,
             token=token,
             cache_dir=cache_dir,
-            # Resolve these names when the operation runs so the historical
-            # controller-level monkeypatch seams remain usable after init.
-            upload_function=lambda *args, **kwargs: upload_files(*args, **kwargs),
-            download_function=lambda *args, **kwargs: _download_hf_file(*args, **kwargs),
+            upload_function=_upload_files_at_call_time,
+            download_function=_download_hf_file_at_call_time,
         )
 
 
@@ -223,6 +222,16 @@ def _download_hf_file(
         token=token,
         local_dir=local_dir,
     )
+
+
+def _upload_files_at_call_time(*args: Any, **kwargs: Any) -> str:
+    """Resolve the façade upload seam when publishing, not at construction."""
+    return upload_files(*args, **kwargs)
+
+
+def _download_hf_file_at_call_time(*args: Any, **kwargs: Any) -> Path:
+    """Resolve the façade download seam when verifying, not at construction."""
+    return _download_hf_file(*args, **kwargs)
 
 
 __all__ = [
