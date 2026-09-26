@@ -46,7 +46,7 @@ Dataset = "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only"
 sentence-splitting = ["wtpsplit[onnx-cpu]==2.2.1"]
 sentence-splitting-gpu = [
     "wtpsplit[onnx-gpu]==2.2.1",
-    "onnxruntime-gpu[cuda,cudnn]==1.29.0",
+    "onnxruntime-gpu[cuda,cudnn]==1.30.0",
 ]
 
 [build-system]
@@ -73,8 +73,8 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0,<4",
     "radon>=6.0.1,<7",
-    "ruff>=0.15.20,<0.16",
-    "ty==0.0.64",
+    "ruff>=0.16.8,<0.17",
+    "ty==0.0.83",
     "types-pyyaml>=6.0.12",
 ]
 
