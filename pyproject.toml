@@ -23,11 +23,11 @@ dependencies = [
     "httpx>=0.28.1",
     "matplotlib>=3.11.0",
     "osmium>=4.3.1",
-    "pyarrow>=24.0.0",
+    "pyarrow>=25.0.0",
     "typer>=0.27.0",
     "rich>=15.0.0",
-    "tqdm>=4.68.4",
-    "trackio>=0.34.0,<1",
+    "tqdm>=4.70.0",
+    "trackio>=0.38.0,<1",
 ]
 
 [project.scripts]
@@ -67,7 +67,7 @@ dev = [
     "hypothesis>=6.168.0,<7",
     "pytest-bdd>=8.1.0,<9",
     "mkdocs-material>=9.7.7,<10",
-    "mutmut>=3.7.0,<4",
+    "mutmut>=3.8.0,<4",
     "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
