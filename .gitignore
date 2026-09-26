@@ -48,3 +48,6 @@ data/
 # Local presentation build outputs
 /presentations/captures/
 /presentations/output/
+
+# Historical agent planning archive; durable decisions belong in docs/adr/.
+docs/superpowers/

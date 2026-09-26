@@ -40,7 +40,6 @@ markdown_extensions:
       permalink: true
 
 exclude_docs: |
-  superpowers/**
   .DS_Store
 
 nav:
@@ -50,6 +49,7 @@ nav:
   - Quality boundary ADR: adr/0001-quality-boundaries.md
   - Language-split contract ADR: adr/0002-language-split-contract.md
   - Language-split release: language-splits.md
+  - Dataset snapshot: dataset-snapshot.md
   - Development: development.md
   - V2 sentence splitting: sentence-splitting.md
   - Grid5000 sentence operations: grid5000-sentence-splitting.md

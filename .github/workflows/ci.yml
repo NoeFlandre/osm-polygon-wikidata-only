@@ -69,9 +69,13 @@ jobs:
       - name: Run the development pytest suite
         run: docker run --rm osm-polygon-wikidata-only:ci-development
       - name: Build the non-root runtime image
-        run: docker build --target runtime --tag osm-polygon-wikidata-only:ci .
-      - name: Verify the safe default command
-        run: docker run --rm osm-polygon-wikidata-only:ci --help
+        run: docker build --target runtime --tag osm-polygon-wikidata-only:local .
+      - name: Validate the Compose runtime configuration
+        run: docker compose config --quiet
+      - name: Create the Compose bind-mount data root
+        run: mkdir -p ../osm-polygon-data/raw
+      - name: Smoke-test the Compose default without network access
+        run: docker compose run --rm --no-deps --network none runtime
 
   # The single required status check: it fails unless every needed job succeeded.
   all-green:

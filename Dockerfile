@@ -69,6 +69,12 @@ CMD ["uv", "run", "pytest", "-q", "-m", "not repository"]
 # into the image.
 FROM ${UV_IMAGE} AS runtime
 
+ARG PROJECT_VERSION=0.1.0
+
+LABEL org.opencontainers.image.source="https://github.com/NoeFlandre/osm-polygon-wikidata-only" \
+    org.opencontainers.image.version="${PROJECT_VERSION}" \
+    org.opencontainers.image.licenses="Apache-2.0"
+
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libexpat1 \
     && rm -rf /var/lib/apt/lists/*
@@ -94,3 +100,8 @@ USER app
 # sync/process command to opt into any data work.
 ENTRYPOINT ["osm-polygon-wikidata-only"]
 CMD ["--help"]
+
+# Long-running CLI jobs can report healthy while their version command remains
+# available; this checks the installed runtime without contacting a service.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["osm-polygon-wikidata-only", "--version"]

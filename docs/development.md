@@ -77,6 +77,44 @@ contract with the `/data` volume behind it. The image also runs
 of the build context. Those repository-completeness contracts run in the
 `quality` CI job against a full checkout.
 
+### Docker Compose runtime
+
+The root `compose.yaml` builds the `runtime` target. Its default command is
+`--help`, so starting it does not process data or publish anything. The
+optional `.env` file is loaded only at runtime; start from the example and keep
+the real file private:
+
+```bash
+cp .env.example .env
+mkdir -p ../osm-polygon-data/raw  # bind sources must exist
+```
+
+Set `OSM_POLYGON_DATA_ROOT` in `.env` to an absolute host directory outside the
+source checkout. That directory is used as a bind mount at `/data`; the default
+`../osm-polygon-data` is also outside the checkout. The CLI writes resumable
+state and generated files there. Set `HOST_UID` and `HOST_GID` to the host
+directory owner's numeric IDs so the non-root container can write to the
+mount. Compose overlays the host `raw/` directory as read-only at `/data/raw`.
+On Linux, the values are `id -u` and `id -g`; Compose environment
+variables can override the example defaults for one command:
+
+```bash
+HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm runtime
+```
+
+To process local Geofabrik files, place them in `$OSM_POLYGON_DATA_ROOT/raw`
+and override the harmless default command:
+
+```bash
+HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
+  docker compose run --rm runtime sync-dir /data/raw --data-root /data --skip-existing
+```
+
+Set `HF_TOKEN` in `.env` only when a command explicitly includes `--push`.
+The token is not copied into the image, and Compose does not add `--push` to
+commands. The image's health check runs the local CLI version command; it does
+not contact Hugging Face, Wikimedia, or another service.
+
 To run the opt-in workflow, provide a host data root containing `raw/`:
 
 ```bash

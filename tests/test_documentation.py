@@ -61,6 +61,16 @@ def test_mkdocs_navigation_points_to_existing_public_pages() -> None:
     assert config["exclude_docs"].split()
 
 
+def test_superpowers_archive_is_removed_ignored_and_not_excluded() -> None:
+    archive = REPOSITORY / "docs/superpowers"
+    assert not any(path.is_file() for path in archive.rglob("*"))
+    assert (
+        "docs/superpowers/" in (REPOSITORY / ".gitignore").read_text(encoding="utf-8").splitlines()
+    )
+    config = yaml.safe_load((REPOSITORY / "mkdocs.yml").read_text(encoding="utf-8"))
+    assert all("superpowers" not in pattern for pattern in config["exclude_docs"].split())
+
+
 def test_public_docs_never_contain_test_password() -> None:
     documents = [
         REPOSITORY / "README.md",
@@ -115,3 +125,59 @@ def test_dataset_citation_files_are_valid_and_point_to_their_hubs() -> None:
         assert citation["repository-code"] == (
             "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
         )
+
+
+def test_readme_is_a_concise_first_run_guide_with_factual_project_scope() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    lines = readme.splitlines()
+
+    assert len(lines) < 200
+    quick_start = lines.index("## Quick start")
+    assert quick_start < 16
+    assert "uv sync --frozen" in readme
+    assert "monaco-latest.osm.pbf" in readme
+    assert "download.geofabrik.de/europe/monaco-latest.osm.pbf" in readme
+    assert "process-pbf" in readme
+    assert "--data-root" in readme
+    assert "--limit 100" in readme
+    assert "--no-full-text" in readme
+    assert "osm-polygon-wikidata-only" in readme
+    assert "osm-polygon-wikidata-and-wikipedia" in readme
+    assert "V1" in readme and "V2" in readme
+    assert "polygons/<stem>.parquet" in readme
+    assert "wikipedia/documents/<stem>.parquet" in readme
+    assert "polygon_document_links/<stem>.parquet" in readme
+    for target in (
+        "docs/architecture.md",
+        "docs/api.md",
+        "docs/development.md",
+        "docs/dataset-snapshot.md",
+        "docs/citations/osm-polygon-wikidata-only.cff",
+        "docs/citations/osm-polygon-wikidata-and-wikipedia.cff",
+        "CITATION.cff",
+    ):
+        assert target in readme
+    assert "OSM_POLYGON_DATA_ROOT" in readme
+    assert "HF_TOKEN" in readme
+    assert "docker compose run" in readme
+    assert "Apache-2.0" in readme
+    assert "ODbL 1.0" in readme
+    assert "CC0 1.0" in readme
+    assert "CC BY-SA 4.0" in readme
+    assert "GFDL" in readme
+    assert "Wikimedia Terms of Use" in readme
+    assert "Wikivoyage copyleft policy" in readme
+    assert "Snapshot metric" not in readme
+    assert "Small snapshot table" not in readme
+
+
+def test_dataset_snapshot_page_owns_metrics_and_links_both_dataset_cards() -> None:
+    snapshot = (REPOSITORY / "docs/dataset-snapshot.md").read_text(encoding="utf-8")
+
+    assert "Snapshot metric" in snapshot
+    assert "Small snapshot table" in snapshot
+    assert "final-dataset-snapshot" in snapshot
+    assert "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-only" in snapshot
+    assert (
+        "https://huggingface.co/datasets/NoeFlandre/osm-polygon-wikidata-and-wikipedia" in snapshot
+    )

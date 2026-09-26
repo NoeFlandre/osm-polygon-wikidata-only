@@ -260,12 +260,21 @@ do not prove runtime side-effect safety.
 
 ## Container boundary
 
-The Docker `build` has `development` and `runtime` stages. The runtime image
-contains the installed application and locked dependencies, runs as a
-non-root user, and defaults to `--help`. Operators must mount a data root
-explicitly before running `sync-dir /data/raw --data-root /data`; source PBFs
-are mounted read-only by the provided `just docker-run` recipe. Credentials are
-passed at runtime and are never copied into image layers.
+The Docker build has separate `development` and `runtime` targets. The runtime
+image contains the installed application and locked dependencies, runs as a
+non-root user, and carries OCI source, version, and license labels. Its
+health check invokes the local CLI version command. Both `docker run` and the
+Compose service default to `--help`.
+
+The root `compose.yaml` builds the `runtime` target, optionally loads a local
+`.env`, maps the host UID/GID, and bind-mounts an external data root at `/data`.
+The runtime receives only the container path `/data` as
+`OSM_POLYGON_DATA_ROOT`; the host path remains a Compose setting. The Compose
+service does not add publication flags. Hugging Face credentials are supplied
+at runtime and never enter the image layers. CI smoke-tests the default command
+with container networking disabled. For processing, the command is
+`sync-dir /data/raw --data-root /data`; the Compose bind mount keeps source PBFs
+read-only while storing output and resumable state under `/data`.
 
 ## Compatibility and verification
 
