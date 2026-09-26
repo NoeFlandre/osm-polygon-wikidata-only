@@ -459,7 +459,7 @@ def test_merge_batches_v1_title_lookups_across_region(tmp_path: Path) -> None:
 
         def by_titles(self, keys: tuple[tuple[str, str], ...]):
             self.calls += 1
-            return {key: () for key in keys}
+            return dict.fromkeys(keys, ())
 
     class WikipediaClient:
         def fetch_article(self, _language: str, _site: str, title: str, **_kwargs: object):

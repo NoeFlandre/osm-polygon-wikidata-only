@@ -27,7 +27,8 @@ def test_grid5000_documentation_freezes_gpu_controller_contract() -> None:
     documentation = (REPOSITORY / "docs/grid5000-sentence-splitting.md").read_text(encoding="utf-8")
 
     for required in (
-        "scripts/grid5000_sentence_controller.py",
+        "osm-polygon-wikidata-only grid5000 controller",
+        "osm-polygon-wikidata-only grid5000 job",
         "host=1/gpu=1",
         "0:30",
         "usagepolicycheck -t",

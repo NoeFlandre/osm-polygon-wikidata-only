@@ -631,7 +631,7 @@ def test_no_credentials_pacing(
     )
 
     assert len(observed_pacing) > 0
-    by_host = {host: min_i for host, min_i in observed_pacing}
+    by_host = dict(observed_pacing)
     assert by_host["en.wikipedia.org"] == 0.5
     assert by_host["www.wikidata.org"] == 1.2
     assert by_host["es.wikipedia.org"] == 0.5

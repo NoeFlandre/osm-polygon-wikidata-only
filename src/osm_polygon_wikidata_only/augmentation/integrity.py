@@ -318,7 +318,7 @@ def _write_polygon_articles_if_needed(
 
 
 def enforce_polygon_articles_integrity(
-    data_root: DataRoot, stem: str
+    data_root: DataRoot, stem: str, *, dry_run: bool = False
 ) -> PolygonArticlesIntegrityResult:
     """Reject every ``polygon_articles`` row whose wikidata does not
     match the canonical polygon wikidata for the same ``polygon_id``.
@@ -335,6 +335,9 @@ def enforce_polygon_articles_integrity(
 
     The rejection records are returned sorted by ``polygon_id`` so
     the audit is reproducible across runs.
+
+    With ``dry_run=True`` the rejections are computed but no parquet is
+    rewritten; ``rewritten`` then reports what a real run would do.
     """
     polygons_path = data_root.processed_polygons / f"{stem}.parquet"
     links_path = data_root.processed_links / f"{stem}.parquet"
@@ -361,7 +364,9 @@ def enforce_polygon_articles_integrity(
     retained_count = len(retained_rows)
     rejected_count = len(rejections)
     rewritten = rejected_count > 0
-    _write_polygon_articles_if_needed(links_path, retained_rows, rewritten=rewritten)
+    _write_polygon_articles_if_needed(
+        links_path, retained_rows, rewritten=rewritten and not dry_run
+    )
 
     rejections_tuple = tuple(
         sorted(rejections, key=lambda record: (record.identifier, record.wikidata))
@@ -513,7 +518,9 @@ def _table_from_rows(
     return pa.table({column: [] for column in columns}, schema=schema)
 
 
-def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIntegrityResult:
+def enforce_wikivoyage_integrity(
+    data_root: DataRoot, stem: str, *, dry_run: bool = False
+) -> WikivoyageIntegrityResult:
     """Reject every wikivoyage document whose wikidata is absent from
     the shard's polygons, and cascade the rejection to its sections.
 
@@ -525,7 +532,8 @@ def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIn
     When at least one document or section is rejected the
     ``wikivoyage/documents`` and ``wikivoyage/sections`` parquets
     are atomically rewritten. When nothing is rejected the parquets
-    are left untouched (byte-identical).
+    are left untouched (byte-identical). ``dry_run=True`` never
+    rewrites either table.
     """
     documents_path, sections_path, documents_rows, sections_rows, valid_qids = (
         _load_wikivoyage_integrity_inputs(data_root, stem)
@@ -551,8 +559,8 @@ def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIn
         sections_path,
         retained_documents,
         retained_sections,
-        rewrite_documents=rewritten_documents,
-        rewrite_sections=rewritten_sections,
+        rewrite_documents=rewritten_documents and not dry_run,
+        rewrite_sections=rewritten_sections and not dry_run,
     )
 
     rejections_tuple = tuple(
@@ -580,6 +588,8 @@ def enforce_wikivoyage_integrity(data_root: DataRoot, stem: str) -> WikivoyageIn
 def _collect_integrity_results(
     data_root: DataRoot,
     stems: list[str],
+    *,
+    dry_run: bool = False,
 ) -> tuple[list[PolygonArticlesIntegrityResult], list[WikivoyageIntegrityResult]]:
     """Run available integrity checks for each requested shard."""
     polygon_results: list[PolygonArticlesIntegrityResult] = []
@@ -587,12 +597,16 @@ def _collect_integrity_results(
     for stem in stems:
         links_path = data_root.processed_links / f"{stem}.parquet"
         if links_path.is_file():
-            polygon_results.append(enforce_polygon_articles_integrity(data_root, stem))
+            polygon_results.append(
+                enforce_polygon_articles_integrity(data_root, stem, dry_run=dry_run)
+            )
         wikivoyage_documents_path = (
             data_root.processed / "wikivoyage" / "documents" / f"{stem}.parquet"
         )
         if wikivoyage_documents_path.is_file():
-            wikivoyage_results.append(enforce_wikivoyage_integrity(data_root, stem))
+            wikivoyage_results.append(
+                enforce_wikivoyage_integrity(data_root, stem, dry_run=dry_run)
+            )
     return polygon_results, wikivoyage_results
 
 
@@ -627,6 +641,7 @@ def enforce_all_regions(
     *,
     stems: list[str] | None = None,
     audit_filename: str = "integrity_audit.json",
+    dry_run: bool = False,
 ) -> IntegrityReport:
     """Run both integrity checks across every shard and emit a
     deterministic audit JSON.
@@ -636,11 +651,16 @@ def enforce_all_regions(
     polygon_articles or wikivoyage/documents). The audit JSON is
     written to ``<data_root>/processed/integrity/<audit_filename>``
     with deterministic key order.
+
+    With ``dry_run=True`` the report is computed but nothing is written:
+    no parquet is rewritten and the audit JSON is not created.
     """
     if stems is None:
         stems = sorted(path.stem for path in data_root.processed_polygons.glob("*.parquet"))
 
-    polygon_results, wikivoyage_results = _collect_integrity_results(data_root, stems)
+    polygon_results, wikivoyage_results = _collect_integrity_results(
+        data_root, stems, dry_run=dry_run
+    )
 
     polygon_results.sort(key=lambda result: result.shard)
     wikivoyage_results.sort(key=lambda result: result.shard)
@@ -652,6 +672,8 @@ def enforce_all_regions(
         audit_path=data_root.processed / "integrity" / audit_filename,
     )
 
+    if dry_run:
+        return report
     audit_dir = report.audit_path.parent
     audit_dir.mkdir(parents=True, exist_ok=True)
     audit_payload = _integrity_audit_payload(report, polygon_results, wikivoyage_results)

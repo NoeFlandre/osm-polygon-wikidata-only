@@ -17,6 +17,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from osm_polygon_wikidata_only.config.paths import repository_root
+
+# Wheels ship the hero images inside the package (``force-include``); a source
+# checkout keeps them at ``<repo>/assets``. ``repository_root`` is ``None``
+# for an installed package, so only the packaged copy is consulted there.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _local_asset(relative: str) -> Path:
+    """Return the checkout copy of *relative* when present, else the packaged one."""
+    checkout = repository_root()
+    if checkout is not None and (checkout / relative).is_file():
+        return checkout / relative
+    return _PACKAGE_ROOT / relative
+
+
 # Top-level directories inside the HF dataset repo. These must
 # match the column lists in ``domain.schema``.
 REMOTE_POLYGONS_DIR = "polygons"
@@ -57,23 +73,9 @@ LEGACY_REMOTE_COVERAGE_MAP_FILE = "coverage_map.png"
 
 # The static hero image shown at the top of the public README and dataset card.
 REMOTE_DATASET_HERO_FILE = "assets/dataset_hero.png"
-_REPOSITORY_DATASET_HERO_FILE = Path(__file__).resolve().parents[3] / REMOTE_DATASET_HERO_FILE
-_PACKAGED_DATASET_HERO_FILE = Path(__file__).resolve().parents[1] / REMOTE_DATASET_HERO_FILE
-LOCAL_DATASET_HERO_FILE = (
-    _REPOSITORY_DATASET_HERO_FILE
-    if _REPOSITORY_DATASET_HERO_FILE.is_file()
-    else _PACKAGED_DATASET_HERO_FILE
-)
+LOCAL_DATASET_HERO_FILE = _local_asset(REMOTE_DATASET_HERO_FILE)
 # V2 has its own source image while keeping the stable public repository path.
-_REPOSITORY_V2_DATASET_HERO_FILE = (
-    Path(__file__).resolve().parents[3] / "assets/dataset_hero_v2.png"
-)
-_PACKAGED_V2_DATASET_HERO_FILE = Path(__file__).resolve().parents[1] / "assets/dataset_hero_v2.png"
-LOCAL_V2_DATASET_HERO_FILE = (
-    _REPOSITORY_V2_DATASET_HERO_FILE
-    if _REPOSITORY_V2_DATASET_HERO_FILE.is_file()
-    else _PACKAGED_V2_DATASET_HERO_FILE
-)
+LOCAL_V2_DATASET_HERO_FILE = _local_asset("assets/dataset_hero_v2.png")
 
 # Superseded geographic Wikipedia coverage path, retained for compatibility
 # imports and its atomic remote deletion.
@@ -102,7 +104,7 @@ def remote_dataset_card_path() -> str:
     return "README.md"
 
 
-def local_to_remote(local_path: Path, processed_subdir: str) -> str:
+def local_to_remote(local_path: Path, processed_subdir: str) -> str:  # noqa: ARG001 -- public argument kept for API compatibility
     """Convert a local path under the processed dir to its remote equivalent."""
     parts = local_path.parts
     # Last two: <subdir>/<stem>.parquet

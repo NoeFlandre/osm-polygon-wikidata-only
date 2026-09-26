@@ -38,7 +38,7 @@ def _load_hf_token() -> str | None:
         return None
     try:
         token = get_token()
-    except Exception:  # pragma: no cover - get_token can raise if backend misbehaves
+    except Exception:  # noqa: BLE001 -- a misbehaving token backend means no token
         return None
     if isinstance(token, str) and token:
         return token

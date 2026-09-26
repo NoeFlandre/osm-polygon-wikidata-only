@@ -175,6 +175,13 @@ release-stats data_root: quality-runtime
         --confirm-repo NoeFlandre/osm-polygon-wikidata-and-wikipedia \
         --apply
 
+# Fail on any known vulnerability in either locked dependency set.
+audit: quality-runtime
+    uv export --frozen --all-groups --all-extras --no-emit-project --quiet -o "{{ QUALITY_TMP_DIR }}/audit-requirements.txt"
+    uvx pip-audit==2.9.0 --strict --disable-pip --require-hashes -r "{{ QUALITY_TMP_DIR }}/audit-requirements.txt"
+    uv export --frozen --directory preprocessing --all-groups --no-emit-project --quiet -o "{{ QUALITY_TMP_DIR }}/audit-preprocessing-requirements.txt"
+    uvx pip-audit==2.9.0 --strict --disable-pip --require-hashes -r "{{ QUALITY_TMP_DIR }}/audit-preprocessing-requirements.txt"
+
 build: quality-runtime
     uv build
 
@@ -190,6 +197,8 @@ package-smoke: quality-runtime
         --resource hf/ne_110m_admin_0_countries.geojson \
         --resource assets/dataset_hero.png \
         --resource assets/dataset_hero_v2.png \
+        --resource cli/grid5000.py \
+        --resource cli/audit_containment.py \
         --entry-point osm-polygon-wikidata-only \
         --entry-point osm-polygon-wikidata-only-enforce-integrity \
         --entry-point osm-polygon-wikidata-only-audit-remote \

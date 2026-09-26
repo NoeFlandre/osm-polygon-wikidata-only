@@ -47,13 +47,17 @@ def _capture_help(parser: argparse.ArgumentParser, prog_args: list[str]) -> str:
 def _parser_with_frozen_formatter() -> argparse.ArgumentParser:
     """Build the production parser with the frozen formatter width."""
     parser = build_parser()
-    parser.formatter_class = _FrozenFormatter
-    sub_action = next(
-        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
-    )
-    for sub_parser in sub_action.choices.values():
-        sub_parser.formatter_class = _FrozenFormatter
+    _freeze_formatters(parser)
     return parser
+
+
+def _freeze_formatters(parser: argparse.ArgumentParser) -> None:
+    """Apply the frozen formatter to *parser* and every nested subparser."""
+    parser.formatter_class = _FrozenFormatter
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for sub_parser in action.choices.values():
+                _freeze_formatters(sub_parser)
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +74,13 @@ def help_outputs() -> dict[str, str]:
         "language-splits": _capture_help(parser, ["language-splits"]),
         "publish-language-splits": _capture_help(parser, ["publish-language-splits"]),
         "release-stats": _capture_help(parser, ["release-stats"]),
+        "enforce-integrity": _capture_help(parser, ["enforce-integrity"]),
+        "audit-remote": _capture_help(parser, ["audit-remote"]),
+        "trackio-snapshot": _capture_help(parser, ["trackio-snapshot"]),
+        "grid5000": _capture_help(parser, ["grid5000"]),
+        "grid5000-controller": _capture_help(parser, ["grid5000", "controller"]),
+        "grid5000-job": _capture_help(parser, ["grid5000", "job"]),
+        "audit-containment": _capture_help(parser, ["audit-containment"]),
     }
 
 
@@ -144,8 +155,41 @@ def test_root_help_lists_every_subcommand(help_outputs: dict[str, str]) -> None:
         "augment-dir",
         "language-splits",
         "publish-language-splits",
+        "release-stats",
+        "enforce-integrity",
+        "audit-remote",
+        "trackio-snapshot",
+        "grid5000",
+        "audit-containment",
     ):
         assert command in text
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "enforce-integrity",
+        "audit-remote",
+        "trackio-snapshot",
+        "grid5000",
+        "grid5000-controller",
+        "grid5000-job",
+        "audit-containment",
+    ],
+)
+def test_tool_help_frozen(help_outputs: dict[str, str], name: str) -> None:
+    golden_path = GOLDEN / f"cli_help_{name}.txt"
+    assert golden_path.exists(), f"missing golden help file: {golden_path}"
+    assert help_outputs[name] == golden_path.read_text(encoding="utf-8")
+
+
+def test_every_subcommand_has_a_golden_help_file(help_outputs: dict[str, str]) -> None:
+    sub_action = next(
+        action
+        for action in build_parser()._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    assert set(sub_action.choices) <= set(help_outputs)
 
 
 def test_root_help_includes_top_level_description(help_outputs: dict[str, str]) -> None:

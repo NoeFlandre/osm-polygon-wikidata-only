@@ -421,10 +421,15 @@ def build_golden_help(out: Path) -> dict[str, Path]:
             super().__init__(prog, width=100, max_help_position=30)
 
     parser = build_parser()
-    parser.formatter_class = _FrozenFormatter
-    sub_action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
-    for sub_parser in sub_action.choices.values():
-        sub_parser.formatter_class = _FrozenFormatter
+
+    def _freeze(target: argparse.ArgumentParser) -> None:
+        target.formatter_class = _FrozenFormatter
+        for action in target._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for sub_parser in action.choices.values():
+                    _freeze(sub_parser)
+
+    _freeze(parser)
 
     def _capture(prog_args: list[str]) -> str:
         import pytest
@@ -451,6 +456,13 @@ def build_golden_help(out: Path) -> dict[str, Path]:
         "language-splits": ["language-splits"],
         "publish-language-splits": ["publish-language-splits"],
         "release-stats": ["release-stats"],
+        "enforce-integrity": ["enforce-integrity"],
+        "audit-remote": ["audit-remote"],
+        "trackio-snapshot": ["trackio-snapshot"],
+        "grid5000": ["grid5000"],
+        "grid5000-controller": ["grid5000", "controller"],
+        "grid5000-job": ["grid5000", "job"],
+        "audit-containment": ["audit-containment"],
     }
     for name, prog_args in targets.items():
         path = out / "golden" / f"cli_help_{name}.txt"

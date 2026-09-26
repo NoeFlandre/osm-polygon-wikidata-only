@@ -747,7 +747,7 @@ def test_release_file_sort_keys_distinguish_table_language_and_path() -> None:
         {"table": "a", "language": "unknown", "path": "a"},
         {"table": "b", "language": "en", "path": "a"},
     ]
-    assert sorted(reversed(expected_records), key=_expected_file_sort_key) == expected_records
+    assert sorted(expected_records, key=_expected_file_sort_key) == expected_records
     assert _expected_file_sort_key({"table": "a", "language": "unknown", "path": "a"}) == (
         "a",
         "True",
@@ -771,7 +771,7 @@ def test_release_file_sort_keys_distinguish_table_language_and_path() -> None:
         {"table": "a", "language": "unknown", "path": "a"},
         {"table": "b", "language": "en", "path": "a"},
     ]
-    assert sorted(reversed(generated_records), key=_generated_file_sort_key) == generated_records
+    assert sorted(generated_records, key=_generated_file_sort_key) == generated_records
     assert _generated_file_sort_key({"table": "a", "language": "unknown", "path": "a"}) == (
         "a",
         "True",

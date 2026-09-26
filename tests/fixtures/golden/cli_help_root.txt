@@ -1,11 +1,11 @@
-usage: PROG [-h]
- {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,publish-language-splits,release-stats}
+usage: PROG [-h] [--version]
+ {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,publish-language-splits,release-stats,enforce-integrity,audit-remote,trackio-snapshot,grid5000,audit-containment}
  ...
 
 Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage.
 
 positional arguments:
- {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,publish-language-splits,release-stats}
+ {process-pbf,process-dir,sync-dir,split-v2-sentences,augment-region,augment-dir,language-splits,publish-language-splits,release-stats,enforce-integrity,audit-remote,trackio-snapshot,grid5000,audit-containment}
  process-pbf Process one PBF file
  process-dir Process every PBF in a directory
  sync-dir Converge core and augmentation for every PBF
@@ -16,6 +16,14 @@ positional arguments:
  files
  publish-language-splits Generate and publish exact-target V1/V2 language partitions
  release-stats Publish only the dataset card and the polygon statistics report
+ enforce-integrity Drop join-integrity violations from processed tables and write an
+ audit
+ audit-remote Read-only audit of remote versus local canonical dataset files
+ trackio-snapshot Publish the frozen dataset snapshot run to Trackio
+ grid5000 Grid5000 GPU sentence-splitting controller and job
+ audit-containment Read-only JSON audit of whole-file containment retirements (exit 2 if
+ blocked)
 
 options:
  -h, --help show this help message and exit
+ --version show program's version number and exit

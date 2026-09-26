@@ -30,9 +30,8 @@ def _write_documents(path: Path, rows: list[dict]) -> None:
         # the empty schema (will be filtered by apply stage).
         table = pa.Table.from_pylist(
             [
-                {
-                    col: None
-                    for col in [
+                dict.fromkeys(
+                    [
                         "document_id",
                         "article_id",
                         "wikidata",
@@ -62,7 +61,7 @@ def _write_documents(path: Path, rows: list[dict]) -> None:
                         "fetch_error",
                         "content_hash",
                     ]
-                }
+                )
             ],
             schema=document_schema(),
         )

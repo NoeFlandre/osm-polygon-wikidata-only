@@ -302,7 +302,7 @@ def _fetch_speculative_results(
                 ref.title,
                 fetch_full_text=fetch_full_text,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- exception is kept and re-raised later, see comment below
             # Keep the exception until the completed index confirms that the
             # title cannot be reused from a later V1 shard.
             speculative[position] = exc
@@ -360,7 +360,7 @@ def _resolve_pending(
 
 
 def _resolve_pending_outcome(
-    position: int,
+    position: int,  # noqa: ARG001 -- signature exercised directly by tests
     ref: WikipediaTagRef,
     result_or_error: FetchResult | Exception | None,
     client: WikipediaClient,
@@ -389,7 +389,7 @@ def _apply_pending_outcome(
     polygon_id: str,
     position: int,
     outcome: tuple[DirectWikipediaStatus, FetchResult | None, Exception | None],
-    ref: WikipediaTagRef,
+    ref: WikipediaTagRef,  # noqa: ARG001 -- outcome applier signature kept uniform
     context: Mapping[str, Any],
     documents: dict[str, dict[str, Any]],
     links: dict[str, dict[str, Any]],

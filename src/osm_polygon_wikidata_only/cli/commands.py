@@ -66,6 +66,7 @@ from .dependencies import build_clients as _build_clients
 from .dependencies import resolve_cli_data_root as _resolve_data_root
 from .parser import build_parser
 from .parser import build_settings as _build_settings
+from .tools import dispatch_tool
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
@@ -174,7 +175,7 @@ def _refresh_repository_metadata(
     # broad, unstable set of types. The documented behavior is to report
     # the refresh as a failed upload and keep its marker for the next run,
     # never to escape the caller's ``finally`` block.
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- documented fail-soft refresh, see comment above
         LOGGER.error("Repository metadata refresh failed: %s", error)
         return [f"Refresh repository metadata and maps: {error}"]
     if not dry_run:
@@ -845,6 +846,9 @@ def _dispatch_existing_command(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    tool_status = dispatch_tool(args)
+    if tool_status is not None:
+        return tool_status
     data_root, settings = _prepare_runtime(args)
     _authenticate_for_push(parser, args, settings)
     return _dispatch_command(parser, args, data_root=data_root, settings=settings)

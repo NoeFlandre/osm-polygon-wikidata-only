@@ -31,7 +31,7 @@ class _SectionParser(HTMLParser):
         self.sections[-1] = (heading, anchor, level, clean_article_text(" ".join(self._text_parts)))
         self._text_parts = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002 -- HTMLParser override signature
         if tag in {"script", "style", "table", "sup"}:
             self._ignored += 1
         if tag in {"h2", "h3", "h4", "h5", "h6"}:

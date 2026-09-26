@@ -3,14 +3,17 @@ name: Documentation
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Deploys from main never cancel each other; a newer push to a pull request
+# cancels that pull request's superseded docs build.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -31,17 +34,21 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen
       - name: Configure Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: Build documentation
         run: uv run mkdocs build --strict --site-dir site
       - name: Add public presentations
         run: uv run python scripts/assemble_docs_site.py --site-dir site
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: site
 
   deploy:
+    # Pull requests only prove the strict build; only main deploys Pages.
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

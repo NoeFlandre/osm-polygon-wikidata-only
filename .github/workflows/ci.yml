@@ -8,11 +8,19 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its in-progress run; pushes to main
+# always run to completion.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   quality:
     runs-on: ubuntu-latest
-    # The deterministic gate includes the full suite, all configured CRAP scopes, and
-    # bounded mutation tests. Keep enough time for a cold runner.
+    # The deterministic gate includes the full suite, all configured CRAP scopes,
+    # bounded mutation tests, and (via `architecture-checks`) the strict docs
+    # build, wheel/sdist build, package smoke install and the preprocessing
+    # checks, so no separate job repeats them. Keep enough time for a cold runner.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -24,6 +32,10 @@ jobs:
           tool: just
       - name: Install Python
         run: uv python install 3.12
+      - name: Verify the lockfiles match pyproject.toml
+        run: |
+          uv lock --check
+          uv lock --check --directory preprocessing
       - name: Run the deterministic QA gauntlet
         env:
           # CI runners have more headroom than local Macs; keep the same
@@ -31,9 +43,9 @@ jobs:
           MUTMUT_MAX_CHILDREN: "4"
         run: just quality-gauntlet
 
-  preprocessing:
+  security:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
@@ -44,8 +56,8 @@ jobs:
           tool: just
       - name: Install Python
         run: uv python install 3.12
-      - name: Run preprocessing quality checks
-        run: just preprocessing-check
+      - name: Audit both lockfiles for known vulnerabilities
+        run: just audit
 
   container:
     runs-on: ubuntu-latest
@@ -60,3 +72,22 @@ jobs:
         run: docker build --target runtime --tag osm-polygon-wikidata-only:ci .
       - name: Verify the safe default command
         run: docker run --rm osm-polygon-wikidata-only:ci --help
+
+  # The single required status check: it fails unless every needed job succeeded.
+  all-green:
+    if: always()
+    needs: [quality, security, container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required CI job finished with '$result'."
+              exit 1
+            fi
+          done

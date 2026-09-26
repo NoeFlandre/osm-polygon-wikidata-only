@@ -19,7 +19,7 @@ __all__ = ["render_front_matter"]
 
 def render_front_matter(
     *,
-    repo_id: str,
+    repo_id: str,  # noqa: ARG001 -- public keyword kept for API compatibility
     license: str,
     primary_lang: str,
     polygon_count: int,

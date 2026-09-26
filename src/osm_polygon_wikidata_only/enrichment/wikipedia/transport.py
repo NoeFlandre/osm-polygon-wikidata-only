@@ -64,14 +64,14 @@ class InMemoryWikipediaClient(WikipediaClient):
 
     def fetch_article(
         self,
-        language: str,
+        language: str,  # noqa: ARG002 -- transport protocol signature
         site: str,
         title: str,
         *,
-        wikidata_label: str = "",
-        wikidata_description: str = "",
-        wikidata_aliases: list[str] | None = None,
-        fetch_full_text: bool = True,
+        wikidata_label: str = "",  # noqa: ARG002 -- transport protocol signature
+        wikidata_description: str = "",  # noqa: ARG002 -- transport protocol signature
+        wikidata_aliases: list[str] | None = None,  # noqa: ARG002 -- transport protocol signature
+        fetch_full_text: bool = True,  # noqa: ARG002 -- transport protocol signature
     ) -> FetchResult:
         return self._responses.get((site, title), FetchResult("article_not_found", None))
 
@@ -102,7 +102,7 @@ class HttpWikipediaClient(WikipediaClient):
         *,
         wikidata_label: str = "",
         wikidata_description: str = "",
-        wikidata_aliases: list[str] | None = None,
+        wikidata_aliases: list[str] | None = None,  # noqa: ARG002 -- transport protocol signature
         fetch_full_text: bool = True,
     ) -> FetchResult:
         url = self._build_url(language, title, fetch_full_text=fetch_full_text)

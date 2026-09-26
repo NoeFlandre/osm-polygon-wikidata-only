@@ -556,7 +556,7 @@ def _writer_for_language(
     destination: Path,
     stage_root: Path,
     spec: LanguageTableSpec,
-    max_rows_per_shard: int,
+    max_rows_per_shard: int,  # noqa: ARG001 -- writer factory signature kept uniform
     shard_counts: dict[str, int],
     expected_schema: pa.Schema,
     state: _TableWriteState,
@@ -677,7 +677,7 @@ def _install_staged_files(
     _remove_empty_output_directories(destination, previous | final_paths)
 
 
-def _previous_partition_paths(root: Path, destination: Path) -> set[Path]:
+def _previous_partition_paths(root: Path, destination: Path) -> set[Path]:  # noqa: ARG001 -- seam patched by tests with this signature
     payload = _read_previous_manifest(root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH)
     previous_destination = _manifest_output_root(payload, root)
     if previous_destination is None:
@@ -880,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     args = parser.parse_args(argv)
     result = build_v2_language_splits(args.processed_root, batch_size=args.batch_size)
-    print(result.manifest_path)
+    print(result.manifest_path)  # noqa: T201 -- script entrypoint writes JSON to stdout
     return 0
 
 

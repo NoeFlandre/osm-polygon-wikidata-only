@@ -363,7 +363,7 @@ def test_upload_files_returns_the_upload_commit_oid(tmp_path: Path) -> None:
         [(polygon, "polygons/x.parquet")],
         commit_message="x",
         token="my-token",
-        _api_factory=lambda *, token: _FakeApi(),
+        _api_factory=lambda *, token: _FakeApi(),  # noqa: PLW0108 -- factory must accept token=
     )
 
     assert result == "uploaded-commit-oid"
@@ -390,7 +390,7 @@ def test_upload_files_prefers_oid_on_string_like_commit_info(tmp_path: Path) -> 
         [(polygon, "polygons/x.parquet")],
         commit_message="x",
         token="my-token",
-        _api_factory=lambda *, token: _FakeApi(),
+        _api_factory=lambda *, token: _FakeApi(),  # noqa: PLW0108 -- factory must accept token=
     )
 
     assert result == "uploaded-commit-oid"

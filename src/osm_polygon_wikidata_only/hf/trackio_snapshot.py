@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from osm_polygon_wikidata_only.config.paths import resolve_data_root
+from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 
 from ._trackio.models import (
     DATASET_PRESENTATION_URL,
@@ -39,7 +39,7 @@ def publish(
     ] = TRACKIO_SPACE_ID,
 ) -> None:
     """Publish one static run and exactly three plots."""
-    resolved = resolve_data_root(data_root, repo_root=Path(__file__).resolve().parents[3])
+    resolved = resolve_data_root(data_root, repo_root=repository_root())
     artifacts = publish_trackio_snapshot(
         output_dir=resolved.cache / "trackio" / TRACKIO_RUN_NAME,
         space_id=space_id,

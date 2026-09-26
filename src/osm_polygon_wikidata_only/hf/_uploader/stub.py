@@ -60,7 +60,7 @@ class StubHfHub:
     ) -> list[str]:
         del repo_id, revision, repo_type
         if self.remote_files is not None:
-            return sorted(list(self.remote_files))
+            return sorted(self.remote_files)
         return []
 
     def get_paths_info(

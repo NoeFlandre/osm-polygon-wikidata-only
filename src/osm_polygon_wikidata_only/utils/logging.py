@@ -19,7 +19,7 @@ def configure_logging(level: str | int = "INFO") -> None:
     format includes a module name and a short time so log lines are
     useful in a CI runner and on a developer terminal.
     """
-    global _CONFIGURED
+    global _CONFIGURED  # noqa: PLW0603 -- process-wide one-shot logging configuration
     if isinstance(level, str):
         level = level.upper()
     root = logging.getLogger()

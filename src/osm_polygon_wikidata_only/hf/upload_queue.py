@@ -164,7 +164,7 @@ class BackgroundUploadQueue:
                     return
                 try:
                     self._process_job(job)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- worker thread records every job failure instead of dying
                     detail = f"{job.message}: {error}"
                     LOGGER.error("Background upload failed: %s", detail)
                     self._failures.append(detail)

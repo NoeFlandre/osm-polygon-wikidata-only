@@ -43,6 +43,29 @@ CACHE_WIKIDATA = "wikidata"
 CACHE_WIKIPEDIA = "wikipedia"
 
 
+# Files that identify a source checkout of this project. An installed wheel
+# lives under site-packages, where these are absent next to ``src/``.
+_CHECKOUT_MARKERS = ("pyproject.toml", "src/osm_polygon_wikidata_only/__init__.py")
+
+
+def repository_root(module_file: str | os.PathLike[str] = __file__) -> Path | None:
+    """Return the source checkout root, or ``None`` for an installed package.
+
+    *module_file* is a module directly inside a subpackage of
+    ``osm_polygon_wikidata_only`` (default: this module). In a checkout it
+    sits at ``<root>/src/osm_polygon_wikidata_only/<subpackage>/``; in a
+    wheel, Docker runtime image or other site-packages install the
+    ``src`` layout and checkout markers are absent, so ``None`` is returned.
+    """
+    parents = Path(module_file).resolve().parents
+    if len(parents) < 4 or parents[2].name != "src":
+        return None
+    candidate = parents[3]
+    if all((candidate / marker).is_file() for marker in _CHECKOUT_MARKERS):
+        return candidate
+    return None
+
+
 class DataRootError(RuntimeError):
     """Raised when the data root cannot be located or is unsafe to use."""
 
@@ -146,7 +169,7 @@ def _is_inside(child: Path, parent: Path) -> bool:
 def resolve_data_root(
     explicit: str | os.PathLike[str] | None = None,
     *,
-    repo_root: Path,
+    repo_root: Path | None,
 ) -> DataRoot:
     """Resolve the data root.
 
@@ -155,8 +178,9 @@ def resolve_data_root(
     explicit:
         CLI-provided override (``--data-root``).
     repo_root:
-        Path to this repository's root. Used to detect unsafe configurations
-        where the data root accidentally points inside the source tree.
+        Path to this repository's root (see :func:`repository_root`). Used to
+        detect unsafe configurations where the data root accidentally points
+        inside the source tree. ``None`` (installed package) skips that check.
 
     Raises
     ------
@@ -199,7 +223,7 @@ def _require_candidates_exist(candidates: list[tuple[str, Path]]) -> None:
 
 def _validate_candidates(
     candidates: list[tuple[str, Path]],
-    repo_root: Path,
+    repo_root: Path | None,
 ) -> DataRoot:
     for source, candidate in candidates:
         _validate_candidate(candidate, source, repo_root)
@@ -207,10 +231,10 @@ def _validate_candidates(
     raise AssertionError("at least one data-root candidate is required")
 
 
-def _validate_candidate(candidate: Path, source: str, repo_root: Path) -> None:
+def _validate_candidate(candidate: Path, source: str, repo_root: Path | None) -> None:
     if not candidate.is_dir():
         raise DataRootError(f"Data root candidate {candidate} ({source}) is not a directory.")
-    if _is_inside(candidate, repo_root):
+    if repo_root is not None and _is_inside(candidate, repo_root):
         raise DataRootError(
             f"Data root {candidate} ({source}) is inside the repository "
             f"({repo_root}). Refusing to write artifacts into the repo."

@@ -186,10 +186,12 @@ export OSM_POLYGON_DATA_ROOT=/path/to/osm-polygon-data
 
 ## Usage
 
-After `uv sync`, the main `osm-polygon-wikidata-only` CLI (argparse
-subcommands) and the standalone helper scripts are:
+After `uv sync`, every workflow is a subcommand of the single
+`osm-polygon-wikidata-only` CLI (`--help` lists them, `--version` prints the
+installed version):
 
 ```bash
+uv run osm-polygon-wikidata-only --version
 uv run osm-polygon-wikidata-only sync-dir <dir> [--options]
 uv run osm-polygon-wikidata-only process-pbf <input.pbf> [--options]
 uv run osm-polygon-wikidata-only process-dir  <dir>     [--options]
@@ -198,8 +200,39 @@ uv run osm-polygon-wikidata-only augment-dir             [--options]
 uv run osm-polygon-wikidata-only language-splits         [--options]
 uv run osm-polygon-wikidata-only publish-language-splits [--options]
 uv run osm-polygon-wikidata-only split-v2-sentences       [--options]
-uv run osm-polygon-wikidata-only-trackio                 [--data-root <path>]
+uv run osm-polygon-wikidata-only release-stats            [--options]
+uv run osm-polygon-wikidata-only enforce-integrity        [--data-root <path>] [--dry-run] [--json]
+uv run osm-polygon-wikidata-only audit-remote             [--data-root <path>] [--repo-id <id>]
+uv run osm-polygon-wikidata-only trackio-snapshot         [--dataset-version v1|v2] [--data-root <path>]
+uv run osm-polygon-wikidata-only grid5000 controller|job  [--options]
+uv run osm-polygon-wikidata-only audit-containment        <data-root> [--output <file>]
 ```
+
+The standalone executables `osm-polygon-wikidata-only-enforce-integrity`,
+`osm-polygon-wikidata-only-audit-remote`, `osm-polygon-wikidata-only-trackio`
+and `osm-polygon-wikidata-and-wikipedia-trackio` remain installed as
+deprecated aliases of `enforce-integrity`, `audit-remote`,
+`trackio-snapshot` and `trackio-snapshot --dataset-version v2`. The
+`scripts/grid5000_sentence_*.py` and `scripts/audit_containment.py` files are
+thin compatibility shims over `grid5000 controller|job` and
+`audit-containment` (see [Grid5000 sentence splitting](docs/grid5000-sentence-splitting.md)).
+
+### Join-integrity enforcement
+
+`osm-polygon-wikidata-only enforce-integrity` drops `polygon_articles` rows
+whose Wikidata QID disagrees with the canonical polygons table, and Wikivoyage
+documents (with their sections) whose QID is absent from it, then writes
+`processed/integrity/integrity_audit.json`.
+
+| Flag | Purpose |
+|---|---|
+| `--dry-run` | Compute and log the rejection counts; rewrite no table and write no audit |
+| `--json` | Print the summary counts as one JSON object on stdout |
+| `--log-level <level>` | `DEBUG`, `INFO` (default), `WARNING` or `ERROR` |
+| `--audit-filename <name>` | Audit file name under `processed/integrity/` |
+
+A missing data root, an unreadable parquet or a data-contract violation is
+reported as one `error:` line on stderr with exit status 1.
 
 ### Common options
 

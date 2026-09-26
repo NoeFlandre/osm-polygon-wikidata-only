@@ -231,7 +231,7 @@ def test_http_wikidata_client_reports_429_as_host_scoped_throttle(
     monkeypatch.setattr(
         scheduler, "report_host_throttled", lambda host, delay: host_reports.append((host, delay))
     )
-    monkeypatch.setattr(scheduler, "report_throttled", lambda delay: global_reports.append(delay))
+    monkeypatch.setattr(scheduler, "report_throttled", global_reports.append)
     monkeypatch.setattr(scheduler, "pace_host", lambda *_, **__: None)
     client = HttpWikidataClient(Settings(), scheduler=scheduler, session=ThrottledSession())
 
@@ -518,7 +518,7 @@ def test_http_wikipedia_client_reports_429_as_host_scoped_throttle(
     monkeypatch.setattr(
         scheduler, "report_host_throttled", lambda host, delay: host_reports.append((host, delay))
     )
-    monkeypatch.setattr(scheduler, "report_throttled", lambda delay: global_reports.append(delay))
+    monkeypatch.setattr(scheduler, "report_throttled", global_reports.append)
     monkeypatch.setattr(scheduler, "pace_host", lambda *_, **__: None)
     client = HttpWikipediaClient(Settings(), scheduler=scheduler, session=ThrottledSession())
 

@@ -1,0 +1,27 @@
+# Weekly, grouped update PRs. Actions stay pinned by SHA; Dependabot bumps the
+# SHA and the trailing version comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /preprocessing
+    schedule:
+      interval: weekly
+    groups:
+      preprocessing-dependencies:
+        patterns: ["*"]

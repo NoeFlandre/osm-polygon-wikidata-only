@@ -846,16 +846,18 @@ def test_synthetic_failure_modes(tmp_path: Path, case_name: str, expected_reason
             art_dir / "case.parquet",
         )
 
-    elif (
-        case_name.startswith("case24_")
-        or case_name.startswith("case25_")
-        or case_name.startswith("case26_")
-        or case_name.startswith("case27_")
-        or case_name.startswith("case28_")
-        or case_name.startswith("case29_")
-        or case_name.startswith("case30_")
-        or case_name.startswith("case31_")
-        or case_name.startswith("case32_")
+    elif case_name.startswith(
+        (
+            "case24_",
+            "case25_",
+            "case26_",
+            "case27_",
+            "case28_",
+            "case29_",
+            "case30_",
+            "case31_",
+            "case32_",
+        )
     ):
         col_to_mismatch = case_name.split("_")[1]
         if col_to_mismatch == "thumb":

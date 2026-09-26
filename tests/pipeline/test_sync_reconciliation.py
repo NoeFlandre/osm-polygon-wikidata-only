@@ -27,7 +27,7 @@ from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction, plan_syn
 
 def compute_sha256(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -620,7 +620,7 @@ def test_reconciliation_limited_to_input_stems(
 
     # Two regions local: mexico-latest and hungary-latest
     _setup_mock_region(data_root, "mexico-latest", augmented=True)
-    # hungary-latest is inconsistent/malformed (invalid_core=True)
+    # The hungary-latest region is malformed: its core tables are invalid.
     _setup_mock_region(data_root, "hungary-latest", augmented=True, invalid_core=True)
 
     # Reconciliation tests must never reach the network. The fail-loud

@@ -319,7 +319,7 @@ class PersistentIndexQueries:
         """Resolve title keys in bounded batches without changing row order."""
         normalized = normalized_title_keys(keys)
         if not self._initialized.is_set():
-            return {key: () for key in normalized}
+            return dict.fromkeys(normalized, ())
         self._raise_error()
 
         results, missing = self._cached_title_results(normalized)

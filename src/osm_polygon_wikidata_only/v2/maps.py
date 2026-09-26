@@ -108,7 +108,7 @@ def _resolve_land_context(
         return None, None
     try:
         return ensure_world_land(land_cache_dir), land_cache_dir
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- optional network map context falls back to no continents
         LOGGER.warning("V2 maps will omit Natural Earth land context: %s", error)
         return None, land_cache_dir
 

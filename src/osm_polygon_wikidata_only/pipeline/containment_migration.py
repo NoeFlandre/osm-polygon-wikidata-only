@@ -115,9 +115,9 @@ def _duplicate_blockers(
 
 
 def _audit_present_contract(
-    processed_dir: Path,
+    processed_dir: Path,  # noqa: ARG001 -- audit hook signature shared with the absent-contract path
     contract: TableContract,
-    parent: str,
+    parent: str,  # noqa: ARG001 -- audit hook signature shared with the absent-contract path
     child: str,
     parent_path: Path,
     child_path: Path,
@@ -133,7 +133,7 @@ def _audit_present_contract(
             )
         parent_ids, parent_duplicates = _identity_set(parent_path, contract)
         child_ids, child_duplicates = _identity_set(child_path, contract)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- audit reports any unreadable table as a finding
         return (
             TableAudit(contract.subdir, 0, 0, 0, 0),
             [f"{child}: unreadable {contract.subdir}: {type(error).__name__}"],
@@ -341,13 +341,14 @@ def _append_child_rows(
     parent_polygons: dict[tuple[Any, Any], dict[str, Any]],
 ) -> None:
     """Append unseen child rows, remapping polygon article provenance."""
-    for candidate in child_rows:
-        key = _identity(candidate, contract)
+    for child_row in child_rows:
+        key = _identity(child_row, contract)
         if key in seen:
             continue
+        candidate = child_row
         if contract.subdir == "polygon_articles":
             candidate = _remap_link(
-                candidate,
+                child_row,
                 parent_stem=parent_stem,
                 parent_polygons=parent_polygons,
             )

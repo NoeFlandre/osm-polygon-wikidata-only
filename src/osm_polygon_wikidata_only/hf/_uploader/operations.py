@@ -178,7 +178,7 @@ def _fallback_error_details(error: Exception) -> tuple[None, str]:
 def _response_message(response: Any, error: Exception) -> str:
     try:
         message = response.text
-    except Exception:  # pragma: no cover - defensive
+    except Exception:  # noqa: BLE001 -- defensive read of an arbitrary response object
         message = None
     return str(message or getattr(error, "server_message", None) or error)
 

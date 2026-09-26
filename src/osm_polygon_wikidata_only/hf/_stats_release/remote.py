@@ -92,7 +92,7 @@ def load_remote_state(
     # Deliberately broad: any failure to read the remote revision (auth,
     # network, a client without repo metadata) means "no remote card to
     # merge". The subsequent upload and verification still fail loudly.
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback, see comment above
         return RemoteState(None, {})
     if not revision:
         return RemoteState(None, {})

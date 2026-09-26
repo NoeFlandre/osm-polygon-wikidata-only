@@ -65,7 +65,7 @@ def assemble_augmentation_upload(
     )
     try:
         land_path = hooks.ensure_world_land(data_root.cache)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional network map context falls back to no continents
         LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
         land_path = None
     text_snapshot = hooks.load_text_presence(data_root.processed)

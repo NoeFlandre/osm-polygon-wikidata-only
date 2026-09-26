@@ -489,7 +489,7 @@ def test_run_sync_returns_zero_on_clean_close(tmp_path: Path) -> None:
         extract_pbf=fake_extract,
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
-        close_uploads=lambda: [],
+        close_uploads=list,
     )
     assert rc == 0
 

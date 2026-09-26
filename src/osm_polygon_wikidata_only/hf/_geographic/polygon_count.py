@@ -154,7 +154,7 @@ def _count_map_axes(land_features: Sequence[Any] | None) -> tuple[Any, Any]:
 def _count_scale(cells: Sequence[PolygonCountCell]) -> tuple[mcolors.Colormap, mcolors.LogNorm]:
     counts = [cell.polygon_count for cell in cells] or [1]
     minimum = max(min(counts), 1)
-    maximum = max(max(counts), minimum + 1)
+    maximum = max(*counts, minimum + 1)
     return plt.get_cmap(_COUNT_COLORMAP_NAME), mcolors.LogNorm(vmin=minimum, vmax=maximum)
 
 

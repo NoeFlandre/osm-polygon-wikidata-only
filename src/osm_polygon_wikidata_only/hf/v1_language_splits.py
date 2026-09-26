@@ -327,7 +327,7 @@ def _validate_written_counts(
 
 def _build_staged_partitions(
     release_root: Path,
-    stage_root: Path,
+    stage_root: Path,  # noqa: ARG001 -- keeps parity with the V2 builder signature
     spec: LanguageTableSpec,
     schema: pa.Schema,
     staged_paths: dict[str, Path],
@@ -646,7 +646,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path=args.manifest_path,
         batch_size=args.batch_size,
     )
-    print(f"Generated {len(release.files)} V1 language files and {release.manifest_path}")
+    print(f"Generated {len(release.files)} V1 language files and {release.manifest_path}")  # noqa: T201 -- script entrypoint writes JSON to stdout
     return 0
 
 

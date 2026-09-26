@@ -30,6 +30,11 @@ def test_parser_has_documented_subcommands() -> None:
         "release-stats",
         "sync-dir",
         "split-v2-sentences",
+        "enforce-integrity",
+        "audit-remote",
+        "trackio-snapshot",
+        "grid5000",
+        "audit-containment",
     }
 
 
@@ -705,9 +710,7 @@ def test_process_dir_persists_and_clears_the_metadata_refresh_marker(
         "set_metadata_refresh_marker",
         lambda data_root, stems, hashes: markers.append((stems, hashes)),
     )
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -760,9 +763,7 @@ def test_process_dir_keeps_the_marker_when_an_upload_fails(
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -777,7 +778,7 @@ def _marker(stems: list[str]) -> dict[str, object]:
     """Return a metadata-refresh marker payload shaped like the real one."""
     return {
         "stems": sorted(stems),
-        "fingerprint_hashes": {stem: "a" * 64 for stem in sorted(stems)},
+        "fingerprint_hashes": dict.fromkeys(sorted(stems), "a" * 64),
     }
 
 
@@ -822,9 +823,7 @@ def test_a_failed_regional_upload_skips_the_metadata_refresh(
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -864,9 +863,7 @@ def test_a_resumed_run_never_refreshes_from_a_marker_alone(
         commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -914,9 +911,7 @@ def test_a_marker_naming_an_unpublished_region_blocks_the_refresh(
         lambda data_root: _marker(["published-latest", "stranded-latest"]),
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -966,9 +961,7 @@ def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
         commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", failing_refresh)
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -1106,9 +1099,7 @@ def test_an_aborted_run_drains_without_publishing_metadata(
         commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     with pytest.raises(RuntimeError, match="canonical document snapshot failed"):
         commands._run_processing_command(
@@ -1160,9 +1151,7 @@ def test_recording_a_region_preserves_a_surviving_marker(
     )
     monkeypatch.setattr(commands, "set_metadata_refresh_marker", record)
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -1250,9 +1239,7 @@ def test_a_dry_run_never_touches_the_refresh_marker(
         commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
     )
     monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(
-        commands, "clear_metadata_refresh_marker", lambda data_root: cleared.append(data_root)
-    )
+    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(

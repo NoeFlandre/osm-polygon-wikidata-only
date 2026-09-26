@@ -106,7 +106,8 @@ def _crosses_antimeridian(points: Sequence[tuple[float, float]]) -> bool:
 
 def _unwrap_points(points: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
     unwrapped = [points[0]]
-    for lon, lat in points[1:]:
+    for raw_lon, lat in points[1:]:
+        lon = raw_lon
         previous_lon = unwrapped[-1][0]
         while lon - previous_lon > 180.0:
             lon -= 360.0
@@ -215,8 +216,4 @@ def _boundary_points(boundary: object) -> list[tuple[float, float]]:
     if not boundary:
         return []
     pairs = cast(Sequence[Sequence[float]], boundary)
-    points: list[tuple[float, float]] = []
-    for pair in pairs:
-        if len(pair) >= 2:
-            points.append((float(pair[1]), float(pair[0])))
-    return points
+    return [(float(pair[1]), float(pair[0])) for pair in pairs if len(pair) >= 2]

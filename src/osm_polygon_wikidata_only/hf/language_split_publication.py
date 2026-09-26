@@ -627,13 +627,13 @@ def _publication_operations(
     revision: str,
     data_root: Path,
 ) -> list[PublicationOp]:
-    operations: list[PublicationOp] = []
-    for file in files:
+    return [
+        add_op(file.local_path, path_in_repo=file.path_in_repo)
+        for file in files
         if not _remote_matches(
             file, remote_entries.get(file.path_in_repo), hub, repo_id, revision, data_root
-        ):
-            operations.append(add_op(file.local_path, path_in_repo=file.path_in_repo))
-    return operations
+        )
+    ]
 
 
 def _remote_matches(
@@ -685,12 +685,14 @@ def _remote_lfs_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
     lfs_sha = getattr(lfs, "sha256", None) if lfs is not None else None
     if isinstance(lfs_sha, str) and len(lfs_sha) == 64:
         return lfs_sha == local.sha256
+    return None
 
 
 def _remote_blob_match(local: LanguagePublishedFile, remote: Any) -> bool | None:
     blob_id = getattr(remote, "blob_id", None)
     if isinstance(blob_id, str) and len(blob_id) == 40:
         return blob_id == local.git_sha1()
+    return None
 
 
 def _remote_entries(

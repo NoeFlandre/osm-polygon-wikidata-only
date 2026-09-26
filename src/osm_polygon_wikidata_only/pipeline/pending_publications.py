@@ -314,7 +314,7 @@ def _validate_metadata_marker_hashes(raw_hashes: object, raw_stems: object) -> N
         raise ValueError(
             "metadata_refresh.fingerprint_hashes keys must match metadata_refresh.stems"
         )
-    for _stem, sha in hashes.items():
+    for sha in hashes.values():
         _validate_marker_hash(sha)
 
 

@@ -66,7 +66,7 @@ class _HostState:
     lock: threading.Lock = field(default_factory=threading.Lock)
     cooldown_until: float = 0.0
     next_request_at: float = 0.0
-    recent_throttles: deque[float] = field(default_factory=lambda: deque[float]())
+    recent_throttles: deque[float] = field(default_factory=deque[float])
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +105,7 @@ class _ThrottleHistory:
     # host -> last throttle time, used for systemic detection.
     systemic_host_events: dict[str, float] = field(default_factory=dict)
     # Rolling timestamps of every host throttle response (telemetry).
-    global_throttle_times: deque[float] = field(default_factory=lambda: deque[float]())
+    global_throttle_times: deque[float] = field(default_factory=deque[float])
     # Active host tracking for proportional systemic detection
     # (host -> last activity timestamp).
     active_host_timestamps: dict[str, float] = field(default_factory=dict)

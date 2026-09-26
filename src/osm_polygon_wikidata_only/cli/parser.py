@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 
+from osm_polygon_wikidata_only.cli import audit_containment
+from osm_polygon_wikidata_only.cli.grid5000 import add_grid5000_parser
 from osm_polygon_wikidata_only.config.settings import (
     DEFAULT_REPO_ID,
     DEFAULT_USER_AGENT,
@@ -20,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage."
         ),
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
     common = _common_parser()
     _add_process_parsers(sub, common)
@@ -28,7 +33,96 @@ def build_parser() -> argparse.ArgumentParser:
     _add_language_splits_parser(sub)
     _add_publish_language_splits_parser(sub)
     _add_release_stats_parser(sub)
+    _add_tool_parsers(sub)
     return parser
+
+
+DISTRIBUTION = "osm-polygon-wikidata-only"
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+
+
+def package_version() -> str:
+    """Return the installed distribution version, or ``unknown`` without metadata."""
+    try:
+        return distribution_version(DISTRIBUTION)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def add_enforce_integrity_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the enforce-integrity options (shared with the legacy executable)."""
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the data root. Falls back to the OSM_POLYGON_DATA_ROOT environment variable."
+        ),
+    )
+    parser.add_argument(
+        "--audit-filename",
+        type=str,
+        default="integrity_audit.json",
+        help="Name of the audit JSON inside <data-root>/processed/integrity/.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute and report rejections without rewriting tables or writing the audit",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the report summary as JSON on stdout",
+    )
+    parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
+
+
+def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
+    """Register the operator tools that also ship as standalone executables."""
+    integrity = sub.add_parser(
+        "enforce-integrity",
+        help="Drop join-integrity violations from processed tables and write an audit",
+    )
+    add_enforce_integrity_arguments(integrity)
+
+    audit = sub.add_parser(
+        "audit-remote",
+        help="Read-only audit of remote versus local canonical dataset files",
+    )
+    audit.add_argument(
+        "--data-root", type=Path, default=None, help="Local dataset root; defaults to env var"
+    )
+    audit.add_argument("--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face dataset repository")
+    audit.add_argument("--hf-token", default=None, help="Hugging Face token")
+
+    trackio = sub.add_parser(
+        "trackio-snapshot",
+        help="Publish the frozen dataset snapshot run to Trackio",
+    )
+    trackio.add_argument(
+        "--dataset-version",
+        choices=("v1", "v2"),
+        default="v1",
+        help="Which dataset snapshot to publish (default: v1)",
+    )
+    trackio.add_argument(
+        "--data-root", type=Path, default=None, help="Local data root for artifact storage"
+    )
+    trackio.add_argument(
+        "--space-id",
+        default=None,
+        help="Hugging Face Space receiving the run (default: the version's public Space)",
+    )
+
+    add_grid5000_parser(sub)
+
+    containment = sub.add_parser(
+        "audit-containment",
+        help="Read-only JSON audit of whole-file containment retirements (exit 2 if blocked)",
+        description=audit_containment.DESCRIPTION,
+    )
+    audit_containment.add_arguments(containment)
 
 
 def _common_parser() -> argparse.ArgumentParser:

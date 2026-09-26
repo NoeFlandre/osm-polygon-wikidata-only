@@ -223,7 +223,7 @@ def _core_land_path(
     # ``ensure_world_land`` performs network I/O and can raise several
     # exception types; this unified path intentionally falls back to a map
     # without continents.
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional network map context, see comment above
         if world_land_warning is not None:
             world_land_warning("Could not fetch world land data; map will omit continents")
         return None
@@ -309,7 +309,7 @@ def _augmentation_only_map_operations(
     text_presence_snapshot = snapshots / "geographic_text_presence.png"
     try:
         land_path = hooks.ensure_world_land(data_root.cache)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional network map context falls back to no continents
         LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
         land_path = None
     text_presence_snapshot, text_density_snapshot = _text_map_snapshots(

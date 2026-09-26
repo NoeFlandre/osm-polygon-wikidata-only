@@ -74,7 +74,7 @@ def _digest(path: Path) -> str:
 
 def enable_hash_cache(cache_dir: Path) -> None:
     """Load a persisted digest index and keep writing to ``cache_dir``."""
-    global _CACHE_DIR
+    global _CACHE_DIR  # noqa: PLW0603 -- process-wide cache directory setting
     _CACHE_DIR = cache_dir
     for key, entry in _persisted_entries(cache_dir / _CACHE_FILENAME).items():
         restored = _restored_entry(entry)

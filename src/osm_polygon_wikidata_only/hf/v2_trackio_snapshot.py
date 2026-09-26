@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from osm_polygon_wikidata_only.config.paths import resolve_data_root
+from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 from osm_polygon_wikidata_only.hf._trackio.models import FinalDatasetSnapshot
 from osm_polygon_wikidata_only.hf._trackio.publisher import (
     TrackioSnapshotArtifacts,
@@ -81,7 +81,7 @@ def publish(
     ] = V2_TRACKIO_SPACE_ID,
 ) -> None:
     """Publish the V2 card metrics and three static plots."""
-    resolved = resolve_data_root(data_root, repo_root=Path(__file__).resolve().parents[3])
+    resolved = resolve_data_root(data_root, repo_root=repository_root())
     stats = compute_v2_card_stats(resolved.processed_v2, v1_processed=resolved.processed)
     artifacts = publish_v2_trackio_snapshot(
         output_dir=resolved.cache / "trackio" / V2_TRACKIO_RUN_NAME,

@@ -472,7 +472,7 @@ def _existing_document_plan(
         )
     try:
         document_table = pq.read_table(doc_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any unreadable parquet blocks the stem instead of aborting
         return _blocked_plan(
             stem,
             f"unreadable document file ({type(exc).__name__})",
@@ -675,12 +675,10 @@ def plan_migration(processed_dir: Path, stems: set[str] | None = None) -> Migrat
     MigrationPlan
         Immutable, validated plan with per-stem classifications.
     """
-    stems_data: list[StemPlan] = []
     discovered = _discover_all_stems(processed_dir)
     if stems is not None:
         discovered = [s for s in discovered if s in stems]
-    for stem in discovered:
-        stems_data.append(_classify_stem(stem, processed_dir))
+    stems_data = [_classify_stem(stem, processed_dir) for stem in discovered]
 
     return MigrationPlan(
         processed_dir=processed_dir,

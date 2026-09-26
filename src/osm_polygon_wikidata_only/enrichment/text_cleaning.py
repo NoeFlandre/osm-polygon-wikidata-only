@@ -25,7 +25,7 @@ class _RenderedTextParser(HTMLParser):
         self.parts: list[str] = []
         self._ignored_depth = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002 -- HTMLParser override signature
         if tag in self._IGNORED:
             self._ignored_depth += 1
         elif tag in {"br", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr"}:
@@ -66,8 +66,7 @@ def clean_article_text(text: str) -> str:
     """
     out = normalize_unicode(text)
     out = strip_template_markers(out)
-    out = normalize_whitespace(out)
-    return out
+    return normalize_whitespace(out)
 
 
 def html_to_plain_text(html: str) -> str:

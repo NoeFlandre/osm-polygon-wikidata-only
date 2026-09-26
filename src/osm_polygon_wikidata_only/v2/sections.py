@@ -86,11 +86,11 @@ def _missing_documents(
     completed_document_ids: set[str] | None,
 ) -> list[dict[str, Any]]:
     covered = _covered_document_ids(existing_sections, completed_document_ids)
-    missing: list[dict[str, Any]] = []
-    for row in sorted(documents, key=lambda item: str(item.get("document_id", ""))):
-        if _is_missing_document(row, covered):
-            missing.append(row)
-    return missing
+    return [
+        row
+        for row in sorted(documents, key=lambda item: str(item.get("document_id", "")))
+        if _is_missing_document(row, covered)
+    ]
 
 
 def _covered_document_ids(
@@ -164,7 +164,7 @@ def _fetch_one(row: dict[str, Any], section_client: SectionClient) -> list[dict[
 def _future_result(future: Future[list[dict[str, Any]]]) -> list[dict[str, Any]] | Exception:
     try:
         return future.result()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- exception is returned to the caller, which re-raises it
         return error
 
 

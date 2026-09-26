@@ -278,7 +278,7 @@ def _append_merge_rows(
     primary: set[str],
     secondary: set[str],
     primary_key: str,
-    label: str,
+    label: str,  # noqa: ARG001 -- keyword kept for call-site readability
     secondary_key: str | None,
 ) -> set[str]:
     """Append unseen rows while enforcing merge identity constraints."""

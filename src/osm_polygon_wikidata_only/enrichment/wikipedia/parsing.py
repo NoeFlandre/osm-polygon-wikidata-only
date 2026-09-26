@@ -103,7 +103,7 @@ def parse_wikipedia_batch_response(
     requested: list[str],
     data: dict[str, Any],
     *,
-    fetch_full_text: bool,
+    fetch_full_text: bool,  # noqa: ARG001 -- public keyword kept for API compatibility
 ) -> dict[str, FetchResult]:
     """Map an Action API multi-page response back to requested titles."""
     query = _batch_query(data)
