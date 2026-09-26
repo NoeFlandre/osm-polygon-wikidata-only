@@ -15,7 +15,6 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_LINKS_DIR,
     REMOTE_MANIFEST_FILE,
     REMOTE_POLYGONS_DIR,
-    local_to_remote,
     remote_parquet_path,
 )
 from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
@@ -42,11 +41,6 @@ def test_remote_parquet_path() -> None:
         remote_parquet_path(REMOTE_LINKS_DIR, "monaco-latest")
         == "polygon_articles/monaco-latest.parquet"
     )
-
-
-def test_local_to_remote() -> None:
-    p = Path("/x/processed/polygons/monaco-latest.parquet")
-    assert local_to_remote(p, "polygons") == "polygons/monaco-latest.parquet"
 
 
 def test_remote_manifest_file_is_deterministic() -> None:

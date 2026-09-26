@@ -104,13 +104,6 @@ def remote_dataset_card_path() -> str:
     return "README.md"
 
 
-def local_to_remote(local_path: Path, processed_subdir: str) -> str:  # noqa: ARG001 -- public argument kept for API compatibility
-    """Convert a local path under the processed dir to its remote equivalent."""
-    parts = local_path.parts
-    # Last two: <subdir>/<stem>.parquet
-    return remote_parquet_path(parts[-2], local_path.stem)
-
-
 def canonical_region_paths(stem: str) -> dict[str, str]:
     """Return mapping of expected local relative paths (under processed/) to remote paths for a region."""
     return {
@@ -148,7 +141,6 @@ __all__ = [
     "REMOTE_POLYGON_STATS_FILE",
     "REMOTE_WIKIPEDIA_DOCUMENTS_DIR",
     "canonical_region_paths",
-    "local_to_remote",
     "remote_dataset_card_path",
     "remote_parquet_path",
 ]
