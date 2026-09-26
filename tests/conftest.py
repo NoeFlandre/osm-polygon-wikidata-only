@@ -10,6 +10,34 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, settings
+from hypothesis.database import DirectoryBasedExampleDatabase
+
+
+def _dev_example_database() -> DirectoryBasedExampleDatabase | None:
+    """Keep the local example database under ``TMPDIR`` rather than the checkout."""
+
+    tmpdir = os.environ.get("TMPDIR")
+    if not tmpdir:
+        return None
+    return DirectoryBasedExampleDatabase(str(Path(tmpdir) / "hypothesis-examples"))
+
+
+# Hypothesis profiles, selected with ``HYPOTHESIS_PROFILE``. ``ci`` is the
+# default under CI (``CI`` set) and is deterministic; ``dev`` is the default
+# locally; ``nightly`` runs a deeper randomized pass.
+settings.register_profile(
+    "ci",
+    max_examples=100,
+    derandomize=True,
+    database=None,
+    deadline=None,
+    print_blob=True,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+settings.register_profile("dev", deadline=None, database=_dev_example_database())
+settings.register_profile("nightly", max_examples=1000, deadline=None, database=None)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE") or ("ci" if os.environ.get("CI") else "dev"))
 
 from tests._support import (
     _socket_address_is_allowed,
