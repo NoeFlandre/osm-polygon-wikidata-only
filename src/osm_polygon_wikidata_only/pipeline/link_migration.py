@@ -233,9 +233,7 @@ def _read_legacy_inputs(
     legacy_table = _read_stem_table(links_path, "polygon_articles")
     polygons_table = _read_stem_table(polygons_path, "polygons")
     if not docs_path.is_file():
-        raise _UnreadableStemInputError(
-            "legacy schema requires wikipedia/documents/<stem>.parquet"
-        )
+        raise _UnreadableStemInputError("legacy schema requires wikipedia/documents/<stem>.parquet")
     docs_table = _read_stem_table(docs_path, "wikipedia documents")
     return legacy_table, polygons_table, docs_table
 
