@@ -8,14 +8,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from osm_polygon_wikidata_only import __version__
+
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 
 
 # Wikimedia requires a User-Agent identifying the project and a contact.
-# This is overridable via env var so deployments can set their own.
+# The version comes from the installed package metadata (``pyproject.toml``).
+# Deployments override it with the ``--user-agent`` CLI option.
 DEFAULT_USER_AGENT = (
-    "osm-polygon-wikidata-only/0.1.0 (https://github.com/NoeFlandre/osm-polygon-wikidata-only) "
-    "datasets-pipeline"
+    f"osm-polygon-wikidata-only/{__version__} "
+    "(https://github.com/NoeFlandre/osm-polygon-wikidata-only) datasets-pipeline"
 )
 
 

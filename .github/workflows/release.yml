@@ -1,0 +1,35 @@
+name: Release
+
+# Build the sdist and wheel from a version tag and attach them to a GitHub
+# Release. The tag must match the version in pyproject.toml (the only source).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Check the tag matches the package version
+        run: |
+          version="$(uv version --short)"
+          test "v${version}" = "${GITHUB_REF_NAME}" || {
+            echo "Tag ${GITHUB_REF_NAME} does not match pyproject version ${version}" >&2
+            exit 1
+          }
+      - name: Build sdist and wheel
+        run: uv build --out-dir dist
+      - name: Create the GitHub Release with the artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --verify-tag --generate-notes
