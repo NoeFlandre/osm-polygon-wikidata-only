@@ -182,6 +182,20 @@ def _link_classification(path: Path) -> tuple[str | None, str | None]:
         return None, f"unrecognised schema: {exc}"
 
 
+class _UnreadableStemInputError(Exception):
+    """A stem input file exists but cannot be decoded as Parquet."""
+
+
+def _read_stem_table(path: Path, label: str) -> pa.Table:
+    """Read one stem input, converting decode failures into a blocking reason."""
+    try:
+        return _read_table(path)
+    except (OSError, pa.ArrowInvalid) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOGGER.warning("Could not read %s data at %s: %s", label, path, detail)
+        raise _UnreadableStemInputError(f"{label} file unreadable: {detail}") from exc
+
+
 def _canonical_stem_plan(
     stem: str,
     links_path: Path,
@@ -189,17 +203,9 @@ def _canonical_stem_plan(
 ) -> StemPlan:
     """Validate and describe an already canonical link table."""
     try:
-        links_table = _read_table(links_path)
-    except (OSError, pa.ArrowInvalid) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        LOGGER.warning(
-            "Could not read canonical polygon_articles data at %s: %s", links_path, detail
-        )
-        return _blocked_stem(
-            stem,
-            f"polygon_articles file unreadable: {detail}",
-            fingerprints,
-        )
+        links_table = _read_stem_table(links_path, "polygon_articles")
+    except _UnreadableStemInputError as exc:
+        return _blocked_stem(stem, str(exc), fingerprints)
     if not is_canonical_table_schema(links_table):
         return _blocked_stem(
             stem,
@@ -218,6 +224,22 @@ def _canonical_stem_plan(
     )
 
 
+def _read_legacy_inputs(
+    polygons_path: Path,
+    links_path: Path,
+    docs_path: Path,
+) -> tuple[pa.Table, pa.Table, pa.Table]:
+    """Read the legacy link, polygon and document tables needed for conversion."""
+    legacy_table = _read_stem_table(links_path, "polygon_articles")
+    polygons_table = _read_stem_table(polygons_path, "polygons")
+    if not docs_path.is_file():
+        raise _UnreadableStemInputError(
+            "legacy schema requires wikipedia/documents/<stem>.parquet"
+        )
+    docs_table = _read_stem_table(docs_path, "wikipedia documents")
+    return legacy_table, polygons_table, docs_table
+
+
 def _legacy_stem_plan(
     stem: str,
     polygons_path: Path,
@@ -227,37 +249,11 @@ def _legacy_stem_plan(
 ) -> StemPlan:
     """Convert a legacy table in memory and describe its planned result."""
     try:
-        legacy_table = _read_table(links_path)
-    except (OSError, pa.ArrowInvalid) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        LOGGER.warning("Could not read legacy polygon_articles data at %s: %s", links_path, detail)
-        return _blocked_stem(
-            stem,
-            f"polygon_articles file unreadable: {detail}",
-            fingerprints,
+        legacy_table, polygons_table, docs_table = _read_legacy_inputs(
+            polygons_path, links_path, docs_path
         )
-    try:
-        polygons_table = _read_table(polygons_path)
-    except (OSError, pa.ArrowInvalid) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        LOGGER.warning("Could not read polygon data at %s: %s", polygons_path, detail)
-        return _blocked_stem(stem, f"polygons file unreadable: {detail}", fingerprints)
-    if not docs_path.is_file():
-        return _blocked_stem(
-            stem,
-            "legacy schema requires wikipedia/documents/<stem>.parquet",
-            fingerprints,
-        )
-    try:
-        docs_table = _read_table(docs_path)
-    except (OSError, pa.ArrowInvalid) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        LOGGER.warning("Could not read wikipedia document data at %s: %s", docs_path, detail)
-        return _blocked_stem(
-            stem,
-            f"wikipedia documents file unreadable: {detail}",
-            fingerprints,
-        )
+    except _UnreadableStemInputError as exc:
+        return _blocked_stem(stem, str(exc), fingerprints)
     try:
         canonical_rows = _build_canonical_rows(stem, legacy_table, polygons_table, docs_table)
     except Exception as exc:  # noqa: BLE001 -- any conversion failure blocks the stem instead of aborting
