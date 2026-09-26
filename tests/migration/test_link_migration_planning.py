@@ -224,6 +224,41 @@ def _seed_full_legacy_stem(
     )
 
 
+def _seed_canonical_stem(tmp_path: Path, stem: str = "monaco-latest") -> Path:
+    pa = _pyarrow()
+    from osm_polygon_wikidata_only.domain.polygon_document_links import (
+        polygon_document_link_schema,
+    )
+
+    layout = _processed_layout(tmp_path)
+    _write_polygons(
+        layout["polygons"] / f"{stem}.parquet",
+        [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
+    )
+    links_path = layout["polygon_articles"] / f"{stem}.parquet"
+    links_path.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(
+        [
+            {
+                "polygon_id": f"{stem}:relation:1",
+                "document_id": "Q1:wikipedia:en:1:1",
+                "project": "wikipedia",
+                "wikidata": "Q1",
+                "language": "en",
+                "source_pbf": f"{stem}.osm.pbf",
+                "region": stem,
+                "osm_type": "relation",
+                "osm_id": 1,
+                "page_id": 1,
+                "revision_id": 1,
+            }
+        ],
+        schema=polygon_document_link_schema(),
+    )
+    pa.parquet.write_table(table, links_path)
+    return links_path
+
+
 # ---------------------------------------------------------------------------
 # plan_link_migration happy paths
 # ---------------------------------------------------------------------------
@@ -287,6 +322,64 @@ def test_plan_link_migration_classifies_mixed_schema_exactly_blocked(
         f"Mixed schema must be classified exactly BLOCKED, got "
         f"{stem_plans['monaco-latest'].classification!r}"
     )
+
+
+def test_plan_link_migration_reads_canonical_link_table_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    links_path = _seed_canonical_stem(tmp_path)
+    original_read_table = link_migration.pq.read_table
+    link_table_reads = 0
+
+    def count_link_table_reads(path, *args, **kwargs):
+        nonlocal link_table_reads
+        if Path(path) == links_path:
+            link_table_reads += 1
+        return original_read_table(path, *args, **kwargs)
+
+    monkeypatch.setattr(link_migration.pq, "read_table", count_link_table_reads)
+    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+
+    assert plan.stems[0].classification == "canonical"
+    assert link_table_reads == 1
+
+
+def test_plan_link_migration_includes_corrupt_parquet_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    layout = _processed_layout(tmp_path)
+    _write_polygons(
+        layout["polygons"] / "broken.parquet",
+        [_polygon_row("broken:relation:1", "Q1", source_pbf="broken.osm.pbf", region="broken")],
+    )
+    links_path = layout["polygon_articles"] / "broken.parquet"
+    links_path.parent.mkdir(parents=True, exist_ok=True)
+    links_path.write_bytes(b"not a parquet file")
+
+    with caplog.at_level("WARNING"):
+        plan = link_migration.plan_link_migration(tmp_path, stems=["broken"])
+
+    blocked = plan.stems[0]
+    assert blocked.classification == "BLOCKED"
+    assert "ArrowInvalid:" in blocked.reason
+    assert "ArrowInvalid" in caplog.text
+
+
+def test_plan_link_migration_propagates_unexpected_schema_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    links_path = _seed_canonical_stem(tmp_path)
+    original_read_schema = link_migration.pq.read_schema
+
+    def fail_unexpectedly(path, *args, **kwargs):
+        if Path(path) == links_path:
+            raise RuntimeError("unexpected schema reader failure")
+        return original_read_schema(path, *args, **kwargs)
+
+    monkeypatch.setattr(link_migration.pq, "read_schema", fail_unexpectedly)
+
+    with pytest.raises(RuntimeError, match="unexpected schema reader failure"):
+        link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
 
 
 # ---------------------------------------------------------------------------
