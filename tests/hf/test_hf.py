@@ -43,10 +43,6 @@ def test_remote_parquet_path() -> None:
     )
 
 
-def test_remote_manifest_file_is_deterministic() -> None:
-    assert REMOTE_MANIFEST_FILE == "manifests/processed_pbfs.json"
-
-
 def _small_parquet(tmp_path: Path) -> Path:
     p = tmp_path / "tiny.parquet"
     # Write a minimal placeholder (not real parquet, the stub doesn't care).

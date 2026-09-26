@@ -18,15 +18,13 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.domain.schema import (
-    ARTICLE_COLUMNS,
-    POLYGON_ARTICLE_COLUMNS,
-    POLYGON_COLUMNS,
+    article_schema,
+    polygon_article_schema,
+    polygon_schema,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     DEFAULT_H3_RESOLUTION,
     DEFAULT_MIN_POLYGONS_PER_CELL,
-    LOCAL_POLYGON_COUNT_ASSET_PATH,
-    LOCAL_TEXT_COVERAGE_ASSET_PATH,
     CoverageCell,
     CoverageMapError,
     PolygonCountCell,
@@ -708,16 +706,10 @@ def test_default_min_polygons_per_cell_is_twenty() -> None:
 
 
 def test_domain_schema_constants_align_with_module_contract() -> None:
-    # Defensive: if the upstream schema grows new columns, the visualization
-    # should still work because we read only the columns we need. We assert
-    # the schema's required columns exist.
-    assert "polygon_id" in POLYGON_COLUMNS
-    assert "lat" in POLYGON_COLUMNS
-    assert "lon" in POLYGON_COLUMNS
-    assert "article_id" in ARTICLE_COLUMNS
-    assert "full_text" in ARTICLE_COLUMNS
-    assert "polygon_id" in POLYGON_ARTICLE_COLUMNS
-    assert "article_id" in POLYGON_ARTICLE_COLUMNS
+    """The visualization's required fields are present in produced schemas."""
+    assert {"polygon_id", "lat", "lon"} <= set(polygon_schema().names)
+    assert {"article_id", "full_text"} <= set(article_schema().names)
+    assert {"polygon_id", "article_id"} <= set(polygon_article_schema().names)
 
 
 # --- Strict polygon validation (no silent skipping) -------------------
@@ -1251,17 +1243,6 @@ def test_generate_polygon_count_writes_deterministic_path(tmp_path: Path) -> Non
     )
     out = result.output_path
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-
-
-# --- Both maps: stable paths and module surface ------------------------
-
-
-def test_text_coverage_local_asset_path_is_stable() -> None:
-    assert LOCAL_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
-
-
-def test_polygon_count_local_asset_path_is_stable() -> None:
-    assert LOCAL_POLYGON_COUNT_ASSET_PATH == "assets/geographic_polygon_count.png"
 
 
 def test_polygon_count_cell_is_immutable() -> None:

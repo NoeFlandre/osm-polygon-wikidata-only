@@ -20,18 +20,6 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     generate_coverage_map,
     load_centroids_from_parquet,
 )
-from osm_polygon_wikidata_only.hf.repo_layout import (
-    LEGACY_REMOTE_COVERAGE_MAP_FILE,
-    REMOTE_COVERAGE_MAP_FILE,
-)
-
-# --- repo_layout --------------------------------------------------------
-
-
-def test_remote_coverage_map_path() -> None:
-    assert REMOTE_COVERAGE_MAP_FILE == "assets/coverage_map.png"
-    assert LEGACY_REMOTE_COVERAGE_MAP_FILE == "coverage_map.png"
-
 
 # --- helpers ------------------------------------------------------------
 

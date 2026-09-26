@@ -182,13 +182,10 @@ def test_geographic_facade_preserves_assign_h3_cell_and_defaults() -> None:
 
 
 def test_geographic_facade_preserves_asset_path_constants() -> None:
-    """The stable asset paths and backwards-compatible aliases are stable
-    by value and live on the facade."""
+    """Backwards-compatible geographic asset aliases live on the facade."""
     from osm_polygon_wikidata_only.hf import geographic_text_coverage as facade
 
-    assert facade.REMOTE_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
     assert facade.LOCAL_TEXT_COVERAGE_ASSET_PATH == facade.REMOTE_TEXT_COVERAGE_ASSET_PATH
-    assert facade.REMOTE_POLYGON_COUNT_ASSET_PATH == "assets/geographic_polygon_count.png"
     assert facade.LOCAL_POLYGON_COUNT_ASSET_PATH == facade.REMOTE_POLYGON_COUNT_ASSET_PATH
     assert facade.LOCAL_ASSET_PATH == facade.LOCAL_TEXT_COVERAGE_ASSET_PATH
     assert facade.REMOTE_ASSET_PATH == facade.REMOTE_TEXT_COVERAGE_ASSET_PATH

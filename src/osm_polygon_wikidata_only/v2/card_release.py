@@ -51,7 +51,7 @@ def build_minimal_v2_release_snapshot(
     links_dir = processed_v2 / "polygon_document_links"
     presence = text_presence or _load_presence(processed_v2, links_dir)
     geometry_area = _geometry_area(processed_v2)
-    countries_path = ensure_world_countries(cache_dir or processed_v2.parent / "cache")
+    countries_path = ensure_world_countries(cache_dir or processed_v2.parent / "cache" / "v2")
     rows = _continent_rows(processed_v2, countries_path, links_dir)
     front_matter = _render_front_matter(stats, processed_v2=processed_v2)
     snapshot = MinimalCardSnapshot(

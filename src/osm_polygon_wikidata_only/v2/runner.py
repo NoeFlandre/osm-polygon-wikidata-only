@@ -433,13 +433,13 @@ def _write_v2_metadata(
     state: _V2ExecutionState,
     trackio_publish: Callable[[V2CardStats], None] | None,
 ) -> Path:
-    land_path = state.data_root.cache / "ne_110m_land.geojson"
+    land_path = state.data_root.v2_cache / "ne_110m_land.geojson"
     generate_v2_map_assets(
         state.data_root.processed_v2,
         state.data_root.processed_v2 / "assets",
         v1_processed=state.data_root.processed,
         land_geojson_path=land_path if land_path.is_file() else None,
-        land_cache_dir=state.data_root.cache,
+        land_cache_dir=state.data_root.v2_cache,
     )
     card_stats = compute_v2_card_stats(
         state.data_root.processed_v2,

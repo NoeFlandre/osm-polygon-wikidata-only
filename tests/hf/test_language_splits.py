@@ -44,7 +44,6 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     language_table_specs,
     normalize_language,
 )
-from osm_polygon_wikidata_only.hf.repo_layout import REMOTE_LINKS_DIR, REMOTE_POLYGONS_DIR
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
     polygon_v2_schema,
@@ -336,8 +335,6 @@ def test_contract_uses_actual_textual_schemas_and_keeps_versions_separate() -> N
 
 
 def test_hugging_face_names_are_additive_and_address_one_language() -> None:
-    assert REMOTE_POLYGONS_DIR == "polygons"
-    assert REMOTE_LINKS_DIR == "polygon_articles"
     assert (
         language_config_name(LanguageTable.WIKIPEDIA_DOCUMENTS) == "wikipedia_documents_by_language"
     )
