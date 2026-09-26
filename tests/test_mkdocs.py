@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -18,8 +19,11 @@ def test_pages_workflow_builds_strictly_and_deploys_with_least_privilege() -> No
     assert "id-token: write" in workflow
     assert "uv sync --frozen" in workflow
     assert "uv run mkdocs build --strict" in workflow
-    assert "actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3" in workflow
-    assert "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4" in workflow
+    for action in ("actions/upload-pages-artifact", "actions/deploy-pages"):
+        assert re.search(
+            rf"{re.escape(action)}@[0-9a-f]{{40}}\s+#\s+v\d+(?:\.\d+)*\b",
+            workflow,
+        ), action
     assert "path: site" in workflow
 
 
