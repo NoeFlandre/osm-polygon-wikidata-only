@@ -134,6 +134,17 @@ def test_sequence_scan_uses_envelope_for_noncanonical_filenames(
     assert state._sequence_from_state_path(path) == envelope_sequence
 
 
+@pytest.mark.parametrize("payload", [None, "not-json", "[]"])
+def test_sequence_scan_ignores_unreadable_or_non_object_envelopes(
+    tmp_path: Path, payload: str | None
+) -> None:
+    path = tmp_path / "legacy-id.json"
+    if payload is not None:
+        path.write_text(payload, encoding="utf-8")
+
+    assert state._sequence_from_state_path(path) == 0
+
+
 @pytest.mark.parametrize("sequence", [0, -1, True, "1"])
 def test_sequence_from_non_numeric_envelope_returns_zero(tmp_path: Path, sequence: object) -> None:
     path = tmp_path / "legacy-id.json"

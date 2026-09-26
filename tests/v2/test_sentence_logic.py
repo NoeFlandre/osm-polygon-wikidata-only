@@ -10,6 +10,7 @@ from osm_polygon_wikidata_only.v2.sentence_logic import (
     SAT_SUPPORTED_LANGUAGES,
     SENTENCE_COLUMNS,
     _normalize_pieces,
+    _text,
     is_sat_supported_language,
     sentence_schema,
     split_sections,
@@ -344,6 +345,26 @@ def test_normalize_pieces_preserves_falsey_and_none_model_output(
     piece: object, expected: str
 ) -> None:
     assert _normalize_pieces([piece]) == [expected]  # type: ignore[list-item]
+
+
+def test_text_preserves_existing_string_subclasses_without_coercion() -> None:
+    class SourceText(str):
+        def __str__(self) -> str:
+            return "coerced text"
+
+    source_text = SourceText("original text")
+
+    assert _text({"text": source_text}) is source_text
+
+
+def test_normalize_pieces_preserves_existing_string_subclasses() -> None:
+    class ModelPiece(str):
+        def __str__(self) -> str:
+            return "coerced piece"
+
+    piece = ModelPiece("original piece")
+
+    assert _normalize_pieces([piece])[0] is piece
 
 
 def test_split_sections_rejects_model_output_that_loses_source_text() -> None:

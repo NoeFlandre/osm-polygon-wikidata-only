@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.quality import mutation_gate
+from scripts.quality import mutation_equivalents, mutation_gate
 from scripts.quality.mutation_equivalents import _review_fields, reviewed_equivalents
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -28,6 +28,7 @@ def _gate(report: str, monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
 def test_mutation_gate_passes_only_when_every_mutant_is_killed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.setattr(mutation_equivalents, "REVIEWED_EQUIVALENTS", {})
     assert _gate("one: killed\n", monkeypatch) == 0
     assert capsys.readouterr().out == "Mutation gate passed: 1 mutants killed\n"
     for report, message in (
@@ -66,6 +67,13 @@ def test_equivalence_reviews_are_exact_and_source_bound(
         == 0
     )
     assert capsys.readouterr().out.endswith("1 mutants killed; 1 reviewed equivalents\n")
+
+    monkeypatch.setattr(mutation_equivalents, "REVIEWED_EQUIVALENTS", {NAME: entry})
+    assert _gate(f"{NAME}: survived\n", monkeypatch) == 0
+    assert (
+        capsys.readouterr().out
+        == "Mutation gate passed: 0 mutants killed; 1 reviewed equivalents\n"
+    )
 
     def validate(results: list[tuple[str, str]]) -> frozenset[str]:
         return reviewed_equivalents(

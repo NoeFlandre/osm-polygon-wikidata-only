@@ -9,6 +9,26 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+REVIEWED_EQUIVALENTS: dict[str, dict[str, str]] = {
+    "scripts.quality.architecture.x__module_name__mutmut_16": {
+        "source_sha256": "f660096a8aa6264f9ac4ba0ff03b450fce442675ef7b4a52c60f20e745705282",
+        "mutant_sha256": "aee60257f983f3c4595f981b27d9ac8252a17aab11fe8e007f638ecaca0e6ebd",
+        "reason": (
+            "When parts is empty, joining the one-element tuple (package,) returns package, "
+            "exactly matching the alternate branch; non-empty parts take the same join."
+        ),
+    },
+    "scripts.quality.architecture.x__from_edges__mutmut_10": {
+        "source_sha256": "f660096a8aa6264f9ac4ba0ff03b450fce442675ef7b4a52c60f20e745705282",
+        "mutant_sha256": "3e9ecab4d2ecae1ca920b0a3429c5a3cca56d9ecdcb2b8c474a0d5628955e1a7",
+        "reason": (
+            "The changed branch matters only when a relative import climbs past the configured "
+            "package and leaves base empty. Discovered module paths are all package-prefixed, "
+            "so _resolve_local rejects both the bare alias and its dotted form."
+        ),
+    },
+}
+
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
@@ -66,13 +86,17 @@ def _verify_review(name: str, entry: object, source_root: Path, mutants_root: Pa
 
 def reviewed_equivalents(
     results: Sequence[tuple[str, str]],
-    path: Path,
+    path: Path | None,
     *,
     source_root: Path,
     mutants_root: Path,
 ) -> frozenset[str]:
     """Reject stale, malformed or drifted reviews before accepting a survivor."""
-    reviews = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+    reviews = (
+        REVIEWED_EQUIVALENTS
+        if path is None
+        else json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+    )
     if not isinstance(reviews, dict):
         raise ValueError("Equivalence reviews must be an object")
     statuses = dict(results)

@@ -432,6 +432,7 @@ def test_release_plan_serializers_emit_every_field_and_honor_inventory_override(
 
     for version_plan in plan.releases:
         inventory = version_plan.inventory
+        assert _expected_files(version_plan) == _expected_files(version_plan, inventory)
         serialized = version_plan.to_dict(plan.data_root)
         assert serialized == {
             "dataset_version": version_plan.version.value,
