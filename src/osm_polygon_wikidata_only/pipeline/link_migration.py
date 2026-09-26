@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -85,6 +86,8 @@ from osm_polygon_wikidata_only.pipeline._link_migration.transaction import (
 )
 from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 
+LOGGER = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Schema classification
 # ---------------------------------------------------------------------------
@@ -133,18 +136,9 @@ def _read_table(path: Path) -> pa.Table:
     return pq.read_table(path)
 
 
-def _read_table_safely(path: Path) -> pa.Table | None:
-    try:
-        return _read_table(path)
-    except Exception:  # noqa: BLE001 -- any unreadable table is treated as absent
-        return None
-
-
-def _table_columns(path: Path) -> tuple[str, ...] | None:
-    table = _read_table_safely(path)
-    if table is None:
-        return None
-    return tuple(table.schema.names)
+def _table_columns(path: Path) -> tuple[str, ...]:
+    """Read only Parquet footer metadata needed to classify a link table."""
+    return tuple(pq.read_schema(path).names)
 
 
 def _blocked_stem(
@@ -176,9 +170,12 @@ def _stem_paths(stem: str, processed_dir: Path) -> tuple[Path, Path, Path]:
 
 def _link_classification(path: Path) -> tuple[str | None, str | None]:
     """Classify a link table, returning a reason when it cannot be read."""
-    columns = _table_columns(path)
-    if columns is None:
-        return None, "polygon_articles file unreadable"
+    try:
+        columns = _table_columns(path)
+    except (OSError, pa.ArrowInvalid) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOGGER.warning("Could not read polygon_articles schema at %s: %s", path, detail)
+        return None, f"polygon_articles file unreadable: {detail}"
     try:
         return classify_stem_schema(columns), None
     except ValueError as exc:
