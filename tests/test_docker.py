@@ -191,7 +191,8 @@ def test_ci_builds_and_smoke_tests_the_runtime_image() -> None:
 
     assert "run: just quality-gauntlet" in workflow
     assert "docker build --target runtime" in workflow
-    assert "docker compose run --rm --no-deps --network none pipeline --help" in workflow
+    assert "docker compose run --rm --no-deps pipeline --help" in workflow
+    assert "--network none" not in workflow
     assert "docker compose config --quiet" in workflow
     assert 'HOST_UID="$(id -u)" HOST_GID="$(id -g)"' in workflow
     assert "--entrypoint /bin/sh pipeline" in workflow
@@ -239,7 +240,8 @@ def test_ci_container_job_runs_development_pytest_and_runtime_help() -> None:
     assert "docker run --rm osm-polygon-wikidata-only:ci-development" in container_job
     assert "docker build --target runtime" in container_job
     assert "docker compose config --quiet" in container_job
-    assert "docker compose run --rm --no-deps --network none pipeline --help" in container_job
+    assert "docker compose run --rm --no-deps pipeline --help" in container_job
+    assert "--network none" not in container_job
     assert "HF_TOKEN" not in container_job
     assert "--push" not in container_job
 

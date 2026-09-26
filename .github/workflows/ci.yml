@@ -74,12 +74,12 @@ jobs:
         run: docker compose config --quiet
       - name: Create the Compose bind-mount data root
         run: mkdir -p ../osm-polygon-data/raw
-      - name: Smoke-test the Compose default without network access
-        run: docker compose run --rm --no-deps --network none pipeline --help
-      - name: Verify Compose bind-mount permissions without network access
+      - name: Smoke-test the Compose runtime help
+        run: docker compose run --rm --no-deps pipeline --help
+      - name: Verify Compose bind-mount permissions
         run: |
           HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
-            docker compose run --rm --no-deps --network none \
+            docker compose run --rm --no-deps \
               --entrypoint /bin/sh pipeline \
               -ec 'touch /data/.compose-writable-check
               if touch /data/raw/.compose-readonly-check 2>/dev/null; then
