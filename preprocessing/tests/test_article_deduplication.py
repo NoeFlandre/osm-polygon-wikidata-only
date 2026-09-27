@@ -52,6 +52,28 @@ def _write_source_files(tmp_path: Path) -> tuple[Path, Path]:
     return articles_path, links_path
 
 
+def test_execute_one_rejects_an_aggregate_query_without_a_row() -> None:
+    class EmptyConnection:
+        def execute(self, _query: str) -> object:
+            return self
+
+        def fetchone(self) -> None:
+            return None
+
+    with pytest.raises(RuntimeError, match="aggregate query returned no row"):
+        articles_module._execute_one(EmptyConnection(), "SELECT 1")
+
+
+def test_input_path_validation_rejects_a_missing_file_after_valid_inputs(
+    tmp_path: Path,
+) -> None:
+    existing = tmp_path / "existing.parquet"
+    existing.touch()
+
+    with pytest.raises(FileNotFoundError, match=r"missing\.parquet"):
+        articles_module._validate_input_paths((existing, tmp_path / "missing.parquet"))
+
+
 def test_deduplicates_articles_and_preserves_entity_and_polygon_links(tmp_path):
     articles_path, links_path = _write_source_files(tmp_path)
     output_articles = tmp_path / "processed-articles.parquet"
