@@ -74,9 +74,9 @@ class GatePolicy:
     optional ``maximum`` CRAP score is kept for compatibility.
     """
 
-    max_complexity: int | None = None
-    min_coverage: float = 0.0
-    coverage_complexity: int = 1
+    max_complexity: int | None = 5
+    min_coverage: float = 0.8
+    coverage_complexity: int = 3
     maximum: float | None = None
 
 
@@ -303,9 +303,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--coverage", type=Path, required=True)
     parser.add_argument("--complexity", type=Path, required=True)
     parser.add_argument("--maximum", type=float, default=None, help="optional CRAP ceiling")
-    parser.add_argument("--max-complexity", type=int, default=None)
-    parser.add_argument("--min-coverage", type=float, default=0.0, help="fraction, e.g. 0.8")
-    parser.add_argument("--min-coverage-complexity", type=int, default=1)
+    parser.add_argument("--max-complexity", type=int, default=5)
+    parser.add_argument("--min-coverage", type=float, default=0.8, help="fraction, e.g. 0.8")
+    parser.add_argument("--min-coverage-complexity", type=int, default=3)
     return parser
 
 
