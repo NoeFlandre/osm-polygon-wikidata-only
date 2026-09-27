@@ -13,6 +13,8 @@ import pytest
 
 from osm_polygon_wikidata_only.domain.geometry import (
     GeometryError,
+    _projection_for_rings,
+    _ring_signed_area_and_centroid,
     area_km2,
     centroid_geojson,
     compute_polygon_geometry,
@@ -52,6 +54,25 @@ def test_polygon_geometry_translation_and_scale_invariants() -> None:
         assert result.lon == pytest.approx(x0 + size / 2)
         assert result.lat == pytest.approx(y0 + size / 2)
         assert result.area_m2 > 0
+
+
+def test_tiny_polygon_keeps_centroid_accumulators_zero_initialized() -> None:
+    size = 1e-6
+    result = compute_polygon_geometry({"type": "Polygon", "coordinates": [_square(0.0, 0.0, size)]})
+
+    assert result.lon == pytest.approx(size / 2, abs=1e-12)
+    assert result.lat == pytest.approx(size / 2, abs=1e-12)
+    assert result.area_m2 > 0
+
+
+def test_ring_moments_preserve_geojson_orientation_sign() -> None:
+    ring = _square(0.0, 0.0)
+
+    counterclockwise = _ring_signed_area_and_centroid(ring, cos_lat0=1.0)
+    clockwise = _ring_signed_area_and_centroid(list(reversed(ring)), cos_lat0=1.0)
+
+    assert counterclockwise[0] > 0
+    assert clockwise[0] < 0
 
 
 def test_reversed_ring_has_same_geometry() -> None:
@@ -109,19 +130,34 @@ def test_polar_geometry_uses_safe_projection_fallback() -> None:
 
 
 @pytest.mark.parametrize(
-    "geometry, message",
+    "geometry, expected_message",
     [
-        ({"type": "LineString", "coordinates": []}, "Unsupported geometry type"),
-        ({"type": "Polygon"}, "no coordinates"),
-        ({"type": "Polygon", "coordinates": []}, "no rings"),
-        ({"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [0, 0]]]}, "only 3 vertices"),
+        (
+            {"type": "LineString", "coordinates": []},
+            "Unsupported geometry type for polygon: 'LineString'",
+        ),
+        ({"type": "Polygon"}, "Geometry has no coordinates."),
+        ({"type": "Polygon", "coordinates": []}, "Geometry has no rings."),
+        (
+            {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [0, 0]]]},
+            "Ring has only 3 vertices.",
+        ),
     ],
 )
 def test_invalid_geometry_fails_with_actionable_error(
-    geometry: dict[str, object], message: str
+    geometry: dict[str, object], expected_message: str
 ) -> None:
-    with pytest.raises(GeometryError, match=message):
+    with pytest.raises(GeometryError) as exc_info:
         compute_polygon_geometry(geometry)
+
+    assert str(exc_info.value) == expected_message
+
+
+def test_projection_uses_exact_cosine_floor_at_pole() -> None:
+    ring = [[0.0, 90.0], [1.0, 90.0], [2.0, 90.0], [0.0, 90.0]]
+    _, _, cos_lat0 = _projection_for_rings([ring])
+
+    assert cos_lat0 == 1e-12
 
 
 def test_centroid_serializers_preserve_longitude_then_latitude() -> None:
