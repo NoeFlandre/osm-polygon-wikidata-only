@@ -135,6 +135,7 @@ def test_area_passes_original_area_to_geometry_factory() -> None:
     handler_any._factory = factory
     area = SimpleNamespace(
         id=7,
+        orig_id=lambda: 7,
         tags=_tags(("wikidata", "Q42")),
         is_multipolygon=lambda: True,
         from_way=lambda: False,
@@ -157,6 +158,7 @@ def test_area_forwards_wikipedia_opt_in_to_candidate_filter() -> None:
     handler_any._factory = SimpleNamespace(create_multipolygon=lambda _area: "{}")
     area = SimpleNamespace(
         id=7,
+        orig_id=lambda: 7,
         tags=_tags(("wikipedia:fr", "Titre")),
         is_multipolygon=lambda: True,
         from_way=lambda: False,
@@ -165,6 +167,26 @@ def test_area_forwards_wikipedia_opt_in_to_candidate_filter() -> None:
     handler_any.area(area)
 
     assert seen == [("relation", 7)]
+
+
+def test_area_forwards_original_osm_id_not_encoded_area_id() -> None:
+    from osm_polygon_wikidata_only.io.pbf_reader import _PolygonHandler
+
+    seen: list[tuple[str, int]] = []
+    handler = _PolygonHandler(lambda candidate: seen.append((candidate[0], candidate[1])))
+    handler_any = cast(Any, handler)
+    handler_any._factory = SimpleNamespace(create_multipolygon=lambda _area: "{}")
+    area = SimpleNamespace(
+        id=401,
+        orig_id=lambda: 200,
+        tags=_tags(("wikidata", "Q1;Q2")),
+        is_multipolygon=lambda: True,
+        from_way=lambda: False,
+    )
+
+    handler_any.area(area)
+
+    assert seen == [("relation", 200)]
 
 
 @pytest.mark.parametrize(
@@ -198,6 +220,7 @@ def test_area_filters_invalid_candidates_and_delivers_valid_ones(
     untyped_handler._factory = Factory()
     area = SimpleNamespace(
         id=7,
+        orig_id=lambda: 7,
         tags=tags,
         is_multipolygon=lambda: multipolygon,
         from_way=lambda: from_way,

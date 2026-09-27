@@ -86,6 +86,7 @@ markers = [
     "integration: tests that read a real PBF fixture",
     "requires_just: tests that execute the `just` command runner; skipped when it is not installed",
     "repository: contracts that need a full source checkout, not a pruned build context",
+    "acceptance: offline executable specifications under tests/acceptance (see #115)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:botocore.*",

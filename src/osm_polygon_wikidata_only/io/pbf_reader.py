@@ -157,7 +157,7 @@ class _PolygonHandler(osmium.SimpleHandler):
         geom_json = _geometry_json(self._factory, a)
         if geom_json is None:
             return
-        self._callback((osm_type, a.id, tags, geom_json))
+        self._callback((osm_type, a.orig_id(), tags, geom_json))
 
 
 def _candidate_tags(tags: Any, *, include_wikipedia_tagged: bool) -> dict[str, str] | None:
