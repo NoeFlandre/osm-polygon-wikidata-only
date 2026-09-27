@@ -28,11 +28,7 @@ def _convex_ring(draw: st.DrawFn) -> Ring:
     center_lat = draw(st.floats(min_value=-70.0, max_value=70.0))
     radius = draw(st.floats(min_value=0.001, max_value=0.4))
     count = draw(st.integers(min_value=3, max_value=12))
-    gaps = draw(
-        st.lists(
-            st.floats(min_value=0.2, max_value=1.0), min_size=count, max_size=count
-        )
-    )
+    gaps = draw(st.lists(st.floats(min_value=0.2, max_value=1.0), min_size=count, max_size=count))
     total = sum(gaps)
     angle = draw(st.floats(min_value=0.0, max_value=2 * math.pi))
     points: Ring = []

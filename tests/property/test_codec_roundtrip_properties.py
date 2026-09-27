@@ -98,7 +98,7 @@ def test_language_partitions_are_independent_of_row_order(values: list[Any], dat
 
     def by_value(rows: list[Any]) -> dict[str, list[Any]]:
         return {
-            name: sorted((repr(rows[i]) for i in indices))
+            name: sorted(repr(rows[i]) for i in indices)
             for name, indices in _partitions(rows).items()
         }
 

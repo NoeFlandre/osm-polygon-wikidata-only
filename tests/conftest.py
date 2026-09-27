@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, settings
-from hypothesis.database import DirectoryBasedExampleDatabase
+from hypothesis.database import DirectoryBasedExampleDatabase, ExampleDatabase
 
 
-def _dev_example_database() -> DirectoryBasedExampleDatabase | None:
+def _dev_example_database() -> ExampleDatabase | None:
     """Keep the local example database under ``TMPDIR`` rather than the checkout."""
 
     tmpdir = os.environ.get("TMPDIR")
@@ -37,7 +37,9 @@ settings.register_profile(
 )
 settings.register_profile("dev", deadline=None, database=_dev_example_database())
 settings.register_profile("nightly", max_examples=1000, deadline=None, database=None)
-settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE") or ("ci" if os.environ.get("CI") else "dev"))
+settings.load_profile(
+    os.environ.get("HYPOTHESIS_PROFILE") or ("ci" if os.environ.get("CI") else "dev")
+)
 
 from tests._support import (
     _socket_address_is_allowed,

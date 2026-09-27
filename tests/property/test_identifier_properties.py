@@ -32,11 +32,7 @@ _languages = st.builds(
 _title_chars = st.characters(
     whitelist_categories=("Lu", "Ll", "Nd"), whitelist_characters=" -'(),."
 )
-_titles = (
-    st.text(alphabet=_title_chars, min_size=1, max_size=30)
-    .map(str.strip)
-    .filter(bool)
-)
+_titles = st.text(alphabet=_title_chars, min_size=1, max_size=30).map(str.strip).filter(bool)
 
 
 @given(n=_qid_numbers)
