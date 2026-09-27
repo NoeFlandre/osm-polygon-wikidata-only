@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_COLUMNS,
     POLYGON_COLUMNS,
 )
+from osm_polygon_wikidata_only.hf._geographic.rendering import format_count_tick
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     DEFAULT_H3_RESOLUTION,
     DEFAULT_MIN_POLYGONS_PER_CELL,
@@ -40,6 +41,14 @@ from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
 )
 
 # --- helpers ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "label"),
+    [(999, "999"), (1_000, "1k"), (1_600, "1.6k"), (1_000_000, "1.0M")],
+)
+def test_count_tick_uses_compact_units_at_scale_boundaries(value: float, label: str) -> None:
+    assert format_count_tick(value) == label
 
 
 def _write_polygons_parquet(

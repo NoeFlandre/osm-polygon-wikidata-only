@@ -9,7 +9,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
-from osm_polygon_wikidata_only.v2 import card, card_metrics, card_sentences
+from osm_polygon_wikidata_only.v2 import card, card_metrics, card_scanning_polygons, card_sentences
 from osm_polygon_wikidata_only.v2.card import (
     _document_batch_columns,
     compute_v2_card_stats,
@@ -698,6 +698,17 @@ def test_validated_source_list_rejects_non_lists_and_non_strings() -> None:
         card.validated_source_list({"source": "wikidata"}, "p1", "sources")
     with pytest.raises(ValueError, match="Invalid sources"):
         card.validated_source_list(["wikidata", 1], "p1", "sources")
+
+
+def test_polygon_source_list_decodes_only_string_lists(tmp_path: Path) -> None:
+    assert card_scanning_polygons.parse_source_list(
+        '["wikidata"]', "p1", tmp_path / "polygons.parquet", "discovery_sources"
+    ) == ["wikidata"]
+    for raw in ("not-json", "{}", '["wikidata", 1]'):
+        with pytest.raises(ValueError, match="Invalid discovery_sources"):
+            card_scanning_polygons.parse_source_list(
+                raw, "p1", tmp_path / "polygons.parquet", "discovery_sources"
+            )
 
 
 def test_write_v2_card_preserves_previous_card_when_atomic_write_fails(

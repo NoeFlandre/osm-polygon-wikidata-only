@@ -18,7 +18,42 @@ from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     ProjectTextStats,
     WikidataFactStats,
 )
+from osm_polygon_wikidata_only.hf._dataset_stats.summary_codec import summary_from_json
 from osm_polygon_wikidata_only.hf.dataset_stats import DatasetStats
+
+
+def test_summary_codec_ignores_non_mapping_fields_and_coerces_map_values() -> None:
+    required = {
+        "relative_path": "wikipedia/documents/region.parquet",
+        "fingerprint": "sha256",
+        "file_size_bytes": 12,
+        "kind": "documents",
+    }
+    decoded = summary_from_json(
+        {
+            **required,
+            "languages": None,
+            "property_labels": ["not", "a", "mapping"],
+            "property_counts": "not-a-map",
+        }
+    )
+    assert decoded is not None
+    assert decoded.languages == {}
+    assert decoded.property_labels == {}
+    assert decoded.property_counts == {}
+
+    mapped = summary_from_json(
+        {
+            **required,
+            "languages": {"en": "2"},
+            "property_labels": {"P31": 42},
+            "property_counts": {"P31": "3"},
+        }
+    )
+    assert mapped is not None
+    assert mapped.languages == {"en": 2}
+    assert mapped.property_labels == {"P31": "42"}
+    assert mapped.property_counts == {"P31": 3}
 
 
 def _write_parquet(path: Path, columns: list[str], rows: list[dict]) -> Path:

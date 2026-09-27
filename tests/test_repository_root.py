@@ -50,6 +50,19 @@ def test_data_root_inside_checkout_is_still_refused(tmp_path: Path) -> None:
         resolve_data_root(inner, repo_root=tmp_path)
 
 
+def test_data_root_candidate_must_be_a_directory_and_can_be_external(tmp_path: Path) -> None:
+    file_candidate = tmp_path / "not-a-directory"
+    file_candidate.write_text("data", encoding="utf-8")
+    with pytest.raises(DataRootError, match="is not a directory"):
+        paths._validate_candidate(file_candidate, "configured", repo_root=None)
+
+    external = tmp_path / "external-data"
+    external.mkdir()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    paths._validate_candidate(external, "configured", repo_root=checkout)
+
+
 def test_installed_package_skips_the_repository_containment_check(tmp_path: Path) -> None:
     assert resolve_data_root(tmp_path, repo_root=None).path == tmp_path
 
