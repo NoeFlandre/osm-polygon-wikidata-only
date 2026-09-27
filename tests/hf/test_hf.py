@@ -555,6 +555,26 @@ def test_verify_repo_authorization_suggests_alt_repo_id_when_mismatched() -> Non
         verify_repo_authorization("tok", "noeflandre/dataset", _verify=lambda t: "someoneelse")
 
 
+def test_verify_repo_authorization_rejects_missing_identity() -> None:
+    from osm_polygon_wikidata_only.hf.uploader import verify_repo_authorization
+
+    with pytest.raises(UploadError, match="No Hugging Face token available"):
+        verify_repo_authorization("tok", "noeflandre/dataset", _verify=lambda _token: None)
+
+
+def test_verify_repo_authorization_propagates_token_errors() -> None:
+    from osm_polygon_wikidata_only.hf.uploader import verify_repo_authorization
+
+    error = UploadError("token verification failed")
+
+    def fail_verification(_token: str | None) -> str:
+        raise error
+
+    with pytest.raises(UploadError, match="token verification failed") as caught:
+        verify_repo_authorization("tok", "noeflandre/dataset", _verify=fail_verification)
+    assert caught.value is error
+
+
 def test_upload_card_rejects_empty() -> None:
     stub = StubHfHub()
     with pytest.raises(UploadError):

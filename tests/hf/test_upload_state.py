@@ -96,6 +96,13 @@ def test_highwater_accepts_zero_rejects_negative_and_reads_utf8(
     assert state._read_highwater(tmp_path) == 0
 
 
+def test_highwater_defaults_for_missing_or_malformed_file(tmp_path: Path) -> None:
+    assert state._read_highwater(tmp_path) == 0
+
+    (tmp_path / ".highwater").write_text("not-an-integer", encoding="utf-8")
+    assert state._read_highwater(tmp_path) == 0
+
+
 def test_scanned_sequences_only_include_json_and_support_envelope_sequences(
     tmp_path: Path,
 ) -> None:
@@ -207,6 +214,25 @@ def test_path_containment_uses_non_strict_resolution(
     monkeypatch.setattr(Path, "resolve", resolve)
     assert state._is_inside(child, parent)
     assert calls == [False, False]
+
+
+def test_path_containment_handles_equal_outside_and_resolution_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "parent"
+    outside = tmp_path / "outside"
+    assert state._is_inside(parent, parent)
+    assert not state._is_inside(outside, parent)
+
+    original_resolve = Path.resolve
+
+    def resolve(path: Path, *, strict: bool = False) -> Path:
+        if path == outside:
+            raise OSError("cannot resolve")
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    assert not state._is_inside(outside, parent)
 
 
 def test_remove_failed_upgrade_is_best_effort_and_scoped(
