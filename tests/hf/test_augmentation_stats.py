@@ -1327,6 +1327,21 @@ def test_cache_index_filters_contract_and_non_mapping_entries() -> None:
     ) == {"documents.parquet": {"rows": 2}}
 
 
+def test_cache_index_reader_rejects_missing_invalid_and_non_object_payloads(
+    tmp_path: Path,
+) -> None:
+    from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
+
+    path = tmp_path / "index.json"
+    assert cachemod._read_cache_index(path) is None
+    path.write_text("{", encoding="utf-8")
+    assert cachemod._read_cache_index(path) is None
+    path.write_text("[]", encoding="utf-8")
+    assert cachemod._read_cache_index(path) is None
+    path.write_text('{"file": {"rows": 1}}', encoding="utf-8")
+    assert cachemod._read_cache_index(path) == {"file": {"rows": 1}}
+
+
 def test_scan_paths_skips_missing_subdirectories_and_sorts_files(tmp_path: Path) -> None:
     from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
 

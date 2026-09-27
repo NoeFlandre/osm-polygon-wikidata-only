@@ -44,6 +44,72 @@ def test_remove_speculative_link_leaves_non_speculative_links_unchanged() -> Non
     assert links == {key: row}
 
 
+def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ref = WikipediaTagRef("en", "Title", "wikipedia", "en:Title")
+    cached = {"document_id": "cached"}
+    key = reuse_reconcile._title_key(ref.language, ref.title)
+
+    assert reuse_reconcile._find_reconciliation_candidates(
+        "polygon",
+        {},
+        ref,
+        matches={key: [cached]},
+        current_by_title={},
+        index=object(),
+        wikipedia_client=None,
+        cache=None,
+        fetch_full_text=True,
+    ) == [cached]
+    assert reuse_reconcile._find_reconciliation_candidates(
+        "polygon",
+        {},
+        ref,
+        matches={},
+        current_by_title={("en", "title"): [cached]},
+        index=object(),
+        wikipedia_client=None,
+        cache=None,
+        fetch_full_text=True,
+    ) == [cached]
+    assert (
+        reuse_reconcile._find_reconciliation_candidates(
+            "polygon",
+            {},
+            ref,
+            matches={},
+            current_by_title={},
+            index=object(),
+            wikipedia_client=None,
+            cache=None,
+            fetch_full_text=True,
+        )
+        == ()
+    )
+
+    recovered = {"document_id": "recovered"}
+    calls: list[dict[str, object]] = []
+
+    def enrich(*_args: object, **kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(documents=[recovered])
+
+    monkeypatch.setattr(reuse_reconcile, "enrich_wikipedia_refs", enrich)
+    assert reuse_reconcile._find_reconciliation_candidates(
+        "polygon",
+        {"region": "region"},
+        ref,
+        matches={},
+        current_by_title={},
+        index="index",
+        wikipedia_client="client",
+        cache="cache",
+        fetch_full_text=False,
+    ) == [recovered]
+    assert calls[0]["wait_for_index"] is True
+
+
 def test_has_wikipedia_refs_ignores_malformed_and_empty_values() -> None:
     assert not runner._has_wikipedia_refs(
         SimpleNamespace(polygons=[{"wikipedia_tag_refs": "not-json"}, {"wikipedia_tag_refs": "{}"}])

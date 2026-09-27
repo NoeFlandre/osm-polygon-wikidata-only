@@ -639,3 +639,154 @@ def test_merge_preserves_the_language_partitions_section_owned_by_another_releas
     assert "Validated languages: **348**." in merged
     assert "NEW" in merged
     assert "OLD" not in merged
+
+
+def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.hf._stats_release import remote
+
+    repo_id = "owner/dataset"
+    assert remote._remote_revision(object(), repo_id) is None
+
+    class RepoClient:
+        def repo_info(self, *_args: object, **_kwargs: object) -> object:
+            return object()
+
+    monkeypatch.setattr(remote, "read_repo_sha", lambda *_args: "revision")
+    assert remote._remote_revision(RepoClient(), repo_id) == "revision"
+
+    class LegacyPathsClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_paths_info(
+            self, _repo_id: str, *, paths: list[str], repo_type: str
+        ) -> list[object]:
+            self.calls += 1
+            assert repo_type == "dataset"
+            return [SimpleNamespace(path=paths[0])]
+
+    legacy_paths = LegacyPathsClient()
+    entries = remote._remote_entries(legacy_paths, repo_id, "stats.json", "pinned")
+    assert entries[0].path == "stats.json"
+    assert legacy_paths.calls == 1
+    assert remote._remote_entries(object(), repo_id, "stats.json", "pinned") == []
+
+    downloaded = tmp_path / "remote.json"
+    downloaded.write_bytes(b"remote")
+
+    class LegacyDownloadClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def hf_hub_download(self, _repo_id: str, _path: str, **kwargs: object) -> str:
+            self.calls.append(kwargs)
+            if "cache_dir" in kwargs:
+                raise TypeError("legacy client has no cache_dir")
+            return str(downloaded)
+
+    client = LegacyDownloadClient()
+    assert (
+        remote._download_remote_file(
+            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        )
+        == downloaded
+    )
+    assert len(client.calls) == 2
+    assert "cache_dir" not in client.calls[1]
+    with pytest.raises(StatsReleaseError, match="cannot download files"):
+        remote._download_remote_file(object(), repo_id, "stats.json", "pinned", cache_dir=None)
+
+    monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [object()])
+    monkeypatch.setattr(remote, "_download_remote_file", lambda *_args, **_kwargs: downloaded)
+    assert (
+        remote._download_remote_content(
+            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        )
+        == b"remote"
+    )
+    monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [])
+    assert (
+        remote._download_remote_content(
+            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        )
+        is None
+    )
+    monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [object()])
+    monkeypatch.setattr(
+        remote,
+        "_download_remote_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("offline")),
+    )
+    assert (
+        remote._download_remote_content(
+            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        )
+        is None
+    )
+
+    assert remote._remote_revision_for_verifier(client, repo_id, "upload-rev") == "upload-rev"
+    monkeypatch.setattr(remote, "_remote_revision", lambda *_args: "head-rev")
+    assert remote._remote_revision_for_verifier(client, repo_id, None) == "head-rev"
+    monkeypatch.setattr(remote, "_remote_revision", lambda *_args: None)
+    with pytest.raises(StatsReleaseError, match="returned an empty revision"):
+        remote._remote_revision_for_verifier(client, repo_id, None)
+
+    released = ReleasedFile("stats.json", "hash", 6)
+    remote._verify_remote_size(SimpleNamespace(size=6), released)
+    remote._verify_remote_size(SimpleNamespace(size=None), released)
+    with pytest.raises(StatsReleaseError, match="remote size mismatch"):
+        remote._verify_remote_size(SimpleNamespace(size=7), released)
+
+
+def test_stats_release_manifest_revision_reading_and_inventory_validation(
+    tmp_path: Path,
+) -> None:
+    from osm_polygon_wikidata_only.hf._stats_release import manifest
+
+    assert manifest._manifest_revision([], "source_revision") is None
+    assert (
+        manifest._manifest_revision(
+            {"source_revision": "", "source": {"revision": "source-sha"}}, "source_revision"
+        )
+        == "source-sha"
+    )
+    assert manifest._manifest_revision({"source_revision": "source-sha"}, "source_revision") == (
+        "source-sha"
+    )
+
+    processed = tmp_path / "processed"
+    with pytest.raises(StatsReleaseError, match="manifest is required"):
+        manifest._read_manifest(processed)
+    manifest_path = processed / "manifests" / "processed_pbfs.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text("{", encoding="utf-8")
+    with pytest.raises(StatsReleaseError, match="cannot read processed manifest"):
+        manifest._read_manifest(processed)
+    manifest_path.write_text('{"regions": {}}', encoding="utf-8")
+    read_path, raw_bytes, raw = manifest._read_manifest(processed)
+    assert read_path == manifest_path
+    assert raw_bytes == manifest_path.read_bytes()
+    assert raw == {"regions": {}}
+
+    entry = {
+        "polygons_path": "polygons/region.parquet",
+        "source_pbf": "region.osm.pbf",
+        "row_counts": {"polygons": 1},
+    }
+    with pytest.raises(StatsReleaseError, match="file is missing"):
+        manifest._inventory_row(processed, manifest_path, "region.osm.pbf", entry)
+    polygon_path = processed / "polygons" / "region.parquet"
+    polygon_path.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"polygon_id": ["p1"]}), polygon_path)
+    assert manifest._inventory_row(processed, manifest_path, "region.osm.pbf", entry)[0] == (
+        "polygons/region.parquet"
+    )
+    with pytest.raises(StatsReleaseError, match="row count mismatch"):
+        manifest._inventory_row(
+            processed,
+            manifest_path,
+            "region.osm.pbf",
+            {**entry, "row_counts": {"polygons": 2}},
+        )

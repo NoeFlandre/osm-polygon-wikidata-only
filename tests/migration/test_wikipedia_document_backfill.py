@@ -387,6 +387,101 @@ def test_validate_upgrade_target_accepts_unchanged_document_and_rejects_drift(
         migration._validate_upgrade_target(plan, target)
 
 
+def test_article_validation_and_plan_inputs_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    migration = wikipedia_document_migration
+    article_path = tmp_path / "article.parquet"
+    article_path.write_bytes(b"source")
+    plan = StemPlan(
+        stem="stem-a",
+        operation=MigrationOperation.CREATE_MISSING,
+        reason="",
+        article_hash=migration._file_content_hash(article_path),
+        document_hash=None,
+        row_count=1,
+        canonical_digest="digest",
+    )
+    migration._validate_article_before_write(plan, article_path)
+
+    article_path.write_bytes(b"changed")
+    with pytest.raises(MigrationError, match="article file changed"):
+        migration._validate_article_before_write(plan, article_path)
+
+    monkeypatch.setattr(
+        migration,
+        "_file_content_hash",
+        lambda _path: (_ for _ in ()).throw(OSError("unreadable")),
+    )
+    with pytest.raises(MigrationError, match="article file unreadable"):
+        migration._validate_article_before_write(plan, article_path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            migration,
+            "_read_article_table",
+            lambda *_args: (_ for _ in ()).throw(MigrationError("bad schema")),
+        )
+        blocked = migration._article_plan_inputs("stem-a", article_path)
+        assert isinstance(blocked, StemPlan) and "bad schema" in blocked.reason
+
+    with monkeypatch.context() as patch:
+        patch.setattr(migration, "_read_article_table", lambda *_args: pa.table({"id": [1]}))
+        patch.setattr(
+            migration,
+            "_file_content_hash",
+            lambda _path: (_ for _ in ()).throw(OSError("unreadable")),
+        )
+        blocked = migration._article_plan_inputs("stem-a", article_path)
+        assert isinstance(blocked, StemPlan) and "unreadable article file" in blocked.reason
+
+    with monkeypatch.context() as patch:
+        patch.setattr(migration, "_read_article_table", lambda *_args: pa.table({"id": [1]}))
+        patch.setattr(migration, "_file_content_hash", lambda _path: "article-hash")
+        patch.setattr(
+            migration,
+            "build_wikipedia_document_table",
+            lambda _table: (_ for _ in ()).throw(
+                wikipedia_document_migration.WikipediaDocumentConversionError("bad article")
+            ),
+        )
+        blocked = migration._article_plan_inputs("stem-a", article_path)
+        assert isinstance(blocked, StemPlan) and "article conversion failed" in blocked.reason
+
+
+def test_plan_stem_and_canonical_output_revalidation(tmp_path: Path) -> None:
+    migration = wikipedia_document_migration
+    stem = StemPlan("stem-a", MigrationOperation.CREATE_MISSING, "", "hash", None, 1, "digest")
+    planned = MigrationPlan(tmp_path, (stem,))
+    migration._ensure_plan_stems_match(planned, MigrationPlan(tmp_path, (stem,)))
+    with pytest.raises(MigrationError, match="stem set changed"):
+        migration._ensure_plan_stems_match(
+            planned,
+            MigrationPlan(
+                tmp_path,
+                (
+                    StemPlan(
+                        "stem-b", MigrationOperation.CREATE_MISSING, "", "hash", None, 1, "digest"
+                    ),
+                ),
+            ),
+        )
+
+    table = pa.table({"id": [1]})
+    valid = StemPlan(
+        "stem-a",
+        MigrationOperation.CREATE_MISSING,
+        "",
+        "hash",
+        None,
+        1,
+        migration._table_digest(table),
+    )
+    migration._validate_canonical_output(valid, table)
+    with pytest.raises(MigrationError, match="canonical output changed"):
+        migration._validate_canonical_output(replace(valid, row_count=2), table)
+
+
 class TestPlanningValidation:
     def test_preserves_all_30_article_columns(self, tmp_path: Path) -> None:
         processed = _build_processed_dir(
