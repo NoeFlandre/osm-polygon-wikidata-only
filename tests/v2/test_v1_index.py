@@ -1,6 +1,6 @@
 import sqlite3
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import pyarrow as pa
@@ -88,6 +88,70 @@ def test_persistent_index_deletes_stale_paths_and_invalidates_row_cache(tmp_path
     try:
         index._delete_stale_paths({"removed.parquet"})
         assert not index._row_cache
+    finally:
+        index.close()
+
+
+def test_cached_row_count_rejects_missing_invalid_and_negative_values() -> None:
+    from osm_polygon_wikidata_only.v2.v1_index import _read_cached_row_count
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE index_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    assert _read_cached_row_count(connection) is None
+    connection.execute("INSERT INTO index_metadata VALUES ('row_count', 'not-an-int')")
+    assert _read_cached_row_count(connection) is None
+    connection.execute("UPDATE index_metadata SET value='-1' WHERE key='row_count'")
+    assert _read_cached_row_count(connection) is None
+    connection.execute("UPDATE index_metadata SET value='0' WHERE key='row_count'")
+    assert _read_cached_row_count(connection) == 0
+    connection.close()
+
+
+def test_unchanged_shard_drops_stale_progress_checkpoint(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.v1_index import _PersistentV1Index
+
+    index = _PersistentV1Index(tmp_path / "cache", ())
+    fingerprint = (1, 2, 3, 4, False)
+    try:
+        assert not index._unchanged_shard("shard", fingerprint, {}, {})
+        known = {"shard": fingerprint}
+        assert index._unchanged_shard("shard", fingerprint, known, {})
+
+        index._writer_connection.execute(
+            "INSERT INTO scan_progress VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("shard", *fingerprint, 2, 1),
+        )
+        progress = {"shard": (*fingerprint, 2, 1)}
+        assert index._unchanged_shard("shard", fingerprint, known, progress)
+        assert (
+            index._writer_connection.execute(
+                "SELECT path FROM scan_progress WHERE path='shard'"
+            ).fetchone()
+            is None
+        )
+    finally:
+        index.close()
+
+
+def test_stop_row_group_scan_only_cancels_after_stop_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.v2.v1_index import _PersistentV1Index
+
+    index = _PersistentV1Index(tmp_path / "cache", ())
+    future: Future[list[tuple[str, str, str, int, int, str, int, int]]] = Future()
+    events: list[tuple[int, int, int, int]] = []
+    monkeypatch.setattr(index, "_log_row_group_stop", lambda *args: events.append(args))
+    try:
+        assert not index._stop_row_group_scan(
+            future, position=0, total_files=1, row_group=0, total_row_groups=2
+        )
+        index._stop.set()
+        assert index._stop_row_group_scan(
+            future, position=0, total_files=1, row_group=1, total_row_groups=2
+        )
+        assert future.cancelled()
+        assert events == [(0, 1, 1, 2)]
     finally:
         index.close()
 

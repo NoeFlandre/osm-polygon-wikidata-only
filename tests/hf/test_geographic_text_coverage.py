@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_COLUMNS,
     POLYGON_COLUMNS,
 )
+from osm_polygon_wikidata_only.hf._geographic import parquet_reader
 from osm_polygon_wikidata_only.hf._geographic.rendering import format_count_tick
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     DEFAULT_H3_RESOLUTION,
@@ -149,6 +150,28 @@ def _minimal_articles_schema() -> pa.Schema:
             pa.field("content_hash", pa.string()),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (OSError("disk failure"), "Could not read articles parquet"),
+        (KeyError("missing"), "missing required columns"),
+        (pa.ArrowInvalid("invalid stream"), "missing required columns"),
+    ],
+)
+def test_iter_required_columns_translates_stream_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception, message: str
+) -> None:
+    path = tmp_path / "articles.parquet"
+    pq.write_table(pa.table({"article_id": ["a1"]}), path)
+
+    def fail(*_args: object, **_kwargs: object) -> Iterable[dict[str, Any]]:
+        raise error
+
+    monkeypatch.setattr(parquet_reader, "iter_record_batches", fail)
+    with pytest.raises(CoverageMapError, match=message):
+        list(parquet_reader.iter_required_columns(path, ("article_id",), label="articles"))
 
 
 def _write_links_parquet(path: Path, links: Iterable[tuple[str, str]]) -> Path:

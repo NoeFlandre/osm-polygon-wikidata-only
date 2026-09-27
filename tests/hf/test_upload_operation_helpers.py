@@ -79,6 +79,20 @@ def test_existing_delete_paths_filters_remote_absences_and_translates_errors() -
         operations._existing_delete_paths(FailingHub(), "owner/repo", {"present.parquet"})
 
 
+def test_response_message_falls_back_when_response_text_cannot_be_read() -> None:
+    class BrokenResponse:
+        @property
+        def text(self) -> str:
+            raise RuntimeError("response body unavailable")
+
+    error = RuntimeError("request failed")
+    error.server_message = "server detail"  # type: ignore[attr-defined]
+    assert operations._response_message(BrokenResponse(), error) == "server detail"
+
+    error = RuntimeError("request failed")
+    assert operations._response_message(BrokenResponse(), error) == "request failed"
+
+
 def test_upload_queue_reads_only_current_envelopes(tmp_path: Path) -> None:
     from osm_polygon_wikidata_only.hf.upload_queue import (
         QUEUE_CONTRACT_VERSION,

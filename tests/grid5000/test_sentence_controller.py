@@ -142,6 +142,45 @@ def test_rsync_resolves_remote_home_placeholder(tmp_path: Path, monkeypatch) -> 
     ]
 
 
+def test_rsync_upload_reports_failure_and_remote_home_validation() -> None:
+    from osm_polygon_wikidata_only.grid5000 import sentence_transport
+    from osm_polygon_wikidata_only.grid5000.sentence_controller_policy import ControllerRunError
+
+    assert sentence_transport.validate_remote_home("/home/test-user") == "/home/test-user"
+    with pytest.raises(ControllerRunError, match="remote home is invalid"):
+        sentence_transport.validate_remote_home("relative/path")
+    with pytest.raises(ControllerRunError, match="remote home is invalid"):
+        sentence_transport.validate_remote_home("/home/bad user")
+    with pytest.raises(ControllerRunError, match="Could not resolve"):
+        sentence_transport.validated_remote_home(CompletedProcess((), 1, stdout="", stderr=""))
+    assert (
+        sentence_transport.validated_remote_home(
+            CompletedProcess((), 0, stdout=" /home/test-user\n", stderr="")
+        )
+        == "/home/test-user"
+    )
+
+
+def test_rsync_upload_raises_with_stderr_on_transfer_failure(tmp_path: Path, monkeypatch) -> None:
+    from osm_polygon_wikidata_only.grid5000.sentence_controller_policy import ControllerRunError
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(tuple(args))
+        if args[0] == "ssh":
+            return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
+        return CompletedProcess(args, 23, stdout="", stderr="permission denied\n")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sentence_controller, "_required_executable", lambda name: name)
+    with pytest.raises(ControllerRunError, match="upload failed: permission denied"):
+        sentence_controller.SubprocessGrid5000Transport("grenoble").upload_tree(
+            tmp_path, "$HOME/project"
+        )
+    assert len(calls) == 2
+
+
 def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
     calls: list[tuple[str, ...]] = []
     job_command = 'cd "$HOME/run/code" && uv sync --frozen'
