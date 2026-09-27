@@ -12,7 +12,6 @@ from typing import cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from datasets import load_dataset
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.cli.commands import main
@@ -1122,6 +1121,8 @@ def test_both_selection_validates_every_inventory_before_writing(tmp_path: Path)
 
 
 def test_language_split_result_loads_with_standard_datasets_loader(tmp_path: Path) -> None:
+    from datasets import load_dataset
+
     _write_v1_fixture(tmp_path)
 
     run_language_split_release(DataRoot(tmp_path), dataset_version="v1", batch_size=1)
@@ -1137,6 +1138,8 @@ def test_language_split_result_loads_with_standard_datasets_loader(tmp_path: Pat
 
 
 def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: Path) -> None:
+    from datasets import load_dataset
+
     _write_v2_fixture(tmp_path)
 
     result = run_language_split_release(DataRoot(tmp_path), dataset_version="v2", batch_size=1)
