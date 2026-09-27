@@ -117,12 +117,12 @@ def test_authorization_propagates_token_rejection() -> None:
     def rejected(_token: str | None) -> str:
         raise UploadError("rejected")
 
-    with pytest.raises(UploadError, match="^rejected$"):
+    with pytest.raises(UploadError, match=r"^rejected$"):
         verify_repo_authorization("hf_x", "alice/data", _verify=rejected)
 
 
 def test_authorization_rejects_foreign_namespace() -> None:
-    with pytest.raises(UploadError, match="authenticates as 'bob'.*'alice' namespace"):
+    with pytest.raises(UploadError, match=r"authenticates as 'bob'.*'alice' namespace"):
         verify_repo_authorization("hf_x", "alice/data", _verify=lambda _t: "bob")
 
 

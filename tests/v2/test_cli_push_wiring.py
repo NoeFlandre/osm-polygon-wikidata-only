@@ -66,7 +66,9 @@ def test_uploader_forwards_operations_and_message(
 ) -> None:
     uploads: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        v2_cli, "upload_files", lambda repo_id, **kwargs: uploads.append({"repo": repo_id, **kwargs})
+        v2_cli,
+        "upload_files",
+        lambda repo_id, **kwargs: uploads.append({"repo": repo_id, **kwargs}),
     )
     upload = v2_cli._build_uploader(
         _args(commit_message=commit_message), "example/v2", _settings(), None

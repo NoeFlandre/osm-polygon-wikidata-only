@@ -30,7 +30,7 @@ def test_run_delegates_to_the_command_parser(
 
 
 def test_python_dash_m_entrypoint_renders_help() -> None:
-    completed = subprocess.run(  # noqa: S603 - fixed interpreter and module
+    completed = subprocess.run(
         [sys.executable, "-m", "osm_polygon_wikidata_only.cli.app", "--help"],
         capture_output=True,
         text=True,
@@ -43,7 +43,7 @@ def test_python_dash_m_entrypoint_renders_help() -> None:
 
 
 def test_python_dash_m_entrypoint_rejects_unknown_command() -> None:
-    completed = subprocess.run(  # noqa: S603 - fixed interpreter and module
+    completed = subprocess.run(
         [sys.executable, "-m", "osm_polygon_wikidata_only.cli.app", "no-such-command"],
         capture_output=True,
         text=True,

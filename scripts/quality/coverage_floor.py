@@ -15,6 +15,7 @@ import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +38,7 @@ def file_coverages(report: Mapping[str, object]) -> list[FileCoverage]:
         summary = entry.get("summary") if isinstance(entry, Mapping) else None
         if not isinstance(summary, Mapping):
             raise ValueError(f"coverage entry for {path} has no summary")
-        result.append(_file_coverage(str(path), summary))
+        result.append(_file_coverage(str(path), cast(Mapping[str, object], summary)))
     return sorted(result, key=lambda item: item.path)
 
 
@@ -65,9 +66,7 @@ def below_floor(
     if not math.isfinite(minimum) or not 0.0 <= minimum <= 100.0:
         raise ValueError("minimum must be a percentage between 0 and 100")
     return [
-        item
-        for item in coverages
-        if item.percent < minimum and not _is_exempt(item.path, exempt)
+        item for item in coverages if item.percent < minimum and not _is_exempt(item.path, exempt)
     ]
 
 
@@ -98,7 +97,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if failures:
         print(f"Files below the {args.minimum:g}% per-file coverage floor:", file=sys.stderr)
         for item in failures:
-            print(f"  {item.percent:5.1f}%  {item.path} ({item.statements} statements)", file=sys.stderr)
+            print(
+                f"  {item.percent:5.1f}%  {item.path} ({item.statements} statements)",
+                file=sys.stderr,
+            )
         return 1
     print(f"Per-file coverage floor passed: every file is at least {args.minimum:g}%")
     return 0

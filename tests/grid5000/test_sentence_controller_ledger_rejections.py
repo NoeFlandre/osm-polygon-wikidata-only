@@ -20,9 +20,7 @@ ControllerRunError = sentence_controller.ControllerRunError
 
 
 def _fresh(tmp_path: Path, **kwargs: object) -> sentence_controller.Grid5000SentenceController:
-    return _controller(
-        _data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher(), **kwargs
-    )  # ty: ignore[invalid-argument-type]
+    return _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher(), **kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def _rewrite_ledger(controller: sentence_controller.Grid5000SentenceController, **fields) -> None:
@@ -32,9 +30,7 @@ def _rewrite_ledger(controller: sentence_controller.Grid5000SentenceController, 
 
 
 def _resume(tmp_path: Path, **kwargs: object) -> sentence_controller.Grid5000SentenceController:
-    return _controller(
-        DataRoot(tmp_path), _FakeTransport(tmp_path), _FakePublisher(), **kwargs
-    )  # ty: ignore[invalid-argument-type]
+    return _controller(DataRoot(tmp_path), _FakeTransport(tmp_path), _FakePublisher(), **kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def test_initialize_is_idempotent_within_one_controller(tmp_path: Path) -> None:

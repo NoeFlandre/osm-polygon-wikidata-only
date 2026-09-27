@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
-from osm_polygon_wikidata_only.hf._trackio.publisher import publish_trackio_snapshot
+from osm_polygon_wikidata_only.hf._trackio import publisher as trackio_publisher
 from osm_polygon_wikidata_only.v2.card import V2CardStats
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_RUN_NAME, V2_TRACKIO_SPACE_URL
 from tests.hf.test_trackio_snapshot import _FakeTrackio
@@ -39,21 +39,18 @@ def _stats() -> V2CardStats:
     )
 
 
-def _inject_fake_trackio(monkeypatch: pytest.MonkeyPatch, module: Any) -> _FakeTrackio:
+def _inject_fake_trackio(monkeypatch: pytest.MonkeyPatch) -> _FakeTrackio:
     fake = _FakeTrackio()
-
-    def publish_with_fake(**kwargs: Any) -> Any:
-        return publish_trackio_snapshot(**kwargs, trackio_module=fake)
-
-    monkeypatch.setattr(module, "publish_trackio_snapshot", publish_with_fake)
+    monkeypatch.setattr(trackio_publisher, "_resolve_trackio", lambda _: fake)
     return fake
 
 
 def test_v1_publish_command_writes_artifacts_under_the_data_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _inject_fake_trackio(monkeypatch, trackio_snapshot)
+    fake = _inject_fake_trackio(monkeypatch)
     data_root = tmp_path / "data"
+    data_root.mkdir()
 
     result = CliRunner().invoke(
         trackio_snapshot.app,
@@ -71,7 +68,7 @@ def test_v1_publish_command_writes_artifacts_under_the_data_root(
 def test_v2_publish_command_uses_data_derived_stats(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _inject_fake_trackio(monkeypatch, v2_trackio_snapshot)
+    fake = _inject_fake_trackio(monkeypatch)
     seen: list[tuple[Path, Path]] = []
 
     def fake_stats(processed_v2: Path, *, v1_processed: Path) -> V2CardStats:
@@ -80,6 +77,7 @@ def test_v2_publish_command_uses_data_derived_stats(
 
     monkeypatch.setattr(v2_trackio_snapshot, "compute_v2_card_stats", fake_stats)
     data_root = tmp_path / "data"
+    data_root.mkdir()
 
     result = CliRunner().invoke(
         v2_trackio_snapshot.app,

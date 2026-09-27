@@ -175,5 +175,7 @@ def test_unlisted_polygon_files_are_rejected(tmp_path: Path) -> None:
     _polygons(tmp_path, "a", 1)
     _polygons(tmp_path, "stray", 1)
     _manifest(tmp_path, {"a.pbf": _entry("a", 1)})
-    with pytest.raises(StatsReleaseError, match="absent from the manifest: polygons/stray.parquet"):
+    with pytest.raises(
+        StatsReleaseError, match=r"absent from the manifest: polygons/stray\.parquet"
+    ):
         _provenance(tmp_path)
