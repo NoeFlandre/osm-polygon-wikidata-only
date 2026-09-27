@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,3 +53,15 @@ def test_audit_main_prints_the_payload_and_passes_without_blocked_parents(
 
     assert audit_containment.main([str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["blocked_parents"] == []
+
+
+def test_script_entrypoint_renders_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = Path(audit_containment_shim.__file__)
+    monkeypatch.setattr(sys, "argv", [str(script), "--help"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert exit_info.value.code == 0
+
+

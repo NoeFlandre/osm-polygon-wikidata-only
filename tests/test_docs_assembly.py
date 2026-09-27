@@ -1,5 +1,7 @@
 """Tests for deterministic assembly of public documentation assets."""
 
+import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,20 @@ def test_assemble_public_presentations_copies_the_declared_assets(tmp_path: Path
     for index, relative_path in enumerate(PRESENTATION_FILES):
         target = site_dir / relative_path
         assert target.read_text(encoding="utf-8") == f"asset-{index}"
+
+
+def test_script_entrypoint_assembles_presentations_into_requested_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site_dir = tmp_path / "site"
+    script = Path(assembly_module.__file__)
+    monkeypatch.setattr(sys, "argv", [str(script), "--site-dir", str(site_dir)])
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert exit_info.value.code == 0
+    assert all((site_dir / relative_path).is_file() for relative_path in PRESENTATION_FILES)
 
 
 def test_assemble_public_presentations_fails_before_publishing_partial_site(
@@ -53,7 +69,7 @@ def test_assemble_public_presentations_keeps_existing_site_when_copy_fails(
     real_copy2 = assembly_module.shutil.copy2
     failing_source = source_root / PRESENTATION_FILES[1]
 
-    def fail_copy(source: Path, destination: Path) -> str:
+    def fail_copy(source: Path, destination: Path) -> Path | str:
         if source == failing_source:
             raise OSError("copy failed")
         return real_copy2(source, destination)
