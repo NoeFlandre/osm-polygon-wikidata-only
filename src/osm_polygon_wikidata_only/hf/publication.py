@@ -481,14 +481,9 @@ def refresh_coverage_assets(
     lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
     try:
         land_path = ensure_world_land(data_root.cache)
-    # ``except Exception`` retained: ``ensure_world_land`` performs
-    # network I/O via ``urllib.request.urlretrieve`` and filesystem
-    # mkdir/stat, raising a broad, unstable set of exception types
-    # (``URLError``, ``HTTPError``, ``ContentTooShortError``,
-    # ``socket.timeout``, ``OSError``). Documented fallback: render
-    # the map without continents + invoke ``world_land_warning`` when
-    # not ``None``.
-    except Exception:  # noqa: BLE001 -- documented map fallback, see comment above
+    # Keep the established fallback for missing packaged data or cache I/O:
+    # render without continents and optionally invoke ``world_land_warning``.
+    except Exception:  # noqa: BLE001 -- documented map fallback
         if world_land_warning is not None:
             world_land_warning("Could not fetch world land data; map will omit continents")
         land_path = None

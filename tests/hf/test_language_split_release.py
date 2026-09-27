@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -14,6 +12,7 @@ from typing import cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from datasets import load_dataset
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.cli.commands import main
@@ -1126,34 +1125,15 @@ def test_language_split_result_loads_with_standard_datasets_loader(tmp_path: Pat
     _write_v1_fixture(tmp_path)
 
     run_language_split_release(DataRoot(tmp_path), dataset_version="v1", batch_size=1)
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "\n".join(
-                (
-                    "import json",
-                    "import sys",
-                    "from datasets import load_dataset",
-                    "dataset = load_dataset(",
-                    '    "parquet",',
-                    '    data_files={"train": sys.argv[1]},',
-                    '    split="train",',
-                    "    cache_dir=sys.argv[2],",
-                    ")",
-                    'print(json.dumps({"num_rows": dataset.num_rows, "language": list(dataset["language"])}))',
-                )
-            ),
-            str(_v1_partition(tmp_path, "polygon_articles", "fr")),
-            str(tmp_path / "hf-cache"),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
+    dataset = load_dataset(
+        "parquet",
+        data_files={"train": str(_v1_partition(tmp_path, "polygon_articles", "fr"))},
+        split="train",
+        cache_dir=str(tmp_path / "hf-cache"),
     )
 
-    assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {"num_rows": 1, "language": ["fr"]}
+    assert dataset.num_rows == 1
+    assert list(dataset["language"]) == ["fr"]
 
 
 def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: Path) -> None:
@@ -1168,34 +1148,15 @@ def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: 
     ]
     assert french_files
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "\n".join(
-                (
-                    "import json",
-                    "import sys",
-                    "from datasets import load_dataset",
-                    "dataset = load_dataset(",
-                    '    "parquet",',
-                    "    data_files=sys.argv[1:-1],",
-                    '    split="train",',
-                    "    cache_dir=sys.argv[-1],",
-                    ")",
-                    'print(json.dumps({"num_rows": dataset.num_rows, "document_id": list(dataset["document_id"])}))',
-                )
-            ),
-            *(str(path) for path in french_files),
-            str(tmp_path / "hf-v2-cache"),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
+    dataset = load_dataset(
+        "parquet",
+        data_files=[str(path) for path in french_files],
+        split="train",
+        cache_dir=str(tmp_path / "hf-v2-cache"),
     )
 
-    assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {"num_rows": 1, "document_id": ["doc-fr"]}
+    assert dataset.num_rows == 1
+    assert list(dataset["document_id"]) == ["doc-fr"]
 
 
 @pytest.mark.parametrize("wrap", [Path, DataRoot])

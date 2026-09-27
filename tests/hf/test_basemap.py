@@ -14,6 +14,8 @@ from matplotlib.figure import Figure
 
 from osm_polygon_wikidata_only.hf._geographic import basemap
 
+pytestmark = pytest.mark.real_map
+
 
 class _AxesSpy:
     def __init__(self) -> None:

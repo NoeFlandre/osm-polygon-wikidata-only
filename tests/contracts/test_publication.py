@@ -25,7 +25,10 @@ from osm_polygon_wikidata_only.hf.publication import (
 )
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
-pytestmark = pytest.mark.usefixtures("stub_combined_text_map")
+pytestmark = [
+    pytest.mark.map_orchestration,
+    pytest.mark.usefixtures("stub_combined_text_map"),
+]
 
 
 STEM = "monaco-latest"
@@ -1119,6 +1122,7 @@ def test_snapshot_upload_manifests_writes_processed_manifest_snapshot(
     assert not readme.exists()
 
 
+@pytest.mark.real_map
 def test_refresh_coverage_assets_writes_three_pngs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1155,6 +1159,7 @@ def test_refresh_coverage_assets_writes_three_pngs(
     assert density_path.exists()
 
 
+@pytest.mark.real_map
 def test_refresh_coverage_assets_loads_combined_text_inputs_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -58,6 +58,7 @@ packages = ["src/osm_polygon_wikidata_only"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/osm_polygon_wikidata_only/hf/ne_110m_admin_0_countries.geojson" = "osm_polygon_wikidata_only/hf/ne_110m_admin_0_countries.geojson"
+"src/osm_polygon_wikidata_only/hf/ne_110m_land.geojson" = "osm_polygon_wikidata_only/hf/ne_110m_land.geojson"
 "assets/dataset_hero.png" = "osm_polygon_wikidata_only/assets/dataset_hero.png"
 "assets/dataset_hero_v2.png" = "osm_polygon_wikidata_only/assets/dataset_hero_v2.png"
 
@@ -84,6 +85,9 @@ pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: tests that read a real PBF fixture",
+    "local_network: tests that exercise explicit numeric loopback socket connections",
+    "map_orchestration: orchestration tests that use placeholder map assets",
+    "real_map: tests that verify actual rendered map pixels or visual contracts",
     "requires_just: tests that execute the `just` command runner; skipped when it is not installed",
     "repository: contracts that need a full source checkout, not a pruned build context",
 ]

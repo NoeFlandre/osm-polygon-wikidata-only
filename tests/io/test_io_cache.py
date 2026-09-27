@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
@@ -25,11 +24,11 @@ def test_get_returns_none_for_missing(tmp_path: Path) -> None:
     assert cache.get("nope") is None
 
 
-def test_stale_entry_is_miss(tmp_path: Path) -> None:
+def test_stale_entry_is_miss_with_injected_clock(tmp_path: Path) -> None:
     cache = JsonFileCache(tmp_path, default_ttl_s=10)
-    cache.set("foo", {"a": 1}, ttl_s=1)
-    time.sleep(1.1)
-    assert cache.get("foo") is None
+    cache.set("foo", {"a": 1}, ttl_s=1, now=10)
+    assert cache.get("foo", now=10) is not None
+    assert cache.get("foo", now=12) is None
 
 
 def test_explicit_zero_clock_is_used_for_expiry(tmp_path: Path) -> None:
