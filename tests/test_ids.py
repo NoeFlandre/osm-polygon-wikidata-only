@@ -43,6 +43,4 @@ def test_content_hash_matches_known_sha256_of_utf8() -> None:
     assert content_hash("hello world") == (
         "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
     )
-    assert content_hash("é") == (
-        "4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c"
-    )
+    assert content_hash("é") == ("4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c")
