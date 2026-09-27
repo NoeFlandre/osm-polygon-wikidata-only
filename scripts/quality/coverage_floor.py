@@ -65,9 +65,11 @@ def below_floor(
 
     if not math.isfinite(minimum) or not 0.0 <= minimum <= 100.0:
         raise ValueError("minimum must be a percentage between 0 and 100")
-    return [
-        item for item in coverages if item.percent < minimum and not _is_exempt(item.path, exempt)
-    ]
+    return [item for item in coverages if _file_is_below_floor(item, minimum, exempt)]
+
+
+def _file_is_below_floor(item: FileCoverage, minimum: float, exempt: Sequence[str]) -> bool:
+    return item.percent < minimum and not _is_exempt(item.path, exempt)
 
 
 def _is_exempt(path: str, exempt: Sequence[str]) -> bool:
