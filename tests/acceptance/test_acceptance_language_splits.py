@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 import pytest
@@ -165,9 +165,9 @@ def manifest_forgets_stale(state: _State) -> None:
     manifest = _manifest(state.root)
     paths = {
         file["path"]
-        for table in manifest["tables"]  # type: ignore[union-attr]
-        for bucket in table["buckets"]
-        for file in bucket["files"]
+        for table in cast(list[dict[str, object]], manifest["tables"])
+        for bucket in cast(list[dict[str, object]], table["buckets"])
+        for file in cast(list[dict[str, object]], bucket["files"])
     }
     assert _STALE_SHARD_PATH not in paths
 
