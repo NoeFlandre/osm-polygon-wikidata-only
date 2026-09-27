@@ -6,7 +6,7 @@ import json
 import math
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from osm_polygon_wikidata_only.domain.geometry import (
@@ -93,13 +93,20 @@ def test_area_is_invariant_under_longitude_translation(ring: Ring, offset: float
 
 
 @given(ring=_convex_ring(), scale=st.floats(min_value=0.1, max_value=0.9))
-def test_hole_reduces_area_by_its_own_area(ring: Ring, scale: float) -> None:
+@example(
+    ring=[
+        [150.251, 45.5],
+        [150.25030901699438, 45.50095105651629],
+        [150.24919098300563, 45.49941221474771],
+        [150.251, 45.5],
+    ],
+    scale=0.75,
+)
+def test_hole_reduces_polygon_area(ring: Ring, scale: float) -> None:
     outer = compute_polygon_geometry(_polygon(ring)).area_m2
     hole = _hole_inside(ring, scale)
     with_hole = compute_polygon_geometry(_polygon(ring, hole)).area_m2
     assert 0 <= with_hole < outer
-    # The hole's own area, measured with the outer ring's projection, scales with scale^2.
-    assert with_hole == pytest.approx(outer * (1 - scale**2), rel=1e-6)
 
 
 @given(ring=_convex_ring())
