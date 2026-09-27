@@ -55,6 +55,34 @@ def test_core_hash_path_and_entry_reject_invalid_membership(tmp_path: Path) -> N
     assert _is_valid_core_hash_entry(path, "a" * 64, allowed, root)
 
 
+def test_core_hash_path_fails_closed_when_resolution_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path.resolve() / "region.parquet"
+    original_resolve = Path.resolve
+
+    def fail_target(self: Path, *args: object, **kwargs: object) -> Path:
+        if self == path:
+            raise OSError("unresolvable path")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_target)
+    assert not _is_valid_core_hash_path(str(path), {str(path)}, tmp_path.resolve())
+
+
+def test_processed_link_manifest_returns_false_for_missing_or_malformed_data(
+    tmp_path: Path,
+) -> None:
+    root = SimpleNamespace(processed_manifests=tmp_path)
+    links = tmp_path / "links.parquet"
+    manifest = tmp_path / "processed_pbfs.json"
+
+    assert not _processed_link_manifest_is_current(root, "region-latest", links)
+    for content in ("{broken", "[]", "{}"):
+        manifest.write_text(content, encoding="utf-8")
+        assert not _processed_link_manifest_is_current(root, "region-latest", links)
+
+
 def test_integrity_rejection_payload_serializes_rejected_documents() -> None:
     integrity = WikivoyageIntegrityResult(
         shard="region",
