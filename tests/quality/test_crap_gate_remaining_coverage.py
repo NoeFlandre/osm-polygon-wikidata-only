@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
 from collections import OrderedDict
@@ -11,6 +12,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
+from osm_polygon_wikidata_only.cli import commands
 from osm_polygon_wikidata_only.cli._sync import retirement as retirement_helpers
 from osm_polygon_wikidata_only.cli.run_sync import (
     _load_existing_core_for_publication,
@@ -24,8 +26,10 @@ from osm_polygon_wikidata_only.grid5000 import (
     sentence_controller_lifecycle,
     sentence_controller_policy,
 )
+from osm_polygon_wikidata_only.hf import stats_release
 from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as stats_augmentation
 from osm_polygon_wikidata_only.hf._publication import artifacts as publication_artifacts
+from osm_polygon_wikidata_only.hf.language_split_publication import LanguagePublicationError
 from osm_polygon_wikidata_only.pipeline import (
     containment_migration,
 )
@@ -39,6 +43,9 @@ from osm_polygon_wikidata_only.pipeline._link_migration import transaction
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair_fetch
 from osm_polygon_wikidata_only.v2 import (
     checkpoints as v2_checkpoints,
+)
+from osm_polygon_wikidata_only.v2 import (
+    direct_enrichment as v2_direct_enrichment,
 )
 from osm_polygon_wikidata_only.v2 import (
     extractor as v2_extractor,
@@ -479,3 +486,113 @@ def test_wikipedia_publication_document_validation_checks_configured_path(
             "wikipedia/documents/region.parquet",
             "region",
         )
+
+
+def test_speculative_fetch_stops_when_index_finishes_and_keeps_errors() -> None:
+    from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
+
+    ref = WikipediaTagRef("en", "Title", "wikipedia:en", "Title")
+    state = {"calls": 0}
+
+    class Index:
+        @property
+        def is_ready(self) -> bool:
+            return state["calls"] > 0
+
+    class Client:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> object:
+            state["calls"] += 1
+            return "article"
+
+    result = v2_direct_enrichment._fetch_speculative_results(
+        Index(), ((0, ref), (1, ref)), Client(), True
+    )
+    assert result == {0: "article"}
+
+    class FailingClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("temporary fetch failure")
+
+    errors = v2_direct_enrichment._fetch_speculative_results(
+        SimpleNamespace(is_ready=False), ((2, ref),), FailingClient(), False
+    )
+    assert isinstance(errors[2], RuntimeError)
+    assert str(errors[2]) == "temporary fetch failure"
+
+
+def test_language_split_command_translates_publication_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise LanguagePublicationError("release failed")
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_publication",
+        fail,
+    )
+    args = argparse.Namespace(
+        dataset_version="v2",
+        batch_size=10,
+        confirm_repo=[],
+        apply=False,
+        dry_run=False,
+        hf_token=None,
+    )
+    with pytest.raises(SystemExit) as raised:
+        commands._run_publish_language_splits(
+            argparse.ArgumentParser(), args, data_root=SimpleNamespace()
+        )
+    assert raised.value.code == 2
+    assert "release failed" in capsys.readouterr().err
+
+
+def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = SimpleNamespace(subdir="polygons", identity_columns=("identity",))
+    parent, child = Path("parent.parquet"), Path("child.parquet")
+    schema = pa.schema([("identity", pa.string())])
+    monkeypatch.setattr(
+        containment_migration.pq,
+        "read_schema",
+        lambda path: schema if path == parent else pa.schema([("other", pa.string())]),
+    )
+    audit, blockers = containment_migration._audit_present_contract(
+        Path("processed"), contract, "parent", "child", parent, child
+    )
+    assert audit.child_rows == 0
+    assert blockers == ["child: schema mismatch for polygons"]
+
+    monkeypatch.setattr(containment_migration.pq, "read_schema", lambda _path: schema)
+    identities = iter((({("p",)}, 1), ({("c",)}, 2)))
+    monkeypatch.setattr(containment_migration, "_identity_set", lambda *_args: next(identities))
+    audit, blockers = containment_migration._audit_present_contract(
+        Path("processed"), contract, "parent", "child", parent, child
+    )
+    assert audit.child_rows == 1
+    assert audit.missing_from_parent == 1
+    assert blockers == [
+        "child: polygons parent has 1 duplicate identities",
+        "child: polygons child has 2 duplicate identities",
+    ]
+
+    def fail_read(_path: Path) -> pa.Schema:
+        raise OSError("unreadable parquet")
+
+    monkeypatch.setattr(containment_migration.pq, "read_schema", fail_read)
+    audit, blockers = containment_migration._audit_present_contract(
+        Path("processed"), contract, "parent", "child", parent, child
+    )
+    assert audit.child_rows == 0
+    assert blockers == ["child: unreadable polygons: OSError"]
+
+
+def test_remote_card_merge_handles_absent_and_invalid_utf8_cards(tmp_path: Path) -> None:
+    card = tmp_path / "README.md"
+    card.write_text("generated card", encoding="utf-8")
+    stats_release._merge_remote_card(card, SimpleNamespace(contents={}))
+    assert card.read_text(encoding="utf-8") == "generated card"
+
+    remote = SimpleNamespace(contents={stats_release.REMOTE_CARD_FILE: b"\xff"})
+    with pytest.raises(stats_release.StatsReleaseError, match="not valid UTF-8"):
+        stats_release._merge_remote_card(card, remote)
