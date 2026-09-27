@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
+from statistics import median
+from time import perf_counter
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -71,6 +74,10 @@ def _write_mock_land_geojson(path: Path) -> Path:
     }
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
+
+
+def _natural_earth_land_path() -> Path:
+    return Path(__file__).parents[1] / "fixtures" / "ne_110m_land.geojson"
 
 
 # --- load_centroids_from_parquet ----------------------------------------
@@ -241,14 +248,58 @@ def test_generate_coverage_map_land_changes_output(tmp_path: Path) -> None:
     assert out_no_land.read_bytes() != out_with_land.read_bytes()
 
 
+def test_generate_coverage_map_matches_tolerant_golden(tmp_path: Path) -> None:
+    import matplotlib.image as mpimg
+    import numpy as np
+
+    output = tmp_path / "coverage_map.png"
+    generate_coverage_map(
+        [0.0, 10.0],
+        [45.0, 50.0],
+        output,
+        land_geojson_path=_natural_earth_land_path(),
+        title="Golden Coverage",
+        figsize=(4, 2),
+        dpi=30,
+    )
+
+    actual = mpimg.imread(output)
+    expected_path = Path(__file__).parents[1] / "fixtures/coverage_map_tolerant_golden.png"
+    expected = mpimg.imread(expected_path)
+    difference = np.abs(actual.astype(np.float32) - expected.astype(np.float32))
+
+    assert actual.shape == expected.shape
+    assert float(difference.mean()) <= 0.002
+    assert float((difference.max(axis=2) > 0.04).mean()) <= 0.01
+
+
+def test_natural_earth_land_fixture_is_pinned() -> None:
+    # Natural Earth Vector v5.1.2: geojson/ne_110m_land.geojson.
+    assert sha256(_natural_earth_land_path().read_bytes()).hexdigest() == (
+        "9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9"
+    )
+
+
 def test_generate_coverage_map_many_points(tmp_path: Path) -> None:
-    lons = [float(i % 360 - 180) for i in range(5000)]
-    lats = [float(i % 180 - 90) for i in range(5000)]
-    out = tmp_path / "coverage_map.png"
-    generate_coverage_map(lons, lats, out)
+    lons = [float(i % 360 - 180) for i in range(10_000)]
+    lats = [float(i % 180 - 90) for i in range(10_000)]
+    durations: list[float] = []
+    out = tmp_path / "coverage-map-2.png"
+    for run in range(3):
+        started = perf_counter()
+        generate_coverage_map(
+            lons,
+            lats,
+            tmp_path / f"coverage-map-{run}.png",
+            land_geojson_path=_natural_earth_land_path(),
+        )
+        durations.append(perf_counter() - started)
+
+    # The 0.25s target is for a 4-vCPU dev machine; double it for CI variance.
+    assert median(durations) <= 0.5
     assert out.exists()
-    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-    assert out.stat().st_size < 1_000_000
+    assert (tmp_path / "coverage-map-2.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert (tmp_path / "coverage-map-2.png").stat().st_size < 1_000_000
 
 
 def test_generate_coverage_map_empty_points(tmp_path: Path) -> None:
@@ -258,14 +309,11 @@ def test_generate_coverage_map_empty_points(tmp_path: Path) -> None:
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_draw_land_feature_ignores_empty_and_unsupported_geometry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_draw_land_feature_ignores_empty_and_unsupported_geometry() -> None:
     class Axes:
-        def add_patch(self, _patch: object) -> None:
+        def add_collection(self, _collection: object, *, autolim: bool = True) -> None:
             raise AssertionError("empty or unsupported geometry must not draw")
 
-    monkeypatch.setattr(coverage_map.mpatches, "Polygon", lambda *_args, **_kwargs: None)
     axes = Axes()
     coverage_map._draw_land_feature(axes, {"geometry": {"type": "Point", "coordinates": [0, 0]}})
     coverage_map._draw_land_feature(axes, {"geometry": {"type": "Polygon", "coordinates": []}})

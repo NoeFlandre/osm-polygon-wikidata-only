@@ -9,7 +9,6 @@ two columns needed and matplotlib scatter handles millions of points.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 import urllib.request
@@ -21,12 +20,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 
+from ._geographic.basemap import draw_landmasses, load_land_features
 from ._geographic.polygon_identities import load_unique_polygon_records
 
 LOGGER = logging.getLogger(__name__)
@@ -327,54 +326,27 @@ def _save_coverage_map(fig: Any, output_path: Path) -> None:
 
 
 def _draw_landmasses(ax: Any, geojson_path: Path) -> None:
-    """Parse a GeoJSON file and draw filled landmass polygons."""
-    data: dict[str, Any] = json.loads(geojson_path.read_text(encoding="utf-8"))
-    for feature in data.get("features", []):
-        _draw_land_feature(ax, feature)
+    """Draw cached GeoJSON through the shared geographic basemap renderer."""
+    features = load_land_features(geojson_path)
+    if features is not None:
+        draw_landmasses(
+            ax,
+            features,
+            facecolor=_LAND_COLOR,
+            edgecolor=_LAND_EDGE,
+            linewidth=0.3,
+        )
 
 
 def _draw_land_feature(ax: Any, feature: dict[str, Any]) -> None:
-    geom = feature.get("geometry", {})
-    gtype = geom.get("type")
-    coords = geom.get("coordinates")
-    if gtype == "Polygon" and coords:
-        _draw_polygon_rings(ax, coords)
-    elif gtype == "MultiPolygon" and coords:
-        _draw_land_multipolygon(ax, coords)
-
-
-def _draw_land_multipolygon(ax: Any, coords: list[list[list[list[float]]]]) -> None:
-    for polygon_coords in coords:
-        _draw_polygon_rings(ax, polygon_coords)
-
-
-def _draw_polygon_rings(ax: Any, rings: list[list[list[float]]]) -> None:
-    """Draw a single polygon (list of coordinate rings) on the axes.
-
-    The first ring is the outer boundary; subsequent rings are holes
-    (rare at 110m resolution, but handled for correctness).
-    """
-    if not rings:
-        return
-    patch = mpatches.Polygon(
-        rings[0],
-        closed=True,
+    """Draw one feature through the shared geometry renderer."""
+    draw_landmasses(
+        ax,
+        [feature],
         facecolor=_LAND_COLOR,
         edgecolor=_LAND_EDGE,
         linewidth=0.3,
-        zorder=1,
     )
-    ax.add_patch(patch)
-    for hole in rings[1:]:
-        hole_patch = mpatches.Polygon(
-            hole,
-            closed=True,
-            facecolor=_OCEAN_COLOR,
-            edgecolor=_LAND_EDGE,
-            linewidth=0.3,
-            zorder=2,
-        )
-        ax.add_patch(hole_patch)
 
 
 __all__ = [
