@@ -64,6 +64,68 @@ def evaluate_threshold(entries: Iterable[CrapEntry], *, maximum: float) -> list[
     )
 
 
+@dataclass(frozen=True, slots=True)
+class GatePolicy:
+    """Explicit gate rules: a complexity cap plus a coverage floor.
+
+    ``max_complexity`` fails any function whose cyclomatic complexity exceeds
+    it. ``min_coverage`` fails any function with complexity at or above
+    ``coverage_complexity`` whose coverage fraction is below the floor. An
+    optional ``maximum`` CRAP score is kept for compatibility.
+    """
+
+    max_complexity: int | None = None
+    min_coverage: float = 0.0
+    coverage_complexity: int = 1
+    maximum: float | None = None
+
+
+def gate_violations(
+    entries: Iterable[CrapEntry], policy: GatePolicy
+) -> list[tuple[CrapEntry, str]]:
+    """Return ``(entry, reason)`` for each entry that breaks ``policy``."""
+
+    if policy.max_complexity is not None:
+        _validate_complexity(policy.max_complexity)
+    floor = _validate_coverage(policy.min_coverage)
+    threshold = _validate_complexity(policy.coverage_complexity)
+    ordered = sorted(entries, key=lambda item: (-item.crap, item.path, item.line, item.name))
+    return [
+        (entry, reason)
+        for entry in ordered
+        for reason in _entry_reasons(entry, policy, floor, threshold)
+    ]
+
+
+def _entry_reasons(entry: CrapEntry, policy: GatePolicy, floor: float, threshold: int) -> list[str]:
+    reasons = [
+        _complexity_reason(entry, policy.max_complexity),
+        _coverage_reason(entry, floor, threshold),
+        _crap_reason(entry, policy.maximum),
+    ]
+    return [reason for reason in reasons if reason]
+
+
+def _complexity_reason(entry: CrapEntry, cap: int | None) -> str:
+    if cap is None or entry.complexity <= cap:
+        return ""
+    return f"complexity {entry.complexity} > {cap}"
+
+
+def _coverage_reason(entry: CrapEntry, floor: float, threshold: int) -> str:
+    if entry.complexity < threshold or entry.coverage >= floor:
+        return ""
+    return (
+        f"coverage {entry.coverage * 100:.1f}% < {floor * 100:.1f}% for complexity >= {threshold}"
+    )
+
+
+def _crap_reason(entry: CrapEntry, maximum: float | None) -> str:
+    if maximum is None or not evaluate_threshold([entry], maximum=maximum):
+        return ""
+    return f"CRAP {entry.crap:.2f} >= {maximum:.2f}"
+
+
 def _entries_for_file(
     raw_path: object,
     raw_blocks: object,
@@ -168,10 +230,18 @@ def _mapping_value(value: Mapping[str, object], key: str) -> dict[str, object]:
 def _coverage_file(files: Mapping[str, object], path: str) -> dict[str, object]:
     raw_file = files.get(path)
     if raw_file is None:
-        suffix = Path(path).as_posix()
-        matches = [value for candidate, value in files.items() if str(candidate).endswith(suffix)]
-        raw_file = matches[0] if len(matches) == 1 else None
+        raw_file = _unique_suffix_match(files, Path(path).as_posix())
+    if raw_file is None:
+        raise ValueError(
+            f"coverage file {path} is missing from the coverage report; "
+            "run the tests with coverage over every path passed to radon"
+        )
     return _mapping(raw_file, f"coverage file {path}")
+
+
+def _unique_suffix_match(files: Mapping[str, object], suffix: str) -> object:
+    matches = [value for candidate, value in files.items() if str(candidate).endswith(suffix)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _function_coverage(file_data: Mapping[str, object], name: str) -> dict[str, object]:
@@ -232,26 +302,41 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--coverage", type=Path, required=True)
     parser.add_argument("--complexity", type=Path, required=True)
-    parser.add_argument("--maximum", type=float, default=6.0)
+    parser.add_argument("--maximum", type=float, default=None, help="optional CRAP ceiling")
+    parser.add_argument("--max-complexity", type=int, default=None)
+    parser.add_argument("--min-coverage", type=float, default=0.0, help="fraction, e.g. 0.8")
+    parser.add_argument("--min-coverage-complexity", type=int, default=1)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Print the CRAP report and return non-zero for threshold violations."""
+    """Print the CRAP report and return non-zero for gate violations."""
 
     args = _parser().parse_args(argv)
+    policy = GatePolicy(
+        max_complexity=args.max_complexity,
+        min_coverage=args.min_coverage,
+        coverage_complexity=args.min_coverage_complexity,
+        maximum=args.maximum,
+    )
     entries = entries_from_reports(_load_json(args.coverage), _load_json(args.complexity))
-    offenders = evaluate_threshold(entries, maximum=args.maximum)
-    print(f"CRAP functions: {len(entries)}; maximum allowed: {args.maximum:.2f}")
+    violations = gate_violations(entries, policy)
+    print(
+        f"CRAP functions: {len(entries)}; max complexity: {policy.max_complexity}; "
+        f"min coverage {policy.min_coverage * 100:.0f}% for complexity >= "
+        f"{policy.coverage_complexity}; CRAP maximum: {policy.maximum}"
+    )
     for entry in sorted(entries, key=lambda item: (-item.crap, item.path, item.line, item.name)):
         print(
             f"{entry.crap:7.2f}  complexity={entry.complexity:2d} "
             f"coverage={entry.coverage * 100:5.1f}%  {entry.path}:{entry.line} {entry.name}"
         )
-    if offenders:
-        print(f"CRAP threshold exceeded by {len(offenders)} function(s)")
+    if violations:
+        for entry, reason in violations:
+            print(f"VIOLATION {entry.path}:{entry.line} {entry.name}: {reason}")
+        print(f"CRAP gate failed with {len(violations)} violation(s)")
         return 1
-    print("CRAP threshold passed")
+    print("CRAP gate passed")
     return 0
 
 
