@@ -199,10 +199,13 @@ The canonical gate runs full-source CRAP after the root tests and the
 preprocessing checks included in `architecture-checks`. `just crap-report`
 joins those coverage reports with Radon reports for `src`, `scripts`, and
 `preprocessing/src`; `--show-closures` includes nested functions, and any
-function at CRAP 6 or higher fails. `just crap-all` is the standalone variant
-that refreshes both coverage reports before reporting. Historical `crap-*`
-aliases delegate to that same full-source run; they are compatibility names,
-not separate focused inventories.
+function must have cyclomatic complexity at most 5. Every function with
+complexity 3 or higher must have at least 80% coverage; CRAP scores remain
+visible for context. A source function missing from a coverage report fails
+the gate. `just crap-all` is the standalone variant that refreshes both
+coverage reports before reporting. Historical `crap-*` aliases delegate to
+that same full-source run; they are compatibility names, not separate focused
+inventories.
 
 `just mutation` runs mutmut over the explicit deterministic helper and quality
 tool scope. The gate rejects unreviewed survivors, timeouts, untested results,
