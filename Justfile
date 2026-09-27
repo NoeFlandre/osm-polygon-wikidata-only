@@ -77,7 +77,7 @@ architecture-checks: quality-runtime
 # Canonical full-source CRAP reporting consumes coverage produced by the
 # preceding root `tests` and nested preprocessing quality stages.
 # Gate semantics (issue #116): every function must have cyclomatic complexity
-# <= 5, and every function with complexity >= 3 must reach >= 80% coverage.
+# <= 5, and functions with complexity >= 3 must reach >= 80% coverage.
 # CRAP scores are still printed for review. A radon path absent from the
 # coverage report is a hard, explicit error.
 crap-report: quality-runtime

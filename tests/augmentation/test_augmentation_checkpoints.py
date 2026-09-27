@@ -263,6 +263,20 @@ def test_documents_sections_and_facts_round_trip_with_exact_inputs(tmp_path: Pat
     assert store.load_facts("different") is None
 
 
+def test_facts_checkpoint_ignores_missing_or_invalid_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import AugmentationCheckpointStore
+
+    store = AugmentationCheckpointStore(tmp_path, "england-latest", "a" * 64)
+    monkeypatch.setattr(store, "_matches", lambda *_args: True)
+    monkeypatch.setattr(store, "_read_table", lambda *_args: None)
+    assert store.load_facts("digest") is None
+
+    monkeypatch.setattr(store, "_read_table", lambda *_args: [{"not_a_fact_field": True}])
+    assert store.load_facts("digest") is None
+
+
 def test_incomplete_or_corrupt_checkpoint_is_not_reused(tmp_path: Path) -> None:
     from osm_polygon_wikidata_only.augmentation.checkpoints import (
         AugmentationCheckpointStore,

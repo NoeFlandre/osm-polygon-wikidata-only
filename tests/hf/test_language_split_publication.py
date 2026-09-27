@@ -556,7 +556,7 @@ def test_remote_digest_fallback_hashes_downloaded_file(tmp_path: Path) -> None:
     hub = SimpleNamespace(hf_hub_download=lambda *args, **kwargs: str(downloaded))
 
     assert _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
-    downloaded.write_bytes(b"changed")
+    downloaded.write_bytes(b"changed-content")
     assert not _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
 
 
@@ -649,6 +649,9 @@ def test_manifest_owned_paths_are_limited_to_language_namespaces(
     ).encode()
 
     assert _manifest_owned_paths(raw, plan) == {valid_path}
+    assert _manifest_owned_paths(None, plan) == set()
+    assert _manifest_owned_paths(b"\xff", plan) == set()
+    assert _manifest_owned_paths(b"{", plan) == set()
 
 
 def test_remote_reads_require_the_initial_immutable_revision() -> None:

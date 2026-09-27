@@ -482,6 +482,54 @@ def test_process_batch_publishes_a_ready_batch_without_submitting(
     assert published == [batch]
 
 
+def test_batch_submission_failure_is_persisted_and_rethrown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
+    batch = controller.initialize()["batches"][0]
+
+    def fail_namespace() -> None:
+        raise RuntimeError("frontend unavailable")
+
+    monkeypatch.setattr(controller, "_ensure_remote_namespace", fail_namespace)
+    with pytest.raises(sentence_controller.ControllerRunError, match="frontend unavailable"):
+        controller._submit_batch(batch)
+
+    assert batch["state"] == "failed"
+    assert batch["error"] == "RuntimeError"
+
+
+def test_reconcile_batch_polls_until_terminal_then_retrieves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
+    batch = {"index": 0, "state": "running", "oar_job_id": "12345"}
+    states = iter(("Running", "Terminated exit_code=0"))
+    retrieved: list[tuple[str, int | None]] = []
+
+    def poll(*_args: object, **_kwargs: object) -> CompletedProcess[str]:
+        return CompletedProcess((), 0, stdout=next(states), stderr="")
+
+    monkeypatch.setattr(controller, "_run_frontend", poll)
+    monkeypatch.setattr(
+        controller,
+        "_retrieve_batch",
+        lambda _batch, *, state, exit_code: retrieved.append((state, exit_code)),
+    )
+
+    controller._reconcile_batch(batch)
+
+    assert retrieved == [("terminated", 0)]
+
+
+def test_reconcile_batch_rejects_a_missing_job_id(tmp_path: Path) -> None:
+    controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
+    with pytest.raises(
+        sentence_controller.ControllerRunError, match="without a recorded OAR job ID"
+    ):
+        controller._reconcile_batch({"index": 0, "state": "running"})
+
+
 def test_custom_gpu_model_is_persisted_and_requested(tmp_path: Path) -> None:
     data_root = _data_root(tmp_path)
     transport = _FakeTransport(tmp_path)

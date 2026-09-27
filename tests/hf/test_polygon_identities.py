@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
+    _polygon_identity,
     load_unique_polygon_records,
 )
 
@@ -88,3 +90,16 @@ def test_load_unique_polygon_records_keeps_legacy_fixture_identity_fallback(
 
     assert ("way", 11) in index.records
     assert ("legacy", "fixture-id") in index.records
+
+
+@pytest.mark.parametrize(
+    ("row", "polygon_id"),
+    [
+        ({"osm_type": None, "osm_id": 1}, "way:1"),
+        ({"osm_type": "way", "osm_id": "not-an-id"}, "way:bad"),
+    ],
+)
+def test_typed_polygon_identity_rejects_missing_or_invalid_components(
+    row: dict[str, object], polygon_id: str
+) -> None:
+    assert _polygon_identity(row, polygon_id, typed_identity=True) is None

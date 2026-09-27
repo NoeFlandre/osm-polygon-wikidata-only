@@ -17,10 +17,10 @@ fail-fast sequence: baseline, Ruff, ty, tests, acceptance tests, architecture
 checks, CRAP, mutation tests, smoke test, and diff review.
 
 The CRAP stage (`just crap-report`) enforces two explicit rules per function:
-cyclomatic complexity must be at most 5, and any function with complexity 3 or
-more must have at least 80% coverage. CRAP scores are printed for context. Every
-file analysed by radon must appear in the coverage report, otherwise the gate
-fails with a "missing from the coverage report" error.
+cyclomatic complexity must be at most 5, and every function with complexity 3
+or higher must have at least 80% coverage. CRAP scores are printed for context.
+Every file analysed by radon must appear in the coverage report; otherwise the
+gate fails with a "missing from the coverage report" error.
 
 Do not commit PBFs, Parquet files, caches, tokens, or generated datasets. Keep
 pull requests focused and explain compatibility effects explicitly. Changes to

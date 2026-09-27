@@ -88,3 +88,9 @@ def test_saving_a_completed_batch_again_is_idempotent_and_rejects_conflicts(
     )
     with pytest.raises(RuntimeError, match="conflicts with completed batch 0"):
         store.save(0, conflicting)
+
+
+@pytest.mark.parametrize("stem", ["", ".", "..", "../outside", r"nested\\region"])
+def test_checkpoint_store_rejects_unsafe_stems(tmp_path: Path, stem: str) -> None:
+    with pytest.raises(ValueError, match="Invalid recovery checkpoint stem"):
+        RecoveryCheckpointStore(tmp_path, stem, "plan")

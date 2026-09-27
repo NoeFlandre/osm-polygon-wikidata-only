@@ -20,6 +20,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.augmentation import wikipedia_document_migration
 from osm_polygon_wikidata_only.augmentation.models import document_from_article_row
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
@@ -33,6 +34,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import 
     MigrationOperation,
     MigrationPlan,
     StemPlan,
+    _missing_stem_plan,
     apply_migration,
     plan_migration,
 )
@@ -1348,3 +1350,33 @@ class TestLightweightValidatedPlans:
 def vars_for_slots(value: object) -> tuple[object, ...]:
     """Return dataclass values without requiring ``__dict__``."""
     return tuple(getattr(value, field.name) for field in fields(value))
+
+
+def test_missing_stem_plan_classifies_absent_and_unreadable_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    article = tmp_path / "articles" / "stem.parquet"
+    document = tmp_path / "wikipedia" / "documents" / "stem.parquet"
+
+    no_article = _missing_stem_plan("stem", article, document)
+    assert no_article is not None
+    assert no_article.reason == "no article file found"
+
+    document.parent.mkdir(parents=True)
+    document.write_bytes(b"document")
+    orphan_document = _missing_stem_plan("stem", article, document)
+    assert orphan_document is not None
+    assert orphan_document.reason == "document exists without corresponding article"
+    assert orphan_document.document_hash
+
+    def unreadable(_path: Path) -> str:
+        raise PermissionError("unreadable")
+
+    monkeypatch.setattr(wikipedia_document_migration, "_file_content_hash", unreadable)
+    unreadable_document = _missing_stem_plan("stem", article, document)
+    assert unreadable_document is not None
+    assert unreadable_document.reason == "unreadable document file (PermissionError)"
+
+    article.parent.mkdir(parents=True)
+    article.write_bytes(b"article")
+    assert _missing_stem_plan("stem", article, document) is None

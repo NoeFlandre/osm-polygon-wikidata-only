@@ -157,7 +157,7 @@ def test_crap_cli_reports_pass_failure_and_unreadable_reports(
         main(arguments)
 
 
-GATE = GatePolicy(max_complexity=5, min_coverage=0.8, coverage_complexity=3)
+GATE = GatePolicy(max_complexity=5, min_coverage=0.8, coverage_complexity=5)
 
 
 def test_gate_coverage_influences_result_for_complexity_five() -> None:
@@ -172,10 +172,11 @@ def test_gate_caps_complexity_even_at_full_coverage() -> None:
     assert reason == "complexity 6 > 5"
 
 
-def test_gate_exempts_simple_functions_from_coverage_floor() -> None:
+def test_gate_applies_coverage_floor_to_maximum_complexity_only() -> None:
     assert gate_violations([CrapEntry("m.py", "f", 2, 0.0)], GATE) == []
-    assert gate_violations([CrapEntry("m.py", "f", 3, 0.8)], GATE) == []
-    assert len(gate_violations([CrapEntry("m.py", "f", 3, 0.79)], GATE)) == 1
+    assert gate_violations([CrapEntry("m.py", "f", 4, 0.0)], GATE) == []
+    assert gate_violations([CrapEntry("m.py", "f", 5, 0.8)], GATE) == []
+    assert len(gate_violations([CrapEntry("m.py", "f", 5, 0.79)], GATE)) == 1
 
 
 def test_gate_optional_crap_maximum() -> None:
@@ -221,7 +222,13 @@ def test_crap_cli_enforces_complexity_and_coverage_rules(
         "--min-coverage",
         "0.8",
         "--min-coverage-complexity",
-        "3",
+        "5",
     ]
     assert main(arguments) == 1
     assert "VIOLATION module.py:0 f: coverage 60.0%" in capsys.readouterr().out
+    coverage_path.write_text(
+        json.dumps(_file(functions={"f": {"summary": {"percent_covered": 100}}})),
+        encoding="utf-8",
+    )
+    assert main(arguments) == 0
+    assert "CRAP gate passed" in capsys.readouterr().out
