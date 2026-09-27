@@ -1,7 +1,5 @@
 """Tests for deterministic assembly of public documentation assets."""
 
-import runpy
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,17 +23,21 @@ def test_assemble_public_presentations_copies_the_declared_assets(tmp_path: Path
         assert target.read_text(encoding="utf-8") == f"asset-{index}"
 
 
-def test_script_entrypoint_assembles_presentations_into_requested_site(
+def test_cli_entrypoint_assembles_presentations_into_requested_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    source_root = tmp_path / "source"
+    script = source_root / "scripts" / "assemble_docs_site.py"
+    script.parent.mkdir(parents=True)
+    for index, relative_path in enumerate(PRESENTATION_FILES):
+        source = source_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"asset-{index}", encoding="utf-8")
+
     site_dir = tmp_path / "site"
-    script = Path(assembly_module.__file__)
-    monkeypatch.setattr(sys, "argv", [str(script), "--site-dir", str(site_dir)])
+    monkeypatch.setattr(assembly_module, "__file__", str(script))
 
-    with pytest.raises(SystemExit) as exit_info:
-        runpy.run_path(str(script), run_name="__main__")
-
-    assert exit_info.value.code == 0
+    assert assembly_module.main(["--site-dir", str(site_dir)]) == 0
     assert all((site_dir / relative_path).is_file() for relative_path in PRESENTATION_FILES)
 
 
