@@ -77,7 +77,7 @@ bench-save name="base":
 
 bench-compare name="base":
     uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q \
-        --benchmark-compare={{ name }} --benchmark-compare-fail=mean:25%
+        --benchmark-compare --benchmark-compare-fail=mean:25%
 
 property-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property
