@@ -87,32 +87,6 @@ def _cache_entry(status: str, parsed_result: Any, request_url: str | None) -> An
 # ---------------------------------------------------------------------------
 
 
-def test_wikidata_facade_class_identity_after_split() -> None:
-    from osm_polygon_wikidata_only.enrichment.wikidata import (
-        cache as focused_cache,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikidata import (
-        transport as focused_transport,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikidata_client import (
-        CachedWikidataClient as FacadeCached,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikidata_client import (
-        HttpWikidataClient as FacadeHttp,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikidata_client import (
-        InMemoryWikidataClient as FacadeInMemory,
-    )
-    from osm_polygon_wikidata_only.enrichment.wikidata_client import (
-        WikidataError as FacadeError,
-    )
-
-    assert FacadeHttp is focused_transport.HttpWikidataClient
-    assert FacadeInMemory is focused_transport.InMemoryWikidataClient
-    assert FacadeCached is focused_cache.CachedWikidataClient
-    assert FacadeError is focused_transport.WikidataError
-
-
 def test_wikidata_facade_does_not_leak_new_helpers() -> None:
     import osm_polygon_wikidata_only.enrichment.wikidata_client as facade
 

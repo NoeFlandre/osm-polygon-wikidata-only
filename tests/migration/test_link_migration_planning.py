@@ -259,6 +259,19 @@ def _seed_canonical_stem(tmp_path: Path, stem: str = "monaco-latest") -> Path:
     return links_path
 
 
+def _corrupt_first_data_page(path: Path) -> None:
+    """Keep the Parquet footer valid while making row data unreadable."""
+    pa = _pyarrow()
+    parquet_file = pa.parquet.ParquetFile(path)
+    offset = parquet_file.metadata.row_group(0).column(0).data_page_offset
+    with path.open("r+b") as stream:
+        stream.seek(offset)
+        first_byte = stream.read(1)
+        assert first_byte
+        stream.seek(offset)
+        stream.write(bytes([first_byte[0] ^ 0xFF]))
+
+
 # ---------------------------------------------------------------------------
 # plan_link_migration happy paths
 # ---------------------------------------------------------------------------
@@ -342,6 +355,35 @@ def test_plan_link_migration_reads_canonical_link_table_once(
 
     assert plan.stems[0].classification == "canonical"
     assert link_table_reads == 1
+
+
+@pytest.mark.parametrize("schema", ["canonical", "legacy"])
+def test_unreadable_data_pages_block_only_their_stem(tmp_path: Path, schema: str) -> None:
+    pa = _pyarrow()
+    if schema == "canonical":
+        broken_links = _seed_canonical_stem(tmp_path, "broken")
+    else:
+        _seed_full_legacy_stem(
+            tmp_path,
+            "broken",
+            "Q1",
+            article_id="Q1:en:1:1",
+            document_id="Q1:wikipedia:en:1:1",
+        )
+        broken_links = _processed_layout(tmp_path)["polygon_articles"] / "broken.parquet"
+    _seed_canonical_stem(tmp_path, "healthy")
+    _corrupt_first_data_page(broken_links)
+
+    assert pa.parquet.read_schema(broken_links).names
+    with pytest.raises((OSError, pa.ArrowInvalid)):
+        pa.parquet.read_table(broken_links)
+
+    plan = link_migration.plan_link_migration(tmp_path, stems=["broken", "healthy"])
+    by_stem = {stem.stem: stem for stem in plan.stems}
+
+    assert by_stem["broken"].classification == "BLOCKED"
+    assert "file unreadable" in by_stem["broken"].reason
+    assert by_stem["healthy"].classification == "canonical"
 
 
 def test_plan_link_migration_includes_corrupt_parquet_error(
