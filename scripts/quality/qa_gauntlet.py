@@ -27,6 +27,7 @@ def build_stages() -> tuple[Stage, ...]:
         Stage("ruff", ("just", "ruff")),
         Stage("ty", ("just", "ty")),
         Stage("tests", ("just", "tests")),
+        Stage("coverage floor", ("just", "coverage-floor")),
         Stage("property tests", ("just", "property-tests")),
         Stage("acceptance tests", ("just", "acceptance-tests")),
         Stage("architecture checks", ("just", "architecture-checks")),

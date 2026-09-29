@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import runpy
+import sys
 from pathlib import Path
 
 import pytest
 
 from osm_polygon_wikidata_only.cli import commands
 from osm_polygon_wikidata_only.cli import grid5000 as grid5000_sentence_controller
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from scripts import grid5000_sentence_controller as controller_shim
 from scripts import grid5000_sentence_job as job_shim
 
 
@@ -57,7 +61,7 @@ def test_controller_cli_forwards_all_resumable_run_options(
         == 0
     )
 
-    assert captured["data_root"].path == tmp_path / "data-root"
+    assert captured["data_root"] == DataRoot(tmp_path / "data-root")
     assert captured["site"] == "lyon"
     assert captured["queue"] == "besteffort"
     assert captured["repo_id"] == "example/dataset"
@@ -103,7 +107,7 @@ def test_job_subcommand_forwards_reserved_node_options(
     ]
 
     assert commands.main(["grid5000", "job", *argv]) == 0
-    assert captured["data_root"].path == tmp_path / "data"
+    assert captured["data_root"] == DataRoot(tmp_path / "data")
     assert captured["stems"] == ["a-latest", "b-latest"]
     assert captured["source_commit"] == "abc"
     assert captured["batch_size"] == 256
@@ -111,3 +115,15 @@ def test_job_subcommand_forwards_reserved_node_options(
     assert "Grid5000 sentence job 42: succeeded" in capsys.readouterr().out
 
     assert job_shim.main(argv) == 0
+
+
+@pytest.mark.parametrize("script_path", [controller_shim.__file__, job_shim.__file__])
+def test_legacy_script_entrypoints_render_help(
+    script_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "argv", [script_path, "--help"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(script_path, run_name="__main__")
+
+    assert exit_info.value.code == 0

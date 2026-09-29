@@ -23,6 +23,24 @@ def test_assemble_public_presentations_copies_the_declared_assets(tmp_path: Path
         assert target.read_text(encoding="utf-8") == f"asset-{index}"
 
 
+def test_cli_entrypoint_assembles_presentations_into_requested_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "source"
+    script = source_root / "scripts" / "assemble_docs_site.py"
+    script.parent.mkdir(parents=True)
+    for index, relative_path in enumerate(PRESENTATION_FILES):
+        source = source_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"asset-{index}", encoding="utf-8")
+
+    site_dir = tmp_path / "site"
+    monkeypatch.setattr(assembly_module, "__file__", str(script))
+
+    assert assembly_module.main(["--site-dir", str(site_dir)]) == 0
+    assert all((site_dir / relative_path).is_file() for relative_path in PRESENTATION_FILES)
+
+
 def test_assemble_public_presentations_fails_before_publishing_partial_site(
     tmp_path: Path,
 ) -> None:
@@ -53,7 +71,7 @@ def test_assemble_public_presentations_keeps_existing_site_when_copy_fails(
     real_copy2 = assembly_module.shutil.copy2
     failing_source = source_root / PRESENTATION_FILES[1]
 
-    def fail_copy(source: Path, destination: Path) -> str:
+    def fail_copy(source: Path, destination: Path) -> Path | str:
         if source == failing_source:
             raise OSError("copy failed")
         return real_copy2(source, destination)

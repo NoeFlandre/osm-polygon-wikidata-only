@@ -23,5 +23,6 @@ def test_raw_socket_connect_and_dns_are_refused() -> None:
         socket.getaddrinfo("query.wikidata.org", 443)
 
 
+@pytest.mark.local_network
 def test_loopback_lookup_is_still_allowed() -> None:
     assert socket.getaddrinfo("127.0.0.1", 0)

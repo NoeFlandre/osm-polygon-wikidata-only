@@ -95,8 +95,9 @@ def _manifest_revision(raw: object, *names: str) -> str | None:
 
 
 def _manifest_revision_for_name(raw: Mapping[str, Any], name: str) -> str | None:
-    direct = _non_empty_string(raw.get(name))
-    return direct or _nested_manifest_revision(raw, name)
+    if name.endswith("_revision"):
+        return _non_empty_string(raw.get(name)) or _nested_manifest_revision(raw, name)
+    return _nested_manifest_revision(raw, name)
 
 
 def _nested_manifest_revision(raw: Mapping[str, Any], name: str) -> str | None:
