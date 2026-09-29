@@ -22,7 +22,9 @@ def test_installed_metadata_matches_pyproject() -> None:
 
 
 def test_user_agent_carries_the_real_version() -> None:
-    assert f"osm-polygon-wikidata-only/{osm_polygon_wikidata_only.__version__} " in DEFAULT_USER_AGENT
+    assert (
+        f"osm-polygon-wikidata-only/{osm_polygon_wikidata_only.__version__} " in DEFAULT_USER_AGENT
+    )
 
 
 def test_version_literal_lives_only_in_pyproject() -> None:

@@ -89,6 +89,32 @@ jobs:
               fi
               rm /data/.compose-writable-check'
 
+  # Advisory: times the base and the head on the same runner. Shared runners are
+  # noisy, so this is not part of ``all-green``.
+  benchmarks:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: taiki-e/install-action@cb30b4c9cca98bbd320daf128741850f83d8a99f # v2 (just)
+        with:
+          tool: just
+      - name: Time the base
+        run: |
+          just sync
+          git checkout "${{ github.event.pull_request.head.sha }}" -- benchmarks
+          just bench-save
+      - name: Time the head against it
+        run: |
+          git checkout --force "${{ github.event.pull_request.head.sha }}"
+          just sync
+          just bench-compare
+
   # The single required status check: it fails unless every needed job succeeded.
   all-green:
     if: always()
