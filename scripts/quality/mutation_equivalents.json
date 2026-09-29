@@ -9,11 +9,6 @@
     "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected by ring validation.",
     "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_20": {
-    "mutant_sha256": "40a61e6844ad1cfb5317091c584c680ec7ebd8684830b0fae5bd8c066bd9e101",
-    "reason": "For valid WGS84 latitudes, cosine is nonnegative; at the exact positive floor both branches return the same value. Out-of-range latitudes are not valid GeoJSON positions.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
-  },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_14": {
     "mutant_sha256": "e9bfdcc5c2a25e82716b351e0d09c1eca2d0e10bbef5221855b7d6a1b53572d7",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; ensure_ascii=True serializes identically.",
