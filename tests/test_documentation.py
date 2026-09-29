@@ -19,6 +19,11 @@ def _public_markdown_files() -> Iterator[Path]:
     yield from sorted((REPOSITORY / "docs").glob("*.md"))
 
 
+def test_agent_planning_notes_are_not_published() -> None:
+    """AI planning archives stay out of the public docs tree."""
+    assert not (REPOSITORY / "docs" / "superpowers").exists()
+
+
 def test_public_docs_omit_private_operator_details() -> None:
     """Public Markdown should not publish local internals or cache layouts."""
     forbidden = (
