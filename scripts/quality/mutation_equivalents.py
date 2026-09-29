@@ -92,13 +92,18 @@ def reviewed_equivalents(
     mutants_root: Path,
 ) -> frozenset[str]:
     """Reject stale, malformed or drifted reviews before accepting a survivor."""
-    reviews = (
-        REVIEWED_EQUIVALENTS
-        if path is None
-        else json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-    )
-    if not isinstance(reviews, dict):
-        raise ValueError("Equivalence reviews must be an object")
+    reviews = dict(REVIEWED_EQUIVALENTS)
+    if path is not None:
+        file_reviews = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object
+        )
+        if not isinstance(file_reviews, dict):
+            raise ValueError("Equivalence reviews must be an object")
+        duplicates = reviews.keys() & file_reviews.keys()
+        if duplicates:
+            name = sorted(duplicates)[0]
+            raise ValueError(f"Duplicate review key: {name}")
+        reviews.update(file_reviews)
     statuses = dict(results)
     verified: set[str] = set()
     for name, entry in reviews.items():
