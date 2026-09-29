@@ -1,3 +1,9 @@
-"""Shared version constant for lightweight package entry points."""
+"""Single source of the package version, read from the installed metadata."""
 
-PACKAGE_VERSION = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    # ``pyproject.toml`` is the only place the version is written down.
+    PACKAGE_VERSION = version("osm-polygon-wikidata-only")
+except PackageNotFoundError:  # pragma: no cover - only without installed metadata
+    PACKAGE_VERSION = "0.0.0+unknown"
