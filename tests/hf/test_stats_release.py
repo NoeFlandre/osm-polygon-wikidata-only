@@ -36,6 +36,8 @@ from osm_polygon_wikidata_only.hf.stats_release import (
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
+pytestmark = pytest.mark.map_orchestration
+
 _REPO = "NoeFlandre/osm-polygon-wikidata-only"
 _COMMIT_HASH = "0123456789abcdef0123456789abcdef01234567"
 _COMMIT_URL = f"https://huggingface.co/datasets/{_REPO}/commit/{_COMMIT_HASH}"

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-import urllib.request
 from collections.abc import Collection, Iterator
 from pathlib import Path
 from typing import Any
@@ -31,12 +30,12 @@ from ._geographic.polygon_identities import load_unique_polygon_records
 LOGGER = logging.getLogger(__name__)
 
 WORLD_LAND_URL = (
-    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/"
     "geojson/ne_110m_land.geojson"
 )
 WORLD_LAND_FILENAME = "ne_110m_land.geojson"
 WORLD_COUNTRIES_URL = (
-    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/"
     "geojson/ne_110m_admin_0_countries.geojson"
 )
 WORLD_COUNTRIES_FILENAME = "ne_110m_admin_0_countries.geojson"
@@ -205,17 +204,23 @@ def _selected_centroid_rows(
 
 
 def ensure_world_land(cache_dir: Path) -> Path:
-    """Download and cache the Natural Earth 110m land GeoJSON.
+    """Copy the pinned Natural Earth 110m land GeoJSON into the runtime cache.
 
     Returns the path to the cached file. If the file already exists
-    and is non-empty, it is reused without re-downloading.
+    and is non-empty, it is reused. The reference is bundled with the
+    package so this operation is deterministic and works offline.
     """
     cache_path = cache_dir / WORLD_LAND_FILENAME
     if cache_path.exists() and cache_path.stat().st_size > 0:
         return cache_path
     cache_dir.mkdir(parents=True, exist_ok=True)
-    LOGGER.info("Downloading world land GeoJSON from %s", WORLD_LAND_URL)
-    urllib.request.urlretrieve(WORLD_LAND_URL, cache_path)
+    bundled = Path(__file__).with_name(WORLD_LAND_FILENAME)
+    if not bundled.is_file():
+        raise FileNotFoundError(
+            f"Bundled Natural Earth land reference is missing: {bundled}. "
+            "Reinstall the package before generating coverage maps."
+        )
+    shutil.copyfile(bundled, cache_path)
     LOGGER.info("Cached world land GeoJSON (%d bytes)", cache_path.stat().st_size)
     return cache_path
 

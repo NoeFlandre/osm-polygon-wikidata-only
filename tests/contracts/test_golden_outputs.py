@@ -14,10 +14,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.publication import assemble_region_upload
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
+
+pytestmark = pytest.mark.map_orchestration
 
 FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "fixtures"
 GOLDEN = FIXTURE_ROOT / "golden"

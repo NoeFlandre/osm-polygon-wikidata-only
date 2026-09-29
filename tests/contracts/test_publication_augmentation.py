@@ -34,6 +34,8 @@ from osm_polygon_wikidata_only.hf.publication import (
 )
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
+pytestmark = pytest.mark.map_orchestration
+
 STEM = "monaco-latest"
 REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 

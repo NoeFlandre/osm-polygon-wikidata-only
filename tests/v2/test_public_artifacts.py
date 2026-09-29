@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 import yaml
 
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
@@ -15,6 +16,8 @@ from osm_polygon_wikidata_only.v2.maps import (
 )
 from osm_polygon_wikidata_only.v2.schema import wikipedia_document_v2_schema
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
+
+pytestmark = pytest.mark.map_orchestration
 
 
 def _polygon() -> dict[str, object]:

@@ -37,6 +37,8 @@ from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     render_geographic_text_coverage,
 )
 
+pytestmark = pytest.mark.real_map
+
 # --- helpers ------------------------------------------------------------
 
 

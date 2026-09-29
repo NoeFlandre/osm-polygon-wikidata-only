@@ -7,9 +7,87 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.v2.card_models import V2CardStats
+from osm_polygon_wikidata_only.v2.config import V2_ASSET_PATHS
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem
 from osm_polygon_wikidata_only.v2.runner import run_v2_sync
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
+
+pytestmark = pytest.mark.map_orchestration
+
+
+class _ReadyIndex:
+    def wait_until_ready(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _stub_fast_v2_orchestration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub storage and release rendering outside runner orchestration contracts."""
+
+    def write_map_placeholders(
+        processed_v2: Path,
+        output_dir: Path,
+        **_kwargs: object,
+    ) -> tuple[Path, Path, Path]:
+        del output_dir
+        paths = tuple(processed_v2 / asset for asset in V2_ASSET_PATHS)
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"test map")
+        return paths[0], paths[1], paths[2]
+
+    def write_card_placeholder(processed_v2: Path, **_kwargs: object) -> Path:
+        card = processed_v2 / "README.md"
+        card.write_text("# Test V2 card\n", encoding="utf-8")
+        return card
+
+    card_stats = V2CardStats(
+        regions=0,
+        polygons=0,
+        unique_wikidata_entities=0,
+        wikipedia_documents=0,
+        wikipedia_sections=0,
+        wikivoyage_documents=0,
+        wikivoyage_sections=0,
+        wikidata_facts=0,
+        polygon_document_links=0,
+        wikipedia_tag_only_polygons=0,
+        document_words=0,
+        languages=0,
+        new_polygons_vs_v1=None,
+        new_wikipedia_documents_vs_v1=None,
+        text_coverage_funnel=(),
+        top_wikipedia_languages=(),
+        polygon_link_storage_bytes=0,
+        total_parquet_storage_bytes=0,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
+        lambda *_args, **_kwargs: _ReadyIndex(),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.generate_v2_map_assets",
+        write_map_placeholders,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.compute_v2_card_stats",
+        lambda *_args, **_kwargs: card_stats,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.runner.write_v2_card",
+        write_card_placeholder,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.storage._write_table",
+        lambda path, *_args: path.write_bytes(b"orchestration test artifact"),
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.v2.storage._validate_written_table",
+        lambda *_args: None,
+    )
 
 
 def test_v2_runner_writes_only_inside_v2_storage_roots(
@@ -78,6 +156,8 @@ def test_v2_runner_writes_only_inside_v2_storage_roots(
 def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monkeypatch) -> None:
     root = DataRoot(tmp_path)
     root.ensure()
+    _stub_fast_v2_orchestration(monkeypatch)
+
     pbf = root.raw / "region-latest.osm.pbf"
     pbf.touch()
     extracted = V2ExtractedPbf(
@@ -162,6 +242,7 @@ def test_v2_runner_resumes_provisional_region_without_reextracting(
     monkeypatch,
 ) -> None:
     """A persisted provisional region is finalized from disk on restart."""
+    _stub_fast_v2_orchestration(monkeypatch)
     root = DataRoot(tmp_path)
     root.ensure()
     pbf = root.raw / "region-latest.osm.pbf"
@@ -176,17 +257,6 @@ def test_v2_runner_resumes_provisional_region_without_reextracting(
     )
     reconciled: list[str] = []
 
-    class ReadyIndex:
-        def wait_until_ready(self) -> None:
-            return None
-
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
-        lambda *_args, **_kwargs: ReadyIndex(),
-    )
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.v2.runner.extract_v2_pbf",
         lambda *_args, **_kwargs: pytest.fail("a persisted provisional region was re-extracted"),
@@ -213,6 +283,7 @@ def test_v2_runner_groups_region_publications_into_bounded_commits(
     monkeypatch,
 ) -> None:
     """Many completed regions are published in batches, not one commit each."""
+    _stub_fast_v2_orchestration(monkeypatch)
     root = DataRoot(tmp_path)
     root.ensure()
     pbfs = []
@@ -220,18 +291,6 @@ def test_v2_runner_groups_region_publications_into_bounded_commits(
         pbf = root.raw / f"region-{index:02d}-latest.osm.pbf"
         pbf.touch()
         pbfs.append(pbf)
-
-    class ReadyIndex:
-        def wait_until_ready(self) -> None:
-            return None
-
-        def close(self) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "osm_polygon_wikidata_only.v2.runner.start_v1_reuse_index",
-        lambda *_args, **_kwargs: ReadyIndex(),
-    )
 
     def extract(path: Path, **_kwargs: object) -> V2ExtractedPbf:
         return V2ExtractedPbf(
@@ -275,6 +334,7 @@ def test_v2_runner_rebuilds_a_region_when_a_manifest_file_is_tampered(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    _stub_fast_v2_orchestration(monkeypatch)
     root = DataRoot(tmp_path)
     root.ensure()
     pbf = root.raw / "region-latest.osm.pbf"

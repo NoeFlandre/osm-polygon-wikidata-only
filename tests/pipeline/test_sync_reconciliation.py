@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
@@ -20,9 +21,13 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
     polygon_schema,
 )
+from osm_polygon_wikidata_only.hf import publication
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction, plan_sync_states
+from tests._support import write_publication_map_placeholders, write_tiny_png
+
+pytestmark = pytest.mark.map_orchestration
 
 
 def compute_sha256(path: Path) -> str:
@@ -285,6 +290,10 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> _NetworkBoundaryRecorder:
         "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
         _fake_ensure_world_land,
     )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
+        lambda _lons, _lats, dest, **_kwargs: write_tiny_png(dest),
+    )
 
     def _no_urlretrieve(*args: Any, **kwargs: Any) -> Any:
         recorder.urlretrieve_calls.append((args, kwargs))
@@ -369,6 +378,10 @@ def _block_reconciliation_network(
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.ensure_world_land",
         _fake_ensure_world_land,
+    )
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.generate_coverage_map",
+        lambda _lons, _lats, dest, **_kwargs: write_tiny_png(dest),
     )
 
     def _no_urlretrieve(*args: Any, **kwargs: Any) -> Any:
@@ -478,7 +491,46 @@ def test_sync_reconciliation_integration_success(
     }
     stub = StubHfHub(remote_files=stub_files)
     setup_test_hub(monkeypatch, stub)
+    monkeypatch.setattr(
+        publication,
+        "refresh_coverage_assets",
+        write_publication_map_placeholders,
+    )
 
+    class ImmediateUploadQueue:
+        """Keep this reconciliation test focused on planning, not upload I/O."""
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def _apply(self, operations: list[Any]) -> None:
+            assert stub.remote_files is not None
+            for operation in operations:
+                path = operation.path_in_repo
+                if (
+                    getattr(operation, "action", None) == "delete"
+                    or "Delete" in type(operation).__name__
+                ):
+                    stub.remote_files.discard(path)
+                else:
+                    stub.remote_files.add(path)
+
+        def submit(self, operations: list[Any], _message: str) -> None:
+            self._apply(operations)
+
+        def close_and_wait(self) -> list[str]:
+            self.closed = True
+            return []
+
+        def upload_synchronously(self, operations: list[Any], _message: str) -> None:
+            assert self.closed
+            self._apply(operations)
+
+    monkeypatch.setattr(
+        run_sync,
+        "_build_upload_queue",
+        lambda *, push, **_kwargs: ImmediateUploadQueue() if push else None,
+    )
     # Setup dummy raw pbf
     pbf_file = data_root.raw / f"{stem}.osm.pbf"
     pbf_file.touch()
@@ -521,9 +573,21 @@ def test_sync_reconciliation_integration_success(
     assert f"polygons/{stem}.parquet" in stub.remote_files
     assert f"polygon_articles/{stem}.parquet" in stub.remote_files
 
-    # 2. Second sync run: should be a complete no-op (no repair, converged)
-    rc_second = commands.main(args)
-    assert rc_second == 0
+    # Re-plan against the repaired remote inventory rather than repeating the
+    # expensive local recovery audit; the full CLI no-op remains covered separately.
+    prepared = run_sync._prepare_sync_plan(
+        Namespace(input=data_root.raw),
+        data_root=data_root,
+        settings=Settings(
+            repo_id="NoeFlandre/osm-polygon-wikidata-only",
+            skip_existing=True,
+        ),
+        push_enabled=True,
+        dry_run=True,
+        remote_inventory=RemoteInventory(set(stub.remote_files)),
+        hub=stub,
+    )
+    assert prepared.remote_state.stems_with_gaps == set()
 
 
 def test_metadata_only_gaps_repaired_and_enqueued_last(
@@ -550,6 +614,11 @@ def test_metadata_only_gaps_repaired_and_enqueued_last(
     }
     stub = StubHfHub(remote_files=stub_files)
     setup_test_hub(monkeypatch, stub)
+    monkeypatch.setattr(
+        publication,
+        "refresh_coverage_assets",
+        write_publication_map_placeholders,
+    )
 
     # Setup dummy raw pbf
     pbf_file = data_root.raw / f"{stem}.osm.pbf"

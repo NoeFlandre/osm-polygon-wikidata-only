@@ -24,6 +24,9 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     load_centroids_from_parquet,
 )
 
+pytestmark = pytest.mark.real_map
+
+
 # --- helpers ------------------------------------------------------------
 
 
@@ -348,6 +351,43 @@ def test_ensure_world_land_does_not_redownload(
     monkeypatch.setattr("urllib.request.urlretrieve", fail_if_called)
     ensure_world_land(cache_dir)
     assert not download_called
+
+
+def test_ensure_world_land_copies_the_bundled_reference_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundled = Path(coverage_map.__file__).with_name(WORLD_LAND_FILENAME)
+    monkeypatch.setattr(
+        "urllib.request.urlretrieve",
+        lambda *_args, **_kwargs: pytest.fail("world land must be available offline"),
+    )
+
+    result = ensure_world_land(tmp_path / "cache")
+
+    assert result.read_bytes() == bundled.read_bytes()
+
+
+def test_bundled_world_land_matches_the_pinned_natural_earth_digest() -> None:
+    # Natural Earth Vector v5.1.2: geojson/ne_110m_land.geojson.
+    bundled = Path(coverage_map.__file__).with_name(WORLD_LAND_FILENAME)
+
+    assert sha256(bundled.read_bytes()).hexdigest() == (
+        "9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9"
+    )
+
+
+def test_bundled_world_land_renders_nonempty_land_pixels(tmp_path: Path) -> None:
+    import matplotlib.image as mpimg
+    import numpy as np
+
+    land = Path(coverage_map.__file__).with_name(WORLD_LAND_FILENAME)
+    output = tmp_path / "bundled-land.png"
+    generate_coverage_map([], [], output, land_geojson_path=land, figsize=(4, 2), dpi=30)
+
+    rendered = mpimg.imread(output)[..., :3]
+    land_color = np.array([232, 224, 208], dtype=np.float32) / 255
+    land_pixels = np.all(np.isclose(rendered, land_color, atol=0.01), axis=2)
+    assert int(land_pixels.sum()) > 10
 
 
 def test_ensure_world_countries_copies_the_bundled_reference(tmp_path: Path) -> None:

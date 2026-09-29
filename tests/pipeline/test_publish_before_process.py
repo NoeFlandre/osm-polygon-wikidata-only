@@ -33,6 +33,8 @@ from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, poly
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 
+pytestmark = pytest.mark.map_orchestration
+
 
 def compute_sha256(path: Path) -> str:
     h = hashlib.sha256()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -1126,34 +1127,13 @@ def test_language_split_result_loads_with_standard_datasets_loader(tmp_path: Pat
     _write_v1_fixture(tmp_path)
 
     run_language_split_release(DataRoot(tmp_path), dataset_version="v1", batch_size=1)
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "\n".join(
-                (
-                    "import json",
-                    "import sys",
-                    "from datasets import load_dataset",
-                    "dataset = load_dataset(",
-                    '    "parquet",',
-                    '    data_files={"train": sys.argv[1]},',
-                    '    split="train",',
-                    "    cache_dir=sys.argv[2],",
-                    ")",
-                    'print(json.dumps({"num_rows": dataset.num_rows, "language": list(dataset["language"])}))',
-                )
-            ),
-            str(_v1_partition(tmp_path, "polygon_articles", "fr")),
-            str(tmp_path / "hf-cache"),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
+    loaded = _load_dataset_columns(
+        {"train": str(_v1_partition(tmp_path, "polygon_articles", "fr"))},
+        tmp_path / "hf-cache",
+        ("language",),
     )
 
-    assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {"num_rows": 1, "language": ["fr"]}
+    assert loaded == {"num_rows": 1, "language": ["fr"]}
 
 
 def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: Path) -> None:
@@ -1168,34 +1148,67 @@ def test_v2_language_split_result_loads_with_standard_datasets_loader(tmp_path: 
     ]
     assert french_files
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "\n".join(
-                (
-                    "import json",
-                    "import sys",
-                    "from datasets import load_dataset",
-                    "dataset = load_dataset(",
-                    '    "parquet",',
-                    "    data_files=sys.argv[1:-1],",
-                    '    split="train",',
-                    "    cache_dir=sys.argv[-1],",
-                    ")",
-                    'print(json.dumps({"num_rows": dataset.num_rows, "document_id": list(dataset["document_id"])}))',
-                )
-            ),
-            *(str(path) for path in french_files),
-            str(tmp_path / "hf-v2-cache"),
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
+    loaded = _load_dataset_columns(
+        [str(path) for path in french_files],
+        tmp_path / "hf-v2-cache",
+        ("document_id",),
     )
 
-    assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {"num_rows": 1, "document_id": ["doc-fr"]}
+    assert loaded == {"num_rows": 1, "document_id": ["doc-fr"]}
+
+
+def _load_dataset_columns(
+    data_files: dict[str, str] | list[str],
+    cache_dir: Path,
+    columns: tuple[str, ...],
+) -> dict[str, object]:
+    """Use the Dataset API in-process, isolating NumPy's mutant-runner import bug."""
+    try:
+        from datasets import load_dataset
+
+        dataset = load_dataset(
+            "parquet",
+            data_files=data_files,
+            split="train",
+            cache_dir=str(cache_dir),
+        )
+    except ImportError as error:
+        if "cannot load module more than once per process" not in str(error):
+            raise
+        command = "\n".join(
+            (
+                "import json",
+                "import sys",
+                "from datasets import load_dataset",
+                "dataset = load_dataset(",
+                '    "parquet",',
+                "    data_files=json.loads(sys.argv[1]),",
+                '    split="train",',
+                "    cache_dir=sys.argv[2],",
+                ")",
+                "columns = json.loads(sys.argv[3])",
+                'print(json.dumps({"num_rows": dataset.num_rows, **{name: list(dataset[name]) for name in columns}}))',
+            )
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                command,
+                json.dumps(data_files),
+                str(cache_dir),
+                json.dumps(columns),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            env={**os.environ, "HF_DATASETS_OFFLINE": "1", "HF_HUB_OFFLINE": "1"},
+        )
+        if completed.returncode != 0:
+            raise AssertionError(completed.stderr) from error
+        return json.loads(completed.stdout)
+
+    return {"num_rows": dataset.num_rows, **{column: list(dataset[column]) for column in columns}}
 
 
 @pytest.mark.parametrize("wrap", [Path, DataRoot])
