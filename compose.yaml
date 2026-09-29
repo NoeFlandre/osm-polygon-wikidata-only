@@ -1,0 +1,21 @@
+services:
+  pipeline:
+    image: osm-polygon-wikidata-only:local
+    build:
+      context: .
+      target: runtime
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OSM_POLYGON_DATA_ROOT: /data
+    volumes:
+      - type: bind
+        source: "${OSM_POLYGON_DATA_ROOT:-../osm-polygon-data}"
+        target: /data
+      - type: bind
+        source: "${OSM_POLYGON_DATA_ROOT:-../osm-polygon-data}/raw"
+        target: /data/raw
+        read_only: true
+    command: ["--help"]

@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -40,6 +42,52 @@ def test_dockerfile_uses_locked_uv_install_and_safe_runtime() -> None:
     assert "LC_ALL=C.UTF-8" in dockerfile
     assert "PYTHONUNBUFFERED=1" in dockerfile
     assert "HF_TOKEN" not in dockerfile
+
+
+def test_runtime_image_has_current_oci_metadata_and_a_cli_health_check() -> None:
+    dockerfile = _read("Dockerfile")
+    project_version = tomllib.loads(_read("pyproject.toml"))["project"]["version"]
+
+    assert f"ARG PROJECT_VERSION={project_version}" in dockerfile
+    assert (
+        'org.opencontainers.image.source="https://github.com/NoeFlandre/osm-polygon-wikidata-only"'
+        in dockerfile
+    )
+    assert 'org.opencontainers.image.version="${PROJECT_VERSION}"' in dockerfile
+    assert 'org.opencontainers.image.licenses="Apache-2.0"' in dockerfile
+    assert "HEALTHCHECK --interval=30s --timeout=5s" in dockerfile
+    assert 'CMD ["osm-polygon-wikidata-only", "--version"]' in dockerfile
+
+
+def test_compose_pipeline_uses_the_safe_runtime_contract() -> None:
+    compose = yaml.safe_load(_read("compose.yaml"))
+    pipeline = compose["services"]["pipeline"]
+
+    assert pipeline["build"] == {"context": ".", "target": "runtime"}
+    assert pipeline["image"] == "osm-polygon-wikidata-only:local"
+    assert pipeline["command"] == ["--help"]
+    assert pipeline["user"] == "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    assert pipeline["env_file"] == [{"path": ".env", "required": False}]
+    assert pipeline["environment"]["OSM_POLYGON_DATA_ROOT"] == "/data"
+    assert pipeline["volumes"] == [
+        {
+            "type": "bind",
+            "source": "${OSM_POLYGON_DATA_ROOT:-../osm-polygon-data}",
+            "target": "/data",
+        },
+        {
+            "type": "bind",
+            "source": "${OSM_POLYGON_DATA_ROOT:-../osm-polygon-data}/raw",
+            "target": "/data/raw",
+            "read_only": True,
+        },
+    ]
+
+    example = _read(".env.example")
+    assert "HF_TOKEN=" in example
+    assert "HOST_UID=" in example
+    assert "HOST_GID=" in example
+    assert "HF_TOKEN" in _read("src/osm_polygon_wikidata_only/config/settings.py")
 
 
 def test_development_stage_declares_no_ambient_data_root() -> None:
@@ -88,6 +136,10 @@ def test_dockerignore_excludes_local_data_secrets_and_presentations() -> None:
         ".DS_Store",
     ):
         assert pattern in dockerignore
+    patterns = dockerignore.splitlines()
+    assert ".env.*" in patterns
+    assert "!.env.example" in patterns
+    assert patterns.index(".env.*") < patterns.index("!.env.example")
 
 
 def test_justfile_documents_safe_docker_targets_and_opt_in_pipeline() -> None:
@@ -116,6 +168,11 @@ def test_development_docs_explain_reproducible_docker_mounts_and_safety() -> Non
         "/data/raw",
         "Ctrl-C",
         "HF_TOKEN",
+        "docker compose",
+        "HOST_UID",
+        "HOST_GID",
+        ".env.example",
+        "bind mount",
     ):
         assert text in development
     assert "never" in development.lower()
@@ -134,7 +191,13 @@ def test_ci_builds_and_smoke_tests_the_runtime_image() -> None:
 
     assert "run: just quality-gauntlet" in workflow
     assert "docker build --target runtime" in workflow
-    assert "docker run --rm osm-polygon-wikidata-only:ci --help" in workflow
+    assert "docker compose run --rm --no-deps pipeline --help" in workflow
+    assert "--network none" not in workflow
+    assert "docker compose config --quiet" in workflow
+    assert 'HOST_UID="$(id -u)" HOST_GID="$(id -g)"' in workflow
+    assert "--entrypoint /bin/sh pipeline" in workflow
+    assert "touch /data/.compose-writable-check" in workflow
+    assert "touch /data/raw/.compose-readonly-check" in workflow
     assert "smoke-test:" in justfile
     assert "uv run osm-polygon-wikidata-only --help" in justfile
     assert "uv run osm-polygon-wikidata-only sync-dir --help" in justfile
@@ -176,7 +239,11 @@ def test_ci_container_job_runs_development_pytest_and_runtime_help() -> None:
     assert "docker build --target development" in container_job
     assert "docker run --rm osm-polygon-wikidata-only:ci-development" in container_job
     assert "docker build --target runtime" in container_job
-    assert "docker run --rm osm-polygon-wikidata-only:ci --help" in container_job
+    assert "docker compose config --quiet" in container_job
+    assert "docker compose run --rm --no-deps pipeline --help" in container_job
+    assert "--network none" not in container_job
+    assert "HF_TOKEN" not in container_job
+    assert "--push" not in container_job
 
 
 @pytest.mark.integration
@@ -205,7 +272,7 @@ def test_opt_in_docker_smoke() -> None:
     )
     assert build.returncode == 0, build.stdout + build.stderr
     help_run = subprocess.run(
-        [docker, "run", "--rm", image, "--help"],
+        [docker, "run", "--rm", "--network", "none", image, "--help"],
         capture_output=True,
         text=True,
         check=False,
