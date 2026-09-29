@@ -11,16 +11,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.io.hashing import sha256_file
-from osm_polygon_wikidata_only.utils.json import loads as json_loads
-
-from .sentence_protocol import (
+from osm_polygon_wikidata_only.config.defaults import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_INFERENCE_BATCH_SIZE,
     DEFAULT_MAX_INPUT_BYTES,
     DEFAULT_MAX_STEMS,
     DEFAULT_WALLTIME,
+)
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.utils.json import loads as json_loads
+
+from .sentence_protocol import (
     FileDigest,
     sentence_source_paths,
 )

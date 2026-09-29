@@ -115,6 +115,18 @@ def test_sentence_split_accepts_external_root_and_batch_size(tmp_path: Path) -> 
     assert args.push is False
 
 
+def test_sentence_split_parser_uses_shared_batch_defaults() -> None:
+    from osm_polygon_wikidata_only.config.defaults import (
+        DEFAULT_BATCH_SIZE,
+        DEFAULT_INFERENCE_BATCH_SIZE,
+    )
+
+    args = build_parser().parse_args(["split-v2-sentences"])
+
+    assert args.batch_size == DEFAULT_BATCH_SIZE
+    assert args.inference_batch_size == DEFAULT_INFERENCE_BATCH_SIZE
+
+
 def test_augment_region_requires_stem_argument() -> None:
     args = build_parser().parse_args(["augment-region", "andorra-latest"])
     assert args.command == "augment-region"
@@ -162,3 +174,55 @@ def test_help_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
     assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "osm-polygon-wikidata-only" in captured.out
+
+
+def test_grid5000_parser_defaults_match_shared_runtime_defaults(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.config.defaults import (
+        DEFAULT_BATCH_SIZE,
+        DEFAULT_GRID5000_GPU_MODEL,
+        DEFAULT_GRID5000_QUEUE,
+        DEFAULT_GRID5000_SITE,
+        DEFAULT_INFERENCE_BATCH_SIZE,
+        DEFAULT_MAX_INPUT_BYTES,
+        DEFAULT_MAX_STEMS,
+        DEFAULT_WALLTIME,
+        V2_REPO_ID,
+    )
+
+    parser = build_parser()
+    root_subparsers = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    grid_parser = root_subparsers.choices["grid5000"]
+    grid_subparsers = next(
+        action for action in grid_parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    controller = grid_subparsers.choices["controller"].parse_args(["--data-root", str(tmp_path)])
+    job = grid_subparsers.choices["job"].parse_args(
+        [
+            "--data-root",
+            str(tmp_path),
+            "--stems",
+            "region",
+            "--model-cache",
+            str(tmp_path / "model"),
+            "--source-commit",
+            "source",
+            "--job-id",
+            "123",
+            "--receipt",
+            str(tmp_path / "receipt.json"),
+        ]
+    )
+
+    assert controller.site == DEFAULT_GRID5000_SITE
+    assert controller.queue == DEFAULT_GRID5000_QUEUE
+    assert controller.gpu_model == DEFAULT_GRID5000_GPU_MODEL
+    assert controller.repo_id == V2_REPO_ID
+    assert controller.max_stems == DEFAULT_MAX_STEMS
+    assert controller.max_input_bytes == DEFAULT_MAX_INPUT_BYTES
+    assert controller.batch_size == DEFAULT_BATCH_SIZE
+    assert controller.inference_batch_size == DEFAULT_INFERENCE_BATCH_SIZE
+    assert controller.walltime == DEFAULT_WALLTIME
+    assert job.batch_size == DEFAULT_BATCH_SIZE
+    assert job.inference_batch_size == DEFAULT_INFERENCE_BATCH_SIZE

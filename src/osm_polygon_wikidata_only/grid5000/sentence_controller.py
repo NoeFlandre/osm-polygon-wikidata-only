@@ -11,7 +11,18 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+from osm_polygon_wikidata_only.config.defaults import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_GRID5000_GPU_MODEL,
+    DEFAULT_GRID5000_QUEUE,
+    DEFAULT_GRID5000_SITE,
+    DEFAULT_INFERENCE_BATCH_SIZE,
+    DEFAULT_MAX_INPUT_BYTES,
+    DEFAULT_MAX_STEMS,
+    DEFAULT_WALLTIME,
+)
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
 from osm_polygon_wikidata_only.io.run_lock import exclusive_run_lock
@@ -35,14 +46,6 @@ from .sentence_controller_policy import (
 from .sentence_controller_policy import (
     git_source_commit as _git_source_commit_impl,
 )
-from .sentence_protocol import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_GRID5000_SITE,
-    DEFAULT_INFERENCE_BATCH_SIZE,
-    DEFAULT_MAX_INPUT_BYTES,
-    DEFAULT_MAX_STEMS,
-    DEFAULT_WALLTIME,
-)
 from .sentence_publication import (
     HfHubSentencePublisher as _HfHubSentencePublisher,
 )
@@ -60,8 +63,6 @@ from .sentence_transport import (
 )
 
 _LEDGER_FILENAME = "grid5000_sentence_run.json"
-DEFAULT_GRID5000_QUEUE = "besteffort"
-DEFAULT_GRID5000_GPU_MODEL = "A40"
 _QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _GPU_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 
@@ -149,10 +150,8 @@ class HfHubSentencePublisher(_HfHubSentencePublisher):
             repo_id,
             token=token,
             cache_dir=cache_dir,
-            # Resolve these names when the operation runs so the historical
-            # controller-level monkeypatch seams remain usable after init.
-            upload_function=lambda *args, **kwargs: upload_files(*args, **kwargs),  # noqa: PLW0108 -- late binding keeps the monkeypatch seam
-            download_function=lambda *args, **kwargs: _download_hf_file(*args, **kwargs),  # noqa: PLW0108 -- late binding keeps the monkeypatch seam
+            upload_function=_upload_files_at_call_time,
+            download_function=_download_hf_file_at_call_time,
         )
 
 
@@ -223,6 +222,16 @@ def _download_hf_file(
         token=token,
         local_dir=local_dir,
     )
+
+
+def _upload_files_at_call_time(*args: Any, **kwargs: Any) -> str:
+    """Resolve the façade upload seam when publishing, not at construction."""
+    return upload_files(*args, **kwargs)
+
+
+def _download_hf_file_at_call_time(*args: Any, **kwargs: Any) -> Path:
+    """Resolve the façade download seam when verifying, not at construction."""
+    return _download_hf_file(*args, **kwargs)
 
 
 __all__ = [

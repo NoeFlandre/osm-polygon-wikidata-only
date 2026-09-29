@@ -8,11 +8,29 @@ from __future__ import annotations
 
 import sys
 
-from .commands import main
+from osm_polygon_wikidata_only.version import PACKAGE_VERSION
 
 
 def run() -> int:
-    return main()
+    """Parse the lightweight CLI surface before loading a command handler."""
+    if len(sys.argv) > 1 and sys.argv[1] == "--version":
+        print(f"osm-polygon-wikidata-only {PACKAGE_VERSION}")
+        raise SystemExit(0)
+
+    from .parser import build_parser  # noqa: PLC0415
+
+    parser = build_parser()
+    args = parser.parse_args()
+
+    from .tools import dispatch_tool  # noqa: PLC0415
+
+    tool_status = dispatch_tool(args)
+    if tool_status is not None:
+        return tool_status
+
+    from .commands import run_parsed  # noqa: PLC0415
+
+    return run_parsed(parser, args)
 
 
 if __name__ == "__main__":  # pragma: no cover

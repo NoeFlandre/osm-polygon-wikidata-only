@@ -14,9 +14,11 @@ Subpackages:
 
 from __future__ import annotations
 
+from .version import PACKAGE_VERSION
+
 __all__ = ["__version__"]
 
-__version__ = "0.1.0"
+__version__ = PACKAGE_VERSION
 # Public spelling used by implementation modules that need the package version
 # without importing the dunder attribute across module boundaries.
 VERSION = __version__

@@ -11,67 +11,24 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000.sentence_controller import (
-    DEFAULT_GRID5000_GPU_MODEL,
-    DEFAULT_GRID5000_QUEUE,
     run_grid5000_sentence_controller,
 )
 from osm_polygon_wikidata_only.grid5000.sentence_job import run_sentence_job
-from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_GRID5000_SITE,
-    DEFAULT_INFERENCE_BATCH_SIZE,
-    DEFAULT_MAX_INPUT_BYTES,
-    DEFAULT_MAX_STEMS,
-    DEFAULT_WALLTIME,
+
+from .parser import (
+    CONTROLLER_DESCRIPTION,
+    JOB_DESCRIPTION,
+    add_grid5000_parser,
 )
-from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
-
-CONTROLLER_DESCRIPTION = "Run and resume the local Grid5000 sentence-splitting controller."
-JOB_DESCRIPTION = "Run one CUDA-required sentence batch on a reserved Grid5000 node."
-
-
-def add_controller_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register the controller options on *parser*."""
-    parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--site", default=DEFAULT_GRID5000_SITE)
-    parser.add_argument("--queue", default=DEFAULT_GRID5000_QUEUE)
-    parser.add_argument("--gpu-model", default=DEFAULT_GRID5000_GPU_MODEL)
-    parser.add_argument("--repo-id", default=V2_REPO_ID)
-    parser.add_argument("--max-stems", type=int, default=DEFAULT_MAX_STEMS)
-    parser.add_argument("--max-input-bytes", type=int, default=DEFAULT_MAX_INPUT_BYTES)
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    parser.add_argument("--inference-batch-size", type=int, default=DEFAULT_INFERENCE_BATCH_SIZE)
-    parser.add_argument("--walltime", default=DEFAULT_WALLTIME)
-    parser.add_argument("--run-id")
-    parser.add_argument("--hf-token")
-
-
-def add_job_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register the reserved-node job options on *parser*."""
-    parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--stems", nargs="+", required=True)
-    parser.add_argument("--model-cache", type=Path, required=True)
-    parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--job-id", required=True)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--inference-batch-size", type=int, default=16)
-    parser.add_argument("--receipt", type=Path, required=True)
-
-
-def add_grid5000_parser(sub: argparse._SubParsersAction) -> None:
-    """Register ``grid5000 controller|job`` on the root subparsers."""
-    grid = sub.add_parser("grid5000", help="Grid5000 GPU sentence-splitting controller and job")
-    grid_sub = grid.add_subparsers(dest="grid5000_command", required=True)
-    add_controller_arguments(
-        grid_sub.add_parser(
-            "controller", help=CONTROLLER_DESCRIPTION, description=CONTROLLER_DESCRIPTION
-        )
-    )
-    add_job_arguments(grid_sub.add_parser("job", help=JOB_DESCRIPTION, description=JOB_DESCRIPTION))
+from .parser import (
+    add_grid5000_controller_arguments as add_controller_arguments,
+)
+from .parser import (
+    add_grid5000_job_arguments as add_job_arguments,
+)
 
 
 def run_controller(args: argparse.Namespace) -> int:
