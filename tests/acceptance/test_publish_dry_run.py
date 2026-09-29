@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.stats_release import (
+    RELEASE_ASSET_FILES,
     REMOTE_CARD_FILE,
     ReleasedFile,
     StatsReleaseReport,
     default_remote_verifier,
-    release_polygon_stats,
+    release_v2_polygon_stats,
 )
+from osm_polygon_wikidata_only.v2 import maps as v2_maps
+from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
 scenarios("publish_dry_run.feature")
@@ -54,8 +61,7 @@ class _RecordingHub:
 
 @dataclass
 class _State:
-    processed: Path | None = None
-    staging: Path | None = None
+    data_root: DataRoot | None = None
     hub: StubHfHub | None = None
     reports: list[StatsReleaseReport] = field(default_factory=list)
     files: tuple[ReleasedFile, ...] = ()
@@ -63,21 +69,16 @@ class _State:
     verified_revision: str | None = None
 
 
-def _write_card(destination: Path) -> None:
-    destination.write_text("# Card\n", encoding="utf-8")
-
-
 def _release(state: _State, *, apply: bool) -> StatsReleaseReport:
-    assert state.processed is not None and state.staging is not None
-    report = release_polygon_stats(
-        processed_dir=state.processed,
-        staging_dir=state.staging,
-        repo_id=_REPO,
-        confirm_repo=_REPO,
-        card_writer=_write_card,
+    assert state.data_root is not None
+    assert state.hub is not None
+    report = release_v2_polygon_stats(
+        state.data_root,
+        confirm_repo=V2_REPO_ID,
         apply=apply,
         hub=state.hub,
         verifier=(lambda repo_id, files, *, revision: revision) if apply else None,
+        generated_on="2026-09-01",
     )
     state.reports.append(report)
     return report
@@ -89,17 +90,44 @@ def state() -> _State:
 
 
 @given("a staged V2 release and a fake Hub with a prior card snapshot")
-def staged_release(state: _State, tmp_path: Path) -> None:
-    processed = tmp_path / "processed_v2"
+def staged_release(state: _State, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_root = DataRoot(tmp_path / "data")
+    data_root.ensure()
     write_v2_region(
-        processed,
+        data_root.processed_v2,
         "region-latest",
-        polygons=[{"polygon_id": "p1", "osm_type": "way", "osm_id": 1, "has_wikidata": False}],
+        polygons=[
+            {
+                "polygon_id": "p1",
+                "osm_type": "way",
+                "osm_id": 1,
+                "has_wikidata": False,
+                "lon": 2.35,
+                "lat": 48.86,
+            }
+        ],
         documents=[],
         links=[],
     )
-    state.processed = processed
-    state.staging = tmp_path / "staging"
+
+    def write_map_fixtures(
+        processed_v2: Path,
+        output_dir: Path,
+        **_kwargs: object,
+    ) -> tuple[Path, Path, Path]:
+        assert processed_v2 == data_root.processed_v2
+        assets = (
+            output_dir / "coverage_map.png",
+            output_dir / "geographic_text_presence.png",
+            output_dir / "geographic_text_density.png",
+        )
+        for asset in assets:
+            asset.parent.mkdir(parents=True, exist_ok=True)
+            asset.write_bytes(b"deterministic V2 map fixture")
+        return assets
+
+    monkeypatch.setattr(v2_maps, "generate_v2_map_assets", write_map_fixtures)
+    state.data_root = data_root
     state.hub = StubHfHub(
         remote_files={REMOTE_CARD_FILE},
         remote_content={REMOTE_CARD_FILE: _PRIOR_CARD},
@@ -122,12 +150,31 @@ def publish_again(state: _State) -> None:
     _release(state, apply=True)
 
 
-@then("the planned operations list only the card and the statistics report")
+@then("the planned operations include the V2 card, report, and map assets")
 def planned_files(state: _State) -> None:
     report = state.reports[-1]
     assert report.published is False
     assert report.revision is None
-    assert [item.path_in_repo for item in report.files] == [REMOTE_CARD_FILE, "stats.json"]
+    assert report.repo_id == V2_REPO_ID
+    assert {item.path_in_repo for item in report.files} == {
+        REMOTE_CARD_FILE,
+        "stats.json",
+        *RELEASE_ASSET_FILES,
+    }
+
+    assert state.data_root is not None
+    snapshot = state.data_root.cache / "stats_release_snapshots" / "v2"
+    card = (snapshot / REMOTE_CARD_FILE).read_text(encoding="utf-8")
+    assert "## Polygon area and geometry" in card
+    assert "[`stats.json`](stats.json)" in card
+    for path in RELEASE_ASSET_FILES:
+        asset = snapshot / path
+        assert asset.is_file()
+        assert asset.stat().st_size > 0
+
+    payload = json.loads((snapshot / "stats.json").read_text(encoding="utf-8"))
+    assert payload["card_contract"] == "minimal-v2"
+    assert "v2_card_stats" in payload
 
 
 @then("nothing is uploaded or committed to the Hub")
@@ -164,7 +211,11 @@ def released_files(state: _State, tmp_path: Path) -> None:
 @when("I verify the release with a full commit URL revision")
 def verify_with_url(state: _State) -> None:
     state.verified_revision = default_remote_verifier(
-        _REPO, state.files, revision=_COMMIT_URL, hub=state.recording_hub
+        _REPO,
+        state.files,
+        revision=_COMMIT_URL,
+        # This spy intentionally implements only the verifier's read methods.
+        hub=cast(HfHub, state.recording_hub),
     )
 
 

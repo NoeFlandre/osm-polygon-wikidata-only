@@ -5,7 +5,7 @@ Feature: Publishing statistics against a fake Hub
   Scenario: A dry run plans the release and uploads nothing
     Given a staged V2 release and a fake Hub with a prior card snapshot
     When I publish the statistics with dry-run
-    Then the planned operations list only the card and the statistics report
+    Then the planned operations include the V2 card, report, and map assets
     And nothing is uploaded or committed to the Hub
 
   Scenario: Republishing an unchanged release against its own snapshot is a no-op
