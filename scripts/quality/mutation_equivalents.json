@@ -9,9 +9,9 @@
     "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected by ring validation.",
     "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_20": {
-    "mutant_sha256": "40a61e6844ad1cfb5317091c584c680ec7ebd8684830b0fae5bd8c066bd9e101",
-    "reason": "For valid WGS84 latitudes, cosine is nonnegative; at the exact positive floor both branches return the same value. Out-of-range latitudes are not valid GeoJSON positions.",
+  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_22": {
+    "mutant_sha256": "209d2fe7d7bb37c11cc7a472789b9882197e2e0ff14773a12fd2534f5cbadfb9",
+    "reason": "For valid GeoJSON latitudes in [-90, 90], cosine is nonnegative. At the exact positive floor, both comparison branches return 1e-12, so changing >= to > cannot change the projection factor.",
     "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_14": {
@@ -34,19 +34,24 @@
     "reason": "Python codec names are case-insensitive; utf-8 and UTF-8 produce the same bytes and SHA-256 digest.",
     "source_sha256": "98e252dc33ddfe8c66ef9ea00c7c6a79c4e0cda81ec4966654239d08770be4f5"
   },
-  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_22": {
-    "mutant_sha256": "47e1678f554586924b038bff05db3e4bab7e5aa361e6dfd94fcff0c627d9c7d2",
-    "reason": "typing.cast is a runtime no-op; changing its type expression does not change the decoded mapping.",
+  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_24": {
+    "mutant_sha256": "3a5329de2880ee9262de5c305c4bf25bc6676efc76d8570125b34fba7ed376b7",
+    "reason": "The mutation changes only typing.cast's type argument. typing.cast returns its value unchanged at runtime, so replacing dict[object, object] with None has no runtime effect.",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
   },
-  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_31": {
-    "mutant_sha256": "83097d7715546973ee279932f51032351bff26972f0f4d96a9b3faade17ff1aa",
-    "reason": "typing.cast is a runtime no-op; changing its type expression does not change the decoded integer.",
+  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_33": {
+    "mutant_sha256": "46b3865c40d0f3ceea3610b69974c032ce1779f22454475265d53ba8f05a5fee",
+    "reason": "The mutation changes only typing.cast's type argument. typing.cast returns its value unchanged at runtime, so replacing Any with None has no runtime effect.",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
   },
-  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_35": {
-    "mutant_sha256": "9e416d9ba66f249051bedf244caf50f1f5f000d36c1510754187e054b9e854e8",
-    "reason": "typing.cast is a runtime no-op; changing its type expression does not change the decoded mapping.",
+  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_37": {
+    "mutant_sha256": "c294d8d1d24501b8c2c0d3fdcfc763c59d7e13c05670955d364c94d68d5fd96b",
+    "reason": "The mutation changes only typing.cast's type argument. typing.cast returns its value unchanged at runtime, so replacing dict[object, object] with None has no runtime effect.",
+    "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
+  },
+  "osm_polygon_wikidata_only.hf._dataset_stats.summary_codec.x_summary_from_json__mutmut_50": {
+    "mutant_sha256": "a465939efebff8ed4e54799780bc00a97d50f81373fb2949e4d6098303c5e11e",
+    "reason": "For None the original and mutated conditions both return False; for every non-None value both evaluate bool(value).",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
   }
 }

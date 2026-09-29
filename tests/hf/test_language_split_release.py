@@ -26,6 +26,7 @@ from osm_polygon_wikidata_only.hf import language_split_release
 from osm_polygon_wikidata_only.hf.language_split_release import (
     LanguageSplitReleaseError,
     LanguageSplitReleasePlan,
+    LanguageSplitReleaseResult,
     LanguageSplitVersion,
     _expected_file_sort_key,
     _expected_files,
@@ -421,6 +422,59 @@ def test_release_defaults_and_expected_file_payloads_are_explicit(tmp_path: Path
 
     with pytest.raises(LanguageSplitReleaseError, match="batch_size must be positive"):
         plan_language_split_release(tmp_path, dataset_version="v1", batch_size=0)
+
+
+def test_release_plan_serializers_emit_every_field_and_honor_inventory_override(
+    tmp_path: Path,
+) -> None:
+    _write_both_fixture(tmp_path)
+    plan = plan_language_split_release(tmp_path, dataset_version="both", batch_size=1)
+
+    for version_plan in plan.releases:
+        inventory = version_plan.inventory
+        assert _expected_files(version_plan) == _expected_files(version_plan, inventory)
+        serialized = version_plan.to_dict(plan.data_root)
+        assert serialized == {
+            "dataset_version": version_plan.version.value,
+            "dataset_id": inventory.dataset_id,
+            "processed_root": version_plan.processed_root.relative_to(plan.data_root).as_posix(),
+            "output_root": version_plan.output_root.relative_to(plan.data_root).as_posix(),
+            "manifest_path": version_plan.manifest_path.relative_to(plan.data_root).as_posix(),
+            "source_manifest": (version_plan.processed_root / inventory.source_manifest)
+            .relative_to(plan.data_root)
+            .as_posix(),
+            "source_manifest_sha256": inventory.source_manifest_sha256,
+            "artifact_fingerprint": inventory.artifact_fingerprint,
+            "languages": list(inventory.languages),
+            "tables": [table.to_dict() for table in inventory.tables],
+            "expected_files": _expected_files(version_plan, inventory),
+        }
+
+        override = replace(
+            inventory,
+            dataset_id="override-dataset",
+            source_manifest_sha256="override-manifest-hash",
+            artifact_fingerprint="override-artifact-fingerprint",
+            tables=(),
+        )
+        overridden = version_plan.to_dict(plan.data_root, inventory=override)
+        assert overridden["dataset_id"] == "override-dataset"
+        assert overridden["source_manifest_sha256"] == "override-manifest-hash"
+        assert overridden["artifact_fingerprint"] == "override-artifact-fingerprint"
+        assert overridden["languages"] == []
+        assert overridden["tables"] == []
+        assert overridden["expected_files"] == []
+
+    assert plan.to_payload() == {
+        "command": "language-splits",
+        "dataset_version": "both",
+        "batch_size": 1,
+        "releases": [release.to_dict(plan.data_root) for release in plan.releases],
+    }
+
+    invalid_result = LanguageSplitReleaseResult(plan=plan, dry_run=False, generated=())
+    with pytest.raises(ValueError, match=r"zip\(\) argument"):
+        invalid_result.to_payload()
 
 
 def test_v2_dry_run_plans_bounded_shards_from_inventory_counts(tmp_path: Path) -> None:

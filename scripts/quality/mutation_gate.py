@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from scripts.quality.mutation_equivalents import reviewed_equivalents
+from scripts.quality import mutation_equivalents
 
 MutationResult = tuple[str, str]
 _STATUSES = frozenset(
@@ -90,9 +90,9 @@ def _reviewed_names(argv: Sequence[str], results: Sequence[MutationResult]) -> f
     parser.add_argument("--equivalents", type=Path)
     parser.add_argument("--mutants-root", type=Path, default=Path("mutants"))
     args = parser.parse_args(argv)
-    if args.equivalents is None:
+    if args.equivalents is None and not mutation_equivalents.REVIEWED_EQUIVALENTS:
         return frozenset()
-    return reviewed_equivalents(
+    return mutation_equivalents.reviewed_equivalents(
         results, args.equivalents, source_root=Path.cwd(), mutants_root=args.mutants_root
     )
 
