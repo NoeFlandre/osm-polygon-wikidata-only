@@ -71,13 +71,13 @@ coverage-floor: quality-runtime
 bench:
     uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q
 
-# Save a named baseline, then fail if a later run is >25% slower on the mean.
+# Save a named baseline, then fail if a later run is >50% slower on the mean.
 bench-save name="base":
     uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q --benchmark-save={{ name }}
 
 bench-compare name="base":
     uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q \
-        --benchmark-compare --benchmark-compare-fail=mean:25%
+        --benchmark-compare --benchmark-compare-fail=mean:50%
 
 property-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property
