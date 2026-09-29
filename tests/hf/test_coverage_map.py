@@ -27,6 +27,25 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
 pytestmark = pytest.mark.real_map
 
 
+def test_polygon_id_schema_detection_handles_empty_missing_and_unreadable_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_polygon_id = tmp_path / "with-id.parquet"
+    pq.write_table(pa.table({"polygon_id": ["p1"]}), with_polygon_id)
+    without_polygon_id = tmp_path / "without-id.parquet"
+    pq.write_table(pa.table({"lat": [1.0]}), without_polygon_id)
+
+    assert coverage_map._has_polygon_ids([])
+    assert coverage_map._has_polygon_ids([with_polygon_id])
+    assert not coverage_map._has_polygon_ids([without_polygon_id])
+
+    def unreadable(_path: Path) -> object:
+        raise OSError("unreadable parquet")
+
+    monkeypatch.setattr(coverage_map.pq, "read_schema", unreadable)
+    assert not coverage_map._has_polygon_ids([with_polygon_id])
+
+
 # --- helpers ------------------------------------------------------------
 
 

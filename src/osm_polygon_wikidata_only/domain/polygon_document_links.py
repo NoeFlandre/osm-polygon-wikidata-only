@@ -120,8 +120,6 @@ def _document_id_project(document_id: str) -> str | None:
 def _document_id_wikidata(document_id: str) -> str | None:
     """Return the wikidata slot from a document_id, or None if not present."""
     parts = document_id.split(":")
-    if len(parts) < 1:
-        return None
     candidate = parts[0]
     if is_valid_qid(candidate):
         return candidate

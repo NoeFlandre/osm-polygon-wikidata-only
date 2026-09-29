@@ -277,6 +277,28 @@ def test_ledger_serialize_record_with_revision_id(tmp_path: Path) -> None:
     assert loaded[0].identity == rec.identity
 
 
+def test_load_ledger_handles_missing_and_wrong_contract(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.json"
+    assert rejection_ledger.load_ledger(missing) == []
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text(json.dumps({"contract_version": "legacy", "records": []}))
+    with pytest.raises(ValueError, match="Invalid ledger contract version"):
+        rejection_ledger.load_ledger(invalid)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, True), ("Q42", True), ("Q42;Q43", True), ("", False), ("not-qid", False)],
+)
+def test_rejection_ledger_qid_helper(value: str | None, expected: bool) -> None:
+    assert rejection_ledger._is_valid_qid(value) is expected
+
+
+def test_rejection_ledger_qid_helper_rejects_non_string_values() -> None:
+    assert not rejection_ledger._is_valid_qid(42)  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # Plan/apply split for integrity (Group D public surface)
 # ---------------------------------------------------------------------------

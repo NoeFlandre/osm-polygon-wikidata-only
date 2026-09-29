@@ -182,3 +182,44 @@ def test_gpu_mode_rejects_a_cpu_fallback_session(
             revision="model-revision",
             require_gpu=True,
         )
+
+
+def test_default_providers_cover_coreml_cpu_and_cpu_only_builds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sat_module, "_available_ort_providers", lambda: {"CoreMLExecutionProvider"})
+    assert sat_module._default_ort_providers() == ["CoreMLExecutionProvider"]
+
+    monkeypatch.setattr(
+        sat_module,
+        "_available_ort_providers",
+        lambda: {"CoreMLExecutionProvider", "CPUExecutionProvider"},
+    )
+    assert sat_module._default_ort_providers() == [
+        "CoreMLExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    monkeypatch.setattr(sat_module, "_available_ort_providers", set)
+    assert sat_module._default_ort_providers() == ["CPUExecutionProvider"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        object(),
+        type(
+            "EmptyProviderSession",
+            (),
+            {
+                "model": type(
+                    "Wrapper",
+                    (),
+                    {"ort_session": type("Session", (), {"get_providers": lambda self: []})()},
+                )()
+            },
+        )(),
+    ],
+)
+def test_effective_provider_check_rejects_unverifiable_sessions(model: object) -> None:
+    with pytest.raises(RuntimeError, match="Could not verify the active CUDAExecutionProvider"):
+        sat_module._effective_ort_providers(model)

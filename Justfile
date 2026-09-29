@@ -76,13 +76,17 @@ architecture-checks: quality-runtime
 
 # Canonical full-source CRAP reporting consumes coverage produced by the
 # preceding root `tests` and nested preprocessing quality stages.
+# Gate semantics (issue #116): every function must have cyclomatic complexity
+# <= 5, and functions with complexity >= 3 must reach >= 80% coverage.
+# CRAP scores are still printed for review. A radon path absent from the
+# coverage report is a hard, explicit error.
 crap-report: quality-runtime
     @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
     @test -s "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" || { echo "Run just preprocessing-check first to generate preprocessing coverage." >&2; exit 1; }
     uv run python -m radon cc --show-closures -j src scripts > "{{ QUALITY_REPORT_DIR }}/complexity.json"
-    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/complexity.json" --maximum 6
+    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/complexity.json" --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3
     uv run python -m radon cc --show-closures -j preprocessing/src > "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json"
-    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json" --maximum 6
+    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json" --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3
 
 # Standalone CRAP runs refresh both coverage reports before reporting.
 crap-all: quality-runtime

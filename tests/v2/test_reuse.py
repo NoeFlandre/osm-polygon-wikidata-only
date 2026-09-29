@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
     polygon_schema,
 )
+from osm_polygon_wikidata_only.v2 import reuse_load
 from osm_polygon_wikidata_only.v2.reuse import load_v1_region
 from osm_polygon_wikidata_only.v2.reuse_load import _direct_inputs
 from osm_polygon_wikidata_only.v2.reuse_load import iter_parquet_rows as _rows
@@ -87,6 +88,21 @@ def test_load_v1_region_adds_direct_tag_metadata_to_existing_polygons(tmp_path: 
     result = load_v1_region(root, "region-latest")
     assert result.polygons[0]["discovery_sources"] == '["wikidata","wikipedia_tag"]'
     assert result.links[0]["link_sources"] == '["wikidata_sitelink"]'
+
+
+def test_tag_and_link_source_parsers_ignore_invalid_json_shapes() -> None:
+    assert reuse_load._polygon_tags({"tags": '{"wikipedia":"en:Title"}'}) == {
+        "wikipedia": "en:Title"
+    }
+    assert reuse_load._polygon_tags({"tags": "not-json"}) == {}
+    assert reuse_load._polygon_tags({"tags": "[]"}) == {}
+
+    assert reuse_load.parse_link_sources({"link_sources": '["manual", 2]'}) == {
+        "manual",
+        "2",
+    }
+    assert reuse_load.parse_link_sources({"link_sources": "not-json"}) == set()
+    assert reuse_load.parse_link_sources({"link_sources": "{}"}) == set()
 
 
 def test_rows_consumes_ordered_batches_without_reading_the_whole_file(

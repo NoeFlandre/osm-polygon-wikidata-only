@@ -6,8 +6,13 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
+    CoverageMapError,
+    _coordinate,
+    _polygon_identity,
+    _record_polygon_row,
     load_unique_polygon_records,
 )
 
@@ -88,3 +93,60 @@ def test_load_unique_polygon_records_keeps_legacy_fixture_identity_fallback(
 
     assert ("way", 11) in index.records
     assert ("legacy", "fixture-id") in index.records
+
+
+@pytest.mark.parametrize(
+    ("row", "polygon_id"),
+    [
+        ({"osm_type": None, "osm_id": 1}, "way:1"),
+        ({"osm_type": "way", "osm_id": "not-an-id"}, "way:bad"),
+    ],
+)
+def test_typed_polygon_identity_rejects_missing_or_invalid_components(
+    row: dict[str, object], polygon_id: str
+) -> None:
+    assert _polygon_identity(row, polygon_id, typed_identity=True) is None
+
+
+def test_record_polygon_row_rejects_invalid_and_conflicting_identities(tmp_path: Path) -> None:
+    path = tmp_path / "polygons.parquet"
+    records = {}
+    by_polygon_id = {}
+    valid = {"polygon_id": "p1", "osm_type": "way", "osm_id": 1}
+    _record_polygon_row(
+        path,
+        0,
+        valid,
+        typed_identity=True,
+        records=records,
+        by_polygon_id=by_polygon_id,
+    )
+    assert by_polygon_id == {"p1": ("way", 1)}
+
+    with pytest.raises(CoverageMapError, match=r"invalid \(osm_type, osm_id\) identity"):
+        _record_polygon_row(
+            path,
+            1,
+            {"polygon_id": "p2", "osm_type": None, "osm_id": 2},
+            typed_identity=True,
+            records=records,
+            by_polygon_id=by_polygon_id,
+        )
+    with pytest.raises(CoverageMapError, match="conflicting identities"):
+        _record_polygon_row(
+            path,
+            2,
+            {"polygon_id": "p1", "osm_type": "relation", "osm_id": 1},
+            typed_identity=True,
+            records=records,
+            by_polygon_id=by_polygon_id,
+        )
+
+
+def test_coordinate_returns_none_for_missing_or_non_finite_values(tmp_path: Path) -> None:
+    path = tmp_path / "polygons.parquet"
+    assert _coordinate(path, "p1", None, "lon") is None
+    assert _coordinate(path, "p1", float("nan"), "lon") is None
+    assert _coordinate(path, "p1", "2.5", "lat") == 2.5
+    with pytest.raises(CoverageMapError, match="invalid lat"):
+        _coordinate(path, "p1", "not-a-number", "lat")

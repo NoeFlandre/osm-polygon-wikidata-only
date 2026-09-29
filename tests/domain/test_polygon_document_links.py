@@ -78,6 +78,37 @@ def test_schema_project_column_is_string() -> None:
     )
 
 
+def test_polygon_row_and_document_identity_helpers_validate_slots() -> None:
+    links = polygon_document_links
+    assert links._document_id_wikidata("Q42:wikipedia:en:1:2") == "Q42"
+    assert links._document_id_wikidata("invalid:wikipedia:en:1:2") is None
+    assert links._is_valid_stem("region-latest")
+    for invalid in ("", ".", "..", "a/b", "a\\b"):
+        assert not links._is_valid_stem(invalid)
+
+    row = links._coerce_polygon_row(
+        {
+            "polygon_id": "region:relation:4",
+            "wikidata": "Q42;Q43",
+            "osm_id": "4",
+        }
+    )
+    assert row["wikidata_qids"] == {"Q42", "Q43"}
+    assert row["osm_id"] == 4
+    with pytest.raises(ValueError, match="Invalid polygon_id"):
+        links._coerce_polygon_row({"polygon_id": "../bad", "wikidata": "Q42"})
+    with pytest.raises(ValueError, match="invalid wikidata"):
+        links._coerce_polygon_row({"polygon_id": "valid", "wikidata": "not-a-qid"})
+
+
+def test_document_language_slot_is_checked_only_when_present() -> None:
+    links = polygon_document_links
+    links._validate_document_language("polygon", "Q1:wikipedia:en:1:2", "en")
+    links._validate_document_language("polygon", "legacy-id", "fr")
+    with pytest.raises(ValueError, match="language slot disagrees"):
+        links._validate_document_language("polygon", "Q1:wikipedia:en:1:2", "fr")
+
+
 # ---------------------------------------------------------------------------
 # Builder: success paths
 # ---------------------------------------------------------------------------

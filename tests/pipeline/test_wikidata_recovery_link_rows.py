@@ -85,6 +85,13 @@ def test_legacy_link_conversion_rejects_missing_document() -> None:
         link_rows.legacy_wikipedia_links_to_canonical([_legacy_link()], [], [])
 
 
+def test_legacy_link_conversion_rejects_duplicate_canonical_rows() -> None:
+    with pytest.raises(RecoveryRepairError, match="canonical polygon-document links are invalid"):
+        link_rows.legacy_wikipedia_links_to_canonical(
+            [_legacy_link(), {**_legacy_link(), "page_id": 101}], [_document()], []
+        )
+
+
 def test_canonical_links_convert_and_skip_affected_orphans() -> None:
     converted = link_rows.canonical_wikipedia_links_to_legacy(
         [_canonical_link()], [_document()], [_polygon()], affected_qids={"Q1"}

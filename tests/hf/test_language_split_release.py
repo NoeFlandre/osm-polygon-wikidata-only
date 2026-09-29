@@ -38,9 +38,13 @@ from osm_polygon_wikidata_only.hf.language_split_release import (
     plan_language_split_release,
     run_language_split_release,
 )
+from osm_polygon_wikidata_only.hf.language_split_release import (
+    _selected_versions as _selected_release_versions,
+)
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
     LanguageInventory,
+    LanguageInventoryError,
     LanguageTableInventory,
 )
 from osm_polygon_wikidata_only.v2.language_splits import V2LanguageSplitResult
@@ -861,6 +865,58 @@ def test_generate_version_forwards_paths_and_batch_size(
 
     assert _generate_version(plan, batch_size=7) == f"{version.value}-generated"
     assert calls == [(processed_root, output_root, 7)]
+
+
+@pytest.mark.parametrize("version", [LanguageSplitVersion.V1, LanguageSplitVersion.V2])
+def test_generate_version_wraps_generator_failures(
+    tmp_path: Path, version: LanguageSplitVersion, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = SimpleNamespace(
+        version=version,
+        processed_root=tmp_path / "processed",
+        output_root=tmp_path / "output",
+    )
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("generator failed")
+
+    if version is LanguageSplitVersion.V1:
+        from osm_polygon_wikidata_only.hf import v1_language_splits
+
+        monkeypatch.setattr(v1_language_splits, "generate_v1_language_splits", fail)
+    else:
+        from osm_polygon_wikidata_only.v2 import language_splits as v2_language_splits
+
+        monkeypatch.setattr(v2_language_splits, "build_v2_language_splits", fail)
+
+    with pytest.raises(LanguageSplitReleaseError, match="language split generation failed"):
+        _generate_version(plan, batch_size=3)
+
+
+def test_release_version_selection_and_inventory_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _selected_release_versions("both") == (
+        LanguageSplitVersion.V1,
+        LanguageSplitVersion.V2,
+    )
+    assert _selected_release_versions("v2") == (LanguageSplitVersion.V2,)
+    with pytest.raises(LanguageSplitReleaseError, match="dataset_version must be one of"):
+        _selected_release_versions("unknown")
+
+    from osm_polygon_wikidata_only.hf import language_split_release
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise LanguageInventoryError("manifest changed")
+
+    monkeypatch.setattr(language_split_release, "build_language_inventory", fail)
+    plan = SimpleNamespace(
+        version=LanguageSplitVersion.V2,
+        processed_root=tmp_path,
+        inventory=SimpleNamespace(source_manifest="manifest.json"),
+    )
+    with pytest.raises(LanguageSplitReleaseError, match="fingerprint check failed"):
+        _recompute_inventory(plan)
 
 
 def test_generated_payload_prefers_the_published_manifest_path(tmp_path: Path) -> None:

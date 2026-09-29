@@ -9,9 +9,11 @@ import pytest
 
 from scripts.quality.crap_score import (
     CrapEntry,
+    GatePolicy,
     crap_score,
     entries_from_reports,
     evaluate_threshold,
+    gate_violations,
     main,
 )
 
@@ -147,9 +149,117 @@ def test_crap_cli_reports_pass_failure_and_unreadable_reports(
     arguments = ["--coverage", str(coverage_path), "--complexity", str(complexity_path)]
 
     assert main([*arguments, "--maximum", "1.0"]) == 1
-    assert "CRAP threshold exceeded" in capsys.readouterr().out
+    assert "CRAP gate failed" in capsys.readouterr().out
     assert main([*arguments, "--maximum", "2.0"]) == 0
-    assert "CRAP threshold passed" in capsys.readouterr().out
+    assert "CRAP gate passed" in capsys.readouterr().out
     complexity_path.write_text("not json", encoding="utf-8")
     with pytest.raises(ValueError, match="could not read JSON report"):
         main(arguments)
+
+
+GATE = GatePolicy(max_complexity=5, min_coverage=0.8, coverage_complexity=5)
+
+
+def test_gate_coverage_influences_result_for_complexity_five() -> None:
+    assert gate_violations([CrapEntry("m.py", "f", 5, 1.0)], GATE) == []
+    [(entry, reason)] = gate_violations([CrapEntry("m.py", "f", 5, 0.6)], GATE)
+    assert entry.name == "f"
+    assert "coverage 60.0% < 80.0%" in reason
+
+
+def test_gate_caps_complexity_even_at_full_coverage() -> None:
+    [(_, reason)] = gate_violations([CrapEntry("m.py", "f", 6, 1.0)], GATE)
+    assert reason == "complexity 6 > 5"
+
+
+def test_gate_applies_coverage_floor_to_maximum_complexity_only() -> None:
+    assert gate_violations([CrapEntry("m.py", "f", 2, 0.0)], GATE) == []
+    assert gate_violations([CrapEntry("m.py", "f", 4, 0.0)], GATE) == []
+    assert gate_violations([CrapEntry("m.py", "f", 5, 0.8)], GATE) == []
+    assert len(gate_violations([CrapEntry("m.py", "f", 5, 0.79)], GATE)) == 1
+
+
+def test_gate_optional_crap_maximum() -> None:
+    policy = GatePolicy(max_complexity=None, maximum=6.0)
+    [(_, reason)] = gate_violations([CrapEntry("m.py", "f", 6, 1.0)], policy)
+    assert reason == "CRAP 6.00 >= 6.00"
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [GatePolicy(max_complexity=0), GatePolicy(min_coverage=1.5), GatePolicy(coverage_complexity=0)],
+)
+def test_gate_rejects_invalid_policy(policy: GatePolicy) -> None:
+    with pytest.raises(ValueError):
+        gate_violations([CrapEntry("m.py", "f", 1, 1.0)], policy)
+
+
+def test_missing_coverage_file_gives_clear_message() -> None:
+    with pytest.raises(ValueError, match=r"scripts/x\.py is missing from the coverage report"):
+        entries_from_reports(
+            {"files": {"src/y.py": {"functions": {}}}},
+            {"scripts/x.py": [{"type": "function", "name": "f", "complexity": 1}]},
+        )
+
+
+def test_crap_cli_enforces_complexity_and_coverage_rules(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage_path = tmp_path / "coverage.json"
+    complexity_path = tmp_path / "complexity.json"
+    coverage_path.write_text(
+        json.dumps(_file(functions={"f": {"summary": {"percent_covered": 60}}})),
+        encoding="utf-8",
+    )
+    complexity_path.write_text(json.dumps(_function(complexity=5)), encoding="utf-8")
+    arguments = [
+        "--coverage",
+        str(coverage_path),
+        "--complexity",
+        str(complexity_path),
+        "--max-complexity",
+        "5",
+        "--min-coverage",
+        "0.8",
+        "--min-coverage-complexity",
+        "5",
+    ]
+    assert main(arguments) == 1
+    assert "VIOLATION module.py:0 f: coverage 60.0%" in capsys.readouterr().out
+    coverage_path.write_text(
+        json.dumps(_file(functions={"f": {"summary": {"percent_covered": 100}}})),
+        encoding="utf-8",
+    )
+    assert main(arguments) == 0
+    assert "CRAP gate passed" in capsys.readouterr().out
+
+
+def test_crap_cli_defaults_to_the_project_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage_path = tmp_path / "coverage.json"
+    complexity_path = tmp_path / "complexity.json"
+    coverage_path.write_text(
+        json.dumps(_file(functions={"f": {"summary": {"percent_covered": 79}}})),
+        encoding="utf-8",
+    )
+    complexity_path.write_text(json.dumps(_function(complexity=3)), encoding="utf-8")
+
+    assert main(["--coverage", str(coverage_path), "--complexity", str(complexity_path)]) == 1
+    output = capsys.readouterr().out
+    assert "max complexity: 5" in output
+    assert "coverage 79.0% < 80.0% for complexity >= 3" in output
+
+
+def test_default_gate_policy_enforces_project_thresholds() -> None:
+    entries = [
+        CrapEntry("m.py", "undercovered", 3, 0.79),
+        CrapEntry("m.py", "too-complex", 6, 1.0),
+    ]
+
+    violations = gate_violations(entries, GatePolicy())
+
+    assert {(entry.name, reason) for entry, reason in violations} == {
+        ("undercovered", "coverage 79.0% < 80.0% for complexity >= 3"),
+        ("too-complex", "complexity 6 > 5"),
+    }

@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -93,6 +94,49 @@ def test_is_valid_qid_accepts_well_formed(qid: str) -> None:
 )
 def test_is_valid_qid_rejects_garbage(qid: str) -> None:
     assert not is_valid_qid(qid)
+
+
+@pytest.mark.parametrize(
+    ("status", "article", "error", "expected_articles", "expected_errors"),
+    [
+        ("ok", SimpleNamespace(language="en"), "", 1, {}),
+        ("partial", SimpleNamespace(language="en"), "truncated", 1, {"enwiki": "truncated"}),
+        ("article_not_found", None, "missing", 0, {"enwiki": "missing"}),
+    ],
+)
+def test_apply_article_result_records_status_article_and_error(
+    status: str,
+    article: object | None,
+    error: str,
+    expected_articles: int,
+    expected_errors: dict[str, str],
+) -> None:
+    summary = article_linker.LinkSummary(qid="Q1", entity=None)
+
+    article_linker._apply_article_result(
+        summary,
+        "enwiki",
+        FetchResult(status=status, article=article, error=error),  # type: ignore[arg-type]
+    )
+
+    assert summary.statuses == {"enwiki": status}
+    assert len(summary.articles) == expected_articles
+    assert summary.errors == expected_errors
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "site_workers", "message"),
+    [(0, 1, "batch_size"), (1, 0, "site_workers")],
+)
+def test_fetch_options_require_positive_limits(
+    batch_size: int, site_workers: int, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        article_linker._validate_fetch_options(batch_size, site_workers)
+
+
+def test_fetch_options_accept_positive_limits() -> None:
+    article_linker._validate_fetch_options(1, 1)
 
 
 # --- language_from_site --------------------------------------------------

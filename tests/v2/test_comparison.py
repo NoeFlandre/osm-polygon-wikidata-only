@@ -149,6 +149,16 @@ def test_validated_source_list_rejects_non_string_members() -> None:
         )
 
 
+def test_source_list_rejects_invalid_json_and_non_list_values() -> None:
+    with pytest.raises(ValueError, match="Invalid link_sources"):
+        comparison._source_list("not-json", "p1", Path("links.parquet"), "link_sources")
+    with pytest.raises(ValueError, match="Invalid link_sources"):
+        comparison._source_list("{}", "p1", Path("links.parquet"), "link_sources")
+    assert comparison._source_list(
+        '["osm_wikipedia_tag"]', "p1", Path("links.parquet"), "link_sources"
+    ) == ["osm_wikipedia_tag"]
+
+
 def _v2_polygon(polygon_id: str, sources: str) -> dict[str, object]:
     row = empty_row(tuple(field.name for field in polygon_schema()))
     row.update(

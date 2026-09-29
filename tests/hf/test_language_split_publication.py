@@ -27,13 +27,18 @@ from osm_polygon_wikidata_only.hf.language_split_publication import (
     _merge_language_card,
     _plan_from_version_plan,
     _publish_one_version,
+    _remote_card,
     _remote_entries,
     _remote_files,
     _remote_matches,
     _remote_path_for_local,
+    _remote_revision,
     _verify_remote_release,
     plan_language_split_publication,
     run_language_split_publication,
+)
+from osm_polygon_wikidata_only.hf.language_split_publication import (
+    _selected_versions as _selected_publication_versions,
 )
 from osm_polygon_wikidata_only.hf.language_split_release import LanguageSplitVersion
 from osm_polygon_wikidata_only.hf.language_splits import DatasetContract
@@ -83,6 +88,54 @@ def test_remote_paths_keep_v1_and_v2_contracts_separate(tmp_path: Path) -> None:
         )
         == "language_splits/wikipedia_documents_by_language/lang-fr/a.parquet"
     )
+
+
+def test_publication_path_and_version_helpers_reject_invalid_inputs(tmp_path: Path) -> None:
+    with pytest.raises(LanguagePublicationError, match="outside its publication root"):
+        _remote_path_for_local(
+            DatasetContract.V2,
+            tmp_path / "outside.parquet",
+            processed_root=tmp_path / "processed_v2",
+            output_root=tmp_path / "processed_v2/language_splits",
+        )
+
+    assert _selected_publication_versions("both") == (
+        LanguageSplitVersion.V1,
+        LanguageSplitVersion.V2,
+    )
+    assert _selected_publication_versions("v1") == (LanguageSplitVersion.V1,)
+    with pytest.raises(LanguagePublicationError, match="dataset_version must be one of"):
+        _selected_publication_versions("unknown")
+
+
+def test_remote_revision_requires_a_nonempty_pinned_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    from osm_polygon_wikidata_only.hf import language_split_publication
+
+    monkeypatch.setattr(language_split_publication, "read_repo_sha", lambda *_args: "revision")
+    assert _remote_revision(object(), V1_REPO) == "revision"
+    monkeypatch.setattr(language_split_publication, "read_repo_sha", lambda *_args: "")
+    with pytest.raises(LanguagePublicationError, match="revision unavailable"):
+        _remote_revision(object(), V1_REPO)
+
+    def fail(*_args: object) -> str:
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(language_split_publication, "read_repo_sha", fail)
+    with pytest.raises(LanguagePublicationError, match="could not read remote revision"):
+        _remote_revision(object(), V1_REPO)
+
+
+def test_remote_card_handles_missing_and_invalid_utf8_readme(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from osm_polygon_wikidata_only.hf import language_split_publication
+
+    assert _remote_card(object(), V1_REPO, "rev", set(), tmp_path) == f"# {V1_REPO}\n"
+    monkeypatch.setattr(
+        language_split_publication, "_remote_bytes", lambda *_args, **_kwargs: b"\xff"
+    )
+    with pytest.raises(LanguagePublicationError, match="not valid UTF-8"):
+        _remote_card(object(), V1_REPO, "rev", {"README.md"}, tmp_path)
 
 
 def test_language_card_merge_preserves_unmanaged_content() -> None:
@@ -556,7 +609,7 @@ def test_remote_digest_fallback_hashes_downloaded_file(tmp_path: Path) -> None:
     hub = SimpleNamespace(hf_hub_download=lambda *args, **kwargs: str(downloaded))
 
     assert _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
-    downloaded.write_bytes(b"changed")
+    downloaded.write_bytes(b"changed-content")
     assert not _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
 
 
@@ -649,6 +702,9 @@ def test_manifest_owned_paths_are_limited_to_language_namespaces(
     ).encode()
 
     assert _manifest_owned_paths(raw, plan) == {valid_path}
+    assert _manifest_owned_paths(None, plan) == set()
+    assert _manifest_owned_paths(b"\xff", plan) == set()
+    assert _manifest_owned_paths(b"{", plan) == set()
 
 
 def test_remote_reads_require_the_initial_immutable_revision() -> None:

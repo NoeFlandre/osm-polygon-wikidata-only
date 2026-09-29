@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import pytest
 
 
@@ -54,6 +57,40 @@ def test_token_verification_configures_transport_before_whoami(
     )
 
     assert events == ["configured", "whoami"]
+
+
+def test_token_helpers_cover_no_token_default_client_and_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from osm_polygon_wikidata_only.hf._uploader import token
+    from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+
+    monkeypatch.setattr(token, "resolve_hf_token", lambda _explicit: None)
+    assert token.verify_hf_token(None) is None
+
+    calls: list[str] = []
+
+    class Api:
+        def __init__(self, *, token: str) -> None:
+            calls.append(token)
+
+        def whoami(self) -> dict[str, str]:
+            return {"name": "verified"}
+
+    hub = ModuleType("huggingface_hub")
+    hub.HfApi = Api  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    assert token._whoami_client(None)("secret") == {"name": "verified"}
+    assert calls == ["secret"]
+
+    monkeypatch.setattr(token, "resolve_hf_token", lambda _explicit: "secret")
+    monkeypatch.setattr(token, "configure_hf_http_transport", lambda: None)
+
+    def rejected(_token: str) -> object:
+        raise RuntimeError("revoked")
+
+    with pytest.raises(UploadError, match="rejected HF_TOKEN"):
+        token.verify_hf_token("secret", _whoami=rejected)
 
 
 def test_api_construction_configures_transport_before_client(

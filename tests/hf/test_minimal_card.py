@@ -10,6 +10,7 @@ from osm_polygon_wikidata_only.hf.minimal_card import (
     ContinentCoverage,
     MinimalCardSnapshot,
     SentenceCoverage,
+    _area_summary,
     render_minimal_card,
 )
 
@@ -93,3 +94,23 @@ def test_minimal_card_rejects_an_oversized_description() -> None:
 
     with pytest.raises(ValueError, match="8 KiB"):
         render_minimal_card(oversized)
+
+
+@pytest.mark.parametrize(
+    ("eligible", "supported", "unsupported", "message"),
+    [
+        (-1, 0, -1, "non-negative"),
+        (3, 1, 1, "add up to eligible units"),
+    ],
+)
+def test_sentence_coverage_rejects_inconsistent_counts(
+    eligible: int, supported: int, unsupported: int, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SentenceCoverage(eligible, supported, unsupported)
+
+
+def test_area_summary_requires_both_area_statistics() -> None:
+    unavailable = "Polygon area summary is available in the machine-readable statistics report."
+    assert _area_summary(replace(_snapshot(), total_area_m2=None)) == unavailable
+    assert _area_summary(replace(_snapshot(), median_area_m2=None)) == unavailable

@@ -72,6 +72,41 @@ def test_parse_gpu_output_ignores_blank_lines_and_preserves_order() -> None:
     )
 
 
+def test_sentence_job_normalizes_stems_and_rejects_empty_or_duplicate_values() -> None:
+    assert sentence_job._normalize_stems(("zeta-latest", "alpha-latest")) == (
+        "alpha-latest",
+        "zeta-latest",
+    )
+    with pytest.raises(ValueError, match="At least one sentence stem"):
+        sentence_job._normalize_stems(())
+    with pytest.raises(ValueError, match="must be unique"):
+        sentence_job._normalize_stems(("alpha-latest", "alpha-latest"))
+
+
+@pytest.mark.parametrize("line", ["GPU A, uuid-a", "GPU A,,40960 MiB", "GPU A, uuid-a,"])
+def test_gpu_line_rejects_incomplete_identity(line: str) -> None:
+    with pytest.raises(RuntimeError, match="invalid GPU identity"):
+        sentence_job._parse_gpu_line(line)
+
+
+def test_cuda_runtime_rejects_missing_runtime_and_accepts_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_runtime(_name: str) -> ModuleType:
+        raise ImportError("runtime missing")
+
+    monkeypatch.setattr(sentence_job.importlib, "import_module", missing_runtime)
+    with pytest.raises(RuntimeError, match="requires CUDAExecutionProvider"):
+        sentence_job._require_cuda_runtime()
+
+    monkeypatch.setattr(
+        sentence_job.importlib,
+        "import_module",
+        lambda _name: _fake_onnxruntime(["CUDAExecutionProvider"]),
+    )
+    sentence_job._require_cuda_runtime()
+
+
 def test_job_environment_removes_hub_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "secret-token")
     monkeypatch.setenv("GRID5000_TEST_VALUE", "retained")

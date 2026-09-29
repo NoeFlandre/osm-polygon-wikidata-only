@@ -30,8 +30,13 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     FACT_COLUMNS,
     SECTION_COLUMNS,
 )
-from osm_polygon_wikidata_only.augmentation.sections import parse_sections
+from osm_polygon_wikidata_only.augmentation.sections import (
+    _SectionParser,
+    _trim_section_stack,
+    parse_sections,
+)
 from osm_polygon_wikidata_only.augmentation.wikimedia import (
+    _voyage_sitelink,
     discover_wikivoyage_sitelinks,
     normalize_facts,
 )
@@ -197,6 +202,35 @@ def test_section_parser_preserves_lead_and_nested_hierarchy() -> None:
     assert sections[2].parent_section_id == sections[1].section_id
 
 
+def test_section_parser_tracks_ignored_and_visible_text() -> None:
+    parser = _SectionParser()
+    parser.handle_data("lead")
+    parser._ignored = 1
+    parser.handle_data("hidden")
+    assert parser._text_parts == ["lead"]
+    assert parser._close_ignored_tag("script")
+    assert parser._ignored == 0
+    assert not parser._close_ignored_tag("p")
+    parser._heading_level = 2
+    parser.handle_data("heading")
+    assert parser._heading_parts == ["heading"]
+
+
+def test_section_stack_pops_siblings_and_descendants_only() -> None:
+    document = document_from_article_row(article_row())
+    stack = parse_sections(
+        document,
+        "<h2>History</h2><p>Past.</p><h3>Modern</h3><p>Now.</p>",
+    )
+    assert [section.level for section in stack] == [2, 3]
+
+    _trim_section_stack(stack, 3)
+    assert [section.heading for section in stack] == ["History"]
+    _trim_section_stack(stack, 2)
+    assert stack == []
+    _trim_section_stack(stack, 2)
+
+
 def test_wikivoyage_discovery_keeps_every_language() -> None:
     entity = {
         "sitelinks": {
@@ -210,6 +244,12 @@ def test_wikivoyage_discovery_keeps_every_language() -> None:
         ("en", "enwikivoyage", "Andorra"),
         ("fr", "frwikivoyage", "Andorre"),
     ]
+
+
+def test_wikivoyage_sitelink_rejects_unusable_values() -> None:
+    assert _voyage_sitelink("enwiki", {"title": "Article"}) is None
+    assert _voyage_sitelink("enwikivoyage", "Andorra") is None
+    assert _voyage_sitelink("enwikivoyage", {}) is None
 
 
 def test_fact_normalization_always_keeps_english_and_extra_labels() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,26 @@ def test_checkpoint_uses_exact_table_schemas(tmp_path: Path) -> None:
     assert pq.read_schema(path / "facts.parquet").equals(fact_schema(), check_metadata=True)
 
 
+def test_checkpoint_qid_metadata_must_match_contract_and_be_an_object(tmp_path: Path) -> None:
+    metadata = tmp_path / "metadata.json"
+    metadata.write_text(json.dumps({"contract_version": "other", "qids": ["Q1"]}))
+    with pytest.raises(ValueError, match="contract version mismatch"):
+        RecoveryCheckpointStore._load_qids(metadata)
+
+    metadata.write_text(json.dumps(["Q1"]))
+    with pytest.raises(ValueError, match="must be an object"):
+        RecoveryCheckpointStore._load_qids(metadata)
+
+    from osm_polygon_wikidata_only.pipeline._wikidata_recovery.checkpoints import (
+        CHECKPOINT_CONTRACT_VERSION,
+    )
+
+    metadata.write_text(
+        json.dumps({"contract_version": CHECKPOINT_CONTRACT_VERSION, "qids": ["Q1", 42]})
+    )
+    assert RecoveryCheckpointStore._load_qids(metadata) == ("Q1", "42")
+
+
 def test_incomplete_checkpoint_is_not_reused(tmp_path: Path) -> None:
     store = RecoveryCheckpointStore(tmp_path, "region-latest", "plan")
     incomplete = tmp_path / "region-latest" / "plan" / "batch-000000"
@@ -88,3 +109,9 @@ def test_saving_a_completed_batch_again_is_idempotent_and_rejects_conflicts(
     )
     with pytest.raises(RuntimeError, match="conflicts with completed batch 0"):
         store.save(0, conflicting)
+
+
+@pytest.mark.parametrize("stem", ["", ".", "..", "../outside", r"nested\\region"])
+def test_checkpoint_store_rejects_unsafe_stems(tmp_path: Path, stem: str) -> None:
+    with pytest.raises(ValueError, match="Invalid recovery checkpoint stem"):
+        RecoveryCheckpointStore(tmp_path, stem, "plan")

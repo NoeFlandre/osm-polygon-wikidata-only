@@ -735,3 +735,26 @@ def test_auth_snapshot_does_not_classify_in_progress_auth_as_anonymous() -> None
 
     release_auth.set()
     thread.join(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({}, "missing query"),
+        ({"query": {"tokens": []}}, "missing tokens"),
+        ({"query": {"tokens": {"logintoken": ""}}}, "missing login token"),
+    ],
+)
+def test_login_token_request_rejects_incomplete_responses(
+    payload: dict[str, object], message: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = WikimediaSession(
+        scheduler=make_scheduler(),
+        timeout_s=5,
+        user_agent="test-agent",
+        opener_factory=FakeOpener,
+    )
+    monkeypatch.setattr(session, "_read_json", lambda *_args: payload)
+
+    with pytest.raises(ValueError, match=message):
+        session._request_login_token(FakeOpener(), "https://en.wikipedia.org/w/api.php")

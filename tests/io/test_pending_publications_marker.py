@@ -52,6 +52,38 @@ def _valid_sha(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def test_pending_stem_helpers_validate_envelope_and_uniqueness() -> None:
+    mod = _marker_helpers()
+    with pytest.raises(TypeError, match="missing 'stems'"):
+        mod._pending_stem_values({})
+    with pytest.raises(TypeError, match="must be a list"):
+        mod._pending_stem_values({"stems": "alpha"})
+    assert mod._pending_stem_values({"stems": ["alpha"]}) == ["alpha"]
+
+    assert mod._validate_pending_stem_values(["alpha", "beta"]) == ["alpha", "beta"]
+    with pytest.raises(TypeError, match="is not a string"):
+        mod._validate_pending_stem_values([42])
+    with pytest.raises(ValueError, match="duplicate stems"):
+        mod._validate_pending_stem_values(["alpha", "alpha"])
+
+
+def test_marker_helper_validation_rejects_bad_collections_and_hashes() -> None:
+    mod = _marker_helpers()
+    with pytest.raises(ValueError, match="stems must be a list"):
+        mod._validate_marker_types("alpha", {})
+    with pytest.raises(ValueError, match="fingerprint_hashes must be a dict"):
+        mod._validate_marker_types(["alpha"], None)
+    mod._validate_marker_types(["alpha"], {"alpha": _valid_sha("alpha")})
+
+    with pytest.raises(TypeError, match="fingerprint_hashes must be a dict"):
+        mod._validate_metadata_marker_hashes(None, ["alpha"])
+    with pytest.raises(ValueError, match="keys must match"):
+        mod._validate_metadata_marker_hashes({"other": _valid_sha("alpha")}, ["alpha"])
+    with pytest.raises(ValueError, match="64 lowercase hex chars"):
+        mod._validate_metadata_marker_hashes({"alpha": "bad"}, ["alpha"])
+    mod._validate_metadata_marker_hashes({"alpha": _valid_sha("alpha")}, ["alpha"])
+
+
 # ---------------------------------------------------------------------------
 # Payload: no timestamps
 # ---------------------------------------------------------------------------

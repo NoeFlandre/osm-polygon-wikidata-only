@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from scripts.quality import mutation_gate
-from scripts.quality.mutation_equivalents import reviewed_equivalents
+from scripts.quality.mutation_equivalents import _review_fields, reviewed_equivalents
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 NAME = "scripts.example.x_query__mutmut_1"
@@ -91,3 +91,15 @@ def test_mutation_scope_names_only_existing_sources_and_tests() -> None:
     configured = [*mutation["source_paths"], *mutation["pytest_add_cli_args_test_selection"]]
 
     assert [path for path in configured if not (REPOSITORY / path).is_file()] == []
+
+
+@pytest.mark.parametrize("reason", [None, "", " \t"])
+def test_equivalence_reviews_reject_empty_or_non_string_text(reason: object) -> None:
+    with pytest.raises(ValueError, match="non-empty strings"):
+        _review_fields(
+            {
+                "source_sha256": "source",
+                "mutant_sha256": "mutant",
+                "reason": reason,
+            }
+        )

@@ -11,6 +11,9 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.hf._dataset_stats.combined_languages import (
+    _CACHE_CONTRACT_VERSION,
+    _cache_matches,
+    _document_id,
     compute_combined_language_stats,
 )
 
@@ -18,6 +21,25 @@ from osm_polygon_wikidata_only.hf._dataset_stats.combined_languages import (
 def _write(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows), path)
+
+
+def test_combined_language_cache_match_checks_contract_and_fingerprints() -> None:
+    fingerprints = (("documents/a.parquet", "abc123"),)
+    payload = {
+        "contract_version": _CACHE_CONTRACT_VERSION,
+        "fingerprints": [["documents/a.parquet", "abc123"]],
+    }
+
+    assert _cache_matches(payload, fingerprints)
+    assert not _cache_matches(None, fingerprints)
+    assert not _cache_matches({"contract_version": "old"}, fingerprints)
+    assert not _cache_matches({**payload, "fingerprints": []}, fingerprints)
+
+
+def test_combined_language_document_identity_falls_back_to_article_id() -> None:
+    assert _document_id({"document_id": "doc", "article_id": "article"}) == "doc"
+    assert _document_id({"document_id": "", "article_id": 42}) == "42"
+    assert _document_id({"document_id": None, "article_id": None}) == ""
 
 
 def test_combined_languages_count_documents_and_unique_polygons(tmp_path: Path) -> None:
