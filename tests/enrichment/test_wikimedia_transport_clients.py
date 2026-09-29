@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from osm_polygon_wikidata_only.config.settings import Settings
 from tests.helpers import http_error as _http_error
 
 # ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ class _RecordingScheduler:
         self.throttle_calls.append((host, delay))
 
 
-def _make_settings(**overrides: Any) -> Any:
+def _make_settings(**overrides: Any) -> Settings:
     base = {
         "user_agent": "ua",
         "request_max_retries": 1,
@@ -78,7 +79,7 @@ def _make_settings(**overrides: Any) -> Any:
         "rate_limit_retry_after_default_s": 60.0,
     }
     base.update(overrides)
-    return type("Settings", (), base)()
+    return Settings(**base)
 
 
 # ---------------------------------------------------------------------------
@@ -106,11 +107,13 @@ def test_augmentation_cache_hit_skips_every_transport_step(
     session = _StubSession([])
     cache = _HitCache(parsed={"hit": True})
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     parsed = client.get_json("http://not-https.example.test/api", key="k")
 
@@ -132,11 +135,13 @@ def test_augmentation_cache_miss_runs_full_pipeline() -> None:
     )
     cache = _NoHitCache()
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     parsed = client.get_json("https://www.wikidata.org/w/api.php?ids=Q1", key="k")
 
@@ -159,11 +164,13 @@ def test_augmentation_evicts_cached_api_error_and_refetches(
         status="ok",
     )
     session = _StubSession([(b'{"entities":{"Q1":{"id":"Q1","claims":{}}}}', "identity")])
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = _make_settings()
-    client._scheduler = _RecordingScheduler()
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        _make_settings(),
+        cache,
+        environ={},
+        scheduler=_RecordingScheduler(),
+        session=session,
+    )
 
     result = client.get_json("https://www.wikidata.org/w/api.php?ids=Q1", key="entities")
 
@@ -189,11 +196,13 @@ def test_augmentation_retries_live_transient_api_error_without_caching_it(
             (b'{"entities":{"Q1":{"id":"Q1","claims":{}}}}', "identity"),
         ]
     )
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = _make_settings(request_max_retries=2)
-    client._scheduler = _RecordingScheduler()
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        _make_settings(request_max_retries=2),
+        cache,
+        environ={},
+        scheduler=_RecordingScheduler(),
+        session=session,
+    )
 
     result = client.get_json("https://www.wikidata.org/w/api.php?ids=Q1", key="entities")
 
@@ -214,11 +223,13 @@ def test_augmentation_recovers_after_more_than_eight_dns_failures() -> None:
     ]
     settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
     session = _StubSession([*dns_errors, (b'{"parse":{"text":"ok"}}', "identity")])
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = _RecordingScheduler()
-    client._session = session
-    client._cache = _NoHitCache()
+    client = AugmentationWikimediaClient(
+        settings,
+        _NoHitCache(),
+        environ={},
+        scheduler=_RecordingScheduler(),
+        session=session,
+    )
 
     assert client.get_json("https://en.wikipedia.org/w/api.php", key="dns") == {
         "parse": {"text": "ok"}
@@ -233,11 +244,13 @@ def test_augmentation_unbounded_retry_rejects_permanent_http_error() -> None:
 
     settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
     session = _StubSession([_http_error(404), (b'{"parse":{"text":"wrong"}}', "identity")])
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = _RecordingScheduler()
-    client._session = session
-    client._cache = _NoHitCache()
+    client = AugmentationWikimediaClient(
+        settings,
+        _NoHitCache(),
+        environ={},
+        scheduler=_RecordingScheduler(),
+        session=session,
+    )
 
     with pytest.raises(urllib.error.HTTPError, match="HTTP Error 404"):
         client.get_json("https://en.wikipedia.org/w/api.php", key="permanent")
@@ -271,11 +284,13 @@ def test_augmentation_emits_existing_warning_per_throttle_attempt(
     session = _StubSession(responses=[_http_error(429, retry_after="5")])
     cache = _NoHitCache()
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     with caplog.at_level(
         logging.WARNING, logger="osm_polygon_wikidata_only.augmentation.mediawiki"
@@ -306,11 +321,13 @@ def test_augmentation_emits_warning_for_503_with_error_code(
     session = _StubSession(responses=[_http_error(503, retry_after="2")])
     cache = _NoHitCache()
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     with caplog.at_level(
         logging.WARNING, logger="osm_polygon_wikidata_only.augmentation.mediawiki"
@@ -339,11 +356,13 @@ def test_augmentation_does_not_warn_on_non_throttle_http_error(
     session = _StubSession(responses=[_http_error(502)])
     cache = _NoHitCache()
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     with caplog.at_level(
         logging.WARNING, logger="osm_polygon_wikidata_only.augmentation.mediawiki"
@@ -384,11 +403,13 @@ def test_augmentation_http_date_delay_agrees_between_scheduler_and_warning(
     session = _StubSession(responses=[error])
     cache = _NoHitCache()
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     with caplog.at_level(
         logging.WARNING, logger="osm_polygon_wikidata_only.augmentation.mediawiki"
@@ -434,10 +455,11 @@ def test_wikipedia_does_not_emit_augmentation_warning(
     scheduler = _RecordingScheduler()
     session = _StubSession(responses=[_http_error(429, retry_after="7")])
 
-    client = HttpWikipediaClient.__new__(HttpWikipediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
+    client = HttpWikipediaClient(
+        settings,
+        scheduler=scheduler,
+        session=session,
+    )
 
     with caplog.at_level(
         logging.WARNING,
@@ -465,10 +487,11 @@ def test_wikipedia_unbounded_retry_rejects_permanent_http_error() -> None:
             (b'{"query":{"pages":{"-1":{"title":"Monaco","missing":""}}}}', "identity"),
         ]
     )
-    client = HttpWikipediaClient.__new__(HttpWikipediaClient)
-    client._settings = settings
-    client._scheduler = _RecordingScheduler()
-    client._session = session
+    client = HttpWikipediaClient(
+        settings,
+        scheduler=_RecordingScheduler(),
+        session=session,
+    )
 
     assert client.fetch_article("en", "enwiki", "Monaco").status == "article_not_found"
     assert len(session.reads) == 1
@@ -497,11 +520,12 @@ def test_wikidata_propagates_throttle_failure(caplog: pytest.LogCaptureFixture) 
         ],
     )
 
-    client = HttpWikidataClient.__new__(HttpWikidataClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._endpoint = "https://www.wikidata.org/w/api.php"
+    client = HttpWikidataClient(
+        settings,
+        endpoint="https://www.wikidata.org/w/api.php",
+        scheduler=scheduler,
+        session=session,
+    )
 
     with caplog.at_level(
         logging.WARNING,
@@ -524,11 +548,12 @@ def test_wikidata_unbounded_retry_rejects_permanent_http_error() -> None:
 
     settings = _make_settings(request_max_retries=None, request_base_delay_s=0.0)
     session = _StubSession([_http_error(404), (b'{"entities":{"Q1":{"id":"Q1"}}}', "identity")])
-    client = HttpWikidataClient.__new__(HttpWikidataClient)
-    client._settings = settings
-    client._scheduler = _RecordingScheduler()
-    client._session = session
-    client._endpoint = "https://www.wikidata.org/w/api.php"
+    client = HttpWikidataClient(
+        settings,
+        endpoint="https://www.wikidata.org/w/api.php",
+        scheduler=_RecordingScheduler(),
+        session=session,
+    )
 
     with pytest.raises(urllib.error.HTTPError, match="HTTP Error 404"):
         client.get_entity("Q1")
@@ -551,10 +576,11 @@ def test_wikipedia_non_object_error_message_is_exact() -> None:
     scheduler = _RecordingScheduler()
     session = _StubSession(responses=[(b"[1, 2, 3]", "identity")])
 
-    client = HttpWikipediaClient.__new__(HttpWikipediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
+    client = HttpWikipediaClient(
+        settings,
+        scheduler=scheduler,
+        session=session,
+    )
 
     url = "https://en.wikipedia.org/w/api.php?action=query&titles=X"
     with pytest.raises(ValueError) as exc_info:
@@ -576,10 +602,11 @@ def test_wikidata_non_object_error_message_is_exact() -> None:
     scheduler = _RecordingScheduler()
     session = _StubSession(responses=[(b"42", "identity")])
 
-    client = HttpWikidataClient.__new__(HttpWikidataClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
+    client = HttpWikidataClient(
+        settings,
+        scheduler=scheduler,
+        session=session,
+    )
 
     url = "https://www.wikidata.org/w/api.php?ids=Q1&action=wbgetentities"
     with pytest.raises(ValueError) as exc_info:
@@ -600,11 +627,13 @@ def test_augmentation_non_object_error_message_is_exact() -> None:
     session = _StubSession(responses=[(b'"a string"', "identity")])
     cache = _NoHitCache()
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = settings
-    client._scheduler = scheduler
-    client._session = session
-    client._cache = cache
+    client = AugmentationWikimediaClient(
+        settings,
+        cache,
+        environ={},
+        scheduler=scheduler,
+        session=session,
+    )
 
     url = "https://www.wikidata.org/w/api.php?ids=Q1"
     with pytest.raises(ValueError) as exc_info:
@@ -618,11 +647,10 @@ def test_augmentation_missing_revision_returns_empty_html_and_continues(
 ) -> None:
     """A deleted historical revision is a permanent empty-section result."""
     from osm_polygon_wikidata_only.augmentation.mediawiki import (
-        AugmentationWikimediaClient,
         MediaWikiApiError,
     )
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client = _augmentation_client()
 
     def missing_revision(_url: str, *, key: str) -> dict[str, object]:
         raise MediaWikiApiError(
@@ -645,11 +673,10 @@ def test_augmentation_deleted_revision_permission_denied_returns_empty_html_and_
 ) -> None:
     """A private/deleted revision must not abort section enrichment."""
     from osm_polygon_wikidata_only.augmentation.mediawiki import (
-        AugmentationWikimediaClient,
         MediaWikiApiError,
     )
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client = _augmentation_client()
 
     def permission_denied(_url: str, *, key: str) -> dict[str, object]:
         raise MediaWikiApiError(
@@ -668,28 +695,20 @@ def test_augmentation_deleted_revision_permission_denied_returns_empty_html_and_
 
 
 def test_augmentation_missing_revision_api_payload_returns_empty_html() -> None:
-    from osm_polygon_wikidata_only.augmentation.mediawiki import (
-        AugmentationWikimediaClient,
-    )
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
-    client._settings = _make_settings()
-    client._scheduler = _RecordingScheduler()
-    client._session = _StubSession(
-        [(b'{"error":{"code":"nosuchrevid","info":"revision deleted"}}', "identity")]
+    client = _augmentation_client(
+        _StubSession([(b'{"error":{"code":"nosuchrevid","info":"revision deleted"}}', "identity")])
     )
-    client._cache = _NoHitCache()
 
     assert client.parse_html("wikipedia", "en", 1146058) == ""
 
 
 def test_augmentation_non_missing_revision_error_still_propagates() -> None:
     from osm_polygon_wikidata_only.augmentation.mediawiki import (
-        AugmentationWikimediaClient,
         MediaWikiApiError,
     )
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client = _augmentation_client()
 
     def api_error(_url: str, *, key: str) -> dict[str, object]:
         raise MediaWikiApiError("server error", code="internal_error")
@@ -698,6 +717,18 @@ def test_augmentation_non_missing_revision_error_still_propagates() -> None:
 
     with pytest.raises(MediaWikiApiError, match="server error"):
         client.parse_html("wikipedia", "en", 1146058)
+
+
+def _augmentation_client(session: Any = None) -> Any:
+    from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
+
+    return AugmentationWikimediaClient(
+        _make_settings(),
+        _NoHitCache(),
+        environ={},
+        scheduler=_RecordingScheduler(),
+        session=session or _StubSession([]),
+    )
 
 
 # ---------------------------------------------------------------------------

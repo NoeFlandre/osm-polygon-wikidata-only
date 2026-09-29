@@ -35,12 +35,13 @@ class _Cache:
 
 
 def _client(cache: _Cache, *, attempts: int = 1) -> mediawiki.AugmentationWikimediaClient:
-    client = mediawiki.AugmentationWikimediaClient.__new__(mediawiki.AugmentationWikimediaClient)
-    client._settings = Settings(request_max_retries=attempts, request_base_delay_s=0)
-    client._cache = cache
-    client._session = object()
-    client._scheduler = object()
-    return client
+    return mediawiki.AugmentationWikimediaClient(
+        Settings(request_max_retries=attempts, request_base_delay_s=0),
+        cache,
+        environ={},
+        scheduler=object(),
+        session=object(),
+    )
 
 
 @pytest.mark.parametrize(
