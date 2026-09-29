@@ -84,6 +84,30 @@ def _verify_review(name: str, entry: object, source_root: Path, mutants_root: Pa
         raise ValueError(f"Mutation changed since equivalence review: {name}")
 
 
+def _load_reviews(path: Path | None) -> dict[str, Any]:
+    reviews = dict(REVIEWED_EQUIVALENTS)
+    if path is None:
+        return reviews
+    file_reviews = _read_file_reviews(path)
+    _merge_file_reviews(reviews, file_reviews)
+    return reviews
+
+
+def _read_file_reviews(path: Path) -> dict[str, Any]:
+    file_reviews = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+    if not isinstance(file_reviews, dict):
+        raise ValueError("Equivalence reviews must be an object")
+    return file_reviews
+
+
+def _merge_file_reviews(reviews: dict[str, Any], file_reviews: dict[str, Any]) -> None:
+    duplicates = reviews.keys() & file_reviews.keys()
+    if duplicates:
+        name = sorted(duplicates)[0]
+        raise ValueError(f"Duplicate review key: {name}")
+    reviews.update(file_reviews)
+
+
 def reviewed_equivalents(
     results: Sequence[tuple[str, str]],
     path: Path | None,
@@ -92,18 +116,7 @@ def reviewed_equivalents(
     mutants_root: Path,
 ) -> frozenset[str]:
     """Reject stale, malformed or drifted reviews before accepting a survivor."""
-    reviews = dict(REVIEWED_EQUIVALENTS)
-    if path is not None:
-        file_reviews = json.loads(
-            path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object
-        )
-        if not isinstance(file_reviews, dict):
-            raise ValueError("Equivalence reviews must be an object")
-        duplicates = reviews.keys() & file_reviews.keys()
-        if duplicates:
-            name = sorted(duplicates)[0]
-            raise ValueError(f"Duplicate review key: {name}")
-        reviews.update(file_reviews)
+    reviews = _load_reviews(path)
     statuses = dict(results)
     verified: set[str] = set()
     for name, entry in reviews.items():
