@@ -104,6 +104,8 @@ jobs:
       - uses: taiki-e/install-action@cb30b4c9cca98bbd320daf128741850f83d8a99f # v2 (just)
         with:
           tool: just
+      - name: Fetch the pull request head commit
+        run: git fetch --no-tags origin "refs/pull/${{ github.event.pull_request.number }}/head"
       - name: Time the base
         run: |
           just sync

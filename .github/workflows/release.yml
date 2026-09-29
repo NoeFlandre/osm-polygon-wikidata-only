@@ -21,15 +21,28 @@ jobs:
       - name: Install Python
         run: uv python install 3.12
       - name: Check the tag matches the package version
+        id: version
         run: |
           version="$(uv version --short)"
           test "v${version}" = "${GITHUB_REF_NAME}" || {
             echo "Tag ${GITHUB_REF_NAME} does not match pyproject version ${version}" >&2
             exit 1
           }
+          public_version="${version%%+*}"
+          if [[ "${public_version}" =~ (a|b|rc)[._-]?[0-9]*|\.dev[._-]?[0-9]* ]]; then
+            echo "is_prerelease=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "is_prerelease=false" >> "${GITHUB_OUTPUT}"
+          fi
       - name: Build sdist and wheel
         run: uv build --out-dir dist
       - name: Create the GitHub Release with the artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --verify-tag --generate-notes
+          IS_PRERELEASE: ${{ steps.version.outputs.is_prerelease }}
+        run: |
+          release_args=("${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --verify-tag --generate-notes)
+          if [[ "${IS_PRERELEASE}" == true ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "${release_args[@]}"
