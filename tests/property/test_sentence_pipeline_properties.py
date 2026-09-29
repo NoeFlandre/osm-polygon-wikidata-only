@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from osm_polygon_wikidata_only.domain.ids import content_hash
@@ -90,7 +90,6 @@ def _rows_for_section(rows: list[dict[str, Any]], section_id: str) -> list[dict[
     return [row for row in rows if row["section_id"] == section_id]
 
 
-@settings(max_examples=50, derandomize=True, database=None, deadline=None)
 @given(sections=_sections())
 def test_generated_rows_preserve_each_source_and_offset(sections: list[_GeneratedSection]) -> None:
     segmenter = _DeterministicSegmenter()
@@ -185,7 +184,6 @@ def test_supported_empty_section_is_filtered_before_segmenter_call() -> None:
     assert segmenter.calls == []
 
 
-@settings(max_examples=50, derandomize=True, database=None, deadline=None)
 @given(
     sections=_sections(),
     first_batch_size=st.integers(min_value=1, max_value=4),
