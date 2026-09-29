@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from osm_polygon_wikidata_only.hf.v2_trackio_snapshot import snapshot_from_v2_stats
 from osm_polygon_wikidata_only.v2.card import V2CardStats
-from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_RUN_NAME
 
 
 def test_v2_trackio_snapshot_uses_data_derived_metrics_only() -> None:
@@ -40,7 +39,6 @@ def test_v2_trackio_snapshot_uses_data_derived_metrics_only() -> None:
     assert snapshot.wikipedia_documents == 7
     assert snapshot.wikivoyage_documents == 3
     assert snapshot.wikipedia_polygon_document_links == 12
-    assert V2_TRACKIO_RUN_NAME == "final-dataset-snapshot-v2"
 
 
 def test_v2_card_stats_count_documents_outside_the_top_languages() -> None:

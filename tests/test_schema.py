@@ -28,7 +28,7 @@ def test_each_article_column_has_a_description() -> None:
 
 
 def test_has_geometry() -> None:
-    assert "geometry" in POLYGON_COLUMNS
+    assert "geometry" in polygon_schema().names
     assert "geometry" in POLYGON_DESCRIPTIONS
     assert polygon_schema().field("geometry").type == pa.string()
 

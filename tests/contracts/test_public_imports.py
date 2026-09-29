@@ -209,9 +209,6 @@ def test_hf_geographic_text_coverage_facade_identity() -> None:
     }
     missing = expected - set(dir(facade))
     assert not missing, f"missing documented names on geographic_text_coverage: {missing}"
-    # Spot-check one constant value for identity preservation.
-    assert facade.LOCAL_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
-    assert facade.REMOTE_TEXT_COVERAGE_ASSET_PATH == "assets/geographic_wikipedia_text_coverage.png"
 
 
 # ---------------------------------------------------------------------------

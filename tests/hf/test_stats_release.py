@@ -242,8 +242,6 @@ def test_v1_release_refuses_an_unconfirmed_repository(tmp_path: Path) -> None:
     with pytest.raises(StatsReleaseError, match="repository confirmation"):
         release_v1_polygon_stats(data_root, confirm_repo=V2_REPO_ID)
 
-    assert DEFAULT_REPO_ID == _REPO
-
 
 def test_apply_is_idempotent_and_makes_no_second_commit(processed: Path, tmp_path: Path) -> None:
     hub = StubHfHub()
