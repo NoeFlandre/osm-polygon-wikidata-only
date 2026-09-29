@@ -6,8 +6,12 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
+import osm_polygon_wikidata_only.pipeline.containment_migration as containment_migration
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
+    ChildAudit,
+    RuleAudit,
     audit_rule,
     load_retired_children,
     prepare_local_rule,
@@ -20,6 +24,7 @@ from osm_polygon_wikidata_only.pipeline.containment_policy import (
 
 PARENT = "parent-latest"
 CHILD = "child-latest"
+SECOND_CHILD = "second-child-latest"
 
 
 def _row(columns: tuple[str, ...], token: int) -> dict[str, object]:
@@ -67,6 +72,252 @@ def test_newer_child_polygon_is_losslessly_added_to_parent(tmp_path: Path) -> No
     table = pq.read_table(staged.artifact("polygons"))
     assert table.num_rows == 2
     assert set(table.column("osm_id").to_pylist()) == {1, 2}
+    assert pq.read_schema(staged.artifact("polygons")).equals(
+        pq.read_schema(processed / "polygons" / f"{PARENT}.parquet"), check_metadata=True
+    )
+
+
+def test_stage_reads_each_polygon_table_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = tmp_path / "processed"
+    schema = pa.schema(
+        [pa.field("osm_type", pa.string()), pa.field("osm_id", pa.int64())],
+        metadata={b"contract": b"fixture"},
+    )
+    children = (CHILD, SECOND_CHILD)
+    for stem, osm_id in ((PARENT, 1), (CHILD, 2), (SECOND_CHILD, 3)):
+        path = processed / "polygons" / f"{stem}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.Table.from_pylist([{"osm_type": "way", "osm_id": osm_id}], schema=schema),
+            path,
+        )
+    monkeypatch.setattr(containment_migration, "TABLE_CONTRACTS", (TABLE_CONTRACTS[0],))
+    audit = RuleAudit(PARENT, tuple(ChildAudit(child, ()) for child in children), ())
+    original_read_table = pq.read_table
+    polygon_reads: dict[str, int] = {}
+
+    def read_table(path: str | Path, *args: object, **kwargs: object) -> pa.Table:
+        source = Path(path)
+        if source.parent == processed / "polygons":
+            polygon_reads[source.stem] = polygon_reads.get(source.stem, 0) + 1
+        return original_read_table(path, *args, **kwargs)
+
+    monkeypatch.setattr(containment_migration.pq, "read_table", read_table)
+
+    stage_rule(processed, tmp_path / "cache", audit)
+
+    assert polygon_reads == {PARENT: 1, CHILD: 1, SECOND_CHILD: 1}
+
+
+def test_two_child_polygon_union_matches_golden_rows_and_manifest_stats(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    _seed(processed)
+    for contract in TABLE_CONTRACTS:
+        child_path = processed / contract.subdir / f"{CHILD}.parquet"
+        second_child_path = processed / contract.subdir / f"{SECOND_CHILD}.parquet"
+        second_child_path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pq.read_table(child_path), second_child_path)
+
+    polygon_schema = pa.schema(
+        [
+            pa.field("osm_type", pa.string()),
+            pa.field("osm_id", pa.int64()),
+            pa.field("polygon_id", pa.string()),
+            pa.field("region", pa.string()),
+            pa.field("source_pbf", pa.string()),
+            pa.field("extracted_at", pa.string()),
+            pa.field("wikidata", pa.string()),
+            pa.field("has_wikipedia", pa.bool_()),
+            pa.field("text_available", pa.bool_()),
+            pa.field("area_bucket", pa.string()),
+            pa.field("tag_keys", pa.string()),
+        ],
+        metadata={b"contract": b"fixture"},
+    )
+
+    def polygon_row(
+        osm_id: int,
+        *,
+        extracted_at: str,
+        wikidata: str,
+        has_wikipedia: bool,
+        text_available: bool,
+        area_bucket: str,
+        tag_keys: str,
+        source: str,
+    ) -> dict[str, object]:
+        stem = source.removesuffix(".osm.pbf")
+        return {
+            "osm_type": "way",
+            "osm_id": osm_id,
+            "polygon_id": f"{stem}:way:{osm_id}",
+            "region": stem.removesuffix("-latest"),
+            "source_pbf": source,
+            "extracted_at": extracted_at,
+            "wikidata": wikidata,
+            "has_wikipedia": has_wikipedia,
+            "text_available": text_available,
+            "area_bucket": area_bucket,
+            "tag_keys": tag_keys,
+        }
+
+    polygon_tables = {
+        PARENT: [
+            polygon_row(
+                1,
+                extracted_at="2026-01-01T00:00:00Z",
+                wikidata="Q1",
+                has_wikipedia=True,
+                text_available=False,
+                area_bucket="small",
+                tag_keys='["parent", "name"]',
+                source="parent-latest.osm.pbf",
+            ),
+            polygon_row(
+                2,
+                extracted_at="2026-01-01T00:00:00Z",
+                wikidata="Q2",
+                has_wikipedia=False,
+                text_available=True,
+                area_bucket="small",
+                tag_keys='["name"]',
+                source="parent-latest.osm.pbf",
+            ),
+        ],
+        CHILD: [
+            polygon_row(
+                1,
+                extracted_at="2026-02-01T00:00:00Z",
+                wikidata="Q8",
+                has_wikipedia=False,
+                text_available=True,
+                area_bucket="small",
+                tag_keys='["intermediate"]',
+                source="child-latest.osm.pbf",
+            ),
+            polygon_row(
+                3,
+                extracted_at="2026-02-01T00:00:00Z",
+                wikidata="Q3",
+                has_wikipedia=True,
+                text_available=True,
+                area_bucket="large",
+                tag_keys='["name", "shop"]',
+                source="child-latest.osm.pbf",
+            ),
+        ],
+        SECOND_CHILD: [
+            polygon_row(
+                1,
+                extracted_at="2026-03-01T00:00:00Z",
+                wikidata="Q9",
+                has_wikipedia=True,
+                text_available=False,
+                area_bucket="small",
+                tag_keys='["latest", "name"]',
+                source="second-child-latest.osm.pbf",
+            ),
+            polygon_row(
+                4,
+                extracted_at="2026-03-01T00:00:00Z",
+                wikidata="Q4",
+                has_wikipedia=False,
+                text_available=True,
+                area_bucket="large",
+                tag_keys='["name", "amenity"]',
+                source="second-child-latest.osm.pbf",
+            ),
+        ],
+    }
+    for stem, rows in polygon_tables.items():
+        pq.write_table(
+            pa.Table.from_pylist(rows, schema=polygon_schema),
+            processed / "polygons" / f"{stem}.parquet",
+        )
+
+    document_schema = pa.schema(
+        [
+            pa.field("document_id", pa.string()),
+            pa.field("language", pa.string()),
+            pa.field("article_length_chars", pa.int64()),
+        ],
+        metadata={b"contract": b"fixture"},
+    )
+    for stem in (PARENT, CHILD, SECOND_CHILD):
+        pq.write_table(
+            pa.Table.from_pylist(
+                [{"document_id": "article-1", "language": "en", "article_length_chars": 42}],
+                schema=document_schema,
+            ),
+            processed / "wikipedia" / "documents" / f"{stem}.parquet",
+        )
+
+    rule = ContainmentRule(PARENT, (CHILD, SECOND_CHILD))
+    audit = audit_rule(processed, rule)
+    assert audit.safe_to_stage
+    staged = stage_rule(processed, tmp_path / "cache", audit)
+
+    polygon_path = staged.artifact("polygons")
+    staged_table = pq.read_table(polygon_path)
+    assert staged_table.schema.equals(polygon_schema, check_metadata=True)
+    assert staged_table.to_pylist() == [
+        polygon_row(
+            1,
+            extracted_at="2026-03-01T00:00:00Z",
+            wikidata="Q9",
+            has_wikipedia=True,
+            text_available=False,
+            area_bucket="small",
+            tag_keys='["latest", "name"]',
+            source="parent-latest.osm.pbf",
+        ),
+        polygon_row(
+            2,
+            extracted_at="2026-01-01T00:00:00Z",
+            wikidata="Q2",
+            has_wikipedia=False,
+            text_available=True,
+            area_bucket="small",
+            tag_keys='["name"]',
+            source="parent-latest.osm.pbf",
+        ),
+        polygon_row(
+            3,
+            extracted_at="2026-02-01T00:00:00Z",
+            wikidata="Q3",
+            has_wikipedia=True,
+            text_available=True,
+            area_bucket="large",
+            tag_keys='["name", "shop"]',
+            source="parent-latest.osm.pbf",
+        ),
+        polygon_row(
+            4,
+            extracted_at="2026-03-01T00:00:00Z",
+            wikidata="Q4",
+            has_wikipedia=False,
+            text_available=True,
+            area_bucket="large",
+            tag_keys='["name", "amenity"]',
+            source="parent-latest.osm.pbf",
+        ),
+    ]
+    assert containment_migration._canonical_manifest_stats(staged) == {
+        "polygon_count": 4,
+        "unique_wikidata_count": 4,
+        "rows_with_wikipedia": 2,
+        "rows_with_full_text": 3,
+        "area_bucket_counts": {"small": 2, "large": 2},
+        "top_tag_keys": {"latest": 1, "name": 4, "shop": 1, "amenity": 1},
+        "article_count": 1,
+        "language_count": 1,
+        "languages": ["en"],
+        "total_full_text_chars": 42,
+    }
 
 
 def test_duplicate_identity_blocks_staging(tmp_path: Path) -> None:
@@ -78,6 +329,21 @@ def test_duplicate_identity_blocks_staging(tmp_path: Path) -> None:
     audit = audit_rule(processed, ContainmentRule(PARENT, (CHILD,)))
     assert not audit.safe_to_stage
     assert audit.children[0].tables[0].parent_duplicate_identities == 1
+
+
+def test_duplicate_child_polygon_identity_blocks_staging(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _seed(processed)
+    child_path = processed / "polygons" / f"{CHILD}.parquet"
+    child_table = pq.read_table(child_path)
+    pq.write_table(pa.concat_tables([child_table, child_table]), child_path)
+
+    audit = audit_rule(processed, ContainmentRule(PARENT, (CHILD,)))
+
+    assert not audit.safe_to_stage
+    assert audit.children[0].tables[0].child_duplicate_identities == 1
+    with pytest.raises(ValueError, match="not safe to stage"):
+        stage_rule(processed, tmp_path / "cache", audit)
 
 
 def test_missing_required_file_blocks_staging(tmp_path: Path) -> None:

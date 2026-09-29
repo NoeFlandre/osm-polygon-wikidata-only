@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import shutil
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation import steps as augmentation_steps
@@ -77,6 +79,15 @@ class PreparedRule:
 
 RETIREMENT_FILENAME = "containment_retirements.json"
 RETIREMENT_CONTRACT_VERSION = "contained-region-v1"
+_POLYGON_MANIFEST_COLUMNS = (
+    "wikidata",
+    "has_wikipedia",
+    "text_available",
+    "area_bucket",
+    "tag_keys",
+)
+# PyArrow exposes these C++ kernels dynamically; they are missing from its stubs.
+_ARROW_COMPUTE: Any = cast(Any, pc)
 
 
 def _identity_set(path: Path, contract: TableContract) -> tuple[set[tuple[Any, ...]], int]:
@@ -366,8 +377,11 @@ def _merged_contract_rows(
 ) -> tuple[list[dict[str, Any]], pa.Schema]:
     """Merge one containment table and return rows plus its parent schema."""
     parent_path = processed_dir / contract.subdir / f"{parent_stem}.parquet"
+    if contract.subdir == "polygons":
+        return polygon_rows, pq.read_schema(parent_path)
+
     parent = pq.read_table(parent_path)
-    rows = polygon_rows if contract.subdir == "polygons" else parent.to_pylist()
+    rows = parent.to_pylist()
     seen = {_identity(row, contract) for row in rows}
     for child in children:
         child_path = processed_dir / contract.subdir / f"{child}.parquet"
@@ -455,14 +469,47 @@ def _parquet_row_count(path: Path) -> int:
 
 def _canonical_manifest_stats(staged: StagedRule) -> dict[str, Any]:
     """Recompute the existing processed-manifest statistics from staged tables."""
-    polygons = pq.read_table(staged.artifact("polygons")).to_pylist()
+    polygons = pq.read_table(
+        staged.artifact("polygons"),
+        columns=list(_POLYGON_MANIFEST_COLUMNS),
+    )
     documents = pq.read_table(
         staged.artifact("wikipedia/documents"),
         columns=["language", "article_length_chars"],
     ).to_pylist()
     return {
-        **_polygon_manifest_stats(polygons),
+        **_polygon_manifest_table_stats(polygons),
         **_document_manifest_stats(documents),
+    }
+
+
+def _polygon_manifest_table_stats(polygons: pa.Table) -> dict[str, Any]:
+    """Aggregate manifest statistics from projected polygon columns."""
+    wikidata = polygons["wikidata"]
+    nonempty_wikidata = _ARROW_COMPUTE.filter(
+        wikidata,
+        _ARROW_COMPUTE.and_kleene(
+            _ARROW_COMPUTE.is_valid(wikidata),
+            _ARROW_COMPUTE.not_equal(wikidata, ""),
+        ),
+    )
+    area_bucket_counts = {
+        entry["values"]: entry["counts"]
+        for entry in _ARROW_COMPUTE.value_counts(polygons["area_bucket"]).to_pylist()
+    }
+    return {
+        "polygon_count": polygons.num_rows,
+        "unique_wikidata_count": _ARROW_COMPUTE.count_distinct(nonempty_wikidata).as_py(),
+        "rows_with_wikipedia": _ARROW_COMPUTE.sum(
+            _ARROW_COMPUTE.fill_null(polygons["has_wikipedia"], False)
+        ).as_py()
+        or 0,
+        "rows_with_full_text": _ARROW_COMPUTE.sum(
+            _ARROW_COMPUTE.fill_null(polygons["text_available"], False)
+        ).as_py()
+        or 0,
+        "area_bucket_counts": area_bucket_counts,
+        "top_tag_keys": _top_tag_keys_from_values(polygons["tag_keys"].to_pylist()),
     }
 
 
@@ -485,12 +532,19 @@ def _area_bucket_counts(rows: list[dict[str, Any]]) -> dict[Any, int]:
 
 def _top_tag_keys(rows: list[dict[str, Any]]) -> dict[str, int]:
     """Count valid serialized tag keys, ignoring malformed rows."""
+    return _top_tag_keys_from_values(row["tag_keys"] for row in rows)
+
+
+def _top_tag_keys_from_values(values: Iterable[Any]) -> dict[str, int]:
+    """Count valid serialized tag keys in row order, ignoring malformed values."""
     tag_keys: Counter[str] = Counter()
-    for row in rows:
+    for value, row_count in Counter(values).items():
         try:
-            tag_keys.update(json.loads(row["tag_keys"]))
+            parsed_counts = Counter(json.loads(value))
         except (TypeError, ValueError):
             continue
+        for key, count in parsed_counts.items():
+            tag_keys[key] += count * row_count
     return dict(tag_keys.most_common(50))
 
 
