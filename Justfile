@@ -118,7 +118,7 @@ mutation:
     # (2801 instead of 3038 mutants), which silently weakens the gate.
     rm -rf mutants
     uv run python -m mutmut run --max-children "{{ MUTMUT_MAX_CHILDREN }}"
-    uv run python -m mutmut results --all=true | uv run python -m scripts.quality.mutation_gate
+    uv run python -m mutmut results --all=true | uv run python -m scripts.quality.mutation_gate --equivalents scripts/quality/mutation_equivalents.json
 
 smoke-test: quality-runtime
     uv run osm-polygon-wikidata-only --help
