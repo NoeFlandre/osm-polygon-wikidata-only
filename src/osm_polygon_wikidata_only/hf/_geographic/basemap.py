@@ -11,10 +11,13 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-import matplotlib.patches as mpatches
+from matplotlib.collections import PathCollection
+from matplotlib.path import Path as MplPath
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,29 +44,154 @@ def load_land_basemap(cache_dir: Path) -> list[Any] | None:
     to manage the cache when a landmass overlay is requested).
     """
     candidate = cache_dir / "ne_110m_land.geojson"
-    if not candidate.exists() or candidate.stat().st_size == 0:
+    if not candidate.is_file() or candidate.stat().st_size == 0:
         return None
-    data = _read_land_geojson(candidate)
-    return data.get("features") or [] if data is not None else None
+    return load_land_features(candidate)
 
 
-def _read_land_geojson(candidate: Path) -> dict[str, Any] | None:
-    """Read one cached GeoJSON object, logging malformed cache content."""
+def load_land_features(geojson_path: Path) -> list[Any] | None:
+    """Load and cache a GeoJSON file's feature list by canonical path and mtime."""
     try:
-        data = json.loads(candidate.read_text(encoding="utf-8"))
+        candidate = geojson_path.resolve(strict=True)
+        stat = candidate.stat()
+    except OSError as error:
+        LOGGER.warning("Could not read cached land GeoJSON: %s", error)
+        return None
+    if stat.st_size == 0:
+        return None
+    data = _read_land_geojson(candidate.as_posix(), stat.st_mtime_ns)
+    if not isinstance(data, dict):
+        return None
+    features = data.get("features")
+    return features if isinstance(features, list) else []
+
+
+@lru_cache(maxsize=16)
+def _read_land_geojson(path: str, _mtime_ns: int) -> dict[str, Any] | None:
+    """Parse each canonical GeoJSON path once per modification time."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         LOGGER.warning("Could not read cached land GeoJSON: %s", error)
         return None
-    if not isinstance(data, dict):
-        return None
-    return data
+    return data if isinstance(data, dict) else None
 
 
-def draw_landmasses(ax: Any, features: Sequence[Any]) -> None:
-    """Draw Natural Earth landmasses on ``ax``."""
+def draw_landmasses(
+    ax: Any,
+    features: Sequence[Any],
+    *,
+    facecolor: str = _LAND_COLOR,
+    edgecolor: str = _LAND_EDGE,
+    linewidth: float = 0.2,
+    zorder: float = 1,
+) -> None:
+    """Draw all polygon geometry in one collection while preserving interior holes."""
+    paths: list[MplPath] = []
     for feature in features:
-        for ring in _feature_rings(feature):
-            _draw_land_ring(ax, ring)
+        paths.extend(_feature_paths(feature))
+    if not paths:
+        return
+    collection = PathCollection(
+        paths,
+        facecolors=[facecolor],
+        edgecolors=[edgecolor],
+        linewidths=linewidth,
+        zorder=zorder,
+    )
+    ax.add_collection(collection, autolim=False)
+
+
+def _feature_paths(feature: Any) -> list[MplPath]:
+    geometry = _feature_geometry(feature)
+    if geometry is None:
+        return []
+    paths: list[MplPath] = []
+    for polygon in _geometry_polygons(geometry):
+        path = _polygon_path(polygon)
+        if path is not None:
+            paths.append(path)
+    return paths
+
+
+def _geometry_coordinates(geometry: dict[str, Any]) -> list[Any] | tuple[Any, ...] | None:
+    coordinates = geometry.get("coordinates")
+    if isinstance(coordinates, (list, tuple)) and coordinates:
+        return coordinates
+    return None
+
+
+def _geometry_polygons(geometry: dict[str, Any]) -> list[Any]:
+    """Return coordinate-ring groups for Polygon and MultiPolygon geometry."""
+    coordinates = _geometry_coordinates(geometry)
+    if not coordinates:
+        return []
+    return _polygon_groups(geometry.get("type"), coordinates)
+
+
+def _polygon_groups(geometry_type: Any, coordinates: list[Any] | tuple[Any, ...]) -> list[Any]:
+    if geometry_type == "Polygon":
+        return [coordinates]
+    if geometry_type != "MultiPolygon":
+        return []
+    return list(filter(_is_coordinate_group, coordinates))
+
+
+def _is_coordinate_group(value: Any) -> bool:
+    return isinstance(value, (list, tuple))
+
+
+def _polygon_path(rings: Any) -> MplPath | None:
+    vertices: list[tuple[float, float]] = []
+    codes: list[int] = []
+    for ring_index, ring in enumerate(rings):
+        points = _closed_oriented_ring(ring, exterior=ring_index == 0)
+        if points is None:
+            continue
+        vertices.extend(points)
+        codes.append(int(MplPath.MOVETO))
+        codes.extend(int(MplPath.LINETO) for _ in points[1:-1])
+        codes.append(int(MplPath.CLOSEPOLY))
+    if not vertices:
+        return None
+    return MplPath(vertices, codes)
+
+
+def _closed_oriented_ring(ring: Any, *, exterior: bool) -> list[tuple[float, float]] | None:
+    points = _ring_points(ring)
+    if points is None:
+        return None
+    if points[0] != points[-1]:
+        points.append(points[0])
+    if _ring_needs_reversal(_ring_signed_area(points), exterior=exterior):
+        points.reverse()
+    return points
+
+
+def _ring_points(ring: Any) -> list[tuple[float, float]] | None:
+    if not _is_ring_candidate(ring):
+        return None
+    return _convert_ring(ring)
+
+
+def _is_ring_candidate(ring: Any) -> bool:
+    return isinstance(ring, (list, tuple)) and len(ring) >= 3
+
+
+def _convert_ring(ring: Sequence[Any]) -> list[tuple[float, float]] | None:
+    try:
+        points = [(float(point[0]), float(point[1])) for point in ring]
+    except (IndexError, TypeError, ValueError):
+        return None
+    return points if len(points) >= 3 else None
+
+
+def _ring_signed_area(points: Sequence[tuple[float, float]]) -> float:
+    return sum((x1 * y2) - (x2 * y1) for (x1, y1), (x2, y2) in pairwise(points))
+
+
+def _ring_needs_reversal(signed_area: float, *, exterior: bool) -> bool:
+    return signed_area < 0 if exterior else signed_area > 0
 
 
 def _feature_rings(feature: Any) -> list[Sequence[Sequence[float]]]:
@@ -102,20 +230,6 @@ def _multipolygon_rings(coords: Any) -> list[Sequence[Sequence[float]]]:
     return [polygon[0] for polygon in coords if polygon]
 
 
-def _draw_land_ring(ax: Any, ring: Sequence[Sequence[float]]) -> None:
-    if not ring or len(ring) < 3:
-        return
-    patch = mpatches.Polygon(
-        [(float(lon), float(lat)) for lon, lat in ring],
-        closed=True,
-        facecolor=_LAND_COLOR,
-        edgecolor=_LAND_EDGE,
-        linewidth=0.2,
-        zorder=1,
-    )
-    ax.add_patch(patch)
-
-
 def init_axes(ax: Any) -> None:
     """Apply the shared world-extent styling used by every visualization."""
     ax.set_facecolor(_OCEAN_COLOR)
@@ -139,4 +253,5 @@ __all__ = [
     "draw_landmasses",
     "init_axes",
     "load_land_basemap",
+    "load_land_features",
 ]
