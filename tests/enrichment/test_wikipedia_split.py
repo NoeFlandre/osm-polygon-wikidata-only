@@ -116,9 +116,7 @@ def test_cached_wikipedia_constructor_signature_and_failed_ttl_default() -> None
         CachedWikipediaClient,
     )
 
-    _make_settings()
-    client = CachedWikipediaClient.__new__(CachedWikipediaClient)
-    assert client.__init__.__kwdefaults__ == {"failed_ttl_s": 60 * 60}
+    assert CachedWikipediaClient.__init__.__kwdefaults__ == {"failed_ttl_s": 60 * 60}
 
 
 # ---------------------------------------------------------------------------
@@ -562,7 +560,9 @@ def test_wikipedia_lead_batch_error_falls_back_to_full_text(
 ) -> None:
     from osm_polygon_wikidata_only.enrichment.wikipedia import transport
 
-    client = transport.HttpWikipediaClient.__new__(transport.HttpWikipediaClient)
+    client = transport.HttpWikipediaClient(
+        _make_settings(), scheduler=_RecordingScheduler(), session=_StubSession(responses=[])
+    )
     fallback = {"Alpha": transport.FetchResult("article_not_found", None)}
     monkeypatch.setattr(client, "_fetch_full_text_batch", lambda *_args: fallback)
     monkeypatch.setattr(
@@ -579,7 +579,9 @@ def test_wikipedia_lead_batch_parse_error_falls_back_to_full_text(
 ) -> None:
     from osm_polygon_wikidata_only.enrichment.wikipedia import transport
 
-    client = transport.HttpWikipediaClient.__new__(transport.HttpWikipediaClient)
+    client = transport.HttpWikipediaClient(
+        _make_settings(), scheduler=_RecordingScheduler(), session=_StubSession(responses=[])
+    )
     fallback = {"Alpha": transport.FetchResult("article_not_found", None)}
     monkeypatch.setattr(client, "_fetch_full_text_batch", lambda *_args: fallback)
     monkeypatch.setattr(

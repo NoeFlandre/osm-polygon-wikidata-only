@@ -48,10 +48,12 @@ def test_wikivoyage_document_builds_from_cached_payload() -> None:
     assert document.source_api == "mediawiki_action_api"
 
 
-def test_wikivoyage_document_uses_expected_endpoint_and_cache_key(monkeypatch) -> None:
+def test_wikivoyage_document_uses_expected_endpoint_and_cache_key(monkeypatch, tmp_path) -> None:
     from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
+    from osm_polygon_wikidata_only.config.settings import Settings
+    from osm_polygon_wikidata_only.io.cache import JsonFileCache
 
-    client = AugmentationWikimediaClient.__new__(AugmentationWikimediaClient)
+    client = AugmentationWikimediaClient(Settings(), JsonFileCache(tmp_path), environ={})
     calls: list[tuple[str, str]] = []
 
     def get_json(url: str, *, key: str) -> dict[str, Any]:

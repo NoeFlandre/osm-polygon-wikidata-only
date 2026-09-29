@@ -1,13 +1,15 @@
 """Lightweight constants shared by configuration, CLI, and runtime modules."""
 
+from osm_polygon_wikidata_only.version import PACKAGE_VERSION
+
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 V2_REPO_ID = "NoeFlandre/osm-polygon-wikidata-and-wikipedia"
 
 # Wikimedia requires a User-Agent identifying the project and a contact.
 # This is overridable via env var so deployments can set their own.
 DEFAULT_USER_AGENT = (
-    "osm-polygon-wikidata-only/0.1.0 (https://github.com/NoeFlandre/osm-polygon-wikidata-only) "
-    "datasets-pipeline"
+    f"osm-polygon-wikidata-only/{PACKAGE_VERSION} "
+    "(https://github.com/NoeFlandre/osm-polygon-wikidata-only) datasets-pipeline"
 )
 
 DEFAULT_MAX_STEMS = 4

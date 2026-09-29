@@ -67,6 +67,18 @@ coverage-floor: quality-runtime
     @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
     uv run python scripts/quality/coverage_floor.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --minimum 85 {{ COVERAGE_FLOOR_EXEMPTIONS }}
 
+# Time the hot pure functions (benchmarks/ is not part of the normal test run).
+bench:
+    uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q
+
+# Save a named baseline, then fail if a later run is >50% slower on the mean.
+bench-save name="base":
+    uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q --benchmark-save={{ name }}
+
+bench-compare name="base":
+    uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q \
+        --benchmark-compare --benchmark-compare-fail=mean:50%
+
 property-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property
 
