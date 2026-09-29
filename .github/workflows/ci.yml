@@ -108,7 +108,9 @@ jobs:
         run: |
           just sync
           git checkout "${{ github.event.pull_request.head.sha }}" -- benchmarks
-          just bench-save
+          # The base lockfile predates pytest-benchmark, so add it for this run only.
+          uv run --with "pytest-benchmark>=5.3,<6" python -m pytest benchmarks --no-cov \
+            -p no:cacheprovider -q --benchmark-save=base
       - name: Time the head against it
         run: |
           git checkout --force "${{ github.event.pull_request.head.sha }}"
