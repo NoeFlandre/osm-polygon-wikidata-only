@@ -15,7 +15,7 @@ def test_legacy_command_api_resolves_to_the_commands_module(name: str) -> None:
 
 def test_unknown_attribute_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="no attribute 'missing'"):
-        cli.missing  # noqa: B018
+        getattr(cli, "missing")
 
 
 def test_dir_lists_the_lazy_names() -> None:
