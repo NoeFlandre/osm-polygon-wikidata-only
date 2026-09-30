@@ -149,9 +149,11 @@ skip_covered = false
 fail_under = 90
 
 [tool.mutmut]
-# Keep exhaustive mutation focused on pure deterministic helpers.
+# Keep exhaustive mutation focused on bounded, offline-testable contracts.
 on_dependency_change = "rerun"
 source_paths = [
+    "src/osm_polygon_wikidata_only/hf/augmentation_publication.py",
+    "src/osm_polygon_wikidata_only/hf/core_publication.py",
     "src/osm_polygon_wikidata_only/v2/deduplication.py",
     "src/osm_polygon_wikidata_only/v2/fingerprints.py",
     "src/osm_polygon_wikidata_only/v2/wikipedia_tags.py",
@@ -173,7 +175,7 @@ source_paths = [
     "scripts/quality/qa_gauntlet.py",
     "scripts/quality/architecture.py",
 ]
-also_copy = ["src/osm_polygon_wikidata_only", "requirements"]
+also_copy = ["src/osm_polygon_wikidata_only", "requirements", "assets"]
 mutate_only_covered_lines = true
 # Generated dataclass frames have no filesystem path. Unlimited stack depth
 # also avoids omitting tests that reach validation through several adapters.
@@ -195,6 +197,7 @@ pytest_add_cli_args_test_selection = [
     "tests/hf/test_language_split_release.py",
     "tests/hf/test_upload_operation_helpers.py",
     "tests/hf/test_upload_state.py",
+    "tests/contracts/test_publication.py::test_legacy_core_command_submits_exactly_once",
     "tests/v2/test_language_splits.py",
     "tests/v2/test_language_splits_partition_writing.py",
     "tests/v2/test_language_splits_resume_buffers.py",

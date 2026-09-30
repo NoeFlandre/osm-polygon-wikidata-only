@@ -140,7 +140,13 @@ def test_mutation_scope_names_only_existing_sources_and_tests() -> None:
     mutation = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))["tool"][
         "mutmut"
     ]
-    configured = [*mutation["source_paths"], *mutation["pytest_add_cli_args_test_selection"]]
+    configured = [
+        *mutation["source_paths"],
+        *(
+            selector.partition("::")[0]
+            for selector in mutation["pytest_add_cli_args_test_selection"]
+        ),
+    ]
 
     assert [path for path in configured if not (REPOSITORY / path).is_file()] == []
 

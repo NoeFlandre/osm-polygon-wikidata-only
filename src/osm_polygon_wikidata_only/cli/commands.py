@@ -10,11 +10,9 @@ Shared options: ``--push``, ``--repo-id``, ``--data-root``,
 ``--no-full-text``, ``--max-articles-per-qid``, ``--limit``,
 ``--commit-message``, ``--log-level``.
 
-This module owns argparse, runtime construction, and HF
-authentication. Publication assembly lives in
-:mod:`osm_polygon_wikidata_only.hf.publication`; CLI code here
-submits the file lists it returns through the upload queue or the
-direct ``upload_files`` helper.
+This module owns argument parsing, runtime construction, authentication,
+and command dispatch. Core processing publication is delegated to the
+:mod:`osm_polygon_wikidata_only.hf.core_publication` service.
 """
 
 from __future__ import annotations
@@ -37,25 +35,17 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID, Settings
-from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
-from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
+from osm_polygon_wikidata_only.hf.core_publication import run_core_publication
 from osm_polygon_wikidata_only.hf.uploader import (
     StubHfHub,
     UploadError,
     resolve_hf_token,
-    upload_files,
     verify_hf_token,
     verify_repo_authorization,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.run_lock import RunLockError, exclusive_run_lock
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
-from osm_polygon_wikidata_only.pipeline.pending_publications import (
-    clear_metadata_refresh_marker,
-    load_metadata_refresh_marker,
-    set_metadata_refresh_marker,
-)
 from osm_polygon_wikidata_only.pipeline.processor import (
     ProcessResult,
 )
@@ -69,210 +59,6 @@ from .parser import build_settings as _build_settings
 from .tools import dispatch_tool
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
-
-
-def _enqueue_core_upload(
-    upload_queue: BackgroundUploadQueue,
-    *,
-    data_root: DataRoot,
-    repo_id: str,
-    commit_message: str,
-    result: ProcessResult,
-    defer_metadata_assets: bool = False,
-) -> None:
-    """Submit one core publication via :mod:`hf.publication`.
-
-    Thin CLI adapter: builds the ordered file list through
-    :func:`hf.publication.assemble_core_upload` and submits it
-    once through the upload queue. No assembly logic lives here.
-    The legacy ``Could not fetch world land data; map will omit
-    continents`` WARNING is preserved on the CLI logger.
-    """
-    # Keep command-only publication imports lazy so parser/help startup stays light.
-    from osm_polygon_wikidata_only.hf.publication import assemble_core_upload  # noqa: PLC0415
-
-    ops = assemble_core_upload(
-        data_root=data_root,
-        repo_id=repo_id,
-        core=result,
-        world_land_warning=LOGGER.warning,
-        defer_metadata_assets=defer_metadata_assets,
-    )
-    upload_queue.submit(ops, commit_message)
-
-
-def _drain_uploads(
-    upload_queue: BackgroundUploadQueue,
-    *,
-    data_root: DataRoot,
-    repo_id: str,
-    deferring: bool,
-    published_stems: set[str],
-    dry_run: bool,
-) -> list[str]:
-    """Drain the regional queue, then refresh deferred metadata.
-
-    The queue is closed before anything else, so a region whose upload
-    exhausted its retries never gets a manifest, card, map, or statistics
-    report describing it, and nothing after the drain -- an assembly
-    failure, or a malformed refresh marker -- can leave the queue's
-    non-daemon worker waiting for a sentinel that never arrives. Reading
-    the marker therefore happens here rather than in the caller's
-    argument list, while its validation error still propagates.
-
-    The refresh runs synchronously on the drained queue. Its marker is
-    retired only once it succeeds, so a failure leaves the intent on
-    disk for the next run to repair.
-    """
-    failures = upload_queue.close_and_wait()
-    if failures or not deferring:
-        return failures
-    if not _metadata_refresh_requested(data_root, published_stems=published_stems):
-        _warn_metadata_refresh_pending(data_root)
-        return failures
-    return _refresh_repository_metadata(
-        upload_queue, data_root=data_root, repo_id=repo_id, dry_run=dry_run
-    )
-
-
-def _warn_metadata_refresh_pending(data_root: DataRoot) -> None:
-    """Say which regions still owe a refresh this run could not publish.
-
-    This command cannot verify that a region it did not publish itself --
-    one an earlier run stranded, or one the upload queue resumed from its
-    durable state -- actually reached the remote, so it leaves the
-    repository-wide assets alone. The operator needs to know that, and
-    which command repairs it.
-    """
-    marker = load_metadata_refresh_marker(data_root)
-    if marker is None:
-        return
-    LOGGER.warning(
-        "Repository metadata still owes %s; run sync-dir to reconcile those regions "
-        "and refresh the statistics, maps, and README",
-        ", ".join(marker["stems"]),
-    )
-
-
-def _refresh_repository_metadata(
-    upload_queue: BackgroundUploadQueue,
-    *,
-    data_root: DataRoot,
-    repo_id: str,
-    dry_run: bool,
-) -> list[str]:
-    """Publish the deferred repository-wide assets and retire their marker.
-
-    A dry run simulates the upload against the stub hub, so nothing
-    reaches the remote and the marker is left alone: retiring it would
-    tell the next run that the assets are current when they were never
-    published.
-    """
-    try:
-        _upload_metadata_refresh(upload_queue, data_root=data_root, repo_id=repo_id)
-    # ``except Exception`` retained: assembling the refresh runs the
-    # fail-closed statistics scan and the map renderers, which raise a
-    # broad, unstable set of types. The documented behavior is to report
-    # the refresh as a failed upload and keep its marker for the next run,
-    # never to escape the caller's ``finally`` block.
-    except Exception as error:  # noqa: BLE001 -- documented fail-soft refresh, see comment above
-        LOGGER.error("Repository metadata refresh failed: %s", error)
-        return [f"Refresh repository metadata and maps: {error}"]
-    if not dry_run:
-        clear_metadata_refresh_marker(data_root)
-    return []
-
-
-def _refresh_allowed(deferring: bool, processing_completed: bool) -> bool:
-    """Only a run that finished processing may publish deferred assets."""
-    return deferring and processing_completed
-
-
-def _metadata_refresh_requested(data_root: DataRoot, *, published_stems: set[str]) -> bool:
-    """Refresh only when every marked region was published by this run.
-
-    The marker names the regions whose repository-wide assets are still
-    owed. A run that published none of them -- a resumed run that skipped
-    every locally processed PBF, or one whose marked region died before
-    its upload was submitted -- must not publish a manifest, statistics
-    report, or map describing a region the remote never received. The
-    marker survives such a run, and the sync command, which reconciles
-    against the remote and republishes missing regional artifacts before
-    refreshing, is what repairs it.
-    """
-    if not published_stems:
-        return False
-    marker = load_metadata_refresh_marker(data_root)
-    if marker is None:
-        return True
-    return set(marker["stems"]) <= published_stems
-
-
-def _result_stem(result: ProcessResult) -> str:
-    """Return the region stem of one processed PBF."""
-    return Path(str(result.manifest_entry["source_pbf"])).stem.removesuffix(".osm")
-
-
-def _record_deferred_metadata(
-    data_root: DataRoot,
-    stems: dict[str, str],
-    result: ProcessResult,
-) -> None:
-    """Persist the intent to refresh the repository-wide assets.
-
-    A directory run defers those assets, so they stay stale until the
-    final refresh succeeds. The marker survives a crash or a failed
-    refresh and is what a later sync run repairs from; without it every
-    remote path would look present and nothing would be scheduled.
-
-    A surviving marker is merged rather than replaced: an earlier run may
-    have marked a region whose upload never happened, and dropping it
-    here would let this run's own region license a repository-wide
-    refresh describing the stranded one.
-    """
-    stem = _result_stem(result)
-    polygons_path = data_root.processed_polygons / f"{stem}.parquet"
-    if not polygons_path.is_file():
-        return
-    stems[stem] = sha256_file(polygons_path)
-    merged = {**_recorded_marker_hashes(data_root), **stems}
-    set_metadata_refresh_marker(data_root, sorted(merged), merged)
-
-
-def _recorded_marker_hashes(data_root: DataRoot) -> dict[str, str]:
-    """Return the stems an existing refresh marker already names."""
-    marker = load_metadata_refresh_marker(data_root)
-    if marker is None:
-        return {}
-    return {str(stem): str(digest) for stem, digest in marker["fingerprint_hashes"].items()}
-
-
-def _upload_metadata_refresh(
-    upload_queue: BackgroundUploadQueue,
-    *,
-    data_root: DataRoot,
-    repo_id: str,
-) -> None:
-    """Publish the repository-wide assets once a directory run has drained.
-
-    A directory run defers the maps, the statistics report, the hero, and
-    the README so the full-dataset scan behind them happens once, not
-    once per processed PBF.
-    """
-    # Load the publication stack only for the metadata-refresh command path.
-    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
-        assemble_metadata_only_upload,
-    )
-
-    LOGGER.info("Refreshing repository metadata after the processed directory")
-    upload_queue.upload_synchronously(
-        assemble_metadata_only_upload(
-            data_root=data_root,
-            repo_id=repo_id,
-            world_land_warning=LOGGER.warning,
-        ),
-        "Refresh repository metadata and maps",
-    )
 
 
 def _processing_inputs(command: str, input_path: Path) -> list[Path]:
@@ -498,24 +284,18 @@ def _publish_augmentation(
     """Publish one augmentation result when requested."""
     if not args.push:
         return
-    # Do not load Hugging Face publication code for local-only augmentation runs.
-    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
-        assemble_augmentation_upload,
+    from osm_polygon_wikidata_only.hf.augmentation_publication import (  # noqa: PLC0415
+        publish_augmentation,
     )
 
-    hub = StubHfHub() if args.dry_run else None
-    ops = assemble_augmentation_upload(
+    publish_augmentation(
         data_root=data_root,
         repo_id=settings.repo_id,
-        augmentation=result,
-    )
-    upload_files(
-        settings.repo_id,
-        ops=ops,
-        hub=hub,
         token=settings.hf_token,
+        dry_run=args.dry_run,
         commit_message=args.commit_message or f"Add text augmentation for {stem}",
-        num_threads=args.upload_threads,
+        upload_threads=args.upload_threads,
+        result=result,
     )
 
 
@@ -548,38 +328,6 @@ def _run_augmentation_command(
     return 0
 
 
-def _build_upload_queue(
-    args: argparse.Namespace,
-    settings: Settings,
-    *,
-    data_root: DataRoot,
-) -> BackgroundUploadQueue | None:
-    """Build and resume the bounded background upload queue when pushing."""
-    if not args.push:
-        return None
-    hub = StubHfHub() if args.dry_run else None
-
-    def upload_job(ops: list[PublicationOp], message: str) -> None:
-        upload_files(
-            settings.repo_id,
-            ops=ops,
-            hub=hub,
-            token=settings.hf_token,
-            commit_message=message,
-            num_threads=args.upload_threads,
-        )
-
-    upload_queue = BackgroundUploadQueue(
-        upload=upload_job,
-        max_pending=2,
-        state_dir=data_root.cache / "upload_jobs",
-    )
-    resumed = upload_queue.resume_pending()
-    if resumed:
-        LOGGER.info("Resumed %d pending background upload(s)", resumed)
-    return upload_queue
-
-
 def _log_process_results(results: Sequence[ProcessResult]) -> None:
     """Log the stable summary emitted after core processing completes."""
     LOGGER.info(
@@ -595,98 +343,38 @@ def _log_process_results(results: Sequence[ProcessResult]) -> None:
         )
 
 
-def _processing_upload_enqueuer(
-    args: argparse.Namespace,
-    settings: Settings,
-    *,
-    data_root: DataRoot,
-    upload_queue: BackgroundUploadQueue | None,
-    defer_metadata_assets: bool,
-    dry_run: bool,
-    published_stems: set[str],
-) -> Callable[[ProcessResult], None]:
-    """Return the per-region ``on_complete`` hook that queues core uploads."""
-    deferred_stems: dict[str, str] = {}
-
-    def enqueue_upload(result: ProcessResult) -> None:
-        if upload_queue is None:
-            return
-        # Recorded before the job is submitted: a kill between the two
-        # would otherwise leave an uploadable region with no record that
-        # the repository-wide assets still owe it a refresh.
-        if defer_metadata_assets and not dry_run:
-            _record_deferred_metadata(data_root, deferred_stems, result)
-        _enqueue_core_upload(
-            upload_queue,
-            data_root=data_root,
-            repo_id=settings.repo_id,
-            commit_message=args.commit_message
-            or f"Update PBF {result.manifest_entry['source_pbf']}",
-            result=result,
-            defer_metadata_assets=defer_metadata_assets,
-        )
-        published_stems.add(_result_stem(result))
-
-    return enqueue_upload
-
-
 def _run_processing_command(
     args: argparse.Namespace,
     *,
     data_root: DataRoot,
     settings: Settings,
 ) -> int:
-    """Run the core PBF processor and drain any requested uploads."""
+    """Run the core PBF processor through the HF publication service."""
     wd, wiki, cache = _build_clients(settings, data_root=data_root)
     inputs = _processing_inputs(args.command, args.input)
-    upload_queue = _build_upload_queue(args, settings, data_root=data_root)
-    # A directory run publishes one region per PBF; the repository-wide
-    # assets are produced once after the queue drains instead of after
-    # each region.
     defer_metadata_assets = args.command == "process-dir"
-    # A simulated push must not touch durable publication state.
-    dry_run = bool(getattr(args, "dry_run", False))
-    published_stems: set[str] = set()
-    enqueue_upload = _processing_upload_enqueuer(
-        args,
-        settings,
-        data_root=data_root,
-        upload_queue=upload_queue,
-        defer_metadata_assets=defer_metadata_assets,
-        dry_run=dry_run,
-        published_stems=published_stems,
-    )
-    upload_failures: list[str] = []
-    processing_completed = False
-    try:
-        results = orchestrate(
+
+    def process(on_complete: Callable[[ProcessResult], None]) -> list[ProcessResult]:
+        return orchestrate(
             inputs,
             data_root=data_root,
             settings=settings,
             wikidata_client=wd,
             wikipedia_client=wiki,
             cache=cache,
-            on_complete=enqueue_upload,
+            on_complete=on_complete,
         )
-        processing_completed = True
-    finally:
-        if upload_queue is not None:
-            upload_failures = _drain_uploads(
-                upload_queue,
-                data_root=data_root,
-                repo_id=settings.repo_id,
-                # An aborted run still drains the queue, but never
-                # publishes repository-wide assets: a region whose
-                # assembly or submission raised has local artifacts the
-                # remote does not have. The marker survives for the next
-                # run to repair.
-                deferring=_refresh_allowed(defer_metadata_assets, processing_completed),
-                published_stems=published_stems,
-                dry_run=dry_run,
-            )
-    _log_process_results(results)
-    if upload_failures:
-        LOGGER.error("%d background upload(s) failed", len(upload_failures))
+
+    outcome = run_core_publication(
+        process,
+        args,
+        settings,
+        data_root=data_root,
+        defer_metadata_assets=defer_metadata_assets,
+    )
+    _log_process_results(outcome.results)
+    if outcome.upload_failures:
+        LOGGER.error("%d background upload(s) failed", len(outcome.upload_failures))
         return 1
     return 0
 
@@ -816,30 +504,27 @@ def _dispatch_command(
     data_root: DataRoot,
     settings: Settings,
 ) -> int:
-    """Run the language-split facade or delegate to an existing command."""
-    if args.command == "language-splits":
-        return _run_language_splits(parser, args, data_root=data_root)
-    if args.command == "publish-language-splits":
-        return _run_publish_language_splits(parser, args, data_root=data_root)
-    return _dispatch_existing_command(parser, args, data_root=data_root, settings=settings)
-
-
-def _dispatch_existing_command(
-    parser: argparse.ArgumentParser,
-    args: argparse.Namespace,
-    *,
-    data_root: DataRoot,
-    settings: Settings,
-) -> int:
-    """Run the handler for the established processing and release commands."""
-    if args.command == "split-v2-sentences":
-        return _run_v2_sentence_split(parser, args, data_root=data_root, settings=settings)
-    if args.command == "release-stats":
-        return _run_release_stats(parser, args, data_root=data_root)
-    if args.command == "sync-dir":
-        return _run_sync_command(parser, args, data_root=data_root, settings=settings)
-    if args.command in {"augment-region", "augment-dir"}:
-        return _run_augmentation_command(args, data_root=data_root, settings=settings)
+    """Run the selected command handler."""
+    dispatch = {
+        "language-splits": lambda: _run_language_splits(parser, args, data_root=data_root),
+        "publish-language-splits": lambda: _run_publish_language_splits(
+            parser, args, data_root=data_root
+        ),
+        "split-v2-sentences": lambda: _run_v2_sentence_split(
+            parser, args, data_root=data_root, settings=settings
+        ),
+        "release-stats": lambda: _run_release_stats(parser, args, data_root=data_root),
+        "sync-dir": lambda: _run_sync_command(parser, args, data_root=data_root, settings=settings),
+        "augment-region": lambda: _run_augmentation_command(
+            args, data_root=data_root, settings=settings
+        ),
+        "augment-dir": lambda: _run_augmentation_command(
+            args, data_root=data_root, settings=settings
+        ),
+    }
+    handler = dispatch.get(args.command)
+    if handler is not None:
+        return handler()
     return _run_processing_command(args, data_root=data_root, settings=settings)
 
 

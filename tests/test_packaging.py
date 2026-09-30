@@ -263,7 +263,10 @@ def test_crap_report_covers_root_and_preprocessing_sources(tmp_path: Path) -> No
     assert rendered.returncode == 0, rendered.stderr
     output = rendered.stdout + rendered.stderr
     assert "radon cc --show-closures -j src scripts" in output
-    assert "radon cc --show-closures -j preprocessing/src" in output
+    assert (
+        "cd preprocessing && uv run --project .. python -m radon cc --show-closures -j src"
+        in output
+    )
     assert str(runtime / "reports" / "coverage.json") in output
     assert str(runtime / "reports" / "preprocessing-coverage.json") in output
     assert "crap4py" not in output

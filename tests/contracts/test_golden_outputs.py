@@ -1,8 +1,8 @@
 """Golden output tests against checked-in fixtures.
 
-The dataset card Markdown and the unified-sync publication file list
-are public, stable artifacts. Any drift is a regression; the golden
-files in ``tests/fixtures/golden/`` capture the exact expected
+The dataset card Markdown, publication file lists, and language-split
+dry-run report are public, stable artifacts. Any drift is a regression;
+the golden files in ``tests/fixtures/golden/`` capture the exact expected
 output.
 
 These tests exercise :mod:`osm_polygon_wikidata_only.hf.publication`
@@ -185,4 +185,70 @@ def test_publication_file_list_matches_golden(tmp_path: Path) -> None:
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
     assert remote_by_split == golden, (
         f"sync-dir publication order drifted: got {remote_by_split!r}, want {golden!r}"
+    )
+
+
+def test_publish_language_splits_dry_run_matches_golden(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The public CLI dry-run JSON remains stable without contacting the Hub."""
+    from osm_polygon_wikidata_only.cli.commands import main
+    from osm_polygon_wikidata_only.hf.language_split_publication import (
+        LanguagePublicationReport,
+        LanguagePublicationResult,
+        LanguagePublishedFile,
+    )
+    from osm_polygon_wikidata_only.hf.language_split_release import LanguageSplitVersion
+
+    report = LanguagePublicationReport(
+        version=LanguageSplitVersion.V1,
+        repo_id=REPO_ID,
+        dry_run=True,
+        published=False,
+        committed=False,
+        no_op=False,
+        revision=None,
+        files=(
+            LanguagePublishedFile(
+                local_path=Path("data/processed/v1/en.parquet"),
+                path_in_repo="data/en/train.parquet",
+                size_bytes=123,
+                sha256="a" * 64,
+            ),
+        ),
+        changed_files=("data/en/train.parquet",),
+    )
+    result = LanguagePublicationResult(reports=(report,))
+    calls: list[dict[str, object]] = []
+
+    def publish(_data_root: DataRoot, **kwargs: object) -> LanguagePublicationResult:
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_publication",
+        publish,
+    )
+
+    assert (
+        main(
+            [
+                "publish-language-splits",
+                "--data-root",
+                str(tmp_path),
+                "--dataset-version",
+                "v1",
+                "--confirm-repo",
+                REPO_ID,
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert calls[0]["dry_run"] is True
+    assert calls[0]["apply"] is False
+    assert (GOLDEN / "publish_language_splits_dry_run.json").read_text(encoding="utf-8") == (
+        capsys.readouterr().out
     )

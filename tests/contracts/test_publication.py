@@ -106,6 +106,10 @@ def _stub_generators(monkeypatch: pytest.MonkeyPatch) -> None:
     assembly helpers return paths that exist on disk.
     """
     monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.publication.LOCAL_DATASET_HERO_FILE",
+        Path(__file__).resolve().parents[2] / "assets" / "dataset_hero.png",
+    )
+    monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication._load_text_presence",
         lambda _root: object(),
     )
@@ -912,15 +916,45 @@ def test_assemble_region_upload_propagates_snapshot_failure(
         )
 
 
+@pytest.mark.parametrize("defer_metadata_assets", [False, True])
 def test_legacy_core_command_submits_exactly_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    defer_metadata_assets: bool,
 ) -> None:
     """process-pbf/process-dir: one assembly, one queue submission."""
-    import osm_polygon_wikidata_only.cli.commands as commands_mod
+    import osm_polygon_wikidata_only.hf.core_publication as core_publication
+    from osm_polygon_wikidata_only.hf import publication
     from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 
     core, data_root = _stub_process_result(tmp_path)
     _stub_generators(monkeypatch)
+    assembled_deferrals: list[bool] = []
+    assembled_repos: list[str | None] = []
+    warning_messages: list[str] = []
+    assemble = publication.assemble_core_upload
+    monkeypatch.setattr(core_publication.LOGGER, "warning", warning_messages.append)
+
+    def record_assembly(
+        *,
+        data_root: DataRoot,
+        repo_id: str,
+        core: ProcessResult,
+        world_land_warning: Callable[[str], None],
+        defer_metadata_assets: bool = False,
+    ) -> list[PublicationOp]:
+        assembled_deferrals.append(defer_metadata_assets)
+        assembled_repos.append(repo_id)
+        world_land_warning("warning callback")
+        return assemble(
+            data_root=data_root,
+            repo_id=repo_id,
+            core=core,
+            world_land_warning=world_land_warning,
+            defer_metadata_assets=defer_metadata_assets,
+        )
+
+    monkeypatch.setattr(publication, "assemble_core_upload", record_assembly)
 
     submissions: list[tuple[list[PublicationOp], str]] = []
 
@@ -928,17 +962,22 @@ def test_legacy_core_command_submits_exactly_once(
         def submit(self, ops: list[PublicationOp], message: str) -> None:
             submissions.append((ops, message))
 
-    commands_mod._enqueue_core_upload(
+    enqueue_kwargs = {"defer_metadata_assets": True} if defer_metadata_assets else {}
+    core_publication._enqueue_core_upload(
         cast(BackgroundUploadQueue, _StubQueue()),
         data_root=data_root,
         repo_id=REPO_ID,
         commit_message="core msg",
         result=core,
+        **enqueue_kwargs,
     )
     assert len(submissions) == 1, f"legacy core must submit exactly once, got {len(submissions)}"
+    assert assembled_deferrals == [defer_metadata_assets]
+    assert assembled_repos == [REPO_ID]
+    assert warning_messages == ["warning callback"]
     ops, message = submissions[0]
     assert message == "core msg"
-    assert len(ops) == 14
+    assert len(ops) == (5 if defer_metadata_assets else 14)
 
 
 def test_augmentation_command_submits_exactly_once(
@@ -970,33 +1009,22 @@ def test_augmentation_command_submits_exactly_once(
         uploads.append((ops if ops is not None else list(files) if files else [], commit_message))
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.cli.commands.upload_files",
+        "osm_polygon_wikidata_only.hf.augmentation_publication.upload_files",
         fake_upload,
     )
 
-    # Invoke the augmentation command's exact submission block.
-    from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
+    # Exercise the HF service that owns assembly and submission.
+    from osm_polygon_wikidata_only.hf.augmentation_publication import publish_augmentation
 
-    ops = assemble_augmentation_upload(
+    publish_augmentation(
         data_root=data_root,
         repo_id=REPO_ID,
-        augmentation=aug,
+        token=None,
+        dry_run=False,
+        commit_message="aug msg",
+        upload_threads=2,
+        result=aug,
     )
-
-    def _submit(
-        ops: list[PublicationOp],
-        message: str,
-        _hub: object = None,
-    ) -> None:
-        fake_upload(
-            REPO_ID,
-            ops=ops,
-            hub=_hub,
-            token=None,
-            commit_message=message,
-        )
-
-    _submit(ops, "aug msg")
     assert len(uploads) == 1, f"augmentation command must upload exactly once, got {len(uploads)}"
     assert uploads[0][1] == "aug msg"
     # Sidecars + manifest migration + combined map + statistics + README.
@@ -1225,8 +1253,11 @@ def test_refresh_coverage_assets_loads_combined_text_inputs_once(
 def test_cli_commands_no_longer_implements_publication_assembly() -> None:
     """cli.commands must not contain publication assembly implementations."""
     import osm_polygon_wikidata_only.cli.commands as commands_mod
+    import osm_polygon_wikidata_only.hf.augmentation_publication as augmentation_publication_mod
+    import osm_polygon_wikidata_only.hf.core_publication as core_publication_mod
 
     for name in (
+        "upload_files",
         "_sync_upload_files",
         "_coverage_refresh_required",
         "_generate_geographic_text_density_snapshot",
@@ -1237,6 +1268,16 @@ def test_cli_commands_no_longer_implements_publication_assembly() -> None:
         "generate_coverage_map",
     ):
         assert not hasattr(commands_mod, name), f"{name} must not live in cli.commands anymore"
+    assert augmentation_publication_mod.__all__ == ["publish_augmentation"]
+
+    for name in (
+        "_build_upload_queue",
+        "_drain_uploads",
+        "_enqueue_core_upload",
+        "_upload_metadata_refresh",
+    ):
+        assert not hasattr(commands_mod, name), f"{name} must not live in cli.commands anymore"
+    assert core_publication_mod.__all__ == ["run_core_publication"]
 
 
 def test_hf_publication_no_longer_exposes_dead_types() -> None:
