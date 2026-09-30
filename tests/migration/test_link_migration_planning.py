@@ -794,12 +794,14 @@ def test_apply_migratable_stems_continues_after_a_canonical_stem(
 
     canonical_path = processed / "polygon_articles" / "alpha-canonical.parquet"
     migrated_path = processed / "polygon_articles" / "beta-legacy.parquet"
-    assert link_migration.classify_stem_schema(
-        _pyarrow().parquet.read_schema(canonical_path).names
-    ) == "canonical"
-    assert link_migration.classify_stem_schema(
-        _pyarrow().parquet.read_schema(migrated_path).names
-    ) == "canonical"
+    assert (
+        link_migration.classify_stem_schema(_pyarrow().parquet.read_schema(canonical_path).names)
+        == "canonical"
+    )
+    assert (
+        link_migration.classify_stem_schema(_pyarrow().parquet.read_schema(migrated_path).names)
+        == "canonical"
+    )
 
 
 def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> None:
