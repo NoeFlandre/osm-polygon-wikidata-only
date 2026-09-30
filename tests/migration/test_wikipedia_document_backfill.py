@@ -815,9 +815,7 @@ class TestPlanningBlockers:
 
     def test_document_identity_mismatch_reports_the_symmetric_difference(self) -> None:
         with pytest.raises(MigrationError) as error:
-            migration_planning._validate_shared_identities(
-                ["a", "b"], ["a", "c"], "stem-a"
-            )
+            migration_planning._validate_shared_identities(["a", "b"], ["a", "c"], "stem-a")
 
         assert str(error.value) == (
             "Stem 'stem-a': document_id set mismatch (symmetric difference: ['b', 'c'])"
