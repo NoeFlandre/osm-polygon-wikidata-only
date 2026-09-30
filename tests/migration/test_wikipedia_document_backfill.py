@@ -21,6 +21,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation import wikipedia_document_migration
+from osm_polygon_wikidata_only.augmentation._wikipedia_document_migration import (
+    application as migration_application,
+)
+from osm_polygon_wikidata_only.augmentation._wikipedia_document_migration import (
+    planning as migration_planning,
+)
 from osm_polygon_wikidata_only.augmentation.models import document_from_article_row
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
@@ -34,7 +40,6 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import 
     MigrationOperation,
     MigrationPlan,
     StemPlan,
-    _missing_stem_plan,
     apply_migration,
     plan_migration,
 )
@@ -362,100 +367,102 @@ def test_validate_upgrade_target_accepts_unchanged_document_and_rejects_drift(
         operation=migration.MigrationOperation.UPGRADE_LEGACY,
         reason="",
         article_hash="article-hash",
-        document_hash=migration._file_content_hash(target),
+        document_hash=migration_planning._file_content_hash(target),
         row_count=1,
         canonical_digest="digest",
     )
 
-    migration._validate_upgrade_target(plan, target)
+    migration_application._validate_upgrade_target(plan, target)
 
     target.write_bytes(b"changed")
     with pytest.raises(migration.MigrationError, match="changed before write"):
-        migration._validate_upgrade_target(plan, target)
+        migration_application._validate_upgrade_target(plan, target)
 
     target.unlink()
     with pytest.raises(migration.MigrationError, match="disappeared before write"):
-        migration._validate_upgrade_target(plan, target)
+        migration_application._validate_upgrade_target(plan, target)
 
     target.write_bytes(b"document")
     monkeypatch.setattr(
-        migration,
-        "_file_content_hash",
+        migration_application,
+        "file_content_hash",
         lambda _path: (_ for _ in ()).throw(OSError("read failed")),
     )
     with pytest.raises(migration.MigrationError, match="unreadable before write"):
-        migration._validate_upgrade_target(plan, target)
+        migration_application._validate_upgrade_target(plan, target)
 
 
 def test_article_validation_and_plan_inputs_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    migration = wikipedia_document_migration
     article_path = tmp_path / "article.parquet"
     article_path.write_bytes(b"source")
     plan = StemPlan(
         stem="stem-a",
         operation=MigrationOperation.CREATE_MISSING,
         reason="",
-        article_hash=migration._file_content_hash(article_path),
+        article_hash=migration_planning._file_content_hash(article_path),
         document_hash=None,
         row_count=1,
         canonical_digest="digest",
     )
-    migration._validate_article_before_write(plan, article_path)
+    migration_application._validate_article_before_write(plan, article_path)
 
     article_path.write_bytes(b"changed")
     with pytest.raises(MigrationError, match="article file changed"):
-        migration._validate_article_before_write(plan, article_path)
+        migration_application._validate_article_before_write(plan, article_path)
 
     monkeypatch.setattr(
-        migration,
-        "_file_content_hash",
+        migration_application,
+        "file_content_hash",
         lambda _path: (_ for _ in ()).throw(OSError("unreadable")),
     )
     with pytest.raises(MigrationError, match="article file unreadable"):
-        migration._validate_article_before_write(plan, article_path)
+        migration_application._validate_article_before_write(plan, article_path)
 
     with monkeypatch.context() as patch:
         patch.setattr(
-            migration,
+            migration_planning,
             "_read_article_table",
             lambda *_args: (_ for _ in ()).throw(MigrationError("bad schema")),
         )
-        blocked = migration._article_plan_inputs("stem-a", article_path)
+        blocked = migration_planning._article_plan_inputs("stem-a", article_path)
         assert isinstance(blocked, StemPlan) and "bad schema" in blocked.reason
 
     with monkeypatch.context() as patch:
-        patch.setattr(migration, "_read_article_table", lambda *_args: pa.table({"id": [1]}))
         patch.setattr(
-            migration,
+            migration_planning, "_read_article_table", lambda *_args: pa.table({"id": [1]})
+        )
+        patch.setattr(
+            migration_planning,
             "_file_content_hash",
             lambda _path: (_ for _ in ()).throw(OSError("unreadable")),
         )
-        blocked = migration._article_plan_inputs("stem-a", article_path)
+        blocked = migration_planning._article_plan_inputs("stem-a", article_path)
         assert isinstance(blocked, StemPlan) and "unreadable article file" in blocked.reason
 
     with monkeypatch.context() as patch:
-        patch.setattr(migration, "_read_article_table", lambda *_args: pa.table({"id": [1]}))
-        patch.setattr(migration, "_file_content_hash", lambda _path: "article-hash")
         patch.setattr(
-            migration,
+            migration_planning, "_read_article_table", lambda *_args: pa.table({"id": [1]})
+        )
+        patch.setattr(migration_planning, "_file_content_hash", lambda _path: "article-hash")
+        patch.setattr(
+            migration_planning,
             "build_wikipedia_document_table",
             lambda _table: (_ for _ in ()).throw(
                 wikipedia_document_migration.WikipediaDocumentConversionError("bad article")
             ),
         )
-        blocked = migration._article_plan_inputs("stem-a", article_path)
+        blocked = migration_planning._article_plan_inputs("stem-a", article_path)
         assert isinstance(blocked, StemPlan) and "article conversion failed" in blocked.reason
 
 
 def test_plan_stem_and_canonical_output_revalidation(tmp_path: Path) -> None:
-    migration = wikipedia_document_migration
     stem = StemPlan("stem-a", MigrationOperation.CREATE_MISSING, "", "hash", None, 1, "digest")
     planned = MigrationPlan(tmp_path, (stem,))
-    migration._ensure_plan_stems_match(planned, MigrationPlan(tmp_path, (stem,)))
+    migration_application._ensure_plan_stems_match(planned, MigrationPlan(tmp_path, (stem,)))
     with pytest.raises(MigrationError, match="stem set changed"):
-        migration._ensure_plan_stems_match(
+        migration_application._ensure_plan_stems_match(
             planned,
             MigrationPlan(
                 tmp_path,
@@ -475,11 +482,11 @@ def test_plan_stem_and_canonical_output_revalidation(tmp_path: Path) -> None:
         "hash",
         None,
         1,
-        migration._table_digest(table),
+        migration_planning._table_digest(table),
     )
-    migration._validate_canonical_output(valid, table)
+    migration_application._validate_canonical_output(valid, table)
     with pytest.raises(MigrationError, match="canonical output changed"):
-        migration._validate_canonical_output(replace(valid, row_count=2), table)
+        migration_application._validate_canonical_output(replace(valid, row_count=2), table)
 
 
 class TestPlanningValidation:
@@ -587,7 +594,6 @@ class TestPlanningBlockers:
     def test_unexpected_article_reader_errors_propagate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import osm_polygon_wikidata_only.augmentation.wikipedia_document_migration as migration
 
         processed = _build_processed_dir(
             tmp_path,
@@ -600,7 +606,7 @@ class TestPlanningBlockers:
                 raise RuntimeError("unexpected article reader bug")
             return original_read(path, *args, **kwargs)
 
-        monkeypatch.setattr(migration.pq, "read_table", fail_for_article)
+        monkeypatch.setattr(pq, "read_table", fail_for_article)
 
         with pytest.raises(RuntimeError, match="unexpected article reader bug"):
             plan_migration(processed)
@@ -608,7 +614,6 @@ class TestPlanningBlockers:
     def test_unexpected_document_reader_errors_propagate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import osm_polygon_wikidata_only.augmentation.wikipedia_document_migration as migration
 
         article = _make_article_row()
         processed = _build_processed_dir(
@@ -623,7 +628,7 @@ class TestPlanningBlockers:
                 raise RuntimeError("unexpected document reader bug")
             return original_read(path, *args, **kwargs)
 
-        monkeypatch.setattr(migration.pq, "read_table", fail_for_document)
+        monkeypatch.setattr(pq, "read_table", fail_for_document)
 
         with pytest.raises(RuntimeError, match="unexpected document reader bug"):
             plan_migration(processed)
@@ -1453,13 +1458,13 @@ def test_missing_stem_plan_classifies_absent_and_unreadable_documents(
     article = tmp_path / "articles" / "stem.parquet"
     document = tmp_path / "wikipedia" / "documents" / "stem.parquet"
 
-    no_article = _missing_stem_plan("stem", article, document)
+    no_article = migration_planning._missing_stem_plan("stem", article, document)
     assert no_article is not None
     assert no_article.reason == "no article file found"
 
     document.parent.mkdir(parents=True)
     document.write_bytes(b"document")
-    orphan_document = _missing_stem_plan("stem", article, document)
+    orphan_document = migration_planning._missing_stem_plan("stem", article, document)
     assert orphan_document is not None
     assert orphan_document.reason == "document exists without corresponding article"
     assert orphan_document.document_hash
@@ -1467,11 +1472,11 @@ def test_missing_stem_plan_classifies_absent_and_unreadable_documents(
     def unreadable(_path: Path) -> str:
         raise PermissionError("unreadable")
 
-    monkeypatch.setattr(wikipedia_document_migration, "_file_content_hash", unreadable)
-    unreadable_document = _missing_stem_plan("stem", article, document)
+    monkeypatch.setattr(migration_planning, "_file_content_hash", unreadable)
+    unreadable_document = migration_planning._missing_stem_plan("stem", article, document)
     assert unreadable_document is not None
     assert unreadable_document.reason == "unreadable document file (PermissionError)"
 
     article.parent.mkdir(parents=True)
     article.write_bytes(b"article")
-    assert _missing_stem_plan("stem", article, document) is None
+    assert migration_planning._missing_stem_plan("stem", article, document) is None
