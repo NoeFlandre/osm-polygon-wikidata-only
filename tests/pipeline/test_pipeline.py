@@ -7,6 +7,7 @@ import logging
 import threading
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
+from typing import Any
 
 import pyarrow.parquet as pq
 import pytest
@@ -170,7 +171,7 @@ def test_process_pbf_writes_three_parquet_and_manifest(
 
     heartbeat_regions: list[str] = []
     heartbeat_exited: list[bool] = []
-    progress_trackers: list[object] = []
+    progress_trackers: list[Any] = []
     real_fetch_qids = enrichment_phase_module.fetch_qids
 
     class RecordingHeartbeat:
@@ -188,9 +189,9 @@ def test_process_pbf_writes_three_parquet_and_manifest(
         ) -> None:
             heartbeat_exited.append(True)
 
-    def recording_fetch_qids(*args: object, **kwargs: object) -> object:
+    def recording_fetch_qids(*args: Any, **kwargs: Any) -> Any:
         progress_trackers.append(kwargs.get("progress"))
-        return real_fetch_qids(*args, **kwargs)  # type: ignore[arg-type]
+        return real_fetch_qids(*args, **kwargs)
 
     monkeypatch.setattr(enrichment_phase_module, "EnrichmentHeartbeat", RecordingHeartbeat)
     monkeypatch.setattr(enrichment_phase_module, "fetch_qids", recording_fetch_qids)

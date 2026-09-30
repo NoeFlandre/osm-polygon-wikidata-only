@@ -423,7 +423,8 @@ def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically
                     self.active -= 1
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>text</p>"
 
     client = ConcurrentClient()
@@ -484,7 +485,8 @@ def test_merge_batches_v1_title_lookups_across_region(tmp_path: Path) -> None:
             return FetchResult("ok", _article(title))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>text</p>"
 
     index = CountingIndex()
@@ -552,7 +554,8 @@ def test_merge_rechecks_only_titles_missing_from_initial_v1_lookup(tmp_path: Pat
             return FetchResult("ok", _article(title, page_id=2))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>text</p>"
 
     index = CountingIndex()
@@ -610,7 +613,8 @@ def test_merge_fetches_sections_before_waiting_for_final_index(tmp_path: Path) -
             return FetchResult("ok", _article("Speculative page"))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             sections_started.set()
             return "<p>speculative section</p>"
 
@@ -675,7 +679,8 @@ def test_reconcile_v2_region_discards_speculative_duplicate_after_index_scan(
             return FetchResult("ok", _article("Speculative page", page_id=10))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>speculative section</p>"
 
     merge_v2_region(

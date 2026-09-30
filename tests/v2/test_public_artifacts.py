@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -8,6 +9,7 @@ import pytest
 import yaml
 
 from osm_polygon_wikidata_only.domain.schema import empty_row, polygon_schema
+from osm_polygon_wikidata_only.hf.geographic_text_presence import TextPresenceSnapshot
 from osm_polygon_wikidata_only.v2 import maps as v2_maps
 from osm_polygon_wikidata_only.v2.card import render_v2_card
 from osm_polygon_wikidata_only.v2.maps import (
@@ -216,7 +218,7 @@ def test_v2_map_assets_deduplicate_overlapping_typed_identities(
     generate_v2_map_assets(tmp_path, tmp_path / "assets")
 
     assert seen["coverage"] == [(4.0, 50.0), (2.0, 48.0)]
-    presence = seen["presence"]
+    presence = cast(TextPresenceSnapshot, seen["presence"])
     assert presence.polygon_count == 2
     assert presence.combined_polygon_identities == frozenset({("way", 7)})
     assert len(presence.covered_points) == 1

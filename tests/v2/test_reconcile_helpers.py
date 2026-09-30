@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
-from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
+from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
 from osm_polygon_wikidata_only.v2 import direct_enrichment, maps, reuse_reconcile, runner
 from osm_polygon_wikidata_only.v2.direct_enrichment import DirectWikipediaStatus
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
@@ -26,7 +27,7 @@ def test_remove_speculative_link_preserves_other_sources_and_drops_empty_links()
 
     reuse_reconcile._remove_speculative_link(key, links[key], links, direct_document_ids)
 
-    assert json.loads(links[key]["link_sources"]) == ["manual"]
+    assert json.loads(cast(str, links[key]["link_sources"])) == ["manual"]
     assert direct_document_ids == {"document"}
 
     links[key]["link_sources"] = json.dumps(["osm_wikipedia_tag"])
@@ -164,7 +165,7 @@ def test_apply_pending_outcome_records_error_and_non_ok_article() -> None:
     assert statuses[0].status == "deferred_error"
     assert deferred_errors == {0: deferred}
 
-    article = SimpleNamespace(
+    article = WikipediaArticle(
         language="en",
         site="enwiki",
         title="Title",

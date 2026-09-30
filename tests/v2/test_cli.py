@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+from typing import Any
 from types import SimpleNamespace
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -85,7 +86,7 @@ def test_sentence_executor_constructs_pinned_cpu_segmenter(tmp_path: Path, monke
     import osm_polygon_wikidata_only.v2.cli as v2_cli
     from osm_polygon_wikidata_only.v2.sentence_runner import SentenceRunResult
 
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
 
     class FakeSegmenter:
         model_id = "segment-any-text/sat-3l-sm"
@@ -123,7 +124,7 @@ def test_sentence_executor_constructs_pinned_cpu_segmenter(tmp_path: Path, monke
         "revision": "137da05",
         "inference_batch_size": 7,
     }
-    assert calls["run"][2] == 32  # type: ignore[index]
+    assert calls["run"][2] == 32
 
 
 def test_sentence_executor_renders_card_against_v1_artifacts(tmp_path: Path, monkeypatch) -> None:

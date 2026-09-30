@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -23,6 +24,7 @@ from osm_polygon_wikidata_only.hf.publication import (
     refresh_coverage_assets,
     snapshot_upload_manifests,
 )
+from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 pytestmark = [
@@ -85,7 +87,15 @@ def _stub_augmentation_result(processed_root: Path) -> AugmentationResult:
     for p in paths.values():
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("{}", encoding="utf-8")
-    return AugmentationResult(**paths, counts={"wikipedia_documents": 1})
+    return AugmentationResult(
+        wikipedia_documents_path=paths["wikipedia_documents_path"],
+        wikipedia_sections_path=paths["wikipedia_sections_path"],
+        wikivoyage_documents_path=paths["wikivoyage_documents_path"],
+        wikivoyage_sections_path=paths["wikivoyage_sections_path"],
+        wikidata_facts_path=paths["wikidata_facts_path"],
+        manifest_path=paths["manifest_path"],
+        counts={"wikipedia_documents": 1},
+    )
 
 
 def _stub_generators(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -288,12 +298,13 @@ def test_assemble_metadata_only_upload_includes_manifest_migration(
     def refresh_assets(**kwargs: object) -> tuple[Path, Path, Path]:
         snapshots_dir = kwargs["snapshots_dir"]
         assert isinstance(snapshots_dir, Path)
-        paths = tuple(
+        coverage, presence, density = (
             snapshots_dir / name for name in ("coverage.png", "presence.png", "density.png")
         )
+        paths = (coverage, presence, density)
         for path in paths:
             path.touch()
-        return paths  # type: ignore[return-value]
+        return coverage, presence, density
 
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication.refresh_coverage_assets", refresh_assets
@@ -524,9 +535,16 @@ def test_assemble_region_upload_writes_readme_after_other_snapshots(
 
     call_order: list[str] = []
 
-    def density_stub(*a: object, **kw: object) -> Path:
+    def density_stub(
+        _data_root: DataRoot,
+        destination: Path,
+        *,
+        snapshot: object = None,
+    ) -> Path:
         call_order.append("density")
-        return a[1].touch() or a[1]  # type: ignore[index]
+        _ = snapshot
+        destination.touch()
+        return destination
 
     monkeypatch.setattr(
         "osm_polygon_wikidata_only.hf.publication._generate_geographic_text_density_snapshot",
@@ -911,7 +929,7 @@ def test_legacy_core_command_submits_exactly_once(
             submissions.append((ops, message))
 
     commands_mod._enqueue_core_upload(
-        _StubQueue(),  # type: ignore[arg-type]
+        cast(BackgroundUploadQueue, _StubQueue()),
         data_root=data_root,
         repo_id=REPO_ID,
         commit_message="core msg",
@@ -938,7 +956,7 @@ def test_augmentation_command_submits_exactly_once(
         lambda *a, **kw: None,
     )
 
-    uploads: list[tuple[list[PublicationOp], str]] = []
+    uploads: list[tuple[list[PublicationOp] | list[tuple[Path, str]], str]] = []
 
     def fake_upload(
         repo_id: str,
@@ -1043,8 +1061,8 @@ def test_unified_sync_submits_exactly_one_commit_per_region(
 
     def _build_region_publication(
         state: object,
-        augmentation: object,
-        core_obj: object | None,
+        augmentation: AugmentationResult,
+        core_obj: ProcessResult | None,
     ) -> list[PublicationOp]:
         return assemble_region_upload(
             data_root=data_root,
@@ -1376,6 +1394,7 @@ def test_repeated_augmentation_publication_is_idempotent(
     """A second augmentation publication produces the same plan
     (canonical additions + legacy deletion). Idempotent over runs.
     """
+    from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
     from osm_polygon_wikidata_only.hf.publication import assemble_augmentation_upload
     from osm_polygon_wikidata_only.hf.repo_layout import (
         LEGACY_REMOTE_AUGMENTATION_MANIFEST_FILE,
@@ -1401,14 +1420,10 @@ def test_repeated_augmentation_publication_is_idempotent(
         augmentation=aug,
     )
 
-    def summary(plan: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        plan_list = list(plan)  # type: ignore[arg-type]
-        adds = tuple(
-            sorted(op.path_in_repo for op in plan_list if op.action == "add")  # type: ignore[attr-defined]
-        )
-        deletes = tuple(
-            sorted(op.path_in_repo for op in plan_list if op.action == "delete")  # type: ignore[attr-defined]
-        )
+    def summary(plan: Iterable[PublicationOp]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        plan_list = list(plan)
+        adds = tuple(sorted(op.path_in_repo for op in plan_list if op.action == "add"))
+        deletes = tuple(sorted(op.path_in_repo for op in plan_list if op.action == "delete"))
         return adds, deletes
 
     adds_one, deletes_one = summary(plan_one)

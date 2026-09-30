@@ -83,9 +83,13 @@ def test_highwater_accepts_zero_rejects_negative_and_reads_utf8(
     original_read_text = Path.read_text
     encodings: list[str | None] = []
 
-    def read_text(path: Path, *args: object, **kwargs: object) -> str:
-        encodings.append(kwargs.get("encoding"))
-        return original_read_text(path, *args, **kwargs)
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        encodings.append(encoding)
+        return original_read_text(path, encoding=encoding, errors=errors)
 
     monkeypatch.setattr(Path, "read_text", read_text)
     assert state._read_highwater(tmp_path) == 0
@@ -192,9 +196,13 @@ def test_json_reader_requires_utf8_and_rejects_non_objects(
     original_read_text = Path.read_text
     encodings: list[str | None] = []
 
-    def read_text(path: Path, *args: object, **kwargs: object) -> str:
-        encodings.append(kwargs.get("encoding"))
-        return original_read_text(path, *args, **kwargs)
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        encodings.append(encoding)
+        return original_read_text(path, encoding=encoding, errors=errors)
 
     monkeypatch.setattr(Path, "read_text", read_text)
     assert state._read_json_object(path) is None

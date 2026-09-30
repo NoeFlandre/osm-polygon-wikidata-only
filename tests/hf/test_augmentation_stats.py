@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
 import pyarrow as pa
@@ -214,7 +215,7 @@ def _sample_augmentation_stats() -> AugmentationStats:
         fully_augmented_count=1,
         partial_augmented_count=0,
         not_augmented_count=0,
-        orphan_sidecar_stems=[],
+        orphan_sidecar_stems=(),
         wikipedia_documents=ProjectTextStats(rows=433201, total_words=164952567),
         wikipedia_sections=ProjectTextStats(rows=2318909, total_words=230802671),
         wikivoyage_documents=ProjectTextStats(rows=3876, total_words=4896213),
@@ -950,7 +951,7 @@ def test_compute_augmentation_stats_handles_empty_sidecar_dirs(tmp_path: Path) -
 
 def test_compute_augmentation_stats_skips_unreadable_sidecar(
     tmp_path: Path,
-    caplog: logging.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An unreadable Parquet file is counted as unreadable and skipped.
 
@@ -996,7 +997,9 @@ def test_compute_augmentation_stats_records_one_region_per_core_stem(tmp_path: P
     assert stats.not_augmented_count == 2
 
 
-def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
+def test_second_refresh_reuses_cache_zero_parquet_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The per-file cache makes the second refresh a no-op for stable files.
 
     We assert that no Parquet table is read during the second call by
@@ -1058,15 +1061,12 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
     real_safe_table = augmod.safe_table
     call_log: list[Path] = []
 
-    def spy_safe_table(path, columns):
+    def spy_safe_table(path: Path, columns: Iterable[str]) -> pa.Table | None:
         call_log.append(Path(path))
         return real_safe_table(path, columns)
 
-    augmod.safe_table = spy_safe_table  # type: ignore[assignment]
-    try:
-        first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
-    finally:
-        augmod.safe_table = real_safe_table  # type: ignore[assignment]
+    monkeypatch.setattr(augmod, "safe_table", spy_safe_table)
+    first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     cold_calls = len(call_log)
     assert cold_calls > 0
     assert first.fully_augmented_count == 1
@@ -1074,18 +1074,16 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(tmp_path: Path) -> None:
     # Warm refresh: no new safe_table calls; the cache satisfies every
     # lookup.
     call_log.clear()
-    augmod.safe_table = spy_safe_table  # type: ignore[assignment]
-    try:
-        second = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
-    finally:
-        augmod.safe_table = real_safe_table  # type: ignore[assignment]
+    second = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     warm_calls = len(call_log)
     assert warm_calls == 0
     # Same numbers across the two refreshes.
     assert second == first
 
 
-def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
+def test_one_changed_file_rescans_only_that_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A fingerprint change in one Parquet forces a rescan of that
     file (and its fingerprint change), and only that file's
     :func:`safe_table` is invoked.
@@ -1178,15 +1176,12 @@ def test_one_changed_file_rescans_only_that_file(tmp_path: Path) -> None:
     real_safe_table = augmod.safe_table
     call_log: list[Path] = []
 
-    def spy_safe_table(path, columns):
+    def spy_safe_table(path: Path, columns: Iterable[str]) -> pa.Table | None:
         call_log.append(Path(path))
         return real_safe_table(path, columns)
 
-    augmod.safe_table = spy_safe_table  # type: ignore[assignment]
-    try:
-        third = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
-    finally:
-        augmod.safe_table = real_safe_table  # type: ignore[assignment]
+    monkeypatch.setattr(augmod, "safe_table", spy_safe_table)
+    third = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     # Only the changed file's table is read.
     assert len(call_log) == 1
     assert call_log[0] == docs_path
@@ -1397,7 +1392,9 @@ def test_cache_index_has_contract_version(tmp_path: Path) -> None:
     assert "__contract_version__" in raw
 
 
-def test_cache_load_rejects_missing_version_and_rebuilds(tmp_path: Path) -> None:
+def test_cache_load_rejects_missing_version_and_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """An index whose contract version is unknown must trigger a full
     rebuild.
 
@@ -1477,15 +1474,12 @@ def test_cache_load_rejects_missing_version_and_rebuilds(tmp_path: Path) -> None
     real_safe_table = augmod.safe_table
     calls: list[Path] = []
 
-    def spy(path, cols):
+    def spy(path: Path, cols: Iterable[str]) -> pa.Table | None:
         calls.append(Path(path))
         return real_safe_table(path, cols)
 
-    augmod.safe_table = spy  # type: ignore[assignment]
-    try:
-        stats = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
-    finally:
-        augmod.safe_table = real_safe_table  # type: ignore[assignment]
+    monkeypatch.setattr(augmod, "safe_table", spy)
+    stats = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
 
     assert stats.wikipedia_documents.rows == 1
     assert any(c == docs_path for c in calls), (

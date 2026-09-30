@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pyarrow as pa
@@ -13,6 +14,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 
 # Intentionally importing what might not exist yet to verify red state
@@ -78,7 +80,14 @@ def test_remote_inventory_fetch_paths_uses_stub_metadata_for_existing_paths() ->
 
 def test_remote_inventory_fetch_failure() -> None:
     class FailingHub(StubHfHub):
-        def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
+        def list_repo_files(
+            self,
+            repo_id: str,
+            *,
+            revision: str | None = None,
+            repo_type: str,
+        ) -> list[str]:
+            _ = (repo_id, revision, repo_type)
             raise httpx.ConnectError("Network timeout")
 
     with pytest.raises(UploadError, match="Network timeout"):
@@ -159,15 +168,19 @@ def test_remote_inventory_fetch_paths_reads_exact_file_metadata() -> None:
     inventory = RemoteInventory.fetch_paths(
         "test/repo",
         paths=["wikipedia/sentences/alpha-latest.parquet", "README.md"],
-        hub=Hub(),
+        hub=cast(HfHub, Hub()),
     )
 
     assert inventory.files == {
         "wikipedia/sentences/alpha-latest.parquet",
         "README.md",
     }
-    assert inventory.metadata("wikipedia/sentences/alpha-latest.parquet").sha256 == "a" * 64
-    assert inventory.metadata("README.md").sha256 is None
+    sentence_metadata = inventory.metadata("wikipedia/sentences/alpha-latest.parquet")
+    readme_metadata = inventory.metadata("README.md")
+    assert sentence_metadata is not None
+    assert readme_metadata is not None
+    assert sentence_metadata.sha256 == "a" * 64
+    assert readme_metadata.sha256 is None
 
 
 def test_remote_inventory_fetch_paths_falls_back_for_legacy_hub_client() -> None:
@@ -179,7 +192,7 @@ def test_remote_inventory_fetch_paths_falls_back_for_legacy_hub_client() -> None
     inventory = RemoteInventory.fetch_paths(
         "test/repo",
         paths=["README.md"],
-        hub=LegacyHub(),  # type: ignore[arg-type]
+        hub=cast(HfHub, LegacyHub()),
     )
 
     assert inventory.files == {"README.md"}

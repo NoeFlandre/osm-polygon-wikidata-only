@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
+from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgressSnapshot
+from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaAuthSnapshot
 from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 
 
 @pytest.mark.parametrize("include_auth", [False, True])
@@ -13,13 +14,14 @@ def test_sync_heartbeat_logs_once_then_stops(include_auth: bool) -> None:
         def __init__(self) -> None:
             self.results = iter((False, True))
 
-        def wait(self, _timeout: float) -> bool:
+        def wait(self, timeout: float) -> bool:
+            assert timeout == 1.0
             return next(self.results)
 
         def set(self) -> None:
             raise AssertionError("run should not change the stop signal")
 
-    scheduler = SimpleNamespace(
+    scheduler = RequestSchedulerSnapshot(
         requests_last_minute=2,
         current_requests_per_minute=30.0,
         maximum_requests_per_minute=60.0,
@@ -32,16 +34,16 @@ def test_sync_heartbeat_logs_once_then_stops(include_auth: bool) -> None:
         cooldown_remaining_s=0.0,
     )
     messages: list[str] = []
-    auth = lambda: SimpleNamespace(  # noqa: E731
-        credentials_configured=True,
-        authenticated_hosts=1,
-        anonymous_hosts=0,
+    auth = lambda: WikimediaAuthSnapshot(  # noqa: E731
+        credentials_configured=True, authenticated_hosts=1, anonymous_hosts=0, pending_hosts=0
     )
     heartbeat = SyncHeartbeat(
         region="region",
         region_index=1,
         region_total=1,
-        augmentation_snapshot=lambda: SimpleNamespace(phase="documents", completed=1, total=2),
+        augmentation_snapshot=lambda: AugmentationProgressSnapshot(
+            phase="documents", completed=1, total=2
+        ),
         scheduler_snapshot=lambda: scheduler,
         auth_snapshot=auth if include_auth else None,
         log=messages.append,

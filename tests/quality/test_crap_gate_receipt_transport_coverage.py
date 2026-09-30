@@ -4,19 +4,25 @@ import urllib.error
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pyarrow as pa
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaHttpSession
 from osm_polygon_wikidata_only.enrichment.wikipedia import transport as wikipedia_transport
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
     _read_checkpoint_metadata,
 )
 from osm_polygon_wikidata_only.hf import v1_language_splits
-from osm_polygon_wikidata_only.hf.v1_language_splits import V1LanguageSplitError
+from osm_polygon_wikidata_only.hf.v1_language_splits import (
+    LanguageTableSpec,
+    V1LanguageSplitError,
+)
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery import audit_receipts
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestScheduler
 
 
 def test_recovery_receipt_loader_rejects_bad_json_and_accepts_contract(
@@ -54,7 +60,10 @@ def test_checkpoint_metadata_reader_rejects_invalid_and_non_object_payloads(
 def test_v1_language_stream_wraps_unexpected_errors_and_preserves_domain_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    spec = SimpleNamespace(language_column="language")
+    spec = cast(
+        LanguageTableSpec,
+        SimpleNamespace(language_column="language"),
+    )
     args = (tmp_path / "source.parquet", spec, pa.schema([]), tmp_path, 1, {}, {}, {})
 
     def fail_open(_path: Path) -> object:
@@ -79,7 +88,9 @@ def test_wikipedia_request_translates_http_and_network_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = wikipedia_transport.HttpWikipediaClient(
-        Settings(), scheduler=SimpleNamespace(), session=SimpleNamespace()
+        Settings(),
+        scheduler=cast(RequestScheduler, SimpleNamespace()),
+        session=cast(WikimediaHttpSession, SimpleNamespace()),
     )
     monkeypatch.setattr(wikipedia_transport, "with_retries", lambda call, **_kwargs: call())
 
@@ -107,7 +118,9 @@ def test_wikipedia_parse_fallback_preserves_error_and_handles_empty_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = wikipedia_transport.HttpWikipediaClient(
-        Settings(), scheduler=SimpleNamespace(), session=SimpleNamespace()
+        Settings(),
+        scheduler=cast(RequestScheduler, SimpleNamespace()),
+        session=cast(WikimediaHttpSession, SimpleNamespace()),
     )
     original = FetchResult("empty_text", None)
     rejected = FetchResult("http_error", None, "fallback unavailable")

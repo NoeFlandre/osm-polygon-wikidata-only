@@ -113,7 +113,7 @@ def test_result_is_frozen(tmp_path: Path) -> None:
     result = wikipedia_source_paths(data_root, STEM)
 
     with pytest.raises((AttributeError, TypeError)):
-        result.canonical = tmp_path / "other"  # type: ignore[misc]
+        setattr(result, "canonical", tmp_path / "other")
 
 
 def test_wikipedia_source_paths_class_is_exposed(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -296,7 +297,7 @@ def test_rejection_ledger_qid_helper(value: str | None, expected: bool) -> None:
 
 
 def test_rejection_ledger_qid_helper_rejects_non_string_values() -> None:
-    assert not rejection_ledger._is_valid_qid(42)  # type: ignore[arg-type]
+    assert not rejection_ledger._is_valid_qid(cast(str | None, 42))
 
 
 # ---------------------------------------------------------------------------

@@ -72,7 +72,8 @@ def test_section_builder_preserves_existing_rows_and_checkpoint_order() -> None:
 
 def test_section_builder_does_not_fetch_non_wikipedia_documents() -> None:
     class Client:
-        def parse_html(self, *_args: object) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             raise AssertionError("Wikivoyage rows must not use the Wikipedia section client")
 
     result = build_missing_sections(
@@ -129,7 +130,8 @@ def test_section_builder_raises_the_first_input_failure_not_completion_failure(
     monkeypatch.setattr(sections_module, "as_completed", completion_order)
 
     class UnusedClient:
-        def parse_html(self, *_args: object) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             raise AssertionError("the executor should not invoke the client")
 
     with pytest.raises(ValueError, match="first input failed"):
