@@ -19,7 +19,11 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageTableInventory,
     language_table_specs,
 )
-from osm_polygon_wikidata_only.v2 import language_splits
+from osm_polygon_wikidata_only.v2 import (
+    language_split_models,
+    language_split_writer,
+    language_splits,
+)
 from osm_polygon_wikidata_only.v2.language_splits import (
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
 )
@@ -30,8 +34,8 @@ def _shard_state(
     *,
     row_count: int = 0,
     source_files: list[str] | None = None,
-) -> language_splits._ShardWriteState:
-    return language_splits._ShardWriteState(
+) -> language_split_models.LanguageShardWriteState:
+    return language_split_models.LanguageShardWriteState(
         language="en",
         shard_index=0,
         writer=cast(pq.ParquetWriter, writer),
@@ -50,7 +54,7 @@ def test_v2_partition_batch_returns_explicit_wide_row_indices() -> None:
     so the width is part of the contract rather than an accident of inference.
     """
     batch = pa.record_batch([pa.array(["en", "fr", "en", None])], names=["language"])
-    partitions = language_splits._partition_batch(batch, 0)
+    partitions = language_split_writer._partition_batch(batch, 0)
     assert partitions
     for indices in partitions.values():
         assert indices.type in (pa.int64(), pa.uint64())
@@ -59,7 +63,7 @@ def test_v2_partition_batch_returns_explicit_wide_row_indices() -> None:
 def test_v2_partition_batch_groups_rows_in_first_occurrence_order() -> None:
     """Partitions are ordered by first appearance and indices stay ascending."""
     batch = pa.record_batch([pa.array(["fr", "en", "fr", "en", "fr"])], names=["language"])
-    partitions = language_splits._partition_batch(batch, 0)
+    partitions = language_split_writer._partition_batch(batch, 0)
     assert list(partitions) == ["fr", "en"]
     assert partitions["fr"].to_pylist() == [0, 2, 4]
     assert partitions["en"].to_pylist() == [1, 3]
@@ -96,7 +100,7 @@ def test_v2_table_shard_counts_omit_empty_buckets() -> None:
         buckets=(bucket, nonempty),
     )
 
-    assert language_splits._table_shard_counts(inventory, 100_000) == {"fr": 1}
+    assert language_split_writer._table_shard_counts(inventory, 100_000) == {"fr": 1}
 
 
 def test_v2_write_language_indices_respects_existing_shard_capacity(
@@ -104,7 +108,7 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
 ) -> None:
     batch = pa.record_batch([pa.array(["en"] * 8)], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
 
     class FakeWriter:
         def __init__(self) -> None:
@@ -123,13 +127,13 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
     state.current["en"] = first
     writers = iter((first, second))
 
-    def fake_writer_for_language(*_args: object) -> language_splits._ShardWriteState:
+    def fake_writer_for_language(*_args: object) -> language_split_models.LanguageShardWriteState:
         return next(writers)
 
-    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
+    monkeypatch.setattr(language_split_writer, "_writer_for_language", fake_writer_for_language)
 
     with ExitStack() as stack:
-        language_splits._write_language_indices(
+        language_split_writer._write_language_indices(
             "en",
             pa.array(range(8), type=pa.int64()),
             batch,
@@ -149,7 +153,7 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
     assert [len(rows) for rows in first_writer.rows] == [7]
     assert second_writer.rows == []
     assert [b.num_rows for b in second.pending] == [1]
-    language_splits._flush_shard(state, second)
+    language_split_writer._flush_shard(state, second)
     assert [len(rows) for rows in second_writer.rows] == [1]
     assert second.pending == []
     assert state.pending_bytes == 0
@@ -163,7 +167,7 @@ def test_v2_write_language_indices_advances_offset_across_shards(
 ) -> None:
     batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
 
     class FakeWriter:
         def write_table(self, selected: pa.Table) -> None:
@@ -177,16 +181,16 @@ def test_v2_write_language_indices_advances_offset_across_shards(
     state.current["en"] = first
     writers = iter((first, second))
 
-    def fake_writer_for_language(*_args: object) -> language_splits._ShardWriteState:
+    def fake_writer_for_language(*_args: object) -> language_split_models.LanguageShardWriteState:
         try:
             return next(writers)
         except StopIteration as error:
             raise AssertionError("offset did not advance across shards") from error
 
-    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
+    monkeypatch.setattr(language_split_writer, "_writer_for_language", fake_writer_for_language)
 
     with ExitStack() as stack:
-        language_splits._write_language_indices(
+        language_split_writer._write_language_indices(
             "en",
             pa.array(range(3), type=pa.int64()),
             batch,
@@ -208,15 +212,15 @@ def test_v2_write_language_indices_advances_offset_across_shards(
 def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
     shard = _shard_state(object(), source_files=["source-a.parquet"])
 
-    language_splits._record_source_file(shard, "source-a.parquet")
-    language_splits._record_source_file(shard, "source-b.parquet")
+    language_split_writer._record_source_file(shard, "source-a.parquet")
+    language_split_writer._record_source_file(shard, "source-b.parquet")
 
     assert shard.source_files == ["source-a.parquet", "source-b.parquet"]
 
 
 def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
     observed: dict[str, object] = {}
 
     @contextmanager
@@ -228,11 +232,11 @@ def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.M
         def __init__(self, path: Path, schema: pa.Schema, *, compression: str) -> None:
             observed["writer"] = (path, schema, compression)
 
-    monkeypatch.setattr(language_splits, "atomic_replacement", fake_atomic)
-    monkeypatch.setattr(language_splits.pq, "ParquetWriter", FakeWriter)
+    monkeypatch.setattr(language_split_writer, "atomic_replacement", fake_atomic)
+    monkeypatch.setattr(language_split_writer.pq, "ParquetWriter", FakeWriter)
 
     with ExitStack() as stack:
-        writer = language_splits._writer_for_language(
+        writer = language_split_writer._writer_for_language(
             "en",
             tmp_path / "destination",
             tmp_path / "stage",

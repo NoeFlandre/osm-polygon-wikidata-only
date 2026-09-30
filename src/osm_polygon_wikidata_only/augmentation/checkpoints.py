@@ -23,6 +23,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     section_schema,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.parquet import write_typed_table
 from osm_polygon_wikidata_only.utils.json import dumps, loads
 
 CHECKPOINT_CONTRACT_VERSION = "augmentation-checkpoints-v1"
@@ -252,11 +253,12 @@ class AugmentationCheckpointStore:
         documents: list[Document],
     ) -> Path:
         def write(directory: Path) -> None:
-            self._write_table(
+            write_typed_table(
                 directory / "documents.parquet",
                 [document.to_dict() for document in documents],
                 DOCUMENT_COLUMNS,
                 document_schema(),
+                empty_input_placeholder=False,
             )
             self._write_metadata(directory, {"entities_digest": entity_digest})
 
@@ -285,11 +287,12 @@ class AugmentationCheckpointStore:
         relative = f"sections/batch-{self._validate_index(index):06d}"
 
         def write(directory: Path) -> None:
-            self._write_table(
+            write_typed_table(
                 directory / "sections.parquet",
                 [section.to_dict() for section in sections],
                 SECTION_COLUMNS,
                 section_schema(),
+                empty_input_placeholder=False,
             )
             self._write_metadata(
                 directory,
@@ -313,11 +316,12 @@ class AugmentationCheckpointStore:
 
     def save_facts(self, entity_digest: str, facts: list[WikidataFact]) -> Path:
         def write(directory: Path) -> None:
-            self._write_table(
+            write_typed_table(
                 directory / "facts.parquet",
                 [fact.to_dict() for fact in facts],
                 FACT_COLUMNS,
                 fact_schema(),
+                empty_input_placeholder=False,
             )
             self._write_metadata(directory, {"entities_digest": entity_digest})
 
@@ -378,16 +382,6 @@ class AugmentationCheckpointStore:
             return rows
         except (OSError, ValueError, TypeError, pa.ArrowException):
             return None
-
-    @staticmethod
-    def _write_table(
-        path: Path,
-        rows: list[dict[str, Any]],
-        columns: tuple[str, ...],
-        schema: pa.Schema,
-    ) -> None:
-        normalized = [{column: row.get(column) for column in columns} for row in rows]
-        pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path, compression="snappy")
 
     def _section_batch_path(self, index: int) -> Path:
         return self.plan_root / "sections" / f"batch-{self._validate_index(index):06d}"

@@ -46,16 +46,33 @@ def write_table(
     columns: tuple[str, ...],
     schema: pa.Schema,
 ) -> int:
-    """Write ``rows`` to ``path`` using ``schema`` and return the row count.
+    """Write a typed dataset table, retaining the established empty-row policy."""
+    return write_typed_table(
+        path,
+        rows,
+        columns,
+        schema,
+        empty_input_placeholder=True,
+    )
 
-    Empty input is allowed: we write a single placeholder row with
-    default values, then immediately drop it so the resulting parquet
-    file has zero data rows but the correct schema. This way
-    ``datasets.load_dataset`` and friends always see a typed schema.
+
+def write_typed_table(
+    path: Path,
+    rows: Iterable[dict[str, object]],
+    columns: tuple[str, ...],
+    schema: pa.Schema,
+    *,
+    empty_input_placeholder: bool,
+) -> int:
+    """Normalize and write typed rows with a caller-selected empty policy.
+
+    Dataset exports use a placeholder row before slicing it away so
+    ``datasets.load_dataset`` sees a typed schema. Checkpoints write the
+    empty table directly so required non-string fields need no fake values.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     materialized = _fill_columns(rows, columns)
-    if not materialized:
+    if not materialized and empty_input_placeholder:
         placeholder = empty_row(columns)
         table = pa.Table.from_pylist([placeholder], schema=schema)
         table = table.slice(0, 0)
@@ -116,4 +133,5 @@ __all__ = [
     "write_polygon_articles",
     "write_polygons",
     "write_table",
+    "write_typed_table",
 ]

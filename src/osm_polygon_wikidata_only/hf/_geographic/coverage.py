@@ -20,9 +20,6 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 
 from .aggregation import aggregate_geographic_text_coverage
-from .basemap import DPI as _DPI
-from .basemap import FIGSIZE as _FIGSIZE
-from .basemap import draw_landmasses, init_axes
 from .h3_geometry import (
     DEFAULT_H3_RESOLUTION,
     DEFAULT_MIN_POLYGONS_PER_CELL,
@@ -32,7 +29,7 @@ from .models import CoverageCell, CoverageMapError, RenderResult
 from .parquet_inputs import (
     sorted_parquets,  # noqa: F401  (kept for downstream consumer compatibility)
 )
-from .rendering import atomic_save_png, format_percent_tick
+from .rendering import create_map_axes, format_percent_tick, save_map_figure
 
 LOGGER = logging.getLogger(__name__)
 
@@ -112,25 +109,16 @@ def render_geographic_text_coverage(
     """Render the coverage PNG and atomically write it to ``output_path``."""
     coerced = coerce_coverage_cells(cells)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = _coverage_axes(land_features)
+    fig, ax = create_map_axes(land_features)
     cmap, norm = _coverage_scale()
     for cell in coerced:
         draw_coverage_cell(ax, cell, cmap=cmap, norm=norm)
     caption = _coverage_caption(coerced, min_polygons_per_cell)
     _decorate_coverage_figure(fig, ax, cmap, norm, caption)
-    _save_coverage_figure(fig, output_path)
+    save_map_figure(fig, output_path)
 
     LOGGER.info("Wrote geographic Wikipedia text coverage map to %s", output_path)
     return RenderResult(output_path=output_path, caption=caption)
-
-
-def _coverage_axes(land_features: Sequence[Any] | None) -> tuple[Any, Any]:
-    fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
-    fig.set_facecolor("white")
-    init_axes(ax)
-    if land_features:
-        draw_landmasses(ax, land_features)
-    return fig, ax
 
 
 def _coverage_scale() -> tuple[mcolors.Colormap, mcolors.Normalize]:
@@ -175,14 +163,6 @@ def _decorate_coverage_figure(
     colorbar.set_label("Polygons with non-empty Wikipedia text (%)", fontsize=8, color="#333333")
     colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_percent_tick))
     colorbar.ax.tick_params(labelsize=7)
-
-
-def _save_coverage_figure(fig: Any, output_path: Path) -> None:
-    try:
-        fig.tight_layout(rect=(0, 0.06, 1, 0.95))
-        atomic_save_png(fig, output_path)
-    finally:
-        plt.close(fig)
 
 
 def generate_geographic_text_coverage(

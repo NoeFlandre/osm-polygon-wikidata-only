@@ -11,7 +11,6 @@ data. They cover:
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -28,20 +27,12 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.cli import commands, run_sync
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from tests.helpers import sha256_file
 
 pytestmark = pytest.mark.map_orchestration
-
-
-def compute_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _setup_mock_region(data_root: DataRoot, stem: str, *, augmented: bool = True) -> None:
@@ -140,8 +131,8 @@ def _setup_mock_region(data_root: DataRoot, stem: str, *, augmented: bool = True
                     stem: {
                         "contract_version": "text-sidecars-v1",
                         "core_hashes": {
-                            str(polygons_path): compute_sha256(polygons_path),
-                            str(wikipedia_documents_path): compute_sha256(wikipedia_documents_path),
+                            str(polygons_path): sha256_file(polygons_path),
+                            str(wikipedia_documents_path): sha256_file(wikipedia_documents_path),
                         },
                         "counts": {
                             "wikipedia_documents": 1,
@@ -178,21 +169,6 @@ def _setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
     monkeypatch.setattr(run_sync, "_build_upload_queue", mock_build_queue)
 
 
-def _patch_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
-    def mock_build_wikimedia_runtime(*args: Any, **kwargs: Any) -> Any:
-        class DummyRuntime:
-            settings = Settings(repo_id="test", user_agent="test")
-            scheduler = type("DummyScheduler", (), {"snapshot": {}})()
-            session = type("DummySession", (), {"auth_snapshot": {}})()
-            wikidata = None
-            wikipedia = None
-            cache = None
-
-        return DummyRuntime()
-
-    monkeypatch.setattr(run_sync, "build_wikimedia_runtime", mock_build_wikimedia_runtime)
-
-
 def _synthesize_pending_publication(data_root: DataRoot, stem: str) -> None:
     from osm_polygon_wikidata_only.pipeline.pending_publications import add_pending_publications
 
@@ -200,7 +176,10 @@ def _synthesize_pending_publication(data_root: DataRoot, stem: str) -> None:
 
 
 def test_publish_only_repair_runs_before_processing_new_region(
-    tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    mock_hf_auth: None,
+    monkeypatch: pytest.MonkeyPatch,
+    no_op_wikimedia_runtime: None,
 ) -> None:
     """When the input has a PUBLISH-only repair candidate AND a fresh
     PROCESS PBF, the upload queue must see the publish commit FIRST,
@@ -226,7 +205,6 @@ def test_publish_only_repair_runs_before_processing_new_region(
     }
     stub = StubHfHub(remote_files=stub_files)
     _setup_test_hub(monkeypatch, stub)
-    _patch_runtime(monkeypatch)
 
     # Only the publish stem has a real PBF; the process stem is not
     # in input_stems. The publish commit alone is the assertion
@@ -262,7 +240,10 @@ def test_publish_only_repair_runs_before_processing_new_region(
 
 
 def test_two_runs_are_noop(
-    tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    mock_hf_auth: None,
+    monkeypatch: pytest.MonkeyPatch,
+    no_op_wikimedia_runtime: None,
 ) -> None:
     """After a successful convergence, the second invocation must
     find nothing to do and remain a no-op."""
@@ -289,7 +270,6 @@ def test_two_runs_are_noop(
     }
     stub = StubHfHub(remote_files=stub_files)
     _setup_test_hub(monkeypatch, stub)
-    _patch_runtime(monkeypatch)
 
     (data_root.raw / f"{stem}.osm.pbf").touch()
 

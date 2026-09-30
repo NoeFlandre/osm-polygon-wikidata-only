@@ -20,16 +20,13 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 
 from .aggregation import aggregate_geographic_polygon_count
-from .basemap import DPI as _DPI
-from .basemap import FIGSIZE as _FIGSIZE
-from .basemap import draw_landmasses, init_axes
 from .h3_geometry import (
     DEFAULT_H3_RESOLUTION,
     DEFAULT_MIN_POLYGONS_PER_CELL,
     cell_rings,
 )
 from .models import CoverageMapError, PolygonCountCell, RenderResult
-from .rendering import atomic_save_png, format_count_tick
+from .rendering import create_map_axes, format_count_tick, save_map_figure
 
 LOGGER = logging.getLogger(__name__)
 
@@ -131,24 +128,15 @@ def render_count_map(
     if not coerced and not allow_empty:
         raise CoverageMapError("Cannot render count map: no H3 cells supplied.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = _count_map_axes(land_features)
+    fig, ax = create_map_axes(land_features)
     cmap, norm = _count_scale(coerced)
     for cell in coerced:
         draw_count_cell(ax, cell, cmap=cmap, norm=norm)
     _decorate_count_map(fig, ax, cmap, norm, title, caption, colorbar_label)
-    _save_count_map(fig, output_path)
+    save_map_figure(fig, output_path)
 
     LOGGER.info("Wrote geographic polygon count map to %s", output_path)
     return RenderResult(output_path=output_path, caption=caption)
-
-
-def _count_map_axes(land_features: Sequence[Any] | None) -> tuple[Any, Any]:
-    fig, ax = plt.subplots(figsize=_FIGSIZE, dpi=_DPI)
-    fig.set_facecolor("white")
-    init_axes(ax)
-    if land_features:
-        draw_landmasses(ax, land_features)
-    return fig, ax
 
 
 def _count_scale(cells: Sequence[PolygonCountCell]) -> tuple[mcolors.Colormap, mcolors.LogNorm]:
@@ -175,14 +163,6 @@ def _decorate_count_map(
     colorbar.set_label(colorbar_label, fontsize=8, color="#333333")
     colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_count_tick))
     colorbar.ax.tick_params(labelsize=7)
-
-
-def _save_count_map(fig: Any, output_path: Path) -> None:
-    try:
-        fig.tight_layout(rect=(0, 0.06, 1, 0.95))
-        atomic_save_png(fig, output_path)
-    finally:
-        plt.close(fig)
 
 
 def generate_geographic_polygon_count(

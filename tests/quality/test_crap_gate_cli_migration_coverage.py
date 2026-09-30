@@ -20,7 +20,7 @@ from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemPlan,
 )
 from osm_polygon_wikidata_only.v2 import cli as v2_cli
-from osm_polygon_wikidata_only.v2 import index_scanning, language_splits
+from osm_polygon_wikidata_only.v2 import index_scanning, language_split_manifest
 
 
 def test_v2_inventory_handles_disabled_success_and_unavailable_remote(
@@ -95,24 +95,28 @@ def test_v1_legacy_row_conversion_wraps_bad_rows(monkeypatch: pytest.MonkeyPatch
 
 
 def test_manifest_record_readers_reject_wrong_shapes_and_escape_roots(tmp_path: Path) -> None:
-    assert language_splits._manifest_records("not-a-list") == ()
-    assert language_splits._manifest_records([{"path": "ok"}, None, 42]) == ({"path": "ok"},)
+    assert language_split_manifest._manifest_records("not-a-list") == ()
+    assert language_split_manifest._manifest_records([{"path": "ok"}, None, 42]) == (
+        {"path": "ok"},
+    )
 
     missing = tmp_path / "missing.json"
-    assert language_splits._read_previous_manifest(missing) is None
+    assert language_split_manifest._read_previous_manifest(missing) is None
     manifest = tmp_path / "manifest.json"
     manifest.write_text("[]", encoding="utf-8")
-    assert language_splits._read_previous_manifest(manifest) is None
+    assert language_split_manifest._read_previous_manifest(manifest) is None
     manifest.write_text("{broken", encoding="utf-8")
-    assert language_splits._read_previous_manifest(manifest) is None
+    assert language_split_manifest._read_previous_manifest(manifest) is None
 
     root = tmp_path.resolve()
-    assert language_splits._manifest_output_root(None, root) is None
-    assert language_splits._manifest_output_root({"output_root": 42}, root) is None
-    assert language_splits._manifest_output_root({"output_root": "../outside"}, root) is None
-    assert language_splits._manifest_output_root({"output_root": "language_splits"}, root) == (
-        root / "language_splits"
+    assert language_split_manifest._manifest_output_root(None, root) is None
+    assert language_split_manifest._manifest_output_root({"output_root": 42}, root) is None
+    assert (
+        language_split_manifest._manifest_output_root({"output_root": "../outside"}, root) is None
     )
+    assert language_split_manifest._manifest_output_root(
+        {"output_root": "language_splits"}, root
+    ) == (root / "language_splits")
 
 
 @pytest.mark.parametrize("stem", ["", ".", "..", "nested/path", r"nested\path"])

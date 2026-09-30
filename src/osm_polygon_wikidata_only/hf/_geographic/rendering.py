@@ -16,10 +16,34 @@ specific (colormap, alpha, threshold, caption) belongs here.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import matplotlib.pyplot as plt
+
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement
+
+from .basemap import DPI, FIGSIZE, draw_landmasses, init_axes
+
+
+def create_map_axes(land_features: Sequence[Any] | None) -> tuple[Any, Any]:
+    """Create the shared map figure and initialize its geographic axes."""
+    fig, ax = plt.subplots(figsize=FIGSIZE, dpi=DPI)
+    fig.set_facecolor("white")
+    init_axes(ax)
+    if land_features:
+        draw_landmasses(ax, land_features)
+    return fig, ax
+
+
+def save_map_figure(fig: Any, output_path: Path) -> None:
+    """Fit, atomically save, and close a map figure on every exit path."""
+    try:
+        fig.tight_layout(rect=(0, 0.06, 1, 0.95))
+        atomic_save_png(fig, output_path)
+    finally:
+        plt.close(fig)
 
 
 def atomic_save_png(fig: Any, output_path: Path) -> None:
@@ -52,6 +76,8 @@ def format_count_tick(value: float, _position: int | None = None) -> str:
 
 __all__ = [
     "atomic_save_png",
+    "create_map_axes",
     "format_count_tick",
     "format_percent_tick",
+    "save_map_figure",
 ]
