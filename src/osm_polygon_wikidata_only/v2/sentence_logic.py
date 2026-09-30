@@ -428,7 +428,7 @@ def _split_rows(
     return rows
 
 
-def _normalize_pieces(pieces: Sequence[str]) -> list[str]:
+def _normalize_pieces(pieces: Sequence[object]) -> list[str]:
     return [piece if isinstance(piece, str) else str(piece) for piece in pieces]
 
 

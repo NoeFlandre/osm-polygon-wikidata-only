@@ -12,6 +12,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaConfigurationError
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
 _AUTH_ENV = {
     "WIKIMEDIA_BOT_USERNAME": "User@pipeline",
@@ -33,8 +34,8 @@ def test_authenticated_runtime_shares_budget_with_augmentation_client(tmp_path) 
     # remaining below the scheduler's 16-request hard cap.
     assert runtime.scheduler.max_in_flight == 12
     assert runtime.scheduler.current_requests_per_minute == 1_200
-    assert augmentation._scheduler is runtime.scheduler
-    assert augmentation._session is runtime.session
+    assert augmentation.scheduler is runtime.scheduler
+    assert augmentation.session is runtime.session
 
 
 def test_anonymous_runtime_keeps_conservative_concurrency(tmp_path) -> None:
@@ -147,7 +148,8 @@ def test_standalone_augmentation_scheduler_uses_proportional_policy(tmp_path) ->
         JsonFileCache(tmp_path / "augmentation"),
         environ=_AUTH_ENV,
     )
-    scheduler = client._scheduler
+    scheduler = client.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
 
     hosts = tuple(f"h{i}.wikipedia.org" for i in range(195))
     for host in hosts:

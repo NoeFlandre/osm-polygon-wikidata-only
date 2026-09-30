@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from inspect import signature
+from collections.abc import Sequence
 
 import pytest
 
@@ -39,7 +40,7 @@ class _FakeSegmenter:
     def __post_init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def split(self, texts: list[str], *, language: str) -> list[list[str]]:
+    def split(self, texts: Sequence[str], *, language: str) -> Sequence[Sequence[str]]:
         self.calls.append((language, tuple(texts)))
         return [self.pieces[text] for text in texts]
 
@@ -337,14 +338,14 @@ def test_split_sections_uses_empty_section_id_fallback_for_sentence_id() -> None
 
 
 def test_normalize_pieces_converts_non_string_model_output() -> None:
-    assert _normalize_pieces([123]) == ["123"]  # type: ignore[list-item]
+    assert _normalize_pieces([123]) == ["123"]
 
 
 @pytest.mark.parametrize(("piece", "expected"), [(0, "0"), (False, "False"), (None, "None")])
 def test_normalize_pieces_preserves_falsey_and_none_model_output(
     piece: object, expected: str
 ) -> None:
-    assert _normalize_pieces([piece]) == [expected]  # type: ignore[list-item]
+    assert _normalize_pieces([piece]) == [expected]
 
 
 def test_text_preserves_existing_string_subclasses_without_coercion() -> None:
@@ -369,7 +370,7 @@ def test_normalize_pieces_preserves_existing_string_subclasses() -> None:
 
 def test_split_sections_rejects_model_output_that_loses_source_text() -> None:
     section = _section("en-1", "en", "First. Second.")
-    segmenter = _FakeSegmenter({section["text"]: ["First."]})
+    segmenter = _FakeSegmenter({str(section["text"]): ["First."]})
 
     with pytest.raises(ValueError) as error:
         split_sections([section], segmenter=segmenter)
@@ -417,7 +418,7 @@ def test_split_sections_rejects_nonpositive_batch_size(batch_size: int) -> None:
 
 def test_split_sections_rejects_wrong_result_count() -> None:
     class _WrongCountSegmenter(_FakeSegmenter):
-        def split(self, texts: list[str], *, language: str) -> list[list[str]]:
+        def split(self, texts: Sequence[str], *, language: str) -> Sequence[Sequence[str]]:
             self.calls.append((language, tuple(texts)))
             return []
 

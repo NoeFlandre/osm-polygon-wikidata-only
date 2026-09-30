@@ -78,6 +78,10 @@ class _AugmentationClient:
         self.parse_calls.append((project, language, revision_id))
         return "<p>Recovered article text.</p>"
 
+    def wikivoyage_document(self, qid: str, language: str, site: str, title: str) -> None:
+        del qid, language, site, title
+        return None
+
 
 def _wikipedia_article(qid: str, index: int = 9) -> WikipediaArticle:
     return WikipediaArticle(
@@ -791,7 +795,7 @@ def test_repair_change_flags_distinguish_map_inputs_from_sidecars(tmp_path: Path
         inputs.polygons,
         inputs.stored_links,
         inputs.documents,
-        ["section"],
+        [{"id": "section"}],
         inputs.facts,
     )
     assert sidecar_changed == (True, False)
@@ -800,7 +804,7 @@ def test_repair_change_flags_distinguish_map_inputs_from_sidecars(tmp_path: Path
         inputs,
         inputs.polygons,
         inputs.stored_links,
-        ["document"],
+        [{"id": "document"}],
         inputs.sections,
         inputs.facts,
     )

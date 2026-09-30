@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation.models import (
     Document,
+    Section,
     WikidataFact,
     document_from_article_row,
     document_id,
@@ -354,9 +356,17 @@ def test_resolve_entities_empty_qids_no_progress_yet() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[tuple[str, ...], str]] = []
 
-        def entities(self, qids, *, props):
+        def entities(self, qids: list[str] | set[str], *, props: str) -> dict[str, dict[str, Any]]:
             self.calls.append((tuple(sorted(qids)), props))
             return {}
+
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            raise AssertionError("entity-only fake must not fetch article HTML")
+
+        def wikivoyage_document(
+            self, qid: str, language: str, site: str, title: str
+        ) -> Document | None:
+            raise AssertionError("entity-only fake must not fetch Wikivoyage documents")
 
     client = _EmptyClient()
     progress = AugmentationProgress()
@@ -522,28 +532,28 @@ def test_fetch_document_sections_parses_completed_html_without_waiting_for_tail(
     """A slow final fetch must not retain and block already-fetched HTML."""
     from osm_polygon_wikidata_only.augmentation.steps import fetch_document_sections
 
-    client = FakeAugmentationClient()
-    progress = AugmentationProgress()
+    release_tail = threading.Event()
+    first_parsed = threading.Event()
     first = document_from_article_row(article_row())
     second_row = article_row()
     second_row.update(article_id="Q2:en:11:21", wikidata="Q2", page_id=11, revision_id=21)
     second = document_from_article_row(second_row)
-    release_tail = threading.Event()
-    first_parsed = threading.Event()
-    original_parse_html = client.parse_html
 
-    def fetch_html(project: str, language: str, revision_id: int) -> str:
-        if revision_id == second.revision_id:
-            assert release_tail.wait(timeout=2), "test did not release tail fetch"
-        return original_parse_html(project, language, revision_id)
+    class TailDelayedClient(FakeAugmentationClient):
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            if revision_id == second.revision_id:
+                assert release_tail.wait(timeout=2), "test did not release tail fetch"
+            return super().parse_html(project, language, revision_id)
 
-    def record_parse(document: Document, _html: str) -> list[object]:
+    client = TailDelayedClient()
+    progress = AugmentationProgress()
+
+    def record_parse(document: Document, _html: str) -> list[Section]:
         if document.document_id == first.document_id:
             first_parsed.set()
         return []
 
-    client.parse_html = fetch_html  # type: ignore[method-assign]
-    result: list[dict[str, list[object]]] = []
+    result: list[dict[str, list[Section]]] = []
 
     def execute() -> None:
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -635,12 +645,10 @@ def test_write_sidecars_writes_five_files_in_approved_order(tmp_path: Path) -> N
     data_root = _seed_core(tmp_path)
     paths = sidecar_paths(data_root, "andorra-latest")
     doc = document_from_article_row(article_row())
-    voyage = doc.__class__(
-        **{
-            **doc.to_dict(),
-            "document_id": document_id("Q1", "wikivoyage", "fr", 30, 40),
-            "project": "wikivoyage",
-        }
+    voyage = replace(
+        doc,
+        document_id=document_id("Q1", "wikivoyage", "fr", 30, 40),
+        project="wikivoyage",
     )
     sections = {"wikipedia": [], "wikivoyage": []}
 

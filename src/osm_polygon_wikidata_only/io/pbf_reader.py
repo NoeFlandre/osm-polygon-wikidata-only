@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import osmium
 import osmium.geom
@@ -36,6 +36,12 @@ _REGION_RE = re.compile(r"^(?P<region>.+)-latest\.osm\.pbf$")
 # for every retained polygonal element. ``geom_json`` is a GeoJSON string.
 PolygonCandidate = tuple[str, int, dict[str, str], str]
 """A polygon candidate yielded by :class:`PBFReader`."""
+
+
+class PolygonGeometryFactory(Protocol):
+    """Create GeoJSON for one libosmium area callback."""
+
+    def create_multipolygon(self, area: Any) -> str: ...
 
 Callback = Callable[[PolygonCandidate], None]
 """Callback signature for retained polygonal elements."""
@@ -118,11 +124,19 @@ class _PolygonHandler(osmium.SimpleHandler):
     needs them.
     """
 
-    def __init__(self, callback: Callback, *, include_wikipedia_tagged: bool = False) -> None:
+    def __init__(
+        self,
+        callback: Callback,
+        *,
+        include_wikipedia_tagged: bool = False,
+        geometry_factory: PolygonGeometryFactory | None = None,
+    ) -> None:
         super().__init__()
         self._callback = callback
         self._include_wikipedia_tagged = include_wikipedia_tagged
-        self._factory = osmium.geom.GeoJSONFactory()
+        self._factory = (
+            osmium.geom.GeoJSONFactory() if geometry_factory is None else geometry_factory
+        )
 
     @staticmethod
     def _tags(tags: Any) -> dict[str, str]:

@@ -8,13 +8,17 @@ injected deterministic clocks and sleeps so no real time passes.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
 
-def _fake_clock() -> tuple[list[float], list[float], object, object]:
+def _fake_clock() -> tuple[
+    list[float], list[float], Callable[[], float], Callable[[float], None]
+]:
     now = [0.0]
     sleeps: list[float] = []
 
@@ -304,8 +308,8 @@ def test_global_recovery_is_gradual_and_bounded() -> None:
 
 def _make_proportional_scheduler(
     now: list[float],
-    clock: object,
-    sleep: object,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
     *,
     requests_per_minute: float = 1200.0,
     active_host_window_s: float = 60.0,
@@ -681,7 +685,7 @@ def test_concurrent_snapshots_are_thread_safe() -> None:
 )
 def test_scheduler_rejects_invalid_configuration(kwargs: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError) as error:
-        AdaptiveRequestScheduler(**kwargs)  # type: ignore[arg-type]
+        AdaptiveRequestScheduler(**cast(Any, kwargs))
 
     assert str(error.value) == message
 

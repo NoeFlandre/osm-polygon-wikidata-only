@@ -279,7 +279,7 @@ def _corrupt_first_data_page(path: Path) -> None:
 
 def test_plan_link_migration_produces_empty_plan_for_no_stems(tmp_path: Path) -> None:
     """Empty stems list is a normal no-op: planner returns an empty plan."""
-    plan = link_migration.plan_link_migration(tmp_path, stems=[])
+    plan = link_migration.plan_link_migration(tmp_path, stems=set())
     assert plan.stems == (), f"Empty stems must yield empty plan, got {plan.stems}"
     # And no writes happened.
     assert not (tmp_path / "polygon_articles").exists() or not any(
@@ -289,14 +289,14 @@ def test_plan_link_migration_produces_empty_plan_for_no_stems(tmp_path: Path) ->
 
 def test_plan_link_migration_rejects_path_traversal(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
-        link_migration.plan_link_migration(tmp_path, stems=["../escape"])
+        link_migration.plan_link_migration(tmp_path, stems={"../escape"})
 
 
 def test_plan_link_migration_classifies_legacy_stem_as_migratable(tmp_path: Path) -> None:
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     stem_plans = {s.stem: s for s in plan.stems}
     assert stem_plans["monaco-latest"].classification == "migratable", (
         f"Legacy stem with matching document must be migratable, got "
@@ -329,7 +329,7 @@ def test_plan_link_migration_classifies_mixed_schema_exactly_blocked(
     # An incomplete schema: only "polygon_id" and "article_id".
     mixed_table = pa.table({"polygon_id": ["p"], "article_id": ["x"]})
     pa.parquet.write_table(mixed_table, layout["polygon_articles"] / "monaco-latest.parquet")
-    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     stem_plans = {s.stem: s for s in plan.stems}
     assert stem_plans["monaco-latest"].classification == "BLOCKED", (
         f"Mixed schema must be classified exactly BLOCKED, got "
@@ -351,7 +351,7 @@ def test_plan_link_migration_reads_canonical_link_table_once(
         return original_read_table(path, *args, **kwargs)
 
     monkeypatch.setattr(link_migration.pq, "read_table", count_link_table_reads)
-    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
 
     assert plan.stems[0].classification == "canonical"
     assert link_table_reads == 1
@@ -378,7 +378,7 @@ def test_unreadable_data_pages_block_only_their_stem(tmp_path: Path, schema: str
     with pytest.raises((OSError, pa.ArrowInvalid)):
         pa.parquet.read_table(broken_links)
 
-    plan = link_migration.plan_link_migration(tmp_path, stems=["broken", "healthy"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"broken", "healthy"})
     by_stem = {stem.stem: stem for stem in plan.stems}
 
     assert by_stem["broken"].classification == "BLOCKED"
@@ -399,7 +399,7 @@ def test_plan_link_migration_includes_corrupt_parquet_error(
     links_path.write_bytes(b"not a parquet file")
 
     with caplog.at_level("WARNING"):
-        plan = link_migration.plan_link_migration(tmp_path, stems=["broken"])
+        plan = link_migration.plan_link_migration(tmp_path, stems={"broken"})
 
     blocked = plan.stems[0]
     assert blocked.classification == "BLOCKED"
@@ -421,7 +421,7 @@ def test_plan_link_migration_propagates_unexpected_schema_errors(
     monkeypatch.setattr(link_migration.pq, "read_schema", fail_unexpectedly)
 
     with pytest.raises(RuntimeError, match="unexpected schema reader failure"):
-        link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+        link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +476,7 @@ def test_plan_link_migration_within_stem_isolation_alpha_migratable_beta_blocked
     )
     # Beta's directory exists but has no document file.
 
-    plan = link_migration.plan_link_migration(tmp_path, stems=["alpha", "beta"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"alpha", "beta"})
     buckets = {s.stem: s.classification for s in plan.stems}
     assert buckets["alpha"] == "migratable", (
         f"alpha has matching legacy document -> must be migratable, got {buckets['alpha']!r}"
@@ -529,7 +529,7 @@ def test_plan_link_migration_keys_resolution_within_stem_unique_document_id(
             [_legacy_document_row(document_id, shared_article_id, "Q1")],
         )
 
-    plan = link_migration.plan_link_migration(tmp_path, stems=["alpha", "beta"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"alpha", "beta"})
     buckets = {s.stem: s.classification for s in plan.stems}
     assert buckets["alpha"] == "migratable"
     assert buckets["beta"] == "migratable"
@@ -547,12 +547,12 @@ def test_apply_link_migration_aborts_when_polygons_change_after_planning(
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     # Tamper with the polygons file after planning.
     polygons_path = tmp_path / "polygons" / "monaco-latest.parquet"
     polygons_path.write_bytes(polygons_path.read_bytes() + b"corrupt")
     with pytest.raises(Exception):
-        link_migration.apply_link_migration(plan)
+        link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
 def test_apply_link_migration_aborts_when_legacy_links_change_after_planning(
@@ -562,11 +562,11 @@ def test_apply_link_migration_aborts_when_legacy_links_change_after_planning(
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     links_path = tmp_path / "polygon_articles" / "monaco-latest.parquet"
     links_path.write_bytes(links_path.read_bytes() + b"corrupt")
     with pytest.raises(Exception):
-        link_migration.apply_link_migration(plan)
+        link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
 def test_apply_link_migration_aborts_when_legacy_documents_change_after_planning(
@@ -576,11 +576,11 @@ def test_apply_link_migration_aborts_when_legacy_documents_change_after_planning
     _seed_full_legacy_stem(
         tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
-    plan = link_migration.plan_link_migration(tmp_path, stems=["monaco-latest"])
+    plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     docs_path = tmp_path / "wikipedia" / "documents" / "monaco-latest.parquet"
     docs_path.write_bytes(docs_path.read_bytes() + b"corrupt")
     with pytest.raises(Exception):
-        link_migration.apply_link_migration(plan)
+        link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
 def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> None:
@@ -593,11 +593,11 @@ def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> Non
         article_id="Q1:en:1:1",
         document_id="Q1:wikipedia:en:1:1",
     )
-    link_migration.apply_link_migration(processed, stems=["monaco-latest"])
+    link_migration.apply_link_migration(processed, stems={"monaco-latest"})
     first_hash = hashlib.sha256(
         (processed / "polygon_articles" / "monaco-latest.parquet").read_bytes()
     ).hexdigest()
-    link_migration.apply_link_migration(processed, stems=["monaco-latest"])
+    link_migration.apply_link_migration(processed, stems={"monaco-latest"})
     second_hash = hashlib.sha256(
         (processed / "polygon_articles" / "monaco-latest.parquet").read_bytes()
     ).hexdigest()

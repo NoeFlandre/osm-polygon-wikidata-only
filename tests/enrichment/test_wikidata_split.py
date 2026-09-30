@@ -22,11 +22,16 @@ cache,models,parsing}`` must preserve. They lock down:
 from __future__ import annotations
 
 import urllib.error
-from typing import Any
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from typing import Any, TypeVar
 
 import pytest
 
 from tests.helpers import http_error as _http_error
+from osm_polygon_wikidata_only.io.cache import JsonCache
+
+_T = TypeVar("_T")
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -55,9 +60,19 @@ class _StubSession:
 class _RecordingScheduler:
     def __init__(self) -> None:
         self.throttle_calls: list[tuple[str, float]] = []
+        self.max_in_flight = 3
 
-    def report_host_throttled(self, host: str, delay: float) -> None:
-        self.throttle_calls.append((host, delay))
+    def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
+        del host, min_interval_s
+
+    def report_success(self) -> None:
+        return None
+
+    def report_host_throttled(self, host: str, delay_s: float) -> None:
+        self.throttle_calls.append((host, delay_s))
+
+    def run(self, operation: Callable[[], _T]) -> _T:
+        return operation()
 
 
 def _make_settings(**overrides: Any) -> Any:
@@ -74,12 +89,50 @@ def _make_settings(**overrides: Any) -> Any:
     return type("Settings", (), base)()
 
 
-def _cache_entry(status: str, parsed_result: Any, request_url: str | None) -> Any:
-    return type(
-        "CacheEntry",
-        (),
-        {"status": status, "parsed_result": parsed_result, "request_url": request_url},
-    )()
+@dataclass(frozen=True)
+class _CacheEntry:
+    status: str
+    parsed_result: Any
+    request_url: str | None
+
+
+def _cache_entry(status: str, parsed_result: Any, request_url: str | None) -> _CacheEntry:
+    return _CacheEntry(status, parsed_result, request_url)
+
+
+class _MemoryCache(JsonCache):
+    """Small protocol-conforming cache for client characterization tests."""
+
+    def __init__(self, entries: dict[str, _CacheEntry] | None = None) -> None:
+        self.entries = entries or {}
+        self.writes: list[tuple[str, Any, dict[str, Any]]] = []
+
+    def get(self, key: str) -> _CacheEntry | None:
+        return self.entries.get(key)
+
+    def set(
+        self,
+        key: str,
+        payload: Any,
+        *,
+        request_url: str = "",
+        response_metadata: dict[str, Any] | None = None,
+        status: str = "ok",
+        ttl_s: int | None = None,
+    ) -> object:
+        self.writes.append(
+            (
+                key,
+                payload,
+                {
+                    "request_url": request_url,
+                    "response_metadata": response_metadata,
+                    "status": status,
+                    "ttl_s": ttl_s,
+                },
+            )
+        )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -128,10 +181,10 @@ def test_http_wikidata_constructor_signature() -> None:
 
     settings = _make_settings()
     scheduler = _RecordingScheduler()
-    client = HttpWikidataClient(settings, scheduler=scheduler)
+    client = HttpWikidataClient(settings, scheduler=scheduler, endpoint=WIKIDATA_API_URL)
     assert client._settings is settings
-    assert client._scheduler is scheduler
-    assert client._endpoint == WIKIDATA_API_URL
+    assert client.scheduler is scheduler
+    assert client.endpoint == WIKIDATA_API_URL
 
 
 def test_cached_wikidata_constructor_signature_and_failed_ttl_default() -> None:
@@ -145,19 +198,6 @@ def test_cached_wikidata_constructor_signature_and_failed_ttl_default() -> None:
 # ---------------------------------------------------------------------------
 # Cache round-trip: successful entity serialization
 # ---------------------------------------------------------------------------
-
-
-def _recording_cache() -> tuple[Any, dict[str, Any]]:
-    captured: dict[str, Any] = {"stored": []}
-
-    class _Cache:
-        def get(self, key: str) -> Any:
-            return _cache_entry("ok", captured.get("hit"), None)
-
-        def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-            captured["stored"].append((key, payload, kwargs))
-
-    return _Cache(), captured
 
 
 def test_cached_wikidata_serializes_entity_for_success() -> None:
@@ -177,21 +217,13 @@ def test_cached_wikidata_serializes_entity_for_success() -> None:
     inner = InMemoryWikidataClient({"Q1": entity})
 
     # Cache returns None (miss) so the inner is called.
-    stored: list[tuple[str, Any, dict[str, Any]]] = []
-
-    class _MissCache:
-        def get(self, key: str) -> Any:
-            return None
-
-        def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-            stored.append((key, payload, kwargs))
-
-    client = CachedWikidataClient(inner, _MissCache())
+    cache = _MemoryCache()
+    client = CachedWikidataClient(inner, cache)
     result = client.get_entity("Q1")
 
     assert result == entity
-    assert len(stored) == 1
-    key, payload, kwargs = stored[0]
+    assert len(cache.writes) == 1
+    key, payload, kwargs = cache.writes[0]
     assert key == "wikidata/Q1.json"
     assert isinstance(payload, dict)
     assert payload["qid"] == "Q1"
@@ -213,22 +245,14 @@ def test_cached_wikidata_serializes_authoritative_missing_with_failed_ttl() -> N
     )
 
     inner = InMemoryWikidataClient({})
-    stored: list[tuple[str, Any, dict[str, Any]]] = []
-
-    class _MissCache:
-        def get(self, key: str) -> Any:
-            return None
-
-        def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-            stored.append((key, payload, kwargs))
-
-    client = CachedWikidataClient(inner, _MissCache(), failed_ttl_s=99)
+    cache = _MemoryCache()
+    client = CachedWikidataClient(inner, cache, failed_ttl_s=99)
 
     result = client.get_entity("Q1")
 
     assert result is None
-    assert len(stored) == 1
-    key, payload, kwargs = stored[0]
+    assert len(cache.writes) == 1
+    key, payload, kwargs = cache.writes[0]
     assert key == "wikidata/Q1.json"
     assert payload is None
     assert kwargs["status"] == "not_found"
@@ -255,18 +279,13 @@ def test_cached_wikidata_hit_skips_inner_fetch() -> None:
         "aliases": {},
     }
 
-    class _Cache:
-        def get(self, key: str) -> Any:
-            return _cache_entry("ok", cached_payload, None)
-
-        def set(self, *args: Any, **kwargs: Any) -> None:
-            pass
-
     batch_calls: list[list[str]] = []
     per_title_calls: list[str] = []
 
-    class _Inner:
-        def get_entities(self, qids: list[str]) -> list[WikidataEntity | None]:
+    from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataClient
+
+    class _Inner(WikidataClient):
+        def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
             # Record that batch was called (even with empty list, per
             # legacy behaviour).
             batch_calls.append(list(qids))
@@ -277,7 +296,8 @@ def test_cached_wikidata_hit_skips_inner_fetch() -> None:
             return None
 
     inner = _Inner()
-    client = CachedWikidataClient(inner, _Cache())  # type: ignore[arg-type]
+    cache = _MemoryCache({"wikidata/Q1.json": _cache_entry("ok", cached_payload, None)})
+    client = CachedWikidataClient(inner, cache)
     result = client.get_entity("Q1")
 
     # Result reflects the cache, not the inner.
@@ -304,21 +324,19 @@ def test_cached_wikidata_corrupt_payload_is_treated_as_a_miss() -> None:
 
     inner_calls: list[str] = []
 
-    class _Inner:
+    from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataClient
+
+    class _Inner(WikidataClient):
         def get_entity(self, qid: str) -> WikidataEntity:
             inner_calls.append(qid)
             return WikidataEntity(qid=qid)
 
-    cache = type(
-        "C",
-        (),
-        {
-            "get": lambda self, key: _cache_entry("ok", "not-a-dict", None),
-            "set": lambda self, *args, **kw: None,
-        },
-    )()
+        def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
+            return [self.get_entity(qid) for qid in qids]
 
-    client = CachedWikidataClient(_Inner(), cache)  # type: ignore[arg-type]
+    cache = _MemoryCache({"wikidata/Q1.json": _cache_entry("ok", "not-a-dict", None)})
+
+    client = CachedWikidataClient(_Inner(), cache)
     result = client.get_entity("Q1")
     assert result == WikidataEntity(qid="Q1")
     assert inner_calls == ["Q1"]
@@ -332,21 +350,19 @@ def test_cached_wikidata_legacy_error_hit_is_treated_as_a_miss() -> None:
 
     inner_calls: list[str] = []
 
-    class _Inner:
+    from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataClient
+
+    class _Inner(WikidataClient):
         def get_entity(self, qid: str) -> WikidataEntity:
             inner_calls.append(qid)
             return WikidataEntity(qid=qid)
 
-    cache = type(
-        "C",
-        (),
-        {
-            "get": lambda self, key: _cache_entry("error", None, None),
-            "set": lambda self, *args, **kw: None,
-        },
-    )()
+        def get_entities(self, qids: Iterable[str]) -> list[WikidataEntity | None]:
+            return [self.get_entity(qid) for qid in qids]
 
-    client = CachedWikidataClient(_Inner(), cache)  # type: ignore[arg-type]
+    cache = _MemoryCache({"wikidata/Q1.json": _cache_entry("error", None, None)})
+
+    client = CachedWikidataClient(_Inner(), cache)
     result = client.get_entity("Q1")
     assert result == WikidataEntity(qid="Q1")
     assert inner_calls == ["Q1"]
@@ -370,13 +386,7 @@ def test_cached_wikidata_batch_preserves_order_and_dedup() -> None:
             "Q2": WikidataEntity(qid="Q2", sitelinks={}, labels={}, descriptions={}, aliases={}),
         }
     )
-    cache = type(
-        "C",
-        (),
-        {"get": lambda self, key: None, "set": lambda self, *a, **kw: None},
-    )()
-
-    client = CachedWikidataClient(inner, cache)  # type: ignore[arg-type]
+    client = CachedWikidataClient(inner, _MemoryCache())
     results = client.get_entities(["Q1", "Q2", "Q1", "bogus", "Q2"])
 
     assert [r.qid if r else None for r in results] == ["Q1", "Q2", "Q1", None, "Q2"]
@@ -389,22 +399,12 @@ def test_cached_wikidata_invalid_qid_returns_none_without_fetch() -> None:
     )
 
     inner = InMemoryWikidataClient({})
-    sets: list[tuple[str, Any, dict[str, Any]]] = []
-
-    cache = type(
-        "C",
-        (),
-        {
-            "get": lambda self, key: None,
-            "set": lambda self, key, payload, **kw: sets.append((key, payload, kw)),
-        },
-    )()
-
-    client = CachedWikidataClient(inner, cache)  # type: ignore[arg-type]
+    cache = _MemoryCache()
+    client = CachedWikidataClient(inner, cache)
     result = client.get_entity("not-a-qid")
     assert result is None
     # No cache write for invalid QIDs.
-    assert sets == []
+    assert cache.writes == []
 
 
 # ---------------------------------------------------------------------------
@@ -420,9 +420,12 @@ def test_http_wikidata_batch_failure_propagates() -> None:
     settings = _make_settings()
     scheduler = _RecordingScheduler()
     session = _StubSession([_http_error(503, retry_after="3")])
-    client = HttpWikidataClient(settings, scheduler=scheduler)
-    client._session = session
-    client._endpoint = "https://www.wikidata.org/w/api.php"
+    client = HttpWikidataClient(
+        settings,
+        scheduler=scheduler,
+        session=session,
+        endpoint="https://www.wikidata.org/w/api.php",
+    )
 
     with pytest.raises(urllib.error.HTTPError, match="HTTP Error 503"):
         client.get_entities(["Q1"])
@@ -439,25 +442,20 @@ def test_http_wikidata_503_via_cache_propagates_without_cache_write() -> None:
     settings = _make_settings()
     scheduler = _RecordingScheduler()
     session = _StubSession([_http_error(503, retry_after="3")])
-    client = HttpWikidataClient(settings, scheduler=scheduler)
-    client._session = session
-    client._endpoint = "https://www.wikidata.org/w/api.php"
+    client = HttpWikidataClient(
+        settings,
+        scheduler=scheduler,
+        session=session,
+        endpoint="https://www.wikidata.org/w/api.php",
+    )
 
-    stored: list[tuple[str, Any, dict[str, Any]]] = []
-
-    class _MissCache:
-        def get(self, key: str) -> Any:
-            return None
-
-        def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-            stored.append((key, payload, kwargs))
-
-    cached = CachedWikidataClient(client, _MissCache(), failed_ttl_s=11)
+    cache = _MemoryCache()
+    cached = CachedWikidataClient(client, cache, failed_ttl_s=11)
 
     with pytest.raises(urllib.error.HTTPError, match="HTTP Error 503"):
         cached.get_entity("Q1")
 
-    assert stored == []
+    assert cache.writes == []
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +475,7 @@ def test_http_wikidata_accepts_endpoint_override() -> None:
         scheduler=scheduler,
         endpoint="https://example.test/w/api.php",
     )
-    assert client._endpoint == "https://example.test/w/api.php"
+    assert client.endpoint == "https://example.test/w/api.php"
     assert client._build_url("Q1") == (
         "https://example.test/w/api.php?"
         "action=wbgetentities&ids=Q1&props=sitelinks%7Clabels%7Cdescriptions"

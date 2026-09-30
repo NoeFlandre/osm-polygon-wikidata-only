@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import osmium.geom
+import osmium.osm
 import pytest
 
 from osm_polygon_wikidata_only.io.pbf_reader import (
@@ -21,6 +22,16 @@ class _Tag:
     def __init__(self, key: str, value: str) -> None:
         self.k = key
         self.v = value
+
+
+class _GeometryFactory:
+    def __init__(self, geometry: str | None = "{}") -> None:
+        self.geometry = geometry
+
+    def create_multipolygon(self, _area: Any) -> str:
+        if self.geometry is None:
+            raise ValueError("invalid geometry")
+        return self.geometry
 
 
 def _tags(*items: tuple[str, str]) -> list[_Tag]:
@@ -130,9 +141,7 @@ def test_area_passes_original_area_to_geometry_factory() -> None:
             return "{}"
 
     factory = Factory()
-    handler = _PolygonHandler(lambda _candidate: None)
-    handler_any = cast(Any, handler)
-    handler_any._factory = factory
+    handler = _PolygonHandler(lambda _candidate: None, geometry_factory=factory)
     area = SimpleNamespace(
         id=7,
         orig_id=lambda: 7,
@@ -141,7 +150,7 @@ def test_area_passes_original_area_to_geometry_factory() -> None:
         from_way=lambda: False,
     )
 
-    handler_any.area(area)
+    handler.area(cast(osmium.osm.Area, area))
 
     assert factory.received == [area]
 
@@ -153,9 +162,8 @@ def test_area_forwards_wikipedia_opt_in_to_candidate_filter() -> None:
     handler = _PolygonHandler(
         lambda candidate: seen.append((candidate[0], candidate[1])),
         include_wikipedia_tagged=True,
+        geometry_factory=_GeometryFactory(),
     )
-    handler_any = cast(Any, handler)
-    handler_any._factory = SimpleNamespace(create_multipolygon=lambda _area: "{}")
     area = SimpleNamespace(
         id=7,
         orig_id=lambda: 7,
@@ -164,7 +172,7 @@ def test_area_forwards_wikipedia_opt_in_to_candidate_filter() -> None:
         from_way=lambda: False,
     )
 
-    handler_any.area(area)
+    handler.area(cast(osmium.osm.Area, area))
 
     assert seen == [("relation", 7)]
 
@@ -173,9 +181,10 @@ def test_area_forwards_original_osm_id_not_encoded_area_id() -> None:
     from osm_polygon_wikidata_only.io.pbf_reader import _PolygonHandler
 
     seen: list[tuple[str, int]] = []
-    handler = _PolygonHandler(lambda candidate: seen.append((candidate[0], candidate[1])))
-    handler_any = cast(Any, handler)
-    handler_any._factory = SimpleNamespace(create_multipolygon=lambda _area: "{}")
+    handler = _PolygonHandler(
+        lambda candidate: seen.append((candidate[0], candidate[1])),
+        geometry_factory=_GeometryFactory(),
+    )
     area = SimpleNamespace(
         id=401,
         orig_id=lambda: 200,
@@ -184,7 +193,7 @@ def test_area_forwards_original_osm_id_not_encoded_area_id() -> None:
         from_way=lambda: False,
     )
 
-    handler_any.area(area)
+    handler.area(cast(osmium.osm.Area, area))
 
     assert seen == [("relation", 200)]
 
@@ -208,16 +217,11 @@ def test_area_filters_invalid_candidates_and_delivers_valid_ones(
 ) -> None:
     from osm_polygon_wikidata_only.io.pbf_reader import _PolygonHandler
 
-    class Factory:
-        def create_multipolygon(self, _area: object) -> str:
-            if geometry is None:
-                raise ValueError("invalid geometry")
-            return geometry
-
     seen: list[tuple[str, int]] = []
-    handler = _PolygonHandler(lambda candidate: seen.append((candidate[0], candidate[1])))
-    untyped_handler = cast(Any, handler)
-    untyped_handler._factory = Factory()
+    handler = _PolygonHandler(
+        lambda candidate: seen.append((candidate[0], candidate[1])),
+        geometry_factory=_GeometryFactory(geometry),
+    )
     area = SimpleNamespace(
         id=7,
         orig_id=lambda: 7,
@@ -226,6 +230,6 @@ def test_area_filters_invalid_candidates_and_delivers_valid_ones(
         from_way=lambda: from_way,
     )
 
-    untyped_handler.area(area)
+    handler.area(cast(osmium.osm.Area, area))
 
     assert seen == expected

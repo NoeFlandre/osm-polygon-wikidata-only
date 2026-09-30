@@ -23,11 +23,22 @@ cache,models,parsing}`` must preserve. They lock down:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from typing import Any, TypeVar
 
 import pytest
 
 from tests.helpers import http_error as _http_error
+from osm_polygon_wikidata_only.io.cache import JsonCache
+from osm_polygon_wikidata_only.enrichment.wikipedia.models import (
+    BatchWikipediaClient,
+    FetchResult,
+    WikipediaArticle,
+    WikipediaClient,
+)
+
+_T = TypeVar("_T")
 
 # ---------------------------------------------------------------------------
 # Fakes (mirror the style used by ``test_wikimedia_transport_clients.py``)
@@ -56,9 +67,19 @@ class _StubSession:
 class _RecordingScheduler:
     def __init__(self) -> None:
         self.throttle_calls: list[tuple[str, float]] = []
+        self.max_in_flight = 3
 
-    def report_host_throttled(self, host: str, delay: float) -> None:
-        self.throttle_calls.append((host, delay))
+    def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
+        del host, min_interval_s
+
+    def report_success(self) -> None:
+        return None
+
+    def report_host_throttled(self, host: str, delay_s: float) -> None:
+        self.throttle_calls.append((host, delay_s))
+
+    def run(self, operation: Callable[[], _T]) -> _T:
+        return operation()
 
 
 def _make_settings(**overrides: Any) -> Any:
@@ -108,7 +129,7 @@ def test_http_wikipedia_constructor_signature() -> None:
     scheduler = _RecordingScheduler()
     client = HttpWikipediaClient(settings, scheduler=scheduler)
     assert client._settings is settings
-    assert client._scheduler is scheduler
+    assert client.scheduler is scheduler
 
 
 def test_cached_wikipedia_constructor_signature_and_failed_ttl_default() -> None:
@@ -124,25 +145,50 @@ def test_cached_wikipedia_constructor_signature_and_failed_ttl_default() -> None
 # ---------------------------------------------------------------------------
 
 
-def _cache_entry(status: str, parsed_result: Any, request_url: str | None) -> Any:
-    return type(
-        "CacheEntry",
-        (),
-        {"status": status, "parsed_result": parsed_result, "request_url": request_url},
-    )()
+@dataclass(frozen=True)
+class _CacheEntry:
+    status: str
+    parsed_result: Any
+    request_url: str | None
 
 
-def _recording_cache() -> Any:
-    captured: dict[str, Any] = {"stored": []}
+def _cache_entry(status: str, parsed_result: Any, request_url: str | None) -> _CacheEntry:
+    return _CacheEntry(status, parsed_result, request_url)
 
-    class _Cache:
-        def get(self, key: str) -> Any:
-            return _cache_entry("ok", captured.get("hit"), None)
 
-        def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-            captured["stored"].append((key, payload, kwargs))
+class _MemoryCache(JsonCache):
+    """Typed cache fake used to check serialization and cache short-circuiting."""
 
-    return _Cache(), captured
+    def __init__(self, entries: dict[str, _CacheEntry] | None = None) -> None:
+        self.entries = entries or {}
+        self.writes: list[tuple[str, Any, dict[str, Any]]] = []
+
+    def get(self, key: str) -> _CacheEntry | None:
+        return self.entries.get(key)
+
+    def set(
+        self,
+        key: str,
+        payload: Any,
+        *,
+        request_url: str = "",
+        response_metadata: dict[str, Any] | None = None,
+        status: str = "ok",
+        ttl_s: int | None = None,
+    ) -> object:
+        self.writes.append(
+            (
+                key,
+                payload,
+                {
+                    "request_url": request_url,
+                    "response_metadata": response_metadata,
+                    "status": status,
+                    "ttl_s": ttl_s,
+                },
+            )
+        )
+        return self
 
 
 def test_cached_wikipedia_serializes_article_for_success() -> None:
@@ -175,13 +221,13 @@ def test_cached_wikipedia_serializes_article_for_success() -> None:
         retrieved_at="2024-01-01T00:00:00Z",
     )
     inner = InMemoryWikipediaClient({("enwiki", "Monaco"): FetchResult("ok", article)})
-    cache, captured = _recording_cache()
+    cache = _MemoryCache()
     client = CachedWikipediaClient(inner, cache)
 
     result = client.fetch_article("en", "enwiki", "Monaco")
 
     assert result == FetchResult("ok", article)
-    stored = captured["stored"]
+    stored = cache.writes
     assert len(stored) == 1
     key, payload, kwargs = stored[0]
     assert key == "wikipedia/full-text-v2/enwiki/Monaco.json"
@@ -209,13 +255,13 @@ def test_cached_wikipedia_serializes_failure_with_failed_ttl() -> None:
     inner = InMemoryWikipediaClient(
         {("enwiki", "Missing"): FetchResult("article_not_found", None, "missing")},
     )
-    cache, captured = _recording_cache()
+    cache = _MemoryCache()
     client = CachedWikipediaClient(inner, cache, failed_ttl_s=123)
 
     result = client.fetch_article("en", "enwiki", "Missing")
 
     assert result.status == "article_not_found"
-    stored = captured["stored"]
+    stored = cache.writes
     assert len(stored) == 1
     key, payload, kwargs = stored[0]
     assert key == "wikipedia/full-text-v2/enwiki/Missing.json"
@@ -282,10 +328,21 @@ def test_cached_wikipedia_hit_skips_inner_fetch() -> None:
         source_api="",
         retrieved_at="",
     )
-    inner_calls: list[tuple[str, str]] = []
+    inner_calls: list[tuple[str, str, str]] = []
 
-    class _Inner:
-        def fetch_article(self, language, site, title, **_kw):
+    class _Inner(WikipediaClient):
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
+            del wikidata_label, wikidata_description, wikidata_aliases, fetch_full_text
             inner_calls.append((language, site, title))
             raise AssertionError("inner must not be called on a cache hit")
 
@@ -310,16 +367,11 @@ def test_cached_wikipedia_hit_skips_inner_fetch() -> None:
         "source_api": "",
         "retrieved_at": "",
     }
-    cache = type(
-        "C",
-        (),
-        {
-            "get": lambda self, key: _cache_entry("ok", cached_payload, None),
-            "set": lambda self, *args, **kw: None,
-        },
-    )()
+    cache = _MemoryCache(
+        {"wikipedia/full-text-v2/enwiki/Hit.json": _cache_entry("ok", cached_payload, None)}
+    )
 
-    client = CachedWikipediaClient(_Inner(), cache)  # type: ignore[arg-type]
+    client = CachedWikipediaClient(_Inner(), cache)
     result = client.fetch_article("en", "enwiki", "Hit")
 
     assert result.status == "ok"
@@ -364,21 +416,31 @@ def test_cached_wikipedia_corrupt_payload_falls_back_to_inner() -> None:
         ),
     )
 
-    class _Inner:
-        def fetch_article(self, *_args, **_kw):
+    class _Inner(WikipediaClient):
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
+            del language, site, title, wikidata_label, wikidata_description
+            del wikidata_aliases, fetch_full_text
             return fresh
 
-    cache = type(
-        "C",
-        (),
+    cache = _MemoryCache(
         {
-            # Simulates a cache hit whose payload is not a dict (corrupt).
-            "get": lambda self, key: _cache_entry("ok", "not-a-dict", None),
-            "set": lambda self, *args, **kw: None,
-        },
-    )()
+            "wikipedia/full-text-v2/enwiki/Fresh.json": _cache_entry(
+                "ok", "not-a-dict", None
+            )
+        }
+    )
 
-    client = CachedWikipediaClient(_Inner(), cache)  # type: ignore[arg-type]
+    client = CachedWikipediaClient(_Inner(), cache)
     result = client.fetch_article("en", "enwiki", "Fresh")
     assert result == fresh
 
@@ -389,22 +451,27 @@ def test_cached_wikipedia_error_status_hit_is_treated_as_miss() -> None:
         FetchResult,
     )
 
-    inner = type(
-        "I",
-        (),
-        {"fetch_article": lambda self, *a, **kw: FetchResult("http_error", None, "boom")},
-    )()
+    class _Inner(WikipediaClient):
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
+            del language, site, title, wikidata_label, wikidata_description
+            del wikidata_aliases, fetch_full_text
+            return FetchResult("http_error", None, "boom")
 
-    cache = type(
-        "C",
-        (),
-        {
-            "get": lambda self, key: _cache_entry("error", None, None),
-            "set": lambda self, *args, **kw: None,
-        },
-    )()
+    cache = _MemoryCache(
+        {"wikipedia/full-text-v2/enwiki/Boom.json": _cache_entry("error", None, None)}
+    )
 
-    client = CachedWikipediaClient(inner, cache)  # type: ignore[arg-type]
+    client = CachedWikipediaClient(_Inner(), cache)
     result = client.fetch_article("en", "enwiki", "Boom")
     assert result.status == "http_error"
 
@@ -427,13 +494,9 @@ def test_cached_wikipedia_batch_returns_per_title_results() -> None:
             ("enwiki", "B"): FetchResult("article_not_found", None),
         }
     )
-    cache = type(
-        "C",
-        (),
-        {"get": lambda self, key: None, "set": lambda self, *a, **kw: None},
-    )()
+    cache = _MemoryCache()
 
-    client = CachedWikipediaClient(inner, cache)  # type: ignore[arg-type]
+    client = CachedWikipediaClient(inner, cache)
     results = client.fetch_articles("en", "enwiki", ["A", "B"], fetch_full_text=True)
 
     assert set(results) == {"A", "B"}
@@ -447,27 +510,43 @@ def test_cached_wikipedia_batch_with_lead_only_uses_inner_batch_path() -> None:
         FetchResult,
     )
 
-    class _BatchInner:
+    class _BatchInner(WikipediaClient, BatchWikipediaClient):
         def __init__(self) -> None:
             self.batch_called = False
             self.per_title_called = False
 
-        def fetch_articles(self, language, site, titles, *, fetch_full_text=True):
+        def fetch_articles(
+            self,
+            language: str,
+            site: str,
+            titles: Iterable[str],
+            *,
+            fetch_full_text: bool = True,
+        ) -> dict[str, FetchResult]:
+            del language, site, fetch_full_text
             self.batch_called = True
             return {title: FetchResult("article_not_found", None) for title in titles}
 
-        def fetch_article(self, *_args, **_kw):
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
+            del language, site, title, wikidata_label, wikidata_description
+            del wikidata_aliases, fetch_full_text
             self.per_title_called = True
             return FetchResult("article_not_found", None)
 
     inner = _BatchInner()
-    cache = type(
-        "C",
-        (),
-        {"get": lambda self, key: None, "set": lambda self, *a, **kw: None},
-    )()
+    cache = _MemoryCache()
 
-    client = CachedWikipediaClient(inner, cache)  # type: ignore[arg-type]
+    client = CachedWikipediaClient(inner, cache)
     client.fetch_articles("en", "enwiki", ["A"], fetch_full_text=False)
     assert inner.batch_called
     assert not inner.per_title_called
@@ -498,8 +577,7 @@ def test_http_wikipedia_429_returns_rate_limited_not_throttle_warning(
     settings = _make_settings()
     scheduler = _RecordingScheduler()
     session = _StubSession([_http_error(429, retry_after="7")])
-    client = HttpWikipediaClient(settings, scheduler=scheduler)
-    client._session = session
+    client = HttpWikipediaClient(settings, scheduler=scheduler, session=session)
 
     with caplog.at_level(
         logging.WARNING,
@@ -547,7 +625,31 @@ def test_wikipedia_network_error_mapping_preserves_fallback_context(fallback: bo
 def test_empty_fallback_result_preserves_available_article(has_article: bool) -> None:
     from osm_polygon_wikidata_only.enrichment.wikipedia import transport
 
-    article = object() if has_article else None
+    article = (
+        WikipediaArticle(
+            language="en",
+            site="enwiki",
+            title="Fallback",
+            page_id=1,
+            revision_id=1,
+            revision_timestamp="",
+            url="",
+            lead_text="",
+            extract="",
+            full_text="",
+            full_text_format="plain_text",
+            thumbnail_url="",
+            thumbnail_width=None,
+            thumbnail_height=None,
+            categories=[],
+            license="",
+            attribution="",
+            source_api="",
+            retrieved_at="",
+        )
+        if has_article
+        else None
+    )
     result = transport._empty_fallback_result(transport.FetchResult("empty_text", article))
 
     assert result.status == "empty_text"
@@ -621,8 +723,7 @@ def test_http_wikipedia_falls_back_to_parse_when_extract_empty() -> None:
     )
     parse_body = b'{"parse": {"text": {"*": "<p>Body</p>"}}}'
     session = _StubSession([(query_body, "identity"), (parse_body, "identity")])
-    client = HttpWikipediaClient(settings, scheduler=scheduler)
-    client._session = session
+    client = HttpWikipediaClient(settings, scheduler=scheduler, session=session)
 
     result = client.fetch_article("en", "enwiki", "X", fetch_full_text=True)
 

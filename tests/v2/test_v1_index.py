@@ -81,15 +81,20 @@ def test_index_lookup_by_title_page_and_qid(tmp_path: Path) -> None:
 
 
 def test_persistent_index_deletes_stale_paths_and_invalidates_row_cache(tmp_path: Path) -> None:
-    from osm_polygon_wikidata_only.v2.v1_index import _PersistentV1Index
+    path = _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "cache"
+    index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert index.by_page("en", 1)[0]["document_id"] == "Q42:wikipedia:en:1:2"
+    index.close()
 
-    index = _PersistentV1Index(tmp_path / "cache", ())
-    index._row_cache["stale"] = {"document_id": "stale"}
+    # A fresh public index must drop rows belonging to files that disappeared
+    # since the previous build, including rows persisted in its cache.
+    path.unlink()
+    refreshed = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     try:
-        index._delete_stale_paths({"removed.parquet"})
-        assert not index._row_cache
+        assert refreshed.by_page("en", 1) == ()
     finally:
-        index.close()
+        refreshed.close()
 
 
 def test_cached_row_count_rejects_missing_invalid_and_negative_values() -> None:
@@ -670,24 +675,41 @@ def test_persistent_index_reads_next_row_group_during_current_commit(
         *,
         legacy_articles: bool,
         row_group: int,
-        parquet_file: object = None,
-    ):
+        parquet_file: pq.ParquetFile | None = None,
+    ) -> list[tuple[str, str, str, int, int, str, int, int]]:
         if row_group == 1:
             second_scanned.set()
         return original_scan(
             path_arg,
             legacy_articles=legacy_articles,
             row_group=row_group,
-            parquet_file=parquet_file,  # type: ignore[arg-type]
+            parquet_file=parquet_file,
         )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
     original_commit = v1_index._PersistentV1Index._commit_indexed_row_group
 
-    def commit(store: object, *args: object, **kwargs: object) -> None:
-        if kwargs["row_group"] == 0:
+    def commit(
+        store: v1_index._PersistentV1Index,
+        connection: sqlite3.Connection,
+        indexed: list[tuple[str, str, str, int, int, str, int, int]],
+        *,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        total_row_groups: int,
+        row_group: int,
+    ) -> None:
+        if row_group == 0:
             assert second_scanned.wait(timeout=2)
-        original_commit(store, *args, **kwargs)  # type: ignore[arg-type]
+        original_commit(
+            store,
+            connection,
+            indexed,
+            resolved=resolved,
+            fingerprint=fingerprint,
+            total_row_groups=total_row_groups,
+            row_group=row_group,
+        )
 
     monkeypatch.setattr(v1_index._PersistentV1Index, "_commit_indexed_row_group", commit)
     index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "cache")

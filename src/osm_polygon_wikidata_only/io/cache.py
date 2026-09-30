@@ -21,7 +21,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
@@ -42,6 +42,39 @@ class CacheEntry:
     request_url: str
     response_metadata: dict[str, Any]
     parsed_result: Any
+
+
+class CachedJsonEntry(Protocol):
+    """Cache record fields consumed by response-cache clients."""
+
+    @property
+    def status(self) -> str: ...
+
+    @property
+    def parsed_result(self) -> Any: ...
+
+
+class JsonCache(Protocol):
+    """Injectable interface shared by the file cache and in-memory fakes."""
+
+    def get(self, key: str) -> CachedJsonEntry | None: ...
+
+    def set(
+        self,
+        key: str,
+        payload: Any,
+        *,
+        request_url: str = "",
+        response_metadata: dict[str, Any] | None = None,
+        status: str = "ok",
+        ttl_s: int | None = None,
+    ) -> object: ...
+
+
+class JsonResponseCache(JsonCache, Protocol):
+    """Response cache that also supports invalidating corrupt/API-error entries."""
+
+    def delete(self, key: str) -> None: ...
 
 
 class JsonFileCache:
@@ -211,4 +244,10 @@ class JsonFileCache:
             p.unlink()
 
 
-__all__ = ["CacheEntry", "JsonFileCache"]
+__all__ = [
+    "CacheEntry",
+    "CachedJsonEntry",
+    "JsonCache",
+    "JsonFileCache",
+    "JsonResponseCache",
+]

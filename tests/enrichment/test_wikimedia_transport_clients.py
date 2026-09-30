@@ -22,13 +22,29 @@ from __future__ import annotations
 import logging
 import socket
 import urllib.error
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, TypeVar, Unpack
 
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
 from tests.helpers import http_error as _http_error
+
+_T = TypeVar("_T")
+
+
+class _SettingsOverrides(TypedDict, total=False):
+    user_agent: str
+    request_max_retries: int | None
+    request_base_delay_s: float
+    request_timeout_s: float
+    wikipedia_min_interval_s: float
+    wikidata_min_interval_s: float
+    augmentation_min_interval_s: float
+    wikimedia_authenticated_min_interval_s: float
+    rate_limit_retry_after_default_s: float
 
 # ---------------------------------------------------------------------------
 # Fakes -- session, scheduler, cache
@@ -39,12 +55,12 @@ class _StubSession:
     """Records ``WikimediaSession.read`` calls and surfaces canned responses."""
 
     def __init__(self, responses: list[tuple[bytes, str] | BaseException]) -> None:
-        self.reads: list[tuple[Any, float, float]] = []
+        self.reads: list[tuple[urllib.request.Request, float, float]] = []
         self._responses = list(responses)
 
     def read(
         self,
-        request: Any,
+        request: urllib.request.Request,
         *,
         min_interval_anonymous_s: float,
         min_interval_authenticated_s: float,
@@ -62,12 +78,25 @@ class _RecordingScheduler:
     def __init__(self) -> None:
         self.throttle_calls: list[tuple[str, float]] = []
 
-    def report_host_throttled(self, host: str, delay: float) -> None:
-        self.throttle_calls.append((host, delay))
+    @property
+    def max_in_flight(self) -> int:
+        return 3
+
+    def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
+        return None
+
+    def report_success(self) -> None:
+        return None
+
+    def report_host_throttled(self, host: str, delay_s: float) -> None:
+        self.throttle_calls.append((host, delay_s))
+
+    def run(self, operation: Callable[[], _T]) -> _T:
+        return operation()
 
 
-def _make_settings(**overrides: Any) -> Settings:
-    base = {
+def _make_settings(**overrides: Unpack[_SettingsOverrides]) -> Settings:
+    base: _SettingsOverrides = {
         "user_agent": "ua",
         "request_max_retries": 1,
         "request_base_delay_s": 0.0,
@@ -739,28 +768,54 @@ def _augmentation_client(session: Any = None) -> Any:
 class _HitCache:
     def __init__(self, parsed: object) -> None:
         self.cached_parsed = parsed
-        self.stores: list[tuple[str, Any, dict[str, Any]]] = []
+        self.stores: list[tuple[str, Any, str, str]] = []
 
-    def get(self, key: str) -> Any:
+    def get(self, key: str) -> _CacheEntry:
         return _CacheEntry("ok", self.cached_parsed, None)
 
-    def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-        self.stores.append((key, payload, kwargs))
+    def set(
+        self,
+        key: str,
+        payload: Any,
+        *,
+        request_url: str = "",
+        response_metadata: dict[str, Any] | None = None,
+        status: str = "ok",
+        ttl_s: int | None = None,
+    ) -> None:
+        del response_metadata, ttl_s
+        self.stores.append((key, payload, request_url, status))
+
+    def delete(self, key: str) -> None:
+        return None
 
 
 class _NoHitCache:
     def __init__(self) -> None:
-        self.stores: list[tuple[str, Any, dict[str, Any]]] = []
+        self.stores: list[tuple[str, Any, str, str]] = []
 
-    def get(self, key: str) -> Any:
+    def get(self, key: str) -> None:
         return None
 
-    def set(self, key: str, payload: Any, **kwargs: Any) -> None:
-        self.stores.append((key, payload, kwargs))
+    def set(
+        self,
+        key: str,
+        payload: Any,
+        *,
+        request_url: str = "",
+        response_metadata: dict[str, Any] | None = None,
+        status: str = "ok",
+        ttl_s: int | None = None,
+    ) -> None:
+        del response_metadata, ttl_s
+        self.stores.append((key, payload, request_url, status))
+
+    def delete(self, key: str) -> None:
+        return None
 
 
 class _CacheEntry:
     def __init__(self, status: str, parsed_result: Any, request_url: str | None) -> None:
-        self.status = status
-        self.parsed_result = parsed_result
-        self.request_url = request_url
+        self.status: str = status
+        self.parsed_result: Any = parsed_result
+        self.request_url: str | None = request_url

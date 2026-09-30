@@ -217,9 +217,27 @@ def test_successful_direct_fetch_is_cached_for_the_next_run(tmp_path: Path) -> N
     class CountingClient(InMemoryWikipediaClient):
         calls = 0
 
-        def fetch_article(self, *args: object, **kwargs: object) -> FetchResult:
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
             self.calls += 1
-            return super().fetch_article(*args, **kwargs)  # type: ignore[arg-type]
+            return super().fetch_article(
+                language,
+                site,
+                title,
+                wikidata_label=wikidata_label,
+                wikidata_description=wikidata_description,
+                wikidata_aliases=wikidata_aliases,
+                fetch_full_text=fetch_full_text,
+            )
 
     client = CountingClient({("enwiki", "New page"): FetchResult("ok", _article("New page"))})
     ref = WikipediaTagRef("en", "New page", "wikipedia", "en:New page")

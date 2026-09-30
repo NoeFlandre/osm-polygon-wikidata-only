@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.request
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,7 @@ class ThrottleThenSuccessSession:
 
     def read(
         self,
-        request: object,
+        request: urllib.request.Request,
         *,
         min_interval_anonymous_s: float = 0.0,
         min_interval_authenticated_s: float = 0.0,
@@ -102,13 +103,13 @@ def test_sidecar_columns_are_explicit_and_joinable() -> None:
 
 
 def test_augmentation_transport_retries_after_wikimedia_429(tmp_path) -> None:
+    session = ThrottleThenSuccessSession()
     client = AugmentationWikimediaClient(
         Settings(request_max_retries=2, request_base_delay_s=0),
         JsonFileCache(tmp_path),
         environ={},
+        session=session,
     )
-    session = ThrottleThenSuccessSession()
-    client._session = session
 
     result = client.get_json("https://retry.example.org/w/api.php?action=parse", key="retry-test")
 
@@ -204,16 +205,13 @@ def test_section_parser_preserves_lead_and_nested_hierarchy() -> None:
 
 def test_section_parser_tracks_ignored_and_visible_text() -> None:
     parser = _SectionParser()
-    parser.handle_data("lead")
-    parser._ignored = 1
-    parser.handle_data("hidden")
-    assert parser._text_parts == ["lead"]
-    assert parser._close_ignored_tag("script")
-    assert parser._ignored == 0
-    assert not parser._close_ignored_tag("p")
-    parser._heading_level = 2
-    parser.handle_data("heading")
-    assert parser._heading_parts == ["heading"]
+    parser.feed("lead<script>hidden</script><h2>heading</h2>visible")
+    parser.close()
+
+    assert parser.sections == [
+        ("", "", 0, "lead"),
+        ("heading", "heading", 2, "visible"),
+    ]
 
 
 def test_section_stack_pops_siblings_and_descendants_only() -> None:

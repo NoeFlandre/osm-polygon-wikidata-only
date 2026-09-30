@@ -9,7 +9,7 @@ from collections.abc import Callable
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgressSnapshot
 from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgressSnapshot
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaAuthSnapshot
-from osm_polygon_wikidata_only.pipeline.heartbeat import EnrichmentHeartbeat
+from osm_polygon_wikidata_only.pipeline.heartbeat import EnrichmentHeartbeat, StopSignal
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 
 
@@ -108,6 +108,7 @@ class SyncHeartbeat(EnrichmentHeartbeat):
         auth_snapshot: Callable[[], WikimediaAuthSnapshot] | None = None,
         interval_s: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        stop_event: StopSignal | None = None,
     ) -> None:
         self._sync_region = region
         self._region_index = region_index
@@ -124,6 +125,7 @@ class SyncHeartbeat(EnrichmentHeartbeat):
             log=log,
             interval_s=interval_s,
             clock=clock,
+            stop_event=stop_event,
         )
 
     def run(self) -> None:

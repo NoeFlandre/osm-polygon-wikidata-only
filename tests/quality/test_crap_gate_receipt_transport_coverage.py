@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.error
+from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,7 +84,9 @@ def test_wikipedia_request_translates_http_and_network_errors(
     monkeypatch.setattr(wikipedia_transport, "with_retries", lambda call, **_kwargs: call())
 
     def http_error(_url: str) -> object:
-        raise urllib.error.HTTPError("https://en.wikipedia.org/api", 429, "slow down", {}, None)
+        raise urllib.error.HTTPError(
+            "https://en.wikipedia.org/api", 429, "slow down", Message(), None
+        )
 
     monkeypatch.setattr(client, "_http_get", http_error)
     data, result = client._request_article_data("https://en.wikipedia.org/api", fallback=False)

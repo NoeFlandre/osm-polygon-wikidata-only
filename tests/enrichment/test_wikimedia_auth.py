@@ -12,15 +12,19 @@ import urllib.request
 from collections.abc import Callable
 from email.message import Message
 from types import TracebackType
+from typing import TypeVar
 
 import pytest
 
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaConfigurationError,
     WikimediaCredentials,
+    WikimediaHttpOpener,
+    WikimediaHttpResponse,
     WikimediaSession,
     load_wikimedia_credentials,
 )
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestPacer
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
 # The session now requires per-kind interval kwargs on every read.
@@ -29,12 +33,24 @@ _SESSION_PACE = {
     "min_interval_anonymous_s": 0.0,
     "min_interval_authenticated_s": 0.0,
 }
+_T = TypeVar("_T")
 
 
-class FakeResponse:
+def _request_parameters(request: urllib.request.Request) -> dict[str, list[str]]:
+    body = request.data
+    if body is None:
+        query = urllib.parse.urlparse(request.full_url).query
+    elif isinstance(body, (bytes, bytearray, memoryview)):
+        query = bytes(body).decode()
+    else:
+        raise AssertionError(f"unexpected request body type: {type(body).__name__}")
+    return urllib.parse.parse_qs(query)
+
+
+class FakeResponse(WikimediaHttpResponse):
     def __init__(self, payload: object) -> None:
         self._body = json.dumps(payload).encode()
-        self.headers = Message()
+        self.headers: dict[str, str] = {}
 
     def read(self) -> bytes:
         return self._body
@@ -46,7 +62,7 @@ class FakeResponse:
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        exc_tb: TracebackType | None,
+        traceback: TracebackType | None,
     ) -> None:
         return None
 
@@ -54,10 +70,10 @@ class FakeResponse:
 class RawResponse(FakeResponse):
     def __init__(self, body: bytes) -> None:
         self._body = body
-        self.headers = Message()
+        self.headers = {}
 
 
-class FakeOpener:
+class FakeOpener(WikimediaHttpOpener):
     def __init__(
         self,
         *,
@@ -75,11 +91,7 @@ class FakeOpener:
             self.requests.append(request)
         if self._on_open is not None:
             self._on_open()
-        parameters = urllib.parse.parse_qs(
-            request.data.decode()
-            if request.data is not None
-            else urllib.parse.urlparse(request.full_url).query
-        )
+        parameters = _request_parameters(request)
         action = parameters.get("action", [""])[0]
         if action == "query" and parameters.get("meta") == ["tokens"]:
             return FakeResponse({"query": {"tokens": {"logintoken": "LOGIN-TOKEN"}}})
@@ -90,11 +102,7 @@ class FakeOpener:
 
 class MalformedLoginOpener(FakeOpener):
     def open(self, request: urllib.request.Request, *, timeout: float) -> FakeResponse:
-        parameters = urllib.parse.parse_qs(
-            request.data.decode()
-            if request.data is not None
-            else urllib.parse.urlparse(request.full_url).query
-        )
+        parameters = _request_parameters(request)
         if parameters.get("action") == ["login"]:
             return RawResponse(b"malformed-raw-secret-value")
         return super().open(request, timeout=timeout)
@@ -203,7 +211,7 @@ def test_session_closes_http_error_response() -> None:
         body,
     )
 
-    class ThrottledOpener:
+    class ThrottledOpener(WikimediaHttpOpener):
         def open(self, request: urllib.request.Request, *, timeout: float) -> FakeResponse:
             del request, timeout
             raise error
@@ -242,7 +250,7 @@ def test_authenticated_session_logs_in_then_reuses_host_session() -> None:
     token_request, login_request, first_query, second_query = opener.requests
     assert "meta=tokens" in token_request.full_url
     assert login_request.get_method() == "POST"
-    login_parameters = urllib.parse.parse_qs(login_request.data.decode())
+    login_parameters = _request_parameters(login_request)
     assert login_parameters == {
         "action": ["login"],
         "format": ["json"],
@@ -314,14 +322,7 @@ def test_concurrent_first_use_logs_in_once() -> None:
     for thread in threads:
         thread.join(timeout=2)
 
-    actions = [
-        urllib.parse.parse_qs(
-            item.data.decode()
-            if item.data is not None
-            else urllib.parse.urlparse(item.full_url).query
-        ).get("action", [""])[0]
-        for item in opener.requests
-    ]
+    actions = [_request_parameters(item).get("action", [""])[0] for item in opener.requests]
     assert actions.count("login") == 1
     assert len(opener.requests) == 4
 
@@ -390,14 +391,7 @@ def test_authentication_failure_does_not_retry_on_subsequent_requests() -> None:
             **_SESSION_PACE,
         )
 
-    actions = [
-        urllib.parse.parse_qs(
-            item.data.decode()
-            if item.data is not None
-            else urllib.parse.urlparse(item.full_url).query
-        ).get("action", [""])[0]
-        for item in opener.requests
-    ]
+    actions = [_request_parameters(item).get("action", [""])[0] for item in opener.requests]
     # First call: token + login (rejected) + data query. Subsequent
     # calls: only the data query because the host is marked as
     # ``auth_skipped``.
@@ -448,14 +442,7 @@ def test_authentication_failure_on_one_host_does_not_block_another() -> None:
     )
     assert json.loads(body_en) == {"query": {"ok": True}}
 
-    en_actions = [
-        urllib.parse.parse_qs(
-            item.data.decode()
-            if item.data is not None
-            else urllib.parse.urlparse(item.full_url).query
-        ).get("action", [""])[0]
-        for item in en_opener.requests
-    ]
+    en_actions = [_request_parameters(item).get("action", [""])[0] for item in en_opener.requests]
     assert en_actions == ["query", "login", "query"]
 
 
@@ -607,15 +594,15 @@ def test_session_uses_authenticated_pacing_only_for_verified_hosts() -> None:
     observed: list[tuple[str, float]] = []
     observed_lock = threading.Lock()
 
-    class RecordingScheduler:
+    class RecordingScheduler(RequestPacer):
         def __init__(self) -> None:
             self.real = make_scheduler()
 
-        def pace_host(self, host, *, min_interval_s):
+        def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
             with observed_lock:
                 observed.append((host, min_interval_s))
 
-        def run(self, operation):
+        def run(self, operation: Callable[[], _T]) -> _T:
             return self.real.run(operation)
 
         def report_success(self) -> None:
@@ -632,7 +619,7 @@ def test_session_uses_authenticated_pacing_only_for_verified_hosts() -> None:
 
     scheduler = RecordingScheduler()
     session = WikimediaSession(
-        scheduler=scheduler,  # type: ignore[arg-type]
+        scheduler=scheduler,
         timeout_s=5,
         user_agent="test-agent",
         credentials=WikimediaCredentials("NoeFlandre@pipeline", "secret-value"),
@@ -661,14 +648,14 @@ def test_session_uses_anonymous_pacing_when_no_credentials_configured() -> None:
     """Without bot-password credentials every host is paced anonymously."""
     observed: list[tuple[str, float]] = []
 
-    class RecordingScheduler:
+    class RecordingScheduler(RequestPacer):
         def __init__(self) -> None:
             self.real = make_scheduler()
 
-        def pace_host(self, host, *, min_interval_s):
+        def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
             observed.append((host, min_interval_s))
 
-        def run(self, operation):
+        def run(self, operation: Callable[[], _T]) -> _T:
             return self.real.run(operation)
 
         def report_success(self) -> None:
@@ -676,7 +663,7 @@ def test_session_uses_anonymous_pacing_when_no_credentials_configured() -> None:
 
     scheduler = RecordingScheduler()
     session = WikimediaSession(
-        scheduler=scheduler,  # type: ignore[arg-type]
+        scheduler=scheduler,
         timeout_s=5,
         user_agent="test-agent",
         opener_factory=FakeOpener,
@@ -696,12 +683,10 @@ def test_auth_snapshot_does_not_classify_in_progress_auth_as_anonymous() -> None
     release_auth = threading.Event()
 
     class SlowOpener(FakeOpener):
-        def open(self, request, *, timeout):
-            params = urllib.parse.parse_qs(
-                request.data.decode()
-                if request.data is not None
-                else urllib.parse.urlparse(request.full_url).query
-            )
+        def open(
+            self, request: urllib.request.Request, *, timeout: float
+        ) -> FakeResponse:
+            params = _request_parameters(request)
             if params.get("action") == ["login"]:
                 auth_started.set()
                 release_auth.wait(timeout=5)

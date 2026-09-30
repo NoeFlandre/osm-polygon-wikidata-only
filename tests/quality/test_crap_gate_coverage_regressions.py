@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,23 +24,30 @@ from osm_polygon_wikidata_only.augmentation.schema import document_schema
 
 
 def _section(*, document_id: str, section_id: str, section_index: int) -> Section:
-    values = {field.name: "value" for field in fields(Section)}
-    for name in (
-        "page_id",
-        "revision_id",
-        "section_index",
-        "level",
-        "text_length_chars",
-        "text_length_words",
-        "text_length_tokens_estimate",
-    ):
-        values[name] = 1
-    values.update(
-        document_id=document_id,
+    return Section(
         section_id=section_id,
+        document_id=document_id,
+        article_id="article-1",
+        wikidata="Q1",
+        project="wikipedia",
+        language="en",
+        site="enwiki",
+        page_id=1,
+        revision_id=1,
         section_index=section_index,
+        heading="",
+        anchor="",
+        level=0,
+        parent_section_id="",
+        section_path="[]",
+        text="section text",
+        text_length_chars=12,
+        text_length_words=2,
+        text_length_tokens_estimate=3,
+        content_hash="hash",
+        license="CC BY-SA 4.0",
+        attribution="Wikipedia",
     )
-    return Section(**values)
 
 
 def test_core_hash_path_and_entry_reject_invalid_membership(tmp_path: Path) -> None:

@@ -20,6 +20,7 @@ from osm_polygon_wikidata_only.utils.retry import (
     with_retries,
 )
 from osm_polygon_wikidata_only.utils.time import parse_iso_to_z, utc_now_iso
+from tests.helpers import http_error
 
 
 def test_dumps_is_deterministic() -> None:
@@ -41,8 +42,8 @@ def test_production_network_retry_budget_is_unbounded() -> None:
         urllib.error.URLError(socket.gaierror(8, "name lookup failed")),
         TimeoutError("timed out"),
         ConnectionResetError("connection reset"),
-        urllib.error.HTTPError("https://example.test", 429, "limited", {}, None),
-        urllib.error.HTTPError("https://example.test", 503, "unavailable", {}, None),
+        http_error(429, msg="limited"),
+        http_error(503, msg="unavailable"),
     ],
 )
 def test_transient_network_error_classifies_retryable_failures(error: BaseException) -> None:
@@ -52,7 +53,7 @@ def test_transient_network_error_classifies_retryable_failures(error: BaseExcept
 @pytest.mark.parametrize(
     "error",
     [
-        urllib.error.HTTPError("https://example.test", 404, "missing", {}, None),
+        http_error(404, msg="missing"),
         ValueError("malformed payload"),
         RuntimeError("programming error"),
     ],
@@ -114,7 +115,7 @@ def test_unbounded_retries_do_not_overflow_during_very_long_outage(
 
 def test_unbounded_retries_fail_fast_for_non_retryable_error() -> None:
     calls = 0
-    error = urllib.error.HTTPError("https://example.test", 404, "missing", {}, None)
+    error = http_error(404, msg="missing")
 
     def operation() -> str:
         nonlocal calls
@@ -213,7 +214,7 @@ def test_transient_retry_warning_is_sparse_and_does_not_include_error_text(
     ("error", "error_kind"),
     [
         (
-            urllib.error.HTTPError("https://example.test", 503, "unavailable", {}, None),
+            http_error(503, msg="unavailable"),
             "HTTP 503",
         ),
         (urllib.error.URLError(TimeoutError("timed out")), "TimeoutError"),

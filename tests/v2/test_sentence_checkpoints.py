@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -304,12 +305,22 @@ def test_output_matches_requires_every_recorded_output_precondition(
     output = tmp_path / "sentences.parquet"
     if file_exists:
         output.write_bytes(b"final output")
-    checkpoint._metadata = {
-        **checkpoint._metadata,
-        "complete": complete,
-        "output_path": stored_path.format(output=output),
-        "output_hash": stored_hash,
-    }
+    metadata = checkpoint.metadata
+    metadata.update(
+        complete=complete,
+        output_path=stored_path.format(output=output),
+        output_hash=stored_hash,
+    )
+    checkpoint.metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "checkpoints",
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
     monkeypatch.setattr(checkpoint_module, "sha256_file", lambda _path: stored_hash)
 
     assert checkpoint.output_matches(output, output_hash="hash") is expected

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +39,8 @@ from tests.helpers import ensured_data_root
 
 
 class _RecordingWikidataClient(WikidataClient):
-    def __init__(self, mapping: dict[str, WikidataEntity | None]) -> None:
-        self.mapping = mapping
+    def __init__(self, mapping: Mapping[str, WikidataEntity | None]) -> None:
+        self.mapping = dict(mapping)
         self.batch_calls: list[list[str]] = []
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
@@ -504,7 +505,7 @@ def test_audit_reads_only_join_tables_and_facts_not_large_sections(
     original_read_table = pq.read_table
     original_sha256 = audit_mod.sha256_file
 
-    def guarded_read(path: object, *args: object, **kwargs: object) -> pa.Table:
+    def guarded_read(path: Path, *args: Any, **kwargs: Any) -> pa.Table:
         assert Path(path) not in forbidden
         return original_read_table(path, *args, **kwargs)
 

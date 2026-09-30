@@ -41,7 +41,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,
 )
 from osm_polygon_wikidata_only.utils.request_scheduler import (
-    AdaptiveRequestScheduler,
+    RequestScheduler,
     default_scheduler,
 )
 from osm_polygon_wikidata_only.utils.retry import (
@@ -105,7 +105,7 @@ class HttpWikidataClient(WikidataClient):
         settings: Settings,
         *,
         endpoint: str = WIKIDATA_API_URL,
-        scheduler: AdaptiveRequestScheduler | None = None,
+        scheduler: RequestScheduler | None = None,
         session: WikimediaHttpSession | None = None,
     ) -> None:
         self._settings = settings
@@ -116,6 +116,21 @@ class HttpWikidataClient(WikidataClient):
             timeout_s=settings.request_timeout_s,
             user_agent=settings.user_agent,
         )
+
+    @property
+    def scheduler(self) -> RequestScheduler:
+        """Return the request scheduler supplied to this client."""
+        return self._scheduler
+
+    @property
+    def session(self) -> WikimediaHttpSession:
+        """Return the request session supplied to this client."""
+        return self._session
+
+    @property
+    def endpoint(self) -> str:
+        """Return the Action API endpoint configured for this client."""
+        return self._endpoint
 
     def get_entity(self, qid: str) -> WikidataEntity | None:
         return self.get_entities([qid])[0]

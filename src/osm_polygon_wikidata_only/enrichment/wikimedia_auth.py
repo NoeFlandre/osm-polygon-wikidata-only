@@ -15,7 +15,7 @@ from types import TracebackType
 from typing import Protocol, cast
 
 from osm_polygon_wikidata_only.enrichment.wikimedia_http import PooledWikimediaTransport
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestPacer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,12 +73,14 @@ class WikimediaCredentials:
         return f"WikimediaCredentials(username={self.username!r}, password=<redacted>)"
 
 
-class _Response(Protocol):
+class WikimediaHttpResponse(Protocol):
+    """Response operations required by the Wikimedia session."""
+
     headers: Mapping[str, str]
 
     def read(self) -> bytes: ...
 
-    def __enter__(self) -> _Response: ...
+    def __enter__(self) -> WikimediaHttpResponse: ...
 
     def __exit__(
         self,
@@ -88,8 +90,16 @@ class _Response(Protocol):
     ) -> None: ...
 
 
-class _Opener(Protocol):
-    def open(self, request: urllib.request.Request, *, timeout: float) -> _Response: ...
+class WikimediaHttpOpener(Protocol):
+    """Injectable urllib opener contract used by the Wikimedia session."""
+
+    def open(
+        self, request: urllib.request.Request, *, timeout: float
+    ) -> WikimediaHttpResponse: ...
+
+
+_Response = WikimediaHttpResponse
+_Opener = WikimediaHttpOpener
 
 
 class WikimediaHttpSession(Protocol):
@@ -125,7 +135,7 @@ class WikimediaSession:
     def __init__(
         self,
         *,
-        scheduler: AdaptiveRequestScheduler,
+        scheduler: RequestPacer,
         timeout_s: float,
         user_agent: str,
         credentials: WikimediaCredentials | None = None,
@@ -415,6 +425,8 @@ __all__ = [
     "WikimediaConfigurationError",
     "WikimediaCredentials",
     "WikimediaHttpSession",
+    "WikimediaHttpOpener",
+    "WikimediaHttpResponse",
     "WikimediaSession",
     "load_wikimedia_credentials",
 ]

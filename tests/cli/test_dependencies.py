@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata_client import (
 )
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaConfigurationError,
+    WikimediaHttpSession,
     WikimediaSession,
 )
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
@@ -24,7 +25,10 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     HttpWikipediaClient,
 )
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    AdaptiveRequestScheduler,
+    RequestScheduler,
+)
 
 
 def data_root(tmp_path: Path) -> DataRoot:
@@ -43,10 +47,12 @@ def test_build_clients_keeps_anonymous_scheduler_fixed(tmp_path: Path) -> None:
     assert isinstance(wikidata, HttpWikidataClient)
     assert isinstance(wikipedia, HttpWikipediaClient)
     assert cache is None
-    assert wikidata._scheduler is wikipedia._scheduler
+    scheduler = wikidata.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
+    assert scheduler is wikipedia.scheduler
     for _ in range(200):
-        wikidata._scheduler.report_success()
-    assert wikidata._scheduler.current_requests_per_minute == 180
+        scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 180
 
 
 def test_build_clients_logs_anonymous_mode_once(
@@ -110,9 +116,11 @@ def test_build_clients_preserves_lower_anonymous_settings_rate(tmp_path: Path) -
     )
 
     assert isinstance(wikidata, HttpWikidataClient)
+    scheduler = wikidata.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
     for _ in range(200):
-        wikidata._scheduler.report_success()
-    assert wikidata._scheduler.current_requests_per_minute == 90
+        scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 90
 
 
 def test_build_clients_shares_authenticated_session_and_ramps_to_default_ceiling(
@@ -129,12 +137,14 @@ def test_build_clients_shares_authenticated_session_and_ramps_to_default_ceiling
 
     assert isinstance(wikidata, HttpWikidataClient)
     assert isinstance(wikipedia, HttpWikipediaClient)
-    assert isinstance(wikidata._session, WikimediaSession)
-    assert wikidata._session is wikipedia._session
-    assert wikidata._scheduler is wikipedia._scheduler
+    scheduler = wikidata.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
+    assert isinstance(wikidata.session, WikimediaSession)
+    assert wikidata.session is wikipedia.session
+    assert scheduler is wikipedia.scheduler
     for _ in range(2_000):
-        wikidata._scheduler.report_success()
-    assert wikidata._scheduler.current_requests_per_minute == 1_200
+        scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 1_200
 
 
 def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency(
@@ -159,14 +169,16 @@ def test_authenticated_clients_use_full_rate_budget_with_safe_global_concurrency
 
     assert isinstance(wikidata, dependencies.HttpWikidataClient)
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
-    assert wikidata._scheduler.max_in_flight == 12
-    assert wikidata._scheduler.current_requests_per_minute == 1_200
+    scheduler = wikidata.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
+    assert scheduler.max_in_flight == 12
+    assert scheduler.current_requests_per_minute == 1_200
     # Settings must continue to represent anonymous host pacing.
     assert wikidata._settings.wikidata_min_interval_s == pytest.approx(1.2)
     assert wikipedia._settings.wikipedia_min_interval_s == pytest.approx(0.5)
     # The scheduler must start at (or near) the ceiling, not at the
     # conservative anonymous 180 rpm.
-    assert wikidata._scheduler.current_requests_per_minute >= 600
+    assert scheduler.current_requests_per_minute >= 600
 
 
 def test_anonymous_clients_preserve_conservative_throttling(tmp_path: Path) -> None:
@@ -178,11 +190,13 @@ def test_anonymous_clients_preserve_conservative_throttling(tmp_path: Path) -> N
 
     assert isinstance(wikidata, dependencies.HttpWikidataClient)
     assert isinstance(wikipedia, dependencies.HttpWikipediaClient)
+    scheduler = wikidata.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
     # Anonymous sessions must keep the polite defaults.
-    assert wikidata._scheduler.max_in_flight == 3
+    assert scheduler.max_in_flight == 3
     assert wikidata._settings.wikidata_min_interval_s == pytest.approx(1.2)
     assert wikipedia._settings.wikipedia_min_interval_s == pytest.approx(0.5)
-    assert wikidata._scheduler.current_requests_per_minute == pytest.approx(180.0)
+    assert scheduler.current_requests_per_minute == pytest.approx(180.0)
 
 
 def test_build_clients_applies_authenticated_rate_ceiling_override(tmp_path: Path) -> None:
@@ -197,9 +211,11 @@ def test_build_clients_applies_authenticated_rate_ceiling_override(tmp_path: Pat
     )
 
     assert isinstance(wikidata, HttpWikidataClient)
+    scheduler = wikidata.scheduler
+    assert isinstance(scheduler, AdaptiveRequestScheduler)
     for _ in range(1_000):
-        wikidata._scheduler.report_success()
-    assert wikidata._scheduler.current_requests_per_minute == 300
+        scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 300
 
 
 @pytest.mark.parametrize("value", ["", "fast", "0", "-1"])
@@ -245,13 +261,23 @@ def test_cache_enabled_builds_each_http_client_once(
     real_wikidata = dependencies.HttpWikidataClient
     real_wikipedia = dependencies.HttpWikipediaClient
 
-    def build_wikidata(*args: object, **kwargs: object) -> HttpWikidataClient:
+    def build_wikidata(
+        settings: Settings,
+        *,
+        scheduler: RequestScheduler | None = None,
+        session: WikimediaHttpSession | None = None,
+    ) -> HttpWikidataClient:
         counts["wikidata"] += 1
-        return real_wikidata(*args, **kwargs)  # type: ignore[arg-type]
+        return real_wikidata(settings, scheduler=scheduler, session=session)
 
-    def build_wikipedia(*args: object, **kwargs: object) -> HttpWikipediaClient:
+    def build_wikipedia(
+        settings: Settings,
+        *,
+        scheduler: RequestScheduler | None = None,
+        session: WikimediaHttpSession | None = None,
+    ) -> HttpWikipediaClient:
         counts["wikipedia"] += 1
-        return real_wikipedia(*args, **kwargs)  # type: ignore[arg-type]
+        return real_wikipedia(settings, scheduler=scheduler, session=session)
 
     monkeypatch.setattr(dependencies, "HttpWikidataClient", build_wikidata)
     monkeypatch.setattr(dependencies, "HttpWikipediaClient", build_wikipedia)

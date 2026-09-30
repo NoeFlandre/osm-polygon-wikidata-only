@@ -47,8 +47,8 @@ def test_sync_heartbeat_logs_once_then_stops(include_auth: bool) -> None:
         log=messages.append,
         interval_s=1.0,
         clock=lambda: 120.0,
+        stop_event=StopAfterOneLog(),
     )
-    heartbeat._stop = StopAfterOneLog()  # type: ignore[assignment]
 
     heartbeat.run()
 
