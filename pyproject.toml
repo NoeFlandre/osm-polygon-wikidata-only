@@ -233,6 +233,7 @@ pytest_add_cli_args_test_selection = [
     "tests/migration/test_wikipedia_document_backfill.py",
     "tests/migration/test_link_migration_transaction_edges.py",
     "tests/migration/test_lossless_link_conversion.py",
+    "tests/migration/test_manifest_fields_required.py",
     "tests/migration/test_manifest_atomicity.py",
     "tests/migration/test_recovery_transaction_contracts.py",
     "tests/migration/test_single_transaction.py",

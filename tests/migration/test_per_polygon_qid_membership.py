@@ -14,6 +14,7 @@ For every legacy ``polygon_articles`` row:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -131,16 +132,49 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
         processed / "polygons" / "alpha-latest.parquet",
     )
     _seed_legacy(processed / "polygon_articles" / "alpha-latest.parquet", "p1", "Q2")
+    links_path = processed / "polygon_articles" / "alpha-latest.parquet"
+    legacy_rows = pq.read_table(links_path).to_pylist()
+    second_legacy_row = {
+        **legacy_rows[0],
+        "article_id": "Q2:en:2:1",
+        "page_id": 2,
+    }
+    pq.write_table(
+        pa.Table.from_pylist(
+            [second_legacy_row, legacy_rows[0]],
+            schema=polygon_article_schema(),
+        ),
+        links_path,
+    )
     _seed_wiki_doc(
         processed / "wikipedia" / "documents" / "alpha-latest.parquet",
         "Q2:wikipedia:en:1:1",
         "Q2",
     )
+    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
+        wikipedia_document_schema,
+    )
+
+    documents_path = processed / "wikipedia" / "documents" / "alpha-latest.parquet"
+    document_rows = pq.read_table(documents_path).to_pylist()
+    second_document = {
+        **document_rows[0],
+        "document_id": "Q2:wikipedia:en:2:1",
+        "article_id": "Q2:en:2:1",
+        "page_id": 2,
+    }
+    pq.write_table(
+        pa.Table.from_pylist(
+            [*document_rows, second_document],
+            schema=wikipedia_document_schema(),
+        ),
+        documents_path,
+    )
     (processed / "manifests" / "processed_pbfs.json").write_text(
         '{"test.osm.pbf": {"source_pbf": "test.osm.pbf"}}'
     )
     # Empty sidecars.
-    from osm_polygon_wikidata_only.augmentation.schema import section_schema
+    from osm_polygon_wikidata_only.augmentation.schema import document_schema, section_schema
 
     pq.write_table(  # type: ignore[no-untyped-call]
         pa.Table.from_pylist([], schema=section_schema()),
@@ -151,7 +185,7 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
         processed / "wikivoyage" / "sections" / "alpha-latest.parquet",
     )
     pq.write_table(
-        pa.table({"_placeholder": []}),
+        pa.Table.from_pylist([], schema=document_schema()),
         processed / "wikivoyage" / "documents" / "alpha-latest.parquet",
     )  # type: ignore[no-untyped-call]
     pq.write_table(
@@ -161,8 +195,19 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
     plan = lm.plan_link_migration(processed)
     assert plan.is_safe_to_apply
     rejections = lm.plan_link_migration_normalization_rejections(plan)
-    assert len(rejections) == 1
-    assert rejections[0]["wikidata"] == "Q2"
+    assert [rejection["identifier"] for rejection in rejections] == [
+        "Q2:en:1:1",
+        "Q2:en:2:1",
+    ]
+
+    lm.apply_link_migration(processed, plan=plan)
+    ledger = json.loads((processed / "integrity" / "rejection_ledger.json").read_text())
+    assert [record["identifier"] for record in ledger["records"]] == [
+        "Q2:en:1:1",
+        "Q2:en:2:1",
+    ]
+    assert {record["wikidata"] for record in ledger["records"]} == {"Q2"}
+    assert {record["reason"] for record in ledger["records"]} == {"wikidata_not_in_polygon_qids"}
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +304,8 @@ def test_conflicting_duplicate_legacy_rows_block_migration(tmp_path: Path) -> No
         or "duplicate" in blocked[0].reason.lower()
         or "ambiguous" in blocked[0].reason.lower()
     ), f"Block reason must mention conflict/duplicate/ambiguous; got {blocked[0].reason}"
+    assert "polygon_id='p1'" in blocked[0].reason
+    assert "article_id='Q1:en:1:1'" in blocked[0].reason
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +396,4 @@ def test_byte_identical_duplicate_legacy_rows_collapse(tmp_path: Path) -> None:
     assert plan.is_safe_to_apply, (
         f"Byte-identical duplicates must collapse to a single canonical row; plan={plan}"
     )
+    assert lm.plan_link_migration_normalization_rejections(plan) == []

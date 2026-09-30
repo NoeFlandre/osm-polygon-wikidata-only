@@ -38,6 +38,10 @@ def test_recovery_backup_is_removed_only_for_existing_targets(tmp_path: Path) ->
     assert backup.exists()
 
 
+def test_recovery_without_a_backup_path_is_a_noop() -> None:
+    transaction_module._remove_recovery_backup({"existed": False})
+
+
 def test_rollback_entry_removes_new_target(tmp_path: Path) -> None:
     target = tmp_path / "new.txt"
     target.write_text("new", encoding="utf-8")

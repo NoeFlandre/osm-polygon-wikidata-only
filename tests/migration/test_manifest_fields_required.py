@@ -26,8 +26,10 @@ with existing entries (preserving unrelated fields/stems).
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -35,6 +37,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import artifacts
 from tests.migration._builders import write_document, write_legacy_link, write_polygon
 
 
@@ -204,10 +207,18 @@ def test_apply_writes_link_schema_version_and_sha256_to_augmentation_manifest(
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
+    aug_manifest = processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    aug_manifest.parent.mkdir(parents=True, exist_ok=True)
+    completed_at = "2026-07-24T00:00:00Z"
+    pre_existing = {
+        "counts": {"legacy_documents": 12},
+        "completed_at": completed_at,
+        "extra_contract_field": "preserve me",
+    }
+    aug_manifest.write_text(json.dumps({stem: pre_existing}, indent=2, sort_keys=True) + "\n")
 
     link_migration.apply_link_migration(processed)
 
-    aug_manifest = processed / "augmentation" / "manifests" / "augmentation_manifest.json"
     payload = json.loads(aug_manifest.read_text())
     entry = payload[stem]
     # All required augmentation-manifest fields.
@@ -239,6 +250,67 @@ def test_apply_writes_link_schema_version_and_sha256_to_augmentation_manifest(
     assert sha == expected, (
         f"link_artifact_sha256 must equal canonical link hash; got {sha} vs {expected}"
     )
+    assert entry["completed_at"] == completed_at
+    assert entry["extra_contract_field"] == "preserve me"
+    assert entry["counts"] == {
+        "legacy_documents": 12,
+        "polygon_articles": 1,
+        "wikivoyage_documents": 0,
+        "wikivoyage_sections": 0,
+    }
+
+    from osm_polygon_wikidata_only.augmentation.orchestrator import sidecar_paths
+    from osm_polygon_wikidata_only.config.paths import DataRoot
+
+    data_root = DataRoot(tmp_path)
+    expected_paths = [str(path.relative_to(processed)) for path in sidecar_paths(data_root, stem)]
+    assert entry["paths"] == expected_paths
+    polygons_path = processed / "polygons" / f"{stem}.parquet"
+    documents_path = processed / "wikipedia" / "documents" / f"{stem}.parquet"
+    assert entry["core_hashes"] == {
+        str(polygons_path): hashlib.sha256(polygons_path.read_bytes()).hexdigest(),
+        str(documents_path): hashlib.sha256(documents_path.read_bytes()).hexdigest(),
+    }
+
+
+def test_new_augmentation_entry_has_a_timestamp_when_no_previous_value_exists(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _setup_processed(processed, stem)
+
+    link_migration.apply_link_migration(processed)
+
+    path = processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    entry = json.loads(path.read_text())[stem]
+    completed_at = datetime.fromisoformat(entry["completed_at"])
+    assert completed_at.tzinfo is not None
+
+
+def test_manifest_json_reader_requests_utf8_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text('{"city": "München"}', encoding="utf-8")
+    original_read_text = Path.read_text
+    encodings: list[str | None] = []
+
+    def read_text(
+        file_path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        encodings.append(encoding)
+        return original_read_text(file_path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert artifacts._load_json_object(path, "manifest.json") == {"city": "München"}
+    assert len(encodings) == 1
+    assert encodings[0] is not None
+    assert codecs.lookup(encodings[0]).name == "utf-8"
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +410,41 @@ def test_apply_writes_metadata_refresh_marker(tmp_path: Path) -> None:
     )
 
 
+def test_pending_publications_merge_multiple_stems_in_sorted_order(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    stems = ["beta-latest", "alpha-latest"]
+    for stem in stems:
+        _setup_processed(processed, stem)
+
+    link_migration.apply_link_migration(processed)
+
+    pending_path = processed / "manifests" / "pending_migration_publications.json"
+    payload = json.loads(pending_path.read_text())
+    expected_stems = sorted(stems)
+    expected_hashes = {
+        stem: hashlib.sha256(
+            (processed / "polygon_articles" / f"{stem}.parquet").read_bytes()
+        ).hexdigest()
+        for stem in expected_stems
+    }
+    assert payload == {
+        "contract_version": "pending-publications-v1",
+        "stems": expected_stems,
+        "metadata_refresh": {
+            "stems": expected_stems,
+            "fingerprint_hashes": expected_hashes,
+        },
+    }
+
+    from osm_polygon_wikidata_only.augmentation.rejection_ledger import LEDGER_CONTRACT_VERSION
+
+    ledger_path = processed / "integrity" / "rejection_ledger.json"
+    assert json.loads(ledger_path.read_text()) == {
+        "contract_version": LEDGER_CONTRACT_VERSION,
+        "records": [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # 7. Malformed existing processed manifest JSON blocks migration
 # ---------------------------------------------------------------------------
@@ -357,5 +464,34 @@ def test_malformed_processed_manifest_blocks_migration(tmp_path: Path) -> None:
     # Plan should still succeed (planning is read-only and a separate
     # file from the migration). The apply stage must refuse to
     # silently overwrite a malformed manifest.
-    with pytest.raises((ValueError, json.JSONDecodeError)):
+    with pytest.raises((ValueError, json.JSONDecodeError), match=r"processed_pbfs\.json"):
+        link_migration.apply_link_migration(processed)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "diagnostic"),
+    [
+        (
+            "augmentation/manifests/augmentation_manifest.json",
+            "augmentation_manifest.json",
+        ),
+        (
+            "manifests/pending_migration_publications.json",
+            "pending_migration_publications.json",
+        ),
+    ],
+)
+def test_malformed_migration_manifests_keep_their_file_diagnostic(
+    tmp_path: Path,
+    relative_path: str,
+    diagnostic: str,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _setup_processed(processed, stem)
+    malformed = processed / relative_path
+    malformed.parent.mkdir(parents=True, exist_ok=True)
+    malformed.write_text("{ invalid JSON")
+
+    with pytest.raises(ValueError, match=diagnostic):
         link_migration.apply_link_migration(processed)

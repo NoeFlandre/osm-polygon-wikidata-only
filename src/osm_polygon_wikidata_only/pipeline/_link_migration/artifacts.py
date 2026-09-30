@@ -37,14 +37,20 @@ from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 
 def _stage_canonical_link(
+    processed_dir: Path,
     staged_dir: Path,
     links_path: Path,
     canonical_table: pa.Table,
 ) -> Path:
     """Stage the canonical polygon/article parquet artifact."""
-    staged_target = staged_dir / links_path.name
+    staged_target = _staged_artifact_path(processed_dir, staged_dir, links_path)
     atomic_write_parquet(staged_target, canonical_table)
     return staged_target
+
+
+def _staged_artifact_path(processed_dir: Path, staged_dir: Path, target: Path) -> Path:
+    """Mirror the processed-tree path so equal basenames cannot collide."""
+    return staged_dir / target.relative_to(processed_dir)
 
 
 def source_pbf_for_stem(inputs: StemApplyInputs) -> str:
@@ -134,7 +140,7 @@ def _stage_processed_manifest(
         source_pbf,
         context.canonical_table.num_rows,
     )
-    staged_path = staged_dir / path.name
+    staged_path = _staged_artifact_path(processed_dir, staged_dir, path)
     atomic_write_journal_json(staged_path, entries)
     return staged_path
 
@@ -196,7 +202,7 @@ def _stage_augmentation_manifest(
         staged_target,
         processed_dir,
     )
-    staged_path = staged_dir / path.name
+    staged_path = _staged_artifact_path(processed_dir, staged_dir, path)
     atomic_write_journal_json(staged_path, manifest)
     return staged_path
 
@@ -242,7 +248,7 @@ def _stage_pending_publication(
     path = processed_dir / "manifests" / "pending_migration_publications.json"
     payload = _load_pending_publications(path)
     payload = _updated_pending_publications(payload, stem, link_artifact_sha256)
-    staged_path = staged_dir / path.name
+    staged_path = _staged_artifact_path(processed_dir, staged_dir, path)
     atomic_write_journal_json(staged_path, payload)
     return staged_path
 
@@ -281,7 +287,7 @@ def _stage_rejection_ledger(
     merged_records = merge_records(
         [*existing_records, *_rejection_records(wiki_rejections, integrity_plan)]
     )
-    staged_path = staged_dir / path.name
+    staged_path = _staged_artifact_path(processed_dir, staged_dir, path)
     atomic_write_journal_json(
         staged_path,
         {
@@ -293,12 +299,13 @@ def _stage_rejection_ledger(
 
 
 def _stage_retained_voyage_table(
+    processed_dir: Path,
     staged_dir: Path,
     target: Path,
     rows: list[dict[str, Any]],
 ) -> Path:
     """Stage one normalized Wikivoyage table using its original schema."""
-    staged_path = staged_dir / target.name
+    staged_path = _staged_artifact_path(processed_dir, staged_dir, target)
     atomic_write_parquet(
         staged_path,
         pa.Table.from_pylist(rows, schema=pq.read_schema(target)),
@@ -307,6 +314,7 @@ def _stage_retained_voyage_table(
 
 
 def _stage_voyage_replacements(
+    processed_dir: Path,
     staged_dir: Path,
     context: StemApplyContext,
 ) -> list[tuple[Path, Path]]:
@@ -321,6 +329,7 @@ def _stage_voyage_replacements(
         != pq.read_metadata(inputs.voyage_documents_path).num_rows
     ):
         staged = _stage_retained_voyage_table(
+            processed_dir,
             staged_dir,
             inputs.voyage_documents_path,
             integrity_plan.retained_documents,
@@ -331,6 +340,7 @@ def _stage_voyage_replacements(
         != pq.read_metadata(inputs.voyage_sections_path).num_rows
     ):
         staged = _stage_retained_voyage_table(
+            processed_dir,
             staged_dir,
             inputs.voyage_sections_path,
             integrity_plan.retained_sections,
@@ -348,7 +358,9 @@ def stage_stem_replacements(
     inputs = context.inputs
     staged_dir = processed_dir / ".link_migration_staging" / inputs.stem_plan.stem
     staged_dir.mkdir(parents=True, exist_ok=True)
-    staged_target = _stage_canonical_link(staged_dir, inputs.links_path, context.canonical_table)
+    staged_target = _stage_canonical_link(
+        processed_dir, staged_dir, inputs.links_path, context.canonical_table
+    )
     staged_manifest = _stage_processed_manifest(processed_dir, staged_dir, context)
     staged_augmentation = _stage_augmentation_manifest(
         processed_dir,
@@ -370,7 +382,7 @@ def stage_stem_replacements(
         context.integrity_plan,
     )
     replacements = [(inputs.links_path, staged_target)]
-    replacements.extend(_stage_voyage_replacements(staged_dir, context))
+    replacements.extend(_stage_voyage_replacements(processed_dir, staged_dir, context))
     replacements.extend(
         [
             (processed_dir / "integrity" / "rejection_ledger.json", staged_ledger),

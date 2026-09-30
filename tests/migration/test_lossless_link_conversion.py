@@ -18,12 +18,14 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import conversion
 
 
 def _write_legacy_links(
@@ -263,6 +265,98 @@ def test_legacy_row_identity_preserved_byte_for_byte(tmp_path: Path) -> None:
     assert doc_ids == ["Q1:wikipedia:en:100:1", "Q1:wikipedia:en:200:2"], (
         f"Canonical must mirror legacy article_ids, got {doc_ids}"
     )
+    assert {row["document_id"]: row for row in canonical} == {
+        "Q1:wikipedia:en:100:1": {
+            "polygon_id": "p1",
+            "document_id": "Q1:wikipedia:en:100:1",
+            "project": "wikipedia",
+            "wikidata": "Q1",
+            "language": "en",
+            "source_pbf": "alpha-latest.osm.pbf",
+            "region": "alpha",
+            "osm_type": "way",
+            "osm_id": 1,
+            "page_id": 100,
+            "revision_id": 1,
+        },
+        "Q1:wikipedia:en:200:2": {
+            "polygon_id": "p1",
+            "document_id": "Q1:wikipedia:en:200:2",
+            "project": "wikipedia",
+            "wikidata": "Q1",
+            "language": "en",
+            "source_pbf": "alpha-latest.osm.pbf",
+            "region": "alpha",
+            "osm_type": "way",
+            "osm_id": 1,
+            "page_id": 200,
+            "revision_id": 2,
+        },
+    }
+
+
+def test_conversion_defaults_missing_optional_values_without_inventing_them() -> None:
+    rows = conversion.build_canonical_rows(
+        "alpha-latest",
+        pa.Table.from_pylist([{"polygon_id": "p1", "article_id": "a1"}]),
+        pa.Table.from_pylist([{"polygon_id": "p1", "wikidata": "Q1"}]),
+        pa.Table.from_pylist(
+            [
+                {
+                    "article_id": "a1",
+                    "document_id": "Q1:wikipedia::0:0",
+                    "wikidata": "Q1",
+                }
+            ]
+        ),
+    )
+
+    assert rows == [
+        {
+            "polygon_id": "p1",
+            "document_id": "Q1:wikipedia::0:0",
+            "project": "wikipedia",
+            "wikidata": "Q1",
+            "language": "",
+            "source_pbf": "",
+            "region": "",
+            "osm_type": "",
+            "osm_id": 0,
+            "page_id": 0,
+            "revision_id": 0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "conflicting_value"),
+    [
+        ("wikidata", "Q2"),
+        ("page_id", 999),
+        ("revision_id", 999),
+        ("language", "fr"),
+    ],
+)
+def test_conversion_rejects_legacy_identity_fields_that_conflict_with_document(
+    field: str,
+    conflicting_value: str | int,
+) -> None:
+    legacy = _legacy_row("p1", "a1", "Q1")
+    legacy[field] = conflicting_value
+
+    with pytest.raises(ValueError, match=field) as exc_info:
+        conversion.build_canonical_rows(
+            "alpha-latest",
+            pa.Table.from_pylist([legacy], schema=polygon_article_schema()),
+            pa.Table.from_pylist([_poly_row("p1", "Q1")], schema=polygon_schema()),
+            pa.Table.from_pylist(
+                [_doc_row("a1", "Q1:wikipedia:en:100:1", "Q1", 100, 1)],
+                schema=wikipedia_document_schema(),
+            ),
+        )
+
+    assert "polygon_id='p1'" in str(exc_info.value)
+    assert "article_id='a1'" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
