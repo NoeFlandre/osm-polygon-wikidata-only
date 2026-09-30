@@ -405,6 +405,61 @@ def test_remote_inventory_uses_override_or_forwards_all_fetch_credentials(
     assert fetch_calls == [{"repo_id": "org/dataset", "hub": hub, "token": "token"}]
 
 
+def test_prepare_remote_reconciliation_forwards_inventory_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = DataRoot(tmp_path)
+    settings = Settings(repo_id="org/dataset", hf_token="token")
+    hub = object()
+    inventory = RemoteInventory({"alpha/polygons.parquet"})
+    fetch_calls: list[dict[str, Any]] = []
+    planner_calls: list[dict[str, Any]] = []
+
+    def fetch(**kwargs: Any) -> RemoteInventory:
+        fetch_calls.append(kwargs)
+        return inventory
+
+    class Planner:
+        def __init__(self, **kwargs: Any) -> None:
+            planner_calls.append(kwargs)
+
+        def plan(self) -> Any:
+            return type(
+                "Plan",
+                (),
+                {"stems_to_publish": set(), "stems_to_augment": set(), "missing": set()},
+            )()
+
+    monkeypatch.setattr(RemoteInventory, "fetch", fetch)
+    result = sync_reconciliation.prepare_remote_reconciliation(
+        enabled=True,
+        data_root=data_root,
+        settings=settings,
+        input_stems={"alpha"},
+        hub=cast(Any, hub),
+        inventory_override=None,
+        validate_augmentation=lambda _root, _stems: {"alpha": False},
+        load_retired_parent_children=lambda _path: {},
+        canonical_region_paths=lambda stem: {"polygons": f"{stem}/polygons.parquet"},
+        planner_cls=cast(Any, Planner),
+    )
+
+    assert fetch_calls == [{"repo_id": "org/dataset", "hub": hub, "token": "token"}]
+    assert planner_calls == [
+        {
+            "data_root": data_root,
+            "inventory": inventory,
+            "stems": {"alpha"},
+            "augmentation_current": {"alpha": False},
+        }
+    ]
+    assert result.inventory is inventory
+    assert result.plan is not None
+    assert result.stems_with_gaps == set()
+    assert result.core_repaired is False
+
+
 def test_local_augmentation_validation_passes_progress_policy_and_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
