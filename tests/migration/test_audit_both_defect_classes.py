@@ -298,6 +298,7 @@ def test_invalid_wikivoyage_relationships_are_rejected(tmp_path: Path) -> None:
         (row["polygon_id"], row["document_id"]) for row in canonical_links
     }
     assert all(row["document_id"] != "Q99:wikivoyage:en:2:1" for row in canonical_links)
+    assert not (processed / ".link_migration_staging" / stem).exists()
     ledger = json.loads((processed / "integrity" / "rejection_ledger.json").read_text())
     voyage_records = [
         record for record in ledger["records"] if record["source_table"] == "wikivoyage_documents"

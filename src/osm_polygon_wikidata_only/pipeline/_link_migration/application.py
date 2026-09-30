@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -151,7 +152,7 @@ def _apply_migratable_stem(
     )
     staged_dir = processed_dir / ".link_migration_staging" / stem_plan.stem
     with suppress(OSError):
-        staged_dir.rmdir()
+        shutil.rmtree(staged_dir)
 
 
 def _ensure_migration_plan_safe(plan: MigrationPlan) -> None:
