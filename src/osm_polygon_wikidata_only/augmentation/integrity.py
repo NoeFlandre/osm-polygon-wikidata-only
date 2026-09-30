@@ -52,13 +52,27 @@ travels with the dataset. The rejection record schema is::
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.integrity_io import (
+    read_polygon_wikidata_set,
+    read_table_required,
+)
+from osm_polygon_wikidata_only.augmentation.integrity_models import (
+    INTEGRITY_CONTRACT_VERSION,
+    REASON_POLYGON_ARTICLES_MISMATCH,
+    REASON_WIKIVOYAGE_ABSENT,
+    IntegrityReport,
+    PolygonArticlesIntegrityResult,
+    RejectionRecord,
+    WikivoyageIntegrityResult,
+)
+from osm_polygon_wikidata_only.augmentation.polygon_articles_integrity import (
+    enforce_polygon_articles_integrity,
+)
 from osm_polygon_wikidata_only.augmentation.rejection_ledger import attach_cascade_counts
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
@@ -67,320 +81,13 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     section_schema,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.domain.schema import POLYGON_ARTICLE_COLUMNS
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
-from osm_polygon_wikidata_only.io.parquet import write_polygon_articles
 from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 
-INTEGRITY_CONTRACT_VERSION = "join-integrity-v1"
-
-REASON_POLYGON_ARTICLES_MISMATCH = "wikidata_mismatch_with_polygon_master"
-REASON_WIKIVOYAGE_ABSENT = "wikidata_absent_from_polygons"
-
-
-@dataclass(frozen=True, slots=True)
-class RejectionRecord:
-    """One deterministic rejection entry.
-
-    The tuple ``(shard, source_table, identifier, reason)`` is
-    unique across the dataset; ``cascaded_sections`` is non-zero
-    only for ``wikivoyage_documents`` rejections and records how
-    many sections were dropped as a downstream consequence.
-    """
-
-    shard: str
-    source_table: str
-    identifier: str
-    wikidata: str
-    expected: str | None
-    reason: str
-    cascaded_sections: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True, slots=True)
-class PolygonArticlesIntegrityResult:
-    """Result of :func:`enforce_polygon_articles_integrity`."""
-
-    shard: str
-    original_row_count: int
-    retained_row_count: int
-    rejected_row_count: int
-    rewritten: bool
-    rejections: tuple[RejectionRecord, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "shard": self.shard,
-            "original_row_count": self.original_row_count,
-            "retained_row_count": self.retained_row_count,
-            "rejected_row_count": self.rejected_row_count,
-            "rewritten": self.rewritten,
-            "rejections": [record.to_dict() for record in self.rejections],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class WikivoyageIntegrityResult:
-    """Result of :func:`enforce_wikivoyage_integrity`."""
-
-    shard: str
-    original_document_count: int
-    retained_document_count: int
-    rejected_document_count: int
-    original_section_count: int
-    retained_section_count: int
-    cascaded_section_count: int
-    rewritten_documents: bool
-    rewritten_sections: bool
-    rejections: tuple[RejectionRecord, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "shard": self.shard,
-            "original_document_count": self.original_document_count,
-            "retained_document_count": self.retained_document_count,
-            "rejected_document_count": self.rejected_document_count,
-            "original_section_count": self.original_section_count,
-            "retained_section_count": self.retained_section_count,
-            "cascaded_section_count": self.cascaded_section_count,
-            "rewritten_documents": self.rewritten_documents,
-            "rewritten_sections": self.rewritten_sections,
-            "rejections": [record.to_dict() for record in self.rejections],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class IntegrityReport:
-    """Aggregate result of :func:`enforce_all_regions`."""
-
-    contract_version: str
-    polygon_articles: tuple[PolygonArticlesIntegrityResult, ...]
-    wikivoyage: tuple[WikivoyageIntegrityResult, ...]
-    audit_path: Path
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "contract_version": self.contract_version,
-            "polygon_articles": [result.to_dict() for result in self.polygon_articles],
-            "wikivoyage": [result.to_dict() for result in self.wikivoyage],
-        }
-
-    @property
-    def total_polygon_articles_rejected(self) -> int:
-        return sum(result.rejected_row_count for result in self.polygon_articles)
-
-    @property
-    def total_wikivoyage_documents_rejected(self) -> int:
-        return sum(result.rejected_document_count for result in self.wikivoyage)
-
-    @property
-    def total_wikivoyage_sections_cascaded(self) -> int:
-        return sum(result.cascaded_section_count for result in self.wikivoyage)
-
-
-# ---------------------------------------------------------------------------
-# Reading helpers
-# ---------------------------------------------------------------------------
-
-
-def _record_polygon_wikidata(
-    mapping: dict[str, str],
-    duplicates: set[str],
-    polygon_id: str,
-    wikidata: str,
-) -> None:
-    """Record one polygon identity and flag conflicting Wikidata values."""
-    if polygon_id in mapping and mapping[polygon_id] != wikidata:
-        duplicates.add(polygon_id)
-        return
-    mapping[polygon_id] = wikidata
-
-
-def _read_polygon_wikidata_map(polygons_path: Path) -> dict[str, str]:
-    """Read the canonical polygon wikidata for a shard.
-
-    Raises :class:`FileNotFoundError` if the polygons file is
-    missing; raises :class:`ValueError` if a polygon_id appears
-    more than once (the join contract requires a single canonical
-    wikidata per polygon_id).
-    """
-    if not polygons_path.is_file():
-        raise FileNotFoundError(f"Polygons parquet missing: {polygons_path}")
-    table: pa.Table = pq.read_table(polygons_path, columns=["polygon_id", "wikidata"])
-    mapping: dict[str, str] = {}
-    duplicates: set[str] = set()
-    for row in zip(
-        table.column("polygon_id").to_pylist(),
-        table.column("wikidata").to_pylist(),
-        strict=True,
-    ):
-        polygon_id, wikidata = row
-        _record_polygon_wikidata(
-            mapping,
-            duplicates,
-            str(polygon_id),
-            str(wikidata) if wikidata is not None else "",
-        )
-    if duplicates:
-        sorted_ids = ", ".join(sorted(duplicates)[:5])
-        raise ValueError(
-            f"Polygons parquet has conflicting wikidata for polygon_id(s): {sorted_ids}"
-        )
-    return mapping
-
-
-def _read_polygon_wikidata_set(polygons_path: Path) -> set[str]:
-    """Return the set of distinct wikidata QIDs in the polygons parquet."""
-    if not polygons_path.is_file():
-        raise FileNotFoundError(f"Polygons parquet missing: {polygons_path}")
-    table: pa.Table = pq.read_table(polygons_path, columns=["wikidata"])
-    return {str(value) for value in table.column("wikidata").to_pylist() if value}
-
-
-def _read_table_required(path: Path, *, label: str, columns: tuple[str, ...]) -> pa.Table:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} parquet missing: {path}")
-    table: pa.Table = pq.read_table(path, columns=list(columns))
-    return table
-
-
-# ---------------------------------------------------------------------------
-# enforce_polygon_articles_integrity
-# ---------------------------------------------------------------------------
-
-
-def _partition_polygon_article_rows(
-    stem: str,
-    rows: list[dict[str, Any]],
-    polygon_wikidata: dict[str, str],
-) -> tuple[list[dict[str, Any]], list[RejectionRecord], set[str]]:
-    """Split polygon-article rows by canonical Wikidata agreement."""
-    retained_rows: list[dict[str, Any]] = []
-    rejections: list[RejectionRecord] = []
-    seen_polygon_ids: set[str] = set()
-    for row in rows:
-        polygon_id = str(row.get("polygon_id", ""))
-        link_wikidata = str(row.get("wikidata", ""))
-        seen_polygon_ids.add(polygon_id)
-        expected = polygon_wikidata.get(polygon_id)
-        if expected is None or expected != link_wikidata:
-            rejections.append(
-                RejectionRecord(
-                    shard=stem,
-                    source_table="polygon_articles",
-                    identifier=polygon_id,
-                    wikidata=link_wikidata,
-                    expected=expected,
-                    reason=REASON_POLYGON_ARTICLES_MISMATCH,
-                )
-            )
-            continue
-        retained_rows.append({column: row.get(column) for column in POLYGON_ARTICLE_COLUMNS})
-    return retained_rows, rejections, seen_polygon_ids
-
-
-def _missing_polygon_ids(seen_polygon_ids: set[str], polygon_wikidata: dict[str, str]) -> list[str]:
-    """Return polygon IDs referenced by links but absent from the core table."""
-    return sorted(seen_polygon_ids - polygon_wikidata.keys())
-
-
-def _ensure_polygon_ids_exist(
-    stem: str,
-    missing_polygon_ids: list[str],
-    rows: list[dict[str, Any]],
-) -> None:
-    """Raise a clear integrity error when links reference absent polygons."""
-    missing_with_links = sorted(
-        polygon_id
-        for polygon_id in missing_polygon_ids
-        if any(str(row.get("polygon_id", "")) == polygon_id for row in rows)
-    )
-    if not missing_with_links:
-        return
-    sample = ", ".join(missing_with_links[:5])
-    raise ValueError(
-        f"polygon_articles rows reference polygon_id(s) absent from polygons parquet "
-        f"for shard {stem!r}: {sample}"
-    )
-
-
-def _write_polygon_articles_if_needed(
-    links_path: Path,
-    retained_rows: list[dict[str, Any]],
-    *,
-    rewritten: bool,
-) -> None:
-    """Rewrite polygon-article rows only when an integrity defect was found."""
-    if rewritten:
-        write_polygon_articles(links_path, retained_rows)
-
-
-def enforce_polygon_articles_integrity(
-    data_root: DataRoot, stem: str, *, dry_run: bool = False
-) -> PolygonArticlesIntegrityResult:
-    """Reject every ``polygon_articles`` row whose wikidata does not
-    match the canonical polygon wikidata for the same ``polygon_id``.
-
-    The polygons parquet is the source of truth. Rows that reference
-    a ``polygon_id`` absent from the polygons table are rejected
-    (downstream join would fail anyway); the rejection audit records
-    the mismatch with ``expected=None``.
-
-    When at least one row is rejected the ``polygon_articles`` parquet
-    is atomically rewritten with the retained rows and the canonical
-    schema. When no row is rejected the parquet is left untouched
-    (byte-identical), preserving the determinism contract.
-
-    The rejection records are returned sorted by ``polygon_id`` so
-    the audit is reproducible across runs.
-
-    With ``dry_run=True`` the rejections are computed but no parquet is
-    rewritten; ``rewritten`` then reports what a real run would do.
-    """
-    polygons_path = data_root.processed_polygons / f"{stem}.parquet"
-    links_path = data_root.processed_links / f"{stem}.parquet"
-
-    polygon_wikidata = _read_polygon_wikidata_map(polygons_path)
-    table = _read_table_required(
-        links_path,
-        label="polygon_articles",
-        columns=POLYGON_ARTICLE_COLUMNS,
-    )
-    rows = table.to_pylist()
-    retained_rows, rejections, seen_polygon_ids = _partition_polygon_article_rows(
-        stem, rows, polygon_wikidata
-    )
-
-    # Detect polygon_ids that appear in polygon_articles but not in the
-    # polygons table (unknown integrity defect). Surface these as
-    # loud failures rather than silently dropping them: the join
-    # contract guarantees the relationship is total, so a missing
-    # polygon is a data hazard, not a benign gap.
-    _ensure_polygon_ids_exist(stem, _missing_polygon_ids(seen_polygon_ids, polygon_wikidata), rows)
-
-    original_count = len(rows)
-    retained_count = len(retained_rows)
-    rejected_count = len(rejections)
-    rewritten = rejected_count > 0
-    _write_polygon_articles_if_needed(
-        links_path, retained_rows, rewritten=rewritten and not dry_run
-    )
-
-    rejections_tuple = tuple(
-        sorted(rejections, key=lambda record: (record.identifier, record.wikidata))
-    )
-    return PolygonArticlesIntegrityResult(
-        shard=stem,
-        original_row_count=original_count,
-        retained_row_count=retained_count,
-        rejected_row_count=rejected_count,
-        rewritten=rewritten,
-        rejections=rejections_tuple,
-    )
-
+# Preserve the former private read names for callers of this module while
+# keeping cross-module dependencies on the explicit integrity I/O interface.
+_read_polygon_wikidata_set = read_polygon_wikidata_set
+_read_table_required = read_table_required
 
 # ---------------------------------------------------------------------------
 # enforce_wikivoyage_integrity
