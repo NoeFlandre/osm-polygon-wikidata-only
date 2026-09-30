@@ -733,9 +733,11 @@ class TestPlanningBlockers:
         plan = plan_migration(processed)
         sp = plan.stems[0]
         assert sp.operation == MigrationOperation.BLOCKED
-        document_id = build_wikipedia_document_table(_make_article_table([row])).column(
-            "document_id"
-        ).to_pylist()[0]
+        document_id = (
+            build_wikipedia_document_table(_make_article_table([row]))
+            .column("document_id")
+            .to_pylist()[0]
+        )
         assert sp.reason == (
             f"Stem 'stem-a': shared-value conflict for document_id '{document_id}' "
             "in column 'title'"
