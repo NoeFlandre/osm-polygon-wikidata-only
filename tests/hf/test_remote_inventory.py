@@ -7,8 +7,8 @@ from typing import Any
 import httpx
 import pytest
 
-from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 
 

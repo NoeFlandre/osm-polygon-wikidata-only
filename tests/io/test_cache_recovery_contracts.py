@@ -82,7 +82,9 @@ def test_atomic_cache_write_failure_preserves_previous_bytes(
         cache.set("entry", {"value": "new"})
 
     assert path.read_bytes() == before
-    assert cache.get("entry").parsed_result == {"value": "old"}  # type: ignore[union-attr]
+    entry = cache.get("entry")
+    assert entry is not None
+    assert entry.parsed_result == {"value": "old"}
 
 
 def test_clear_removes_only_cache_json_files(tmp_path: Path) -> None:

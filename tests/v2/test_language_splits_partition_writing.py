@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.hf.language_splits import (
@@ -23,6 +23,23 @@ from osm_polygon_wikidata_only.v2 import language_splits
 from osm_polygon_wikidata_only.v2.language_splits import (
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
 )
+
+
+def _shard_state(
+    writer: object,
+    *,
+    row_count: int = 0,
+    source_files: list[str] | None = None,
+) -> language_splits._ShardWriteState:
+    return language_splits._ShardWriteState(
+        language="en",
+        shard_index=0,
+        writer=cast(pq.ParquetWriter, writer),
+        final_path=Path("final.parquet"),
+        staged_path=Path("staged.parquet"),
+        row_count=row_count,
+        source_files=[] if source_files is None else source_files,
+    )
 
 
 def test_v2_partition_batch_returns_explicit_wide_row_indices() -> None:
@@ -99,15 +116,17 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
         def close(self) -> None:
             return None
 
-    first = SimpleNamespace(
-        source_files=[], row_count=3, writer=FakeWriter(), pending=[], pending_bytes=0
-    )
-    second = SimpleNamespace(
-        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
-    )
+    first_writer = FakeWriter()
+    second_writer = FakeWriter()
+    first = _shard_state(first_writer, row_count=3)
+    second = _shard_state(second_writer)
     state.current["en"] = first
     writers = iter((first, second))
-    monkeypatch.setattr(language_splits, "_writer_for_language", lambda *args: next(writers))
+
+    def fake_writer_for_language(*_args: object) -> language_splits._ShardWriteState:
+        return next(writers)
+
+    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
 
     with ExitStack() as stack:
         language_splits._write_language_indices(
@@ -127,11 +146,11 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
 
     # The filled shard is flushed when it closes; the partial one stays buffered
     # until the table finishes, which is what keeps writes large and sequential.
-    assert [len(rows) for rows in first.writer.rows] == [7]
-    assert second.writer.rows == []
+    assert [len(rows) for rows in first_writer.rows] == [7]
+    assert second_writer.rows == []
     assert [b.num_rows for b in second.pending] == [1]
     language_splits._flush_shard(state, second)
-    assert [len(rows) for rows in second.writer.rows] == [1]
+    assert [len(rows) for rows in second_writer.rows] == [1]
     assert second.pending == []
     assert state.pending_bytes == 0
     assert first.row_count == 10
@@ -153,16 +172,12 @@ def test_v2_write_language_indices_advances_offset_across_shards(
         def close(self) -> None:
             return None
 
-    first = SimpleNamespace(
-        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
-    )
-    second = SimpleNamespace(
-        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
-    )
+    first = _shard_state(FakeWriter())
+    second = _shard_state(FakeWriter())
     state.current["en"] = first
     writers = iter((first, second))
 
-    def fake_writer_for_language(*args: object) -> SimpleNamespace:
+    def fake_writer_for_language(*_args: object) -> language_splits._ShardWriteState:
         try:
             return next(writers)
         except StopIteration as error:
@@ -191,7 +206,7 @@ def test_v2_write_language_indices_advances_offset_across_shards(
 
 
 def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
-    shard = SimpleNamespace(source_files=["source-a.parquet"])
+    shard = _shard_state(object(), source_files=["source-a.parquet"])
 
     language_splits._record_source_file(shard, "source-a.parquet")
     language_splits._record_source_file(shard, "source-b.parquet")

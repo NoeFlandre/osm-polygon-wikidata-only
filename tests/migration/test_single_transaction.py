@@ -26,11 +26,11 @@ from osm_polygon_wikidata_only.augmentation.schema import document_schema, secti
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
+from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
 )
 from osm_polygon_wikidata_only.pipeline import link_migration
-from osm_polygon_wikidata_only.config.paths import DataRoot
 
 
 def _write_polygon(processed_dir: Path, stem: str) -> None:
@@ -292,9 +292,6 @@ def test_crash_before_any_commit_does_not_mark_current(
     processed = tmp_path / "processed"
     stem = "alpha-latest"
     _setup_processed(processed, stem)
-
-    # Save the real function BEFORE patching.
-    real_commit = lm._commit_ordered_replacements
 
     def _always_crash(
         directory: Path,

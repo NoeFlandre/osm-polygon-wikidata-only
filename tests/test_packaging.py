@@ -55,7 +55,7 @@ def test_project_uses_ty_as_its_only_static_type_checker() -> None:
     workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     justfile = (root / "Justfile").read_text(encoding="utf-8")
     assert "run: just quality-gauntlet" in workflow
-    assert "uv run ty check src scripts" in justfile
+    assert "uv run ty check src scripts tests" in justfile
     assert "uv run mypy" not in workflow
 
 
@@ -187,7 +187,7 @@ def test_pre_commit_runs_fast_uv_managed_quality_hooks() -> None:
     assert "repo: local" in config
     assert "uv run ruff check src tests scripts" in config
     assert "uv run ruff format --check src tests scripts" in config
-    assert "uv run ty check src scripts" in config
+    assert "uv run ty check src scripts tests" in config
     assert "mypy" not in config
 
 

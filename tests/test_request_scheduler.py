@@ -16,9 +16,7 @@ import pytest
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 
 
-def _fake_clock() -> tuple[
-    list[float], list[float], Callable[[], float], Callable[[float], None]
-]:
+def _fake_clock() -> tuple[list[float], list[float], Callable[[], float], Callable[[float], None]]:
     now = [0.0]
     sleeps: list[float] = []
 

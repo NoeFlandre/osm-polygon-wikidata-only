@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -12,8 +11,6 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import 
 from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import (
     StemPlan as ArticleStemPlan,
 )
-from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.cli.run_sync import (
     _active_pbfs,
     _containment_publications_for_remote,
@@ -27,11 +24,17 @@ from osm_polygon_wikidata_only.cli.run_sync import (
     _reconciliation_summary_message,
     _remote_child_has_artifact,
 )
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, delete_op
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     MigrationPlan as LinkMigrationPlan,
+)
+from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemClassification,
+)
+from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemPlan as LinkStemPlan,
 )
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
@@ -249,5 +252,8 @@ def test_enqueue_containment_retirement_submits_one_remote_operation(
         is True
     )
     assert submitted == [
-        ([delete_op("child/polygons.parquet")], "Retire losslessly contained regional dataset shards")
+        (
+            [delete_op("child/polygons.parquet")],
+            "Retire losslessly contained regional dataset shards",
+        )
     ]

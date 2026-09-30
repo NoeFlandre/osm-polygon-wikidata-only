@@ -760,9 +760,7 @@ def test_remote_path_fallback_cannot_drop_revision_pin() -> None:
             return []
 
     with pytest.raises(LanguagePublicationError, match="revision"):
-        _remote_entries(
-            cast(Any, LegacyHub()), V1_REPO, ("README.md",), revision="immutable-rev"
-        )
+        _remote_entries(cast(Any, LegacyHub()), V1_REPO, ("README.md",), revision="immutable-rev")
 
 
 def test_empty_upload_result_is_verified_as_a_noop(

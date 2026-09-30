@@ -15,8 +15,8 @@ from osm_polygon_wikidata_only.hf._stats_release.models import (
     RemoteState,
     StatsReleaseError,
 )
-from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
+from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 
 REVISION = "a" * 40
 

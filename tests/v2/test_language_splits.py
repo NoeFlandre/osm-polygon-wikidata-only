@@ -9,7 +9,6 @@ import sys
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pyarrow as pa
@@ -41,8 +40,6 @@ from osm_polygon_wikidata_only.v2.language_splits import (
     build_v2_language_splits,
     main,
 )
-
-
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
     wikipedia_document_v2_schema,
@@ -1223,9 +1220,7 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
     monkeypatch.setattr(staged_install, "cleanup_transaction", fake_cleanup)
     monkeypatch.setattr(language_splits, "_remove_empty_output_directories", fake_remove)
 
-    cast(Any, language_splits._install_staged_files)(
-        tmp_path, tmp_path / "language_splits", staged
-    )
+    cast(Any, language_splits._install_staged_files)(tmp_path, tmp_path / "language_splits", staged)
 
     assert observed["previous"] == (tmp_path, tmp_path / "language_splits")
     assert observed["backup"] == [final_a, stale, final_z]

@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest import mock

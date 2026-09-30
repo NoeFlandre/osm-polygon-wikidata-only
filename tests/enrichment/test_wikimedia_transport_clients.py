@@ -46,6 +46,7 @@ class _SettingsOverrides(TypedDict, total=False):
     wikimedia_authenticated_min_interval_s: float
     rate_limit_retry_after_default_s: float
 
+
 # ---------------------------------------------------------------------------
 # Fakes -- session, scheduler, cache
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import hashlib
 import socket
 from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -1444,7 +1444,7 @@ class TestLightweightValidatedPlans:
 
 def vars_for_slots(value: object) -> tuple[object, ...]:
     """Return dataclass values without requiring ``__dict__``."""
-    return tuple(getattr(value, field.name) for field in fields(value))
+    return tuple(getattr(value, field.name) for field in fields(cast(Any, value)))
 
 
 def test_missing_stem_plan_classifies_absent_and_unreadable_documents(

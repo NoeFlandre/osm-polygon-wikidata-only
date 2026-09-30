@@ -80,7 +80,7 @@ class _AugmentationClient:
 
     def wikivoyage_document(self, qid: str, language: str, site: str, title: str) -> None:
         del qid, language, site, title
-        return None
+        return
 
 
 def _wikipedia_article(qid: str, index: int = 9) -> WikipediaArticle:

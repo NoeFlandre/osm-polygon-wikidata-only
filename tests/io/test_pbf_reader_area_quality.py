@@ -28,7 +28,8 @@ class _GeometryFactory:
     def __init__(self, geometry: str | None = "{}") -> None:
         self.geometry = geometry
 
-    def create_multipolygon(self, _area: Any) -> str:
+    def create_multipolygon(self, area: Any) -> str:
+        del area
         if self.geometry is None:
             raise ValueError("invalid geometry")
         return self.geometry

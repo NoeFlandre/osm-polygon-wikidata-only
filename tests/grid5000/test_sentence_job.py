@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import ModuleType
@@ -39,7 +40,7 @@ def _data_root(tmp_path: Path) -> DataRoot:
 
 def _fake_onnxruntime(providers: list[str]) -> ModuleType:
     module = ModuleType("onnxruntime")
-    module.get_available_providers = lambda: providers  # type: ignore[attr-defined]
+    setattr(module, "get_available_providers", lambda: providers)
     return module
 
 
@@ -54,7 +55,8 @@ class _FakeSegmenter:
         type(self).init_kwargs = kwargs
 
 
-def _gpu_runner(_args: object) -> CompletedProcess[str]:
+def _gpu_runner(args: Sequence[str]) -> CompletedProcess[str]:
+    del args
     return CompletedProcess(
         args=["nvidia-smi"],
         returncode=0,
@@ -146,7 +148,8 @@ def test_sentence_job_requires_nvidia_smi_and_writes_sanitized_failure_receipt(
     data_root = _data_root(tmp_path)
     receipt_path = tmp_path / "receipt.json"
 
-    def failed_runner(_args: object) -> CompletedProcess[str]:
+    def failed_runner(args: Sequence[str]) -> CompletedProcess[str]:
+        del args
         return CompletedProcess(
             args=["nvidia-smi"],
             returncode=1,

@@ -694,28 +694,45 @@ def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
 
     client = LegacyDownloadClient()
     assert (
-        legacy_call(remote._download_remote_file,
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_file,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         == downloaded
     )
     assert len(client.calls) == 2
     assert "cache_dir" not in client.calls[1]
     with pytest.raises(StatsReleaseError, match="cannot download files"):
-        legacy_call(remote._download_remote_file, object(), repo_id, "stats.json", "pinned", cache_dir=None)
+        legacy_call(
+            remote._download_remote_file, object(), repo_id, "stats.json", "pinned", cache_dir=None
+        )
 
     monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [object()])
     monkeypatch.setattr(remote, "_download_remote_file", lambda *_args, **_kwargs: downloaded)
     assert (
-        legacy_call(remote._download_remote_content,
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_content,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         == b"remote"
     )
     monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [])
     assert (
-        legacy_call(remote._download_remote_content,
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_content,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         is None
     )
@@ -726,13 +743,21 @@ def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("offline")),
     )
     assert (
-        legacy_call(remote._download_remote_content,
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_content,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         is None
     )
 
-    assert legacy_call(remote._remote_revision_for_verifier, client, repo_id, "upload-rev") == "upload-rev"
+    assert (
+        legacy_call(remote._remote_revision_for_verifier, client, repo_id, "upload-rev")
+        == "upload-rev"
+    )
     monkeypatch.setattr(remote, "_remote_revision", lambda *_args: "head-rev")
     assert legacy_call(remote._remote_revision_for_verifier, client, repo_id, None) == "head-rev"
     monkeypatch.setattr(remote, "_remote_revision", lambda *_args: None)

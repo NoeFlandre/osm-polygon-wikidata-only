@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings

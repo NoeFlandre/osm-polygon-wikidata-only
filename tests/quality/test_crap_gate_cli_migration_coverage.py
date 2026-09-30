@@ -76,14 +76,10 @@ def test_v1_index_row_group_errors_keep_their_contract(
 
     if isinstance(error, ValueError):
         with pytest.raises(ValueError, match="bad value"):
-            cast(Any, index_scanning._read_index_rows)(
-                object(), Path("shard.parquet"), False, 0
-            )
+            cast(Any, index_scanning._read_index_rows)(object(), Path("shard.parquet"), False, 0)
     else:
         with pytest.raises(ValueError, match="V1 document shard is unreadable"):
-            cast(Any, index_scanning._read_index_rows)(
-                object(), Path("shard.parquet"), False, 0
-            )
+            cast(Any, index_scanning._read_index_rows)(object(), Path("shard.parquet"), False, 0)
 
 
 def test_v1_legacy_row_conversion_wraps_bad_rows(monkeypatch: pytest.MonkeyPatch) -> None:

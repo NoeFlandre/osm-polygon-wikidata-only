@@ -43,6 +43,7 @@ class PolygonGeometryFactory(Protocol):
 
     def create_multipolygon(self, area: Any) -> str: ...
 
+
 Callback = Callable[[PolygonCandidate], None]
 """Callback signature for retained polygonal elements."""
 

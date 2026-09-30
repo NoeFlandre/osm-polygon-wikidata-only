@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -357,7 +358,7 @@ def test_existing_checkpoint_uses_canonical_metadata_filename() -> None:
             requested_names.append(name)
             return _MissingPath()
 
-    _validate_existing_checkpoint(_RootPath(), {})  # type: ignore[arg-type]
+    _validate_existing_checkpoint(cast(Path, _RootPath()), {})
 
     assert requested_names == ["metadata.json"]
 

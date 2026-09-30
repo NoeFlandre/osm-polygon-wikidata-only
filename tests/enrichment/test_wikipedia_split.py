@@ -29,14 +29,14 @@ from typing import Any, TypeVar
 
 import pytest
 
-from tests.helpers import http_error as _http_error
-from osm_polygon_wikidata_only.io.cache import JsonCache
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import (
     BatchWikipediaClient,
     FetchResult,
     WikipediaArticle,
     WikipediaClient,
 )
+from osm_polygon_wikidata_only.io.cache import JsonCache
+from tests.helpers import http_error as _http_error
 
 _T = TypeVar("_T")
 
@@ -433,11 +433,7 @@ def test_cached_wikipedia_corrupt_payload_falls_back_to_inner() -> None:
             return fresh
 
     cache = _MemoryCache(
-        {
-            "wikipedia/full-text-v2/enwiki/Fresh.json": _cache_entry(
-                "ok", "not-a-dict", None
-            )
-        }
+        {"wikipedia/full-text-v2/enwiki/Fresh.json": _cache_entry("ok", "not-a-dict", None)}
     )
 
     client = CachedWikipediaClient(_Inner(), cache)

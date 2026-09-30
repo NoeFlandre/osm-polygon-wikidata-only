@@ -13,10 +13,6 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-# PyArrow's C++-generated compute kernels are available at runtime but
-# omitted from the published ``pyarrow.compute`` stubs.
-compute_kernels: Any = cast(Any, pc)
-
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     SECTION_COLUMNS,
@@ -29,6 +25,10 @@ from osm_polygon_wikidata_only.domain.schema import (
     article_schema,
     polygon_article_schema,
 )
+
+# PyArrow's C++-generated compute kernels are available at runtime but
+# omitted from the published ``pyarrow.compute`` stubs.
+compute_kernels: Any = cast(Any, pc)
 
 # Order matching actual canonical ARTICLE_COLUMNS layout
 CANONICAL_UPGRADE_COLUMNS = (

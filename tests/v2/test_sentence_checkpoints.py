@@ -57,13 +57,15 @@ def test_sentence_checkpoint_reuses_rows_and_empty_batches(tmp_path: Path) -> No
 
 def test_sentence_checkpoint_resets_when_contract_changes(tmp_path: Path) -> None:
     root = tmp_path / "checkpoints"
-    kwargs = {
-        "input_fingerprint": "input-a",
-        "model_id": "segment-any-text/sat-3l-sm",
-        "model_revision": "model-a",
-        "batch_size": 2,
-    }
-    checkpoint = SentenceCheckpoint(root, "region-latest", "wikipedia", **kwargs)
+    checkpoint = SentenceCheckpoint(
+        root,
+        "region-latest",
+        "wikipedia",
+        input_fingerprint="input-a",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
+    )
     checkpoint.write_batch(0, [{"sentence_id": "sentence-1"}])
     checkpoint.mark_complete(batch_count=1, row_count=1)
 
@@ -71,7 +73,10 @@ def test_sentence_checkpoint_resets_when_contract_changes(tmp_path: Path) -> Non
         root,
         "region-latest",
         "wikipedia",
-        **(kwargs | {"input_fingerprint": "input-b"}),
+        input_fingerprint="input-b",
+        model_id="segment-any-text/sat-3l-sm",
+        model_revision="model-a",
+        batch_size=2,
     )
 
     assert not changed.complete

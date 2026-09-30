@@ -24,8 +24,7 @@ from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
     WikimediaSession,
     load_wikimedia_credentials,
 )
-from osm_polygon_wikidata_only.utils.request_scheduler import RequestPacer
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler, RequestPacer
 
 # The session now requires per-kind interval kwargs on every read.
 # Existing tests don't care about the values; pass placeholders.
@@ -683,9 +682,7 @@ def test_auth_snapshot_does_not_classify_in_progress_auth_as_anonymous() -> None
     release_auth = threading.Event()
 
     class SlowOpener(FakeOpener):
-        def open(
-            self, request: urllib.request.Request, *, timeout: float
-        ) -> FakeResponse:
+        def open(self, request: urllib.request.Request, *, timeout: float) -> FakeResponse:
             params = _request_parameters(request)
             if params.get("action") == ["login"]:
                 auth_started.set()

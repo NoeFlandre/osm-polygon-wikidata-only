@@ -115,6 +115,7 @@ def test_upload_uses_snapshot_bytes_when_present(tmp_path: Path) -> None:
     canonical.write_bytes(b"CANONICAL")
 
     captured: dict[str, bytes] = {}
+    snapshot_paths: list[str] = []
 
     def upload(ops, message):
         # The upload callback (as in cli/run_sync.py) must read from
@@ -122,7 +123,7 @@ def test_upload_uses_snapshot_bytes_when_present(tmp_path: Path) -> None:
         source = ops[0].snapshot_path or ops[0].local_path
         assert source is not None
         captured["bytes"] = source.read_bytes()
-        captured["path"] = str(source)
+        snapshot_paths.append(str(source))
 
     q = BackgroundUploadQueue(upload=upload, state_dir=tmp_path / "state")
     q.submit([add_op(canonical, path_in_repo="data.parquet")], "test")
@@ -134,11 +135,11 @@ def test_upload_uses_snapshot_bytes_when_present(tmp_path: Path) -> None:
         f"Upload must read snapshot bytes, got {captured.get('bytes')!r}"
     )
     # The path used must be the snapshot path, NOT canonical.
-    assert "/snapshots/" in captured.get("path", ""), (
-        f"Upload must use the snapshot subdirectory, got path={captured.get('path')!r}"
+    assert "/snapshots/" in snapshot_paths[-1], (
+        f"Upload must use the snapshot subdirectory, got path={snapshot_paths[-1]!r}"
     )
-    assert "canonical.parquet" == Path(captured.get("path", "")).name, (
-        f"Upload path must end with the snapshot's local filename, got path={captured.get('path')!r}"
+    assert "canonical.parquet" == Path(snapshot_paths[-1]).name, (
+        f"Upload path must end with the snapshot's local filename, got path={snapshot_paths[-1]!r}"
     )
 
 

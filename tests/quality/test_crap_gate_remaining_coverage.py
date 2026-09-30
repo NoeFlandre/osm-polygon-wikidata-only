@@ -100,7 +100,8 @@ def test_remote_job_cleanup_rejects_foreign_paths_and_is_idempotent() -> None:
         with pytest.raises(error, match="Refusing cleanup"):
             _coverage_call(
                 sentence_controller_lifecycle.SentenceControllerLifecycleMixin._cleanup_remote_job,
-                controller, {"remote_job_root": remote_root}
+                controller,
+                {"remote_job_root": remote_root},
             )
 
     events: list[object] = []
@@ -112,13 +113,15 @@ def test_remote_job_cleanup_rejects_foreign_paths_and_is_idempotent() -> None:
     batch = {"remote_job_root": "run-1/jobs/job-1", "remote_cleaned": True}
     _coverage_call(
         sentence_controller_lifecycle.SentenceControllerLifecycleMixin._cleanup_remote_job,
-        controller, batch
+        controller,
+        batch,
     )
     assert events == []
     batch["remote_cleaned"] = False
     _coverage_call(
         sentence_controller_lifecycle.SentenceControllerLifecycleMixin._cleanup_remote_job,
-        controller, batch
+        controller,
+        batch,
     )
     assert events == ["run-1/jobs/job-1", "write"]
     assert batch["remote_cleaned"] is True
@@ -181,7 +184,10 @@ def test_canonical_retirement_add_paths_and_conflicts(tmp_path: Path) -> None:
         local_path=local,
     )
     resolved = local.resolve()
-    assert _coverage_call(retirement_helpers._canonical_add_path, root, operation, "region") == resolved
+    assert (
+        _coverage_call(retirement_helpers._canonical_add_path, root, operation, "region")
+        == resolved
+    )
     operation.action = "delete"
     assert _coverage_call(retirement_helpers._canonical_add_path, root, operation, "region") is None
     operation.action = "add"
@@ -289,21 +295,24 @@ def test_v2_artifact_skip_policy_and_publication_helpers(
         v2_runner, "_region_artifacts_are_current", lambda *_args, **_kw: calls.append(1) or True
     )
     manifest = {"region": {}}
-    assert not _coverage_call(v2_runner._local_region_artifacts_current,
+    assert not _coverage_call(
+        v2_runner._local_region_artifacts_current,
         "region",
         data_root=root,
         settings=SimpleNamespace(skip_existing=False, force=False),
         manifest=manifest,
         hash_cache=None,
     )
-    assert not _coverage_call(v2_runner._local_region_artifacts_current,
+    assert not _coverage_call(
+        v2_runner._local_region_artifacts_current,
         "region",
         data_root=root,
         settings=SimpleNamespace(skip_existing=True, force=True),
         manifest=manifest,
         hash_cache=None,
     )
-    assert _coverage_call(v2_runner._local_region_artifacts_current,
+    assert _coverage_call(
+        v2_runner._local_region_artifacts_current,
         "region",
         data_root=root,
         settings=SimpleNamespace(skip_existing=True, force=False),
@@ -403,11 +412,15 @@ def test_unprocessed_selection_and_candidate_stream_compatibility() -> None:
     assert pipeline_orchestrator._select_unprocessed(paths, {"a.osm.pbf": {}}) == [paths[1]]
 
     streamed: list[object] = []
-    _coverage_call(v2_extractor._consume_candidates,
-        SimpleNamespace(iter_polygon_candidates=lambda add: add("streamed")), streamed.append
+    _coverage_call(
+        v2_extractor._consume_candidates,
+        SimpleNamespace(iter_polygon_candidates=lambda add: add("streamed")),
+        streamed.append,
     )
-    _coverage_call(v2_extractor._consume_candidates,
-        SimpleNamespace(collect_polygon_candidates=lambda: ["collected"]), streamed.append
+    _coverage_call(
+        v2_extractor._consume_candidates,
+        SimpleNamespace(collect_polygon_candidates=lambda: ["collected"]),
+        streamed.append,
     )
     assert streamed == ["streamed", "collected"]
 
@@ -427,7 +440,9 @@ def test_cached_materialization_references_skip_parquet_groups() -> None:
     row_cache = OrderedDict([("cached", cached_row)])
     result: dict[str, object] = {}
 
-    groups = _coverage_call(index_queries.group_materialization_references, references, row_cache, result)
+    groups = _coverage_call(
+        index_queries.group_materialization_references, references, row_cache, result
+    )
 
     assert result == {"cached": cached_row}
     assert list(groups) == [("two.parquet", True, 2)]
@@ -450,16 +465,24 @@ def test_publication_core_loader_uses_existing_core_when_required(
 
     existing = object()
     assert (
-        _coverage_call(_load_existing_core_for_publication, SimpleNamespace(), "region", existing, required=True)
+        _coverage_call(
+            _load_existing_core_for_publication,
+            SimpleNamespace(),
+            "region",
+            existing,
+            required=True,
+        )
         is existing
     )
     assert (
-        _coverage_call(_load_existing_core_for_publication, SimpleNamespace(), "region", None, required=False)
+        _coverage_call(
+            _load_existing_core_for_publication, SimpleNamespace(), "region", None, required=False
+        )
         is None
     )
     monkeypatch.setattr(publication, "load_existing_core_artifacts", lambda _root, stem: (stem,))
-    assert _coverage_call(_load_existing_core_for_publication,
-        SimpleNamespace(), "region", None, required=True
+    assert _coverage_call(
+        _load_existing_core_for_publication, SimpleNamespace(), "region", None, required=True
     ) == ("region",)
 
 
@@ -479,8 +502,11 @@ def test_checkpoint_tree_staging_copies_only_existing_project_trees(
         data_root=SimpleNamespace(processed_v2=tmp_path / "processed", v2_cache=v2_cache)
     )
 
-    _coverage_call(sentence_controller_batches.SentenceControllerBatchMixin._stage_checkpoint_trees,
-        controller, staged, "region"
+    _coverage_call(
+        sentence_controller_batches.SentenceControllerBatchMixin._stage_checkpoint_trees,
+        controller,
+        staged,
+        "region",
     )
 
     assert (staged / "cache/v2/sentence-checkpoints/region/wikipedia/checkpoint.json").is_file()
@@ -520,8 +546,12 @@ def test_speculative_fetch_stops_when_index_finishes_and_keeps_errors() -> None:
             state["calls"] += 1
             return "article"
 
-    result = _coverage_call(v2_direct_enrichment._fetch_speculative_results,
-        Index(), ((0, ref), (1, ref)), Client(), True
+    result = _coverage_call(
+        v2_direct_enrichment._fetch_speculative_results,
+        Index(),
+        ((0, ref), (1, ref)),
+        Client(),
+        True,
     )
     assert result == {0: "article"}
 
@@ -529,8 +559,12 @@ def test_speculative_fetch_stops_when_index_finishes_and_keeps_errors() -> None:
         def fetch_article(self, *_args: object, **_kwargs: object) -> object:
             raise RuntimeError("temporary fetch failure")
 
-    errors = _coverage_call(v2_direct_enrichment._fetch_speculative_results,
-        SimpleNamespace(is_ready=False), ((2, ref),), FailingClient(), False
+    errors = _coverage_call(
+        v2_direct_enrichment._fetch_speculative_results,
+        SimpleNamespace(is_ready=False),
+        ((2, ref),),
+        FailingClient(),
+        False,
     )
     assert isinstance(errors[2], RuntimeError)
     assert str(errors[2]) == "temporary fetch failure"
@@ -555,8 +589,11 @@ def test_language_split_command_translates_publication_errors(
         hf_token=None,
     )
     with pytest.raises(SystemExit) as raised:
-        _coverage_call(commands._run_publish_language_splits,
-            argparse.ArgumentParser(), args, data_root=SimpleNamespace()
+        _coverage_call(
+            commands._run_publish_language_splits,
+            argparse.ArgumentParser(),
+            args,
+            data_root=SimpleNamespace(),
         )
     assert raised.value.code == 2
     assert "release failed" in capsys.readouterr().err
@@ -573,8 +610,14 @@ def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
         "read_schema",
         lambda path: schema if path == parent else pa.schema([("other", pa.string())]),
     )
-    audit, blockers = _coverage_call(containment_migration._audit_present_contract,
-        Path("processed"), contract, "parent", "child", parent, child
+    audit, blockers = _coverage_call(
+        containment_migration._audit_present_contract,
+        Path("processed"),
+        contract,
+        "parent",
+        "child",
+        parent,
+        child,
     )
     assert audit.child_rows == 0
     assert blockers == ["child: schema mismatch for polygons"]
@@ -582,8 +625,14 @@ def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
     monkeypatch.setattr(containment_migration.pq, "read_schema", lambda _path: schema)
     identities = iter((({("p",)}, 1), ({("c",)}, 2)))
     monkeypatch.setattr(containment_migration, "_identity_set", lambda *_args: next(identities))
-    audit, blockers = _coverage_call(containment_migration._audit_present_contract,
-        Path("processed"), contract, "parent", "child", parent, child
+    audit, blockers = _coverage_call(
+        containment_migration._audit_present_contract,
+        Path("processed"),
+        contract,
+        "parent",
+        "child",
+        parent,
+        child,
     )
     assert audit.child_rows == 1
     assert audit.missing_from_parent == 1
@@ -596,8 +645,14 @@ def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
         raise OSError("unreadable parquet")
 
     monkeypatch.setattr(containment_migration.pq, "read_schema", fail_read)
-    audit, blockers = _coverage_call(containment_migration._audit_present_contract,
-        Path("processed"), contract, "parent", "child", parent, child
+    audit, blockers = _coverage_call(
+        containment_migration._audit_present_contract,
+        Path("processed"),
+        contract,
+        "parent",
+        "child",
+        parent,
+        child,
     )
     assert audit.child_rows == 0
     assert blockers == ["child: unreadable polygons: OSError"]

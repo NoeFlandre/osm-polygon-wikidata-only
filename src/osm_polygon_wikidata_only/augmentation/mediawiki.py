@@ -23,8 +23,8 @@ from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
     NonObjectJsonError as _NonObjectJsonError,
 )
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
-    WikimediaSession,
     WikimediaHttpSession,
+    WikimediaSession,
     load_wikimedia_credentials,
 )
 from osm_polygon_wikidata_only.io.cache import JsonResponseCache

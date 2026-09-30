@@ -93,9 +93,7 @@ class WikimediaHttpResponse(Protocol):
 class WikimediaHttpOpener(Protocol):
     """Injectable urllib opener contract used by the Wikimedia session."""
 
-    def open(
-        self, request: urllib.request.Request, *, timeout: float
-    ) -> WikimediaHttpResponse: ...
+    def open(self, request: urllib.request.Request, *, timeout: float) -> WikimediaHttpResponse: ...
 
 
 _Response = WikimediaHttpResponse
@@ -424,9 +422,9 @@ __all__ = [
     "WikimediaAuthenticationError",
     "WikimediaConfigurationError",
     "WikimediaCredentials",
-    "WikimediaHttpSession",
     "WikimediaHttpOpener",
     "WikimediaHttpResponse",
+    "WikimediaHttpSession",
     "WikimediaSession",
     "load_wikimedia_credentials",
 ]

@@ -49,10 +49,9 @@ import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
-from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf, ProcessResult
 from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod
+from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf, ProcessResult
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryAuditResult,
     RegionAuditResult,

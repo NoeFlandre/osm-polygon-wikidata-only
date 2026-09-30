@@ -45,6 +45,7 @@ class RequestScheduler(RequestPacer, Protocol):
 
     def report_host_throttled(self, host: str, delay_s: float) -> None: ...
 
+
 # Length of the rolling window used for "requests/429s in the last
 # minute" telemetry. Centralised so the snapshot and pruning agree.
 ROLLING_WINDOW_S = 60.0

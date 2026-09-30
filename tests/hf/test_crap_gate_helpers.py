@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -44,9 +45,9 @@ def test_legacy_custom_verifier_signature_remains_supported() -> None:
     def legacy_verifier(repo_id: str, _files: tuple) -> str:
         return repo_id
 
-    assert remote._invoke_custom_verifier(legacy_verifier, "owner/repo", (), "revision") == (
-        "owner/repo"
-    )
+    assert remote._invoke_custom_verifier(
+        cast(Any, legacy_verifier), "owner/repo", (), "revision"
+    ) == ("owner/repo")
 
 
 def test_custom_verifier_falls_back_when_signature_cannot_be_inspected() -> None:
@@ -54,9 +55,9 @@ def test_custom_verifier_falls_back_when_signature_cannot_be_inspected() -> None
         return repo_id
 
     setattr(opaque_verifier, "__signature__", object())
-    assert remote._invoke_custom_verifier(opaque_verifier, "owner/repo", (), "revision") == (
-        "owner/repo"
-    )
+    assert remote._invoke_custom_verifier(
+        cast(Any, opaque_verifier), "owner/repo", (), "revision"
+    ) == ("owner/repo")
 
 
 def test_publication_operation_translation_covers_add_delete_and_invalid_paths(
@@ -65,25 +66,29 @@ def test_publication_operation_translation_covers_add_delete_and_invalid_paths(
     local = tmp_path / "source.txt"
     local.write_text("data", encoding="utf-8")
     add = operations._translate_publication_op(
-        PublicationOp("add", "remote.txt", local_path=local), SimpleNamespace, SimpleNamespace
+        PublicationOp("add", "remote.txt", local_path=local),
+        cast(Any, SimpleNamespace),
+        cast(Any, SimpleNamespace),
     )
     assert add.path_in_repo == "remote.txt"
     assert add.path_or_fileobj == str(local)
 
     delete = operations._translate_publication_op(
-        PublicationOp("delete", "remote.txt"), SimpleNamespace, SimpleNamespace
+        PublicationOp("delete", "remote.txt"),
+        cast(Any, SimpleNamespace),
+        cast(Any, SimpleNamespace),
     )
     assert delete.path_in_repo == "remote.txt"
     with pytest.raises(UploadError, match="does not exist"):
         operations._translate_publication_op(
             PublicationOp("add", "missing.txt", local_path=tmp_path / "missing.txt"),
-            SimpleNamespace,
-            SimpleNamespace,
+            cast(Any, SimpleNamespace),
+            cast(Any, SimpleNamespace),
         )
 
     malformed = SimpleNamespace(action="replace", path_in_repo="x", local_path=None)
     with pytest.raises(UploadError, match="Unknown action"):
-        operations._translate_publication_op(malformed, SimpleNamespace, SimpleNamespace)  # type: ignore[arg-type]
+        cast(Any, operations._translate_publication_op)(malformed, SimpleNamespace, SimpleNamespace)
 
 
 def test_hf_token_loader_handles_token_and_backend_failures(

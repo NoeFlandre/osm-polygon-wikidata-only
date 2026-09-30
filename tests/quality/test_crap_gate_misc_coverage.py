@@ -86,7 +86,7 @@ def test_integrity_audit_handles_missing_corrupt_non_object_and_valid_payloads(
     path = data_root.processed / "integrity" / "integrity_audit.json"
     assert _integrity_audit(data_root) is None
 
-    path.parent.mkdir()
+    path.parent.mkdir(parents=True)
     path.write_text("{broken", encoding="utf-8")
     assert _integrity_audit(data_root) is None
     path.write_text("[]", encoding="utf-8")

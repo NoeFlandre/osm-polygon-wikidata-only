@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_schema,
 )
 from osm_polygon_wikidata_only.hf import publication
+from osm_polygon_wikidata_only.hf._publication.models import CorePublicationArtifacts
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction, plan_sync_states
@@ -464,6 +465,7 @@ def test_recovered_region_publication_loads_repaired_core(tmp_path: Path) -> Non
     )
 
     assert core is not None
+    assert isinstance(core, CorePublicationArtifacts)
     assert core.polygons_path == data_root.processed_polygons / "recovered-latest.parquet"
     assert core.polygon_articles_path == (data_root.processed_links / "recovered-latest.parquet")
 
@@ -567,6 +569,7 @@ def test_sync_reconciliation_integration_success(
     # First run: should repair the remote region by uploading core parquets, README, manifests, maps.
     rc = commands.main(args)
     assert rc == 0
+    assert stub.remote_files is not None
 
     # Check that core files are now in the remote_files
     assert stub.remote_files is not None
@@ -640,6 +643,7 @@ def test_metadata_only_gaps_repaired_and_enqueued_last(
     ]
     rc = commands.main(args)
     assert rc == 0
+    assert stub.remote_files is not None
 
     # Verify README.md is repaired
     assert stub.remote_files is not None
@@ -966,9 +970,11 @@ def test_one_of_polygons_or_links_missing_remotely(
     ]
     rc = commands.main(args)
     assert rc == 0
+    remote_files = stub.remote_files
+    assert remote_files is not None
     # Both polygons and links must be uploaded in a coherent commit
-    assert f"polygons/{stem}.parquet" in stub.remote_files
-    assert f"polygon_articles/{stem}.parquet" in stub.remote_files
+    assert f"polygons/{stem}.parquet" in remote_files
+    assert f"polygon_articles/{stem}.parquet" in remote_files
 
 
 @pytest.mark.parametrize(
@@ -1026,7 +1032,9 @@ def test_each_of_the_five_augmentation_corpora_missing_independently(
     ]
     rc = commands.main(args)
     assert rc == 0
-    assert f"{missing_corp}/{stem}.parquet" in stub.remote_files
+    remote_files = stub.remote_files
+    assert remote_files is not None
+    assert f"{missing_corp}/{stem}.parquet" in remote_files
 
 
 def test_upload_failure_remains_retryable(

@@ -28,8 +28,8 @@ from typing import Any, TypeVar
 
 import pytest
 
-from tests.helpers import http_error as _http_error
 from osm_polygon_wikidata_only.io.cache import JsonCache
+from tests.helpers import http_error as _http_error
 
 _T = TypeVar("_T")
 
