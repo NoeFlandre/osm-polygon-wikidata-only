@@ -24,7 +24,7 @@ from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import _boundary_points
 from osm_polygon_wikidata_only.hf.language_splits import LanguageTable, LanguageTableSpec
 from osm_polygon_wikidata_only.hf.publication import _integrity_audit
-from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemClassification,
     StemPlan,
@@ -173,4 +173,4 @@ def test_link_migration_legacy_rejection_table_reader_handles_missing_files(
         0,
         None,
     )
-    assert link_migration._read_legacy_rejection_tables(tmp_path, plan) is None
+    assert link_planning._read_legacy_rejection_tables(tmp_path, plan) is None

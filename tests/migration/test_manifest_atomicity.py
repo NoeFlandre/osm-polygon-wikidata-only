@@ -17,75 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from osm_polygon_wikidata_only.pipeline import link_migration
-from tests.migration._builders import write_document, write_legacy_link, write_polygon
-
-
-def _setup_processed(processed: Path, stem: str) -> None:
-    for sub in (
-        "polygons",
-        "polygon_articles",
-        "wikipedia/documents",
-        "wikipedia/sections",
-        "wikivoyage/documents",
-        "wikivoyage/sections",
-        "wikidata/facts",
-        "manifests",
-    ):
-        (processed / sub).mkdir(parents=True, exist_ok=True)
-    write_polygon(processed, stem)
-    write_document(processed, stem)
-    write_legacy_link(processed, stem)
-    # Empty placeholder sidecars so sidecar_paths(...).exists() passes.
-
-    # Minimum wikipedia_document_schema is already a real table; the
-    # rest of the sidecars just need to exist as parquet files. Use
-    # empty tables with the corresponding known schemas so any future
-    # check is happy.
-    from osm_polygon_wikidata_only.augmentation.schema import document_schema, section_schema
-
-    empty_sections = pa.Table.from_pylist([], schema=section_schema())
-    pq.write_table(  # type: ignore[no-untyped-call]
-        empty_sections,
-        processed / "wikipedia" / "sections" / f"{stem}.parquet",
-    )
-
-    # For the others, write an empty pyarrow table with a generic schema.
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist([], schema=document_schema()),
-        processed / "wikivoyage" / "documents" / f"{stem}.parquet",
-    )
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist([], schema=section_schema()),
-        processed / "wikivoyage" / "sections" / f"{stem}.parquet",
-    )
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.table({"_placeholder": []}),
-        processed / "wikidata" / "facts" / f"{stem}.parquet",
-    )
-    source_pbf = f"{stem}.osm.pbf"
-    (processed / "manifests" / "processed_pbfs.json").write_text(
-        json.dumps(
-            {
-                source_pbf: {
-                    "source_pbf": source_pbf,
-                    "region": stem.removesuffix("-latest"),
-                    "polygons_path": f"polygons/{stem}.parquet",
-                    "articles_path": f"wikipedia/documents/{stem}.parquet",
-                    "polygon_articles_path": f"polygon_articles/{stem}.parquet",
-                    "extraction_version": "test",
-                    "processed_at": "2026-07-24T00:00:00Z",
-                }
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    )
-
+from tests.migration._builders import seed_processed_migration_stem
 
 # ---------------------------------------------------------------------------
 # 1. link_manifest.json must preserve unrelated stem entries
@@ -98,7 +31,7 @@ def test_processed_pbf_manifest_preserves_other_pbfs(tmp_path: Path) -> None:
     """
     processed = tmp_path / "processed"
     stem_a = "alpha-latest"
-    _setup_processed(processed, stem_a)
+    seed_processed_migration_stem(processed, stem_a, region=stem_a.removesuffix("-latest"))
 
     # Pre-seed processed_pbfs.json with an entry for a different PBF.
     manifest_path = processed / "manifests" / "processed_pbfs.json"
@@ -143,7 +76,7 @@ def test_augmentation_manifest_preserves_other_stem_entries(tmp_path: Path) -> N
     data_root = tmp_path
     stem_a = "alpha-latest"
     stem_b = "beta-latest"
-    _setup_processed(processed, stem_a)
+    seed_processed_migration_stem(processed, stem_a, region=stem_a.removesuffix("-latest"))
 
     # Pre-seed augmentation manifest with an entry for stem B.
     aug_manifest = (
@@ -186,7 +119,7 @@ def test_stem_classified_current_only_after_all_writes(tmp_path: Path) -> None:
     data_root_path = tmp_path
     processed = data_root_path / "processed"
     stem = "alpha-latest"
-    _setup_processed(processed, stem)
+    seed_processed_migration_stem(processed, stem, region=stem.removesuffix("-latest"))
 
     plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply

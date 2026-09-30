@@ -14,7 +14,9 @@ from osm_polygon_wikidata_only.domain.models import Polygon
 from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.hf.uploader import UploadError
-from osm_polygon_wikidata_only.pipeline import link_migration, row_construction
+from osm_polygon_wikidata_only.pipeline import row_construction
+from osm_polygon_wikidata_only.pipeline._link_migration import artifacts as link_artifacts
+from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemClassification,
     StemPlan,
@@ -121,7 +123,7 @@ def test_manifest_record_readers_reject_wrong_shapes_and_escape_roots(tmp_path: 
 
 @pytest.mark.parametrize("stem", ["", ".", "..", "nested/path", r"nested\path"])
 def test_link_migration_stem_validation_rejects_unsafe_values(stem: str) -> None:
-    assert not link_migration._is_valid_stem(stem)
+    assert not link_planning._is_valid_stem(stem)
 
 
 @pytest.mark.parametrize("error", [KeyError("missing column"), pa.ArrowInvalid("bad schema")])
@@ -138,14 +140,14 @@ def test_legacy_rejection_table_reader_returns_none_for_invalid_inputs(
         0,
         None,
     )
-    for path in link_migration._stem_paths(stem_plan.stem, tmp_path)[:2]:
+    for path in link_planning._stem_paths(stem_plan.stem, tmp_path)[:2]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
     monkeypatch.setattr(
-        link_migration.pq, "read_table", lambda *_args, **_kwargs: (_ for _ in ()).throw(error)
+        link_planning.pq, "read_table", lambda *_args, **_kwargs: (_ for _ in ()).throw(error)
     )
 
-    assert link_migration._read_legacy_rejection_tables(tmp_path, stem_plan) is None
+    assert link_planning._read_legacy_rejection_tables(tmp_path, stem_plan) is None
 
 
 def test_source_pbf_helper_rejects_zero_or_multiple_values() -> None:
@@ -170,7 +172,7 @@ def test_source_pbf_helper_rejects_zero_or_multiple_values() -> None:
             polygons_table=Table(values),
         )
         with pytest.raises(RuntimeError, match=f"{count} distinct source_pbf"):
-            cast(Any, link_migration._source_pbf_for_stem)(inputs)
+            link_artifacts.source_pbf_for_stem(cast(Any, inputs))
 
 
 def test_enrich_polygon_fetches_and_summarizes_missing_qid(

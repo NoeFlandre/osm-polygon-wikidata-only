@@ -44,6 +44,7 @@ from osm_polygon_wikidata_only.augmentation.wikimedia import (
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from tests.augmentation._builders import article_row
 from tests.helpers import sha256_file as _sha256
 
 
@@ -66,32 +67,6 @@ class ThrottleThenSuccessSession:
                 "https://en.wikipedia.org/w/api.php", 429, "limited", headers, None
             )
         return b'{"parse":{"text":"ok"}}', ""
-
-
-def article_row() -> dict[str, object]:
-    return {
-        "article_id": "Q1:en:10:20",
-        "wikidata": "Q1",
-        "language": "en",
-        "site": "enwiki",
-        "title": "Andorra",
-        "url": "https://en.wikipedia.org/wiki/Andorra",
-        "page_id": 10,
-        "revision_id": 20,
-        "revision_timestamp": "2026-01-01T00:00:00Z",
-        "retrieved_at": "2026-01-02T00:00:00Z",
-        "full_text": "Lead. History text.",
-        "full_text_format": "plain_text",
-        "article_length_chars": 19,
-        "article_length_words": 3,
-        "article_length_tokens_estimate": 4,
-        "license": "CC BY-SA 4.0",
-        "attribution": "Wikipedia",
-        "source_api": "mediawiki_action_api",
-        "fetch_status": "ok",
-        "fetch_error": "",
-        "content_hash": "abc",
-    }
 
 
 def test_sidecar_columns_are_explicit_and_joinable() -> None:

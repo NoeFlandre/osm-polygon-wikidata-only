@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 from osm_polygon_wikidata_only.pipeline import link_migration
+from tests.migration._builders import write_document, write_polygon
 
 
 def _write_minimal_stem(processed_dir: Path, stem: str) -> None:
@@ -33,42 +34,7 @@ def _write_minimal_stem(processed_dir: Path, stem: str) -> None:
     docs_dir.mkdir(parents=True, exist_ok=True)
     links_dir = processed_dir / "polygon_articles"
     links_dir.mkdir(parents=True, exist_ok=True)
-    polygons = pa.table(
-        {
-            "polygon_id": ["p1"],
-            "wikidata": ["Q1"],
-            "source_pbf": [f"{stem}.osm.pbf"],
-            "region": ["r"],
-            "osm_type": ["way"],
-            "osm_id": [1],
-            "name": [""],
-            "tags": [""],
-            "tag_keys": [""],
-            "tag_count": [0],
-            "osm_primary_tag": [""],
-            "centroid": [""],
-            "lat": [0.0],
-            "lon": [0.0],
-            "bbox": [""],
-            "geometry": [""],
-            "area_m2": [0.0],
-            "area_km2": [0.0],
-            "area_bucket": [""],
-            "has_name": [False],
-            "has_wikidata": [True],
-            "has_wikipedia": [False],
-            "wikipedia_language_count": [0],
-            "wikipedia_languages": [""],
-            "wikipedia_article_count": [0],
-            "has_english_wikipedia": [False],
-            "has_french_wikipedia": [False],
-            "text_available": [False],
-            "best_language": ["en"],
-            "extraction_version": ["test"],
-            "extracted_at": ["2026-07-24T00:00:00Z"],
-        }
-    )
-    pq.write_table(polygons, polygons_dir / f"{stem}.parquet")  # type: ignore[no-untyped-call]
+    write_polygon(processed_dir, stem)
 
     doc = wikipedia_document_schema().empty_table()
     pq.write_table(doc, docs_dir / f"{stem}.parquet")  # type: ignore[no-untyped-call]
@@ -239,45 +205,7 @@ def test_apply_writes_canonical_schema_exactly(tmp_path: Path) -> None:
         processed / "polygon_articles" / f"{stem}.parquet",
     )
 
-    doc = pa.Table.from_pylist(
-        [
-            {
-                "document_id": "Q1:wikipedia:en:100:1",
-                "article_id": "a1",
-                "wikidata": "Q1",
-                "language": "en",
-                "site": "enwiki",
-                "title": "T",
-                "url": "https://en.wikipedia.org/wiki/T",
-                "page_id": 100,
-                "revision_id": 1,
-                "revision_timestamp": "2026-07-24T00:00:00Z",
-                "retrieved_at": "2026-07-24T00:00:00Z",
-                "wikidata_label": "L",
-                "wikidata_description": "D",
-                "wikidata_aliases": "",
-                "lead_text": "",
-                "extract": "",
-                "full_text": "",
-                "full_text_format": "plain_text",
-                "article_length_chars": 0,
-                "article_length_words": 0,
-                "article_length_tokens_estimate": 0,
-                "thumbnail_url": "",
-                "thumbnail_width": None,
-                "thumbnail_height": None,
-                "categories": "",
-                "license": "CC-BY-SA",
-                "attribution": "A",
-                "source_api": "mediawiki_action_api",
-                "fetch_status": "ok",
-                "fetch_error": "",
-                "content_hash": "h",
-            }
-        ],
-        schema=wikipedia_document_schema(),
-    )
-    pq.write_table(doc, processed / "wikipedia" / "documents" / f"{stem}.parquet")  # type: ignore[no-untyped-call]
+    write_document(processed, stem)
 
     plan = link_migration.plan_link_migration(processed)
     assert plan.is_safe_to_apply

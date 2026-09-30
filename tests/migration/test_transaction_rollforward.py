@@ -18,11 +18,12 @@ The journaled transaction must:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import application, transaction
 
 
 def _file_hash(path: Path) -> str:
@@ -37,6 +38,16 @@ def _make_pair(tmp_path: Path, name: str, payload: bytes = b"") -> tuple[Path, P
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(payload if payload else b"STAGED_" + name.encode())
     return target, staged
+
+
+def _crash_after(indices: set[int]) -> Callable[[int, Path], None]:
+    """Return the transaction's deterministic mid-flight crash hook."""
+
+    def crash_hook(index: int, _target: Path) -> None:
+        if index in indices:
+            raise RuntimeError(f"simulated crash at index {index}")
+
+    return crash_hook
 
 
 def test_staged_files_preserved_after_mid_flight_crash(tmp_path: Path) -> None:
@@ -54,17 +65,14 @@ def test_staged_files_preserved_after_mid_flight_crash(tmp_path: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
 
     crash_index = {1}  # crash after applying index 1
-
-    def _crash_hook(index: int, target: Path) -> None:
-        if index in crash_index:
-            raise RuntimeError(f"simulated crash at index {index}")
+    crash_hook = _crash_after(crash_index)
 
     with pytest.raises(RuntimeError, match="simulated crash"):
-        link_migration._commit_ordered_replacements(
+        transaction.commit_ordered_replacements(
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
-            _crash_hook=_crash_hook,
+            _crash_hook=crash_hook,
         )
 
     # Index 0 and 1 are applied; index 2 and 3 are NOT applied.
@@ -98,17 +106,14 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
 
     crash_index = {1}
-
-    def _crash_hook(index: int, target: Path) -> None:
-        if index in crash_index:
-            raise RuntimeError(f"simulated crash at index {index}")
+    crash_hook = _crash_after(crash_index)
 
     with pytest.raises(RuntimeError, match="simulated crash"):
-        link_migration._commit_ordered_replacements(
+        transaction.commit_ordered_replacements(
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
-            _crash_hook=_crash_hook,
+            _crash_hook=crash_hook,
         )
 
     # Now: roll-forward. A subsequent call (with the same directory)
@@ -119,7 +124,7 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
     assert journal.is_file(), "Journal must persist after mid-flight crash"
 
     # Replay by calling the public API again.
-    link_migration._commit_ordered_replacements(
+    transaction.commit_ordered_replacements(
         directory=directory,
         stem="alpha-latest",
         replacements=targets_staged,
@@ -151,7 +156,7 @@ def test_target_staged_journal_paths_remain_inside_roots(tmp_path: Path) -> None
     import pytest as _pytest
 
     with _pytest.raises(RuntimeError, match="simulated crash"):
-        link_migration._commit_ordered_replacements(
+        transaction.commit_ordered_replacements(
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
@@ -179,7 +184,7 @@ def test_manifest_update_failure_is_not_swallowed(tmp_path: Path) -> None:
     """The apply stage's augmentation-manifest update must propagate
     exceptions -- they are NOT logged-and-continued.
     """
-    src = Path(link_migration.__file__).read_text()
+    src = Path(application.__file__).read_text()
     assert "except Exception" not in src or "raise" in src, (
         "link_migration must not swallow manifest-update failures with a broad except + log"
     )

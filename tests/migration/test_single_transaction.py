@@ -15,65 +15,14 @@ expected data-root directories before replay.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 
-import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from osm_polygon_wikidata_only.augmentation.schema import document_schema, section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.pipeline import link_migration
-from tests.migration._builders import write_document, write_legacy_link, write_polygon
-
-
-def _setup_processed(processed: Path, stem: str) -> None:
-    for sub in (
-        "polygons",
-        "polygon_articles",
-        "wikipedia/documents",
-        "wikipedia/sections",
-        "wikivoyage/documents",
-        "wikivoyage/sections",
-        "wikidata/facts",
-        "manifests",
-        "augmentation/manifests",
-    ):
-        (processed / sub).mkdir(parents=True, exist_ok=True)
-    write_polygon(processed, stem)
-    write_document(processed, stem)
-    write_legacy_link(processed, stem)
-    empty_sections = pa.Table.from_pylist([], schema=section_schema())
-    pq.write_table(empty_sections, processed / "wikipedia" / "sections" / f"{stem}.parquet")  # type: ignore[no-untyped-call]
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist([], schema=document_schema()),
-        processed / "wikivoyage" / "documents" / f"{stem}.parquet",
-    )
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist([], schema=section_schema()),
-        processed / "wikivoyage" / "sections" / f"{stem}.parquet",
-    )
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.table({"_placeholder": []}),
-        processed / "wikidata" / "facts" / f"{stem}.parquet",
-    )
-    # Pre-seed the processed manifest so the migration can update it.
-    (processed / "manifests" / "processed_pbfs.json").write_text(
-        json.dumps(
-            {
-                f"{stem}.osm.pbf": {
-                    "source_pbf": f"{stem}.osm.pbf",
-                    "region": "r",
-                    "polygons_path": f"polygons/{stem}.parquet",
-                    "articles_path": f"wikipedia/documents/{stem}.parquet",
-                    "polygon_articles_path": f"polygon_articles/{stem}.parquet",
-                    "extraction_version": "test",
-                    "processed_at": "2026-07-24T00:00:00Z",
-                }
-            }
-        )
-    )
+from tests.migration._builders import seed_processed_migration_stem
 
 
 def _fresh_process(tmp_path: Path) -> DataRoot:
@@ -87,9 +36,7 @@ def _fresh_process(tmp_path: Path) -> DataRoot:
 # ---------------------------------------------------------------------------
 
 
-def test_crash_after_link_parquet_rollforward_completes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
     """A crash between the link parquet commit and the manifest
     updates must allow a fresh restart to complete the transaction
     (link parquet, processed manifest, augmentation manifest,
@@ -97,42 +44,23 @@ def test_crash_after_link_parquet_rollforward_completes(
     """
     processed = tmp_path / "processed"
     stem = "alpha-latest"
-    _setup_processed(processed, stem)
+    seed_processed_migration_stem(processed, stem, region="r")
 
-    # Patch the manifest update sequence to crash immediately after
-    # the link parquet commit (so the manifests are NOT yet updated).
-    from osm_polygon_wikidata_only.pipeline import link_migration as lm
-
-    real_commit = lm._commit_ordered_replacements
-
+    # The public crash hook fires immediately after the link parquet
+    # replacement, before any manifest replacement.
     crash_after_first = {"raised": False}
 
-    def _crashing_commit(
-        directory: Path,
-        stem: str,
-        replacements: list[tuple[Path, Path]],
-        *,
-        _crash_hook: Callable[[int, Path], None] | None = None,
-    ) -> None:
-        # Replace the crash hook to fire after the first replacement.
-        def _hook(index: int, target: Path) -> None:
-            if index == 0 and not crash_after_first["raised"]:
-                crash_after_first["raised"] = True
-                raise RuntimeError("simulated crash after link parquet")
-            if _crash_hook is not None:
-                _crash_hook(index, target)
+    def _crash_hook(index: int, _target: Path) -> None:
+        if index == 0 and not crash_after_first["raised"]:
+            crash_after_first["raised"] = True
+            raise RuntimeError("simulated crash after link parquet")
 
-        return real_commit(
-            directory,
-            stem=stem,
-            replacements=replacements,
-            _crash_hook=_hook,
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        link_migration.apply_link_migration(
+            processed,
+            stems={stem},
+            _crash_hook=_crash_hook,
         )
-
-    with monkeypatch.context() as patcher:
-        patcher.setattr(lm, "_commit_ordered_replacements", _crashing_commit)
-        with pytest.raises(RuntimeError, match="simulated crash"):
-            link_migration.apply_link_migration(processed, stems={stem})
 
     # State after crash:
     # - Link parquet IS committed (atomic file replace already
@@ -170,34 +98,27 @@ def test_crash_after_link_parquet_rollforward_completes(
 # ---------------------------------------------------------------------------
 
 
-def test_crash_before_any_commit_does_not_mark_current(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
     """A crash BEFORE any write must leave the stem un-migrated and
     not-current. A fresh apply then completes the transaction.
     """
     from osm_polygon_wikidata_only.augmentation.orchestrator import (
         augmentation_is_current,
     )
-    from osm_polygon_wikidata_only.pipeline import link_migration as lm
 
     processed = tmp_path / "processed"
     stem = "alpha-latest"
-    _setup_processed(processed, stem)
+    seed_processed_migration_stem(processed, stem, region="r")
 
-    def _always_crash(
-        directory: Path,
-        stem: str,
-        replacements: list[tuple[Path, Path]],
-        *,
-        _crash_hook: Callable[[int, Path], None] | None = None,
-    ) -> None:
+    def _always_crash(_index: int, _target: Path) -> None:
         raise RuntimeError("simulated pre-commit crash")
 
-    with monkeypatch.context() as patcher:
-        patcher.setattr(lm, "_commit_ordered_replacements", _always_crash)
-        with pytest.raises(RuntimeError, match="simulated pre-commit crash"):
-            link_migration.apply_link_migration(processed, stems={stem})
+    with pytest.raises(RuntimeError, match="simulated pre-commit crash"):
+        link_migration.apply_link_migration(
+            processed,
+            stems={stem},
+            _crash_hook=_always_crash,
+        )
 
     data_root = _fresh_process(tmp_path)
     assert augmentation_is_current(data_root, stem) is False
@@ -218,7 +139,7 @@ def test_journal_paths_are_inside_data_root(tmp_path: Path) -> None:
     """
     processed = tmp_path / "processed"
     stem = "alpha-latest"
-    _setup_processed(processed, stem)
+    seed_processed_migration_stem(processed, stem, region="r")
 
     link_migration.apply_link_migration(processed, stems={stem})
 
@@ -242,7 +163,7 @@ def test_manifest_failure_cannot_leave_canonical_link_without_manifest_state(
     """Every durable state change belongs to the same recoverable transaction."""
     processed = tmp_path / "processed"
     stem = "alpha-latest"
-    _setup_processed(processed, stem)
+    seed_processed_migration_stem(processed, stem, region="r")
 
     link_migration.apply_link_migration(processed, stems={stem})
 
@@ -257,31 +178,16 @@ def test_manifest_failure_cannot_leave_canonical_link_without_manifest_state(
 
 def test_transaction_replacements_include_every_durable_migration_artifact(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     processed = tmp_path / "processed"
     stem = "alpha-latest"
-    _setup_processed(processed, stem)
+    seed_processed_migration_stem(processed, stem, region="r")
     captured: list[Path] = []
-    real_commit = link_migration._commit_ordered_replacements
 
-    def capture(
-        directory: Path,
-        stem: str,
-        replacements: list[tuple[Path, Path]],
-        *,
-        _crash_hook=None,
-    ) -> None:
-        captured.extend(target for target, _ in replacements)
-        real_commit(
-            directory,
-            stem,
-            replacements,
-            _crash_hook=_crash_hook,
-        )
+    def capture(_index: int, target: Path) -> None:
+        captured.append(target)
 
-    monkeypatch.setattr(link_migration, "_commit_ordered_replacements", capture)
-    link_migration.apply_link_migration(processed, stems={stem})
+    link_migration.apply_link_migration(processed, stems={stem}, _crash_hook=capture)
 
     relative = {path.relative_to(processed).as_posix() for path in captured}
     assert f"polygon_articles/{stem}.parquet" in relative

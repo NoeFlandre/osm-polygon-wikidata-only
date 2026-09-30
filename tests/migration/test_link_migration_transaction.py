@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import application
 from tests.helpers import sha256_file as _sha256
 
 
@@ -94,8 +95,7 @@ def test_apply_replacements_helper_preserves_transaction_boundary(tmp_path: Path
     """The private replacement adapter keeps the public transaction seam small."""
     target, staged = _make_text_pair(tmp_path, "data.parquet", "OLD", "NEW")
 
-    assert hasattr(link_migration, "_apply_replacements")
-    link_migration._apply_replacements(tmp_path, [(target, staged)])
+    application._apply_replacements(tmp_path, [(target, staged)])
 
     assert target.read_text() == "NEW"
 

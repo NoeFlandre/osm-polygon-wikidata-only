@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pyarrow as pa
+
+    from osm_polygon_wikidata_only.augmentation.rejection_ledger import IntegrityPlan
+    from osm_polygon_wikidata_only.config.paths import DataRoot
 
 
 class StemClassification(StrEnum):
@@ -39,4 +46,35 @@ class MigrationPlan:
         return all(stem.classification != StemClassification.BLOCKED for stem in self.stems)
 
 
-__all__ = ["MigrationPlan", "StemClassification", "StemPlan"]
+@dataclass(frozen=True, slots=True)
+class StemApplyInputs:
+    """Immutable source tables and paths used by one stem transaction."""
+
+    stem_plan: StemPlan
+    links_path: Path
+    polygons_path: Path
+    docs_path: Path
+    voyage_documents_path: Path
+    voyage_sections_path: Path
+    legacy_table: pa.Table
+    polygons_table: pa.Table
+    docs_table: pa.Table
+    data_root: DataRoot
+
+
+@dataclass(frozen=True, slots=True)
+class StemApplyContext:
+    """Derived canonical data and integrity plan for one stem."""
+
+    inputs: StemApplyInputs
+    integrity_plan: IntegrityPlan | None
+    canonical_table: pa.Table
+
+
+__all__ = [
+    "MigrationPlan",
+    "StemApplyContext",
+    "StemApplyInputs",
+    "StemClassification",
+    "StemPlan",
+]

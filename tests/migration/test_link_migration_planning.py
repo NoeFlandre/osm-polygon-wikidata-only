@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_schema,
 )
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
 
 EXPECTED_CANONICAL_COLUMNS: tuple[str, ...] = (
     "polygon_id",
@@ -197,6 +198,29 @@ def _processed_layout(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def _seed_stem_links_without_changing_article_identity(
+    tmp_path: Path, stem: str, shared_article_id: str
+) -> None:
+    """Write one stem's polygon and link rows for cross-stem identity cases."""
+    layout = _processed_layout(tmp_path)
+    _write_polygons(
+        layout["polygons"] / f"{stem}.parquet",
+        [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
+    )
+    _write_legacy_links(
+        layout["polygon_articles"] / f"{stem}.parquet",
+        [
+            _legacy_link_row(
+                f"{stem}:relation:1",
+                shared_article_id,
+                "Q1",
+                source_pbf=f"{stem}.osm.pbf",
+                region=stem,
+            )
+        ],
+    )
+
+
 def _seed_full_legacy_stem(
     tmp_path: Path, stem: str, qid: str, *, article_id: str, document_id: str
 ) -> None:
@@ -341,7 +365,7 @@ def test_plan_link_migration_reads_canonical_link_table_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     links_path = _seed_canonical_stem(tmp_path)
-    original_read_table = link_migration.pq.read_table
+    original_read_table = link_planning.pq.read_table
     link_table_reads = 0
 
     def count_link_table_reads(path, *args, **kwargs):
@@ -350,7 +374,7 @@ def test_plan_link_migration_reads_canonical_link_table_once(
             link_table_reads += 1
         return original_read_table(path, *args, **kwargs)
 
-    monkeypatch.setattr(link_migration.pq, "read_table", count_link_table_reads)
+    monkeypatch.setattr(link_planning.pq, "read_table", count_link_table_reads)
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
 
     assert plan.stems[0].classification == "canonical"
@@ -411,14 +435,14 @@ def test_plan_link_migration_propagates_unexpected_schema_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     links_path = _seed_canonical_stem(tmp_path)
-    original_read_schema = link_migration.pq.read_schema
+    original_read_schema = link_planning.pq.read_schema
 
     def fail_unexpectedly(path, *args, **kwargs):
         if Path(path) == links_path:
             raise RuntimeError("unexpected schema reader failure")
         return original_read_schema(path, *args, **kwargs)
 
-    monkeypatch.setattr(link_migration.pq, "read_schema", fail_unexpectedly)
+    monkeypatch.setattr(link_planning.pq, "read_schema", fail_unexpectedly)
 
     with pytest.raises(RuntimeError, match="unexpected schema reader failure"):
         link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
@@ -438,37 +462,11 @@ def test_plan_link_migration_within_stem_isolation_alpha_migratable_beta_blocked
     alpha matches) -> beta must be BLOCKED, and beta must NOT resolve
     from alpha's documents.
     """
-    pa = _pyarrow()
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-
     layout = _processed_layout(tmp_path)
-    layout["polygon_articles"].mkdir(parents=True, exist_ok=True)
     # Both stems carry the same article_id but different polygon ids.
     shared_article_id = "Q1:en:1:1"
     for stem in ("alpha", "beta"):
-        _write_polygons(
-            layout["polygons"] / f"{stem}.parquet",
-            [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
-        )
-        normalized = [
-            {
-                "polygon_id": f"{stem}:relation:1",
-                "article_id": shared_article_id,
-                "wikidata": "Q1",
-                "language": "en",
-                "source_pbf": f"{stem}.osm.pbf",
-                "region": stem,
-                "osm_type": "relation",
-                "osm_id": 1,
-                "page_id": 1,
-                "revision_id": 1,
-                "is_best_language": True,
-            }
-        ]
-        pa.parquet.write_table(
-            pa.Table.from_pylist(normalized, schema=polygon_article_schema()),
-            layout["polygon_articles"] / f"{stem}.parquet",
-        )
+        _seed_stem_links_without_changing_article_identity(tmp_path, stem, shared_article_id)
     # Only alpha has a matching legacy document. Beta has no doc file.
     _write_legacy_documents(
         layout["wiki_docs"] / "alpha.parquet",
@@ -492,37 +490,11 @@ def test_plan_link_migration_keys_resolution_within_stem_unique_document_id(
 ) -> None:
     """The same article_id appearing in two stems must map to the SAME
     document_id revision (the document_id is the canonical identity)."""
-    pa = _pyarrow()
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-
     layout = _processed_layout(tmp_path)
-    layout["polygon_articles"].mkdir(parents=True, exist_ok=True)
     shared_article_id = "Q1:en:1:1"
     document_id = "Q1:wikipedia:en:1:1"
     for stem in ("alpha", "beta"):
-        _write_polygons(
-            layout["polygons"] / f"{stem}.parquet",
-            [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
-        )
-        normalized = [
-            {
-                "polygon_id": f"{stem}:relation:1",
-                "article_id": shared_article_id,
-                "wikidata": "Q1",
-                "language": "en",
-                "source_pbf": f"{stem}.osm.pbf",
-                "region": stem,
-                "osm_type": "relation",
-                "osm_id": 1,
-                "page_id": 1,
-                "revision_id": 1,
-                "is_best_language": True,
-            }
-        ]
-        pa.parquet.write_table(
-            pa.Table.from_pylist(normalized, schema=polygon_article_schema()),
-            layout["polygon_articles"] / f"{stem}.parquet",
-        )
+        _seed_stem_links_without_changing_article_identity(tmp_path, stem, shared_article_id)
         # Both stems have documents with the SAME document_id (and same revision).
         _write_legacy_documents(
             layout["wiki_docs"] / f"{stem}.parquet",

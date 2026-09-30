@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
@@ -375,9 +374,7 @@ def test_ambiguous_article_id_blocks_stem(tmp_path: Path) -> None:
     assert "AMBIG" in sp.reason or "ambig" in sp.reason or "multiple" in sp.reason.lower()
 
 
-def test_apply_reuses_supplied_plan_without_replanning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_reuses_supplied_plan_without_replanning(tmp_path: Path) -> None:
     """A plan from ``plan_link_migration`` can be applied directly."""
     stem = "alpha-latest"
     processed = tmp_path / "processed"
@@ -387,11 +384,9 @@ def test_apply_reuses_supplied_plan_without_replanning(
 
     plan = link_migration.plan_link_migration(processed, stems={stem})
 
-    def _no_replan(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("apply_link_migration must not re-plan a supplied plan")
-
-    monkeypatch.setattr(link_migration, "plan_link_migration", _no_replan)
-    link_migration.apply_link_migration(processed, plan=plan)
+    # Supplied plans ignore the stem selector; an invalid selector proves the
+    # apply path does not silently call the planner again.
+    link_migration.apply_link_migration(processed, stems={"../ignored"}, plan=plan)
 
     canonical = pq.read_table(  # type: ignore[no-untyped-call]
         processed / "polygon_articles" / f"{stem}.parquet"

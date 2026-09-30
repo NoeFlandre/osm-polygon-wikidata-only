@@ -22,20 +22,7 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 from osm_polygon_wikidata_only.pipeline import link_migration as lm
-
-
-def _seed_polygons(path: Path, polygon_id: str, qids: list[str]) -> None:
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.table(
-            {
-                "polygon_id": [polygon_id],
-                "wikidata": [";".join(qids)],
-                "source_pbf": ["test.osm.pbf"],
-                "region": ["r"],
-            }
-        ),
-        path,
-    )
+from tests.migration._builders import write_polygon_qid_membership
 
 
 def _seed_wiki_doc(path: Path, document_id: str, qid: str, page_id: int = 1) -> None:
@@ -202,7 +189,7 @@ def test_conflicting_duplicate_legacy_rows_block_migration(tmp_path: Path) -> No
         "augmentation/manifests",
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
-    _seed_polygons(processed / "polygons" / "alpha-latest.parquet", "p1", ["Q1"])
+    write_polygon_qid_membership(processed / "polygons" / "alpha-latest.parquet", "p1", ["Q1"])
     # Two legacy rows for (p1, "Q1:en:1:1") -- one with wikidata=Q1, one with Q2.
     pq.write_table(  # type: ignore[no-untyped-call]
         pa.Table.from_pylist(
@@ -297,7 +284,7 @@ def test_byte_identical_duplicate_legacy_rows_collapse(tmp_path: Path) -> None:
         "augmentation/manifests",
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
-    _seed_polygons(processed / "polygons" / "alpha-latest.parquet", "p1", ["Q1"])
+    write_polygon_qid_membership(processed / "polygons" / "alpha-latest.parquet", "p1", ["Q1"])
     pq.write_table(  # type: ignore[no-untyped-call]
         pa.Table.from_pylist(
             [
