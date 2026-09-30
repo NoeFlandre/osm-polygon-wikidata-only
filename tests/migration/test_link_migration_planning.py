@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_schema,
 )
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import application as link_application
 from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
 
 EXPECTED_CANONICAL_COLUMNS: tuple[str, ...] = (
@@ -71,10 +72,17 @@ def test_classify_stem_schema_recognizes_canonical() -> None:
 
 
 def test_classify_stem_schema_rejects_mixed_or_unknown() -> None:
-    with pytest.raises(ValueError, match="Schema is neither legacy nor canonical"):
-        link_migration.classify_stem_schema((*list(POLYGON_ARTICLE_COLUMNS), "junk"))
-    with pytest.raises(ValueError, match="Schema is neither legacy nor canonical"):
+    mixed_columns = (*list(POLYGON_ARTICLE_COLUMNS), "junk")
+    with pytest.raises(ValueError) as mixed_error:
+        link_migration.classify_stem_schema(mixed_columns)
+    assert str(mixed_error.value) == (
+        "Schema is neither legacy nor canonical: "
+        f"{list(mixed_columns)[:6]}... (got {len(mixed_columns)} columns)"
+    )
+
+    with pytest.raises(ValueError) as empty_error:
         link_migration.classify_stem_schema([])
+    assert str(empty_error.value) == "Schema is neither legacy nor canonical: []... (got 0 columns)"
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +603,10 @@ def test_unreadable_data_pages_block_only_their_stem(
     assert "polygon_articles file unreadable" in by_stem["broken"].reason
     assert by_stem["healthy"].classification == "canonical"
     assert "Could not read polygon_articles data at" in caplog.text
+    assert str(broken_links) in caplog.text
+    assert any(
+        error_type in by_stem["broken"].reason for error_type in ("OSError:", "ArrowInvalid:")
+    )
 
 
 def test_plan_link_migration_includes_corrupt_parquet_error(
@@ -712,7 +724,10 @@ def test_apply_link_migration_aborts_when_polygons_change_after_planning(
     # Tamper with the polygons file after planning.
     polygons_path = tmp_path / "polygons" / "monaco-latest.parquet"
     polygons_path.write_bytes(polygons_path.read_bytes() + b"corrupt")
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Link migration stem 'monaco-latest': source file changed after planning",
+    ):
         link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
@@ -726,7 +741,10 @@ def test_apply_link_migration_aborts_when_legacy_links_change_after_planning(
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     links_path = tmp_path / "polygon_articles" / "monaco-latest.parquet"
     links_path.write_bytes(links_path.read_bytes() + b"corrupt")
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Link migration stem 'monaco-latest': source file changed after planning",
+    ):
         link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
@@ -740,8 +758,48 @@ def test_apply_link_migration_aborts_when_legacy_documents_change_after_planning
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     docs_path = tmp_path / "wikipedia" / "documents" / "monaco-latest.parquet"
     docs_path.write_bytes(docs_path.read_bytes() + b"corrupt")
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Link migration stem 'monaco-latest': source file changed after planning",
+    ):
         link_migration.apply_link_migration(tmp_path, plan=plan)
+
+
+def test_apply_migratable_stems_continues_after_a_canonical_stem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processed = tmp_path / "processed"
+    _seed_canonical_stem(processed, "alpha-canonical")
+    _seed_full_legacy_stem(
+        processed,
+        "beta-legacy",
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    plan = link_migration.plan_link_migration(processed)
+    legacy_plan = next(stem for stem in plan.stems if stem.stem == "beta-legacy")
+    inputs = link_application._load_stem_apply_inputs(processed, legacy_plan)
+    assert inputs.voyage_sections_path == (
+        processed / "wikivoyage" / "sections" / "beta-legacy.parquet"
+    )
+
+    def fail_cleanup(_path: Path) -> None:
+        raise OSError("staging directory is still in use")
+
+    monkeypatch.setattr(link_application.shutil, "rmtree", fail_cleanup)
+
+    link_application._apply_migratable_stems(processed, plan, {})
+
+    canonical_path = processed / "polygon_articles" / "alpha-canonical.parquet"
+    migrated_path = processed / "polygon_articles" / "beta-legacy.parquet"
+    assert link_migration.classify_stem_schema(
+        _pyarrow().parquet.read_schema(canonical_path).names
+    ) == "canonical"
+    assert link_migration.classify_stem_schema(
+        _pyarrow().parquet.read_schema(migrated_path).names
+    ) == "canonical"
 
 
 def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> None:

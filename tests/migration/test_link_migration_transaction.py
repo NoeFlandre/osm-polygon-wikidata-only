@@ -356,6 +356,7 @@ def test_new_targets_have_no_backup_in_the_prepared_journal(
             "staged_hash": _sha256(target),
         }
     ]
+    assert journal_payloads[-1]["phase"] == "committed"
 
 
 def test_recovery_journal_rejects_wrong_version_and_stem(
