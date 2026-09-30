@@ -11,19 +11,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import 
 from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import (
     StemPlan as ArticleStemPlan,
 )
-from osm_polygon_wikidata_only.cli.run_sync import (
-    _active_pbfs,
-    _containment_publications_for_remote,
-    _core_repair_required,
-    _enqueue_containment_retirement,
-    _migration_stems_to_persist,
-    _plan_sync_states,
-    _prepare_containment_rules,
-    _prepare_remote_reconciliation,
-    _reconciliation_gap_counts,
-    _reconciliation_summary_message,
-    _remote_child_has_artifact,
-)
+from osm_polygon_wikidata_only.cli.sync_publication import enqueue_containment_retirement
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, delete_op
@@ -42,6 +30,20 @@ from osm_polygon_wikidata_only.pipeline.containment_migration import (
     RuleAudit,
 )
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction
+from osm_polygon_wikidata_only.pipeline.sync_planning import (
+    _active_pbfs,
+    _migration_stems_to_persist,
+    _prepare_containment_rules,
+    plan_sync_states_with_recovery,
+)
+from osm_polygon_wikidata_only.pipeline.sync_reconciliation import (
+    _containment_publications_for_remote,
+    _reconciliation_gap_counts,
+    _remote_child_has_artifact,
+    core_repair_required,
+    prepare_remote_reconciliation,
+    reconciliation_summary_message,
+)
 
 
 def test_active_pbfs_excludes_retired_stems_without_reordering() -> None:
@@ -79,14 +81,14 @@ def test_core_repair_required_matches_action_and_missing_artifacts() -> None:
     """Only core work or missing core files marks a state for map refresh."""
     missing = {("region", "polygons")}
 
-    assert _core_repair_required(SyncAction.PROCESS, "other", set()) is True
-    assert _core_repair_required(SyncAction.PUBLISH, "region", missing) is True
-    assert _core_repair_required(SyncAction.AUGMENT, "region", missing) is True
-    assert _core_repair_required(SyncAction.PUBLISH, "other", missing) is False
-    assert _core_repair_required(SyncAction.COMPLETE, "region", missing) is False
+    assert core_repair_required(SyncAction.PROCESS, "other", set()) is True
+    assert core_repair_required(SyncAction.PUBLISH, "region", missing) is True
+    assert core_repair_required(SyncAction.AUGMENT, "region", missing) is True
+    assert core_repair_required(SyncAction.PUBLISH, "other", missing) is False
+    assert core_repair_required(SyncAction.COMPLETE, "region", missing) is False
 
 
-def test_plan_sync_states_adds_noncanonical_link_migrations_to_recovery() -> None:
+def test_plan_sync_states_with_recovery_adds_noncanonical_link_migrations_to_recovery() -> None:
     """Legacy link layouts are included in the recovery action set."""
     link_plan = LinkMigrationPlan(
         processed_dir=Path("processed"),
@@ -104,7 +106,7 @@ def test_plan_sync_states_adds_noncanonical_link_migrations_to_recovery() -> Non
         ),
     )
 
-    states = _plan_sync_states(
+    states = plan_sync_states_with_recovery(
         [Path("region.osm.pbf")],
         input_stems={"region"},
         core_stems={"region"},
@@ -121,16 +123,16 @@ def test_plan_sync_states_adds_noncanonical_link_migrations_to_recovery() -> Non
 
 def test_reconciliation_summary_message_has_stable_four_case_contract() -> None:
     """Summary wording reflects repair and map-refresh signals only."""
-    assert _reconciliation_summary_message(2, True, False) == (
+    assert reconciliation_summary_message(2, True, False) == (
         "Remote reconciliation complete: 2 regions repaired; README and maps refreshed"
     )
-    assert _reconciliation_summary_message(0, False, True) == (
+    assert reconciliation_summary_message(0, False, True) == (
         "Remote reconciliation complete: README and maps refreshed"
     )
-    assert _reconciliation_summary_message(1, False, False) == (
+    assert reconciliation_summary_message(1, False, False) == (
         "Remote reconciliation complete: 1 regions repaired"
     )
-    assert _reconciliation_summary_message(0, False, False) == (
+    assert reconciliation_summary_message(0, False, False) == (
         "Remote reconciliation complete: converged"
     )
 
@@ -146,9 +148,9 @@ def test_reconciliation_gap_counts_separate_core_and_text_artifacts() -> None:
     assert _reconciliation_gap_counts({"a", "b", "c"}, missing) == (1, 2)
 
 
-def test_prepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Path) -> None:
+def testprepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Path) -> None:
     """Non-push runs avoid all remote inventory and validation work."""
-    result = _prepare_remote_reconciliation(
+    result = prepare_remote_reconciliation(
         enabled=False,
         data_root=DataRoot(tmp_path),
         settings=Settings(),
@@ -211,7 +213,7 @@ def test_enqueue_containment_retirement_skips_ineligible_runs(
     queue: object | None,
 ) -> None:
     assert (
-        _enqueue_containment_retirement(
+        enqueue_containment_retirement(
             data_root=DataRoot(tmp_path),
             settings=Settings(repo_id="org/repo"),
             parent_children=parent_children,
@@ -237,12 +239,12 @@ def test_enqueue_containment_retirement_submits_one_remote_operation(
             submitted.append((operations, description))
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.cli.run_sync._assemble_containment_retirement_upload",
+        "osm_polygon_wikidata_only.cli.sync_publication._assemble_containment_retirement_upload",
         assemble,
     )
 
     assert (
-        _enqueue_containment_retirement(
+        enqueue_containment_retirement(
             data_root=DataRoot(tmp_path),
             settings=Settings(repo_id="org/repo"),
             parent_children={"parent": ("child", "other")},

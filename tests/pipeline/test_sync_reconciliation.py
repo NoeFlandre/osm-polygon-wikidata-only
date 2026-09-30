@@ -12,7 +12,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
-from osm_polygon_wikidata_only.cli import commands, run_sync
+from osm_polygon_wikidata_only.cli import commands, run_sync, sync_publication, sync_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.schema import (
@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.hf import publication
 from osm_polygon_wikidata_only.hf._publication.models import CorePublicationArtifacts
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.pipeline import sync_planning, sync_reconciliation
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction, plan_sync_states
 from tests._support import write_publication_map_placeholders, write_tiny_png
 from tests.helpers import sha256_file
@@ -432,13 +433,13 @@ def setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
     monkeypatch.setattr(RemoteInventory, "fetch", mock_fetch)
 
     # 2. Inject the stub HfHub into the background upload queue construction
-    original_build_queue = run_sync._build_upload_queue
+    original_build_queue = sync_publication.build_upload_queue
 
     def mock_build_queue(*args: Any, **kwargs: Any) -> Any:
         kwargs["_hub"] = stub
         return original_build_queue(*args, **kwargs)
 
-    monkeypatch.setattr(run_sync, "_build_upload_queue", mock_build_queue)
+    monkeypatch.setattr(sync_publication, "build_upload_queue", mock_build_queue)
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
@@ -449,7 +450,7 @@ def test_recovered_region_publication_loads_repaired_core(tmp_path: Path) -> Non
     data_root.ensure()
     _setup_mock_region(data_root, "recovered-latest", augmented=True)
 
-    core = run_sync._load_existing_core_for_publication(
+    core = sync_runtime.load_existing_core_for_publication(
         data_root,
         "recovered-latest",
         None,
@@ -524,8 +525,8 @@ def test_sync_reconciliation_integration_success(
             self._apply(operations)
 
     monkeypatch.setattr(
-        run_sync,
-        "_build_upload_queue",
+        sync_publication,
+        "build_upload_queue",
         lambda *, push, **_kwargs: ImmediateUploadQueue() if push else None,
     )
     # Setup dummy raw pbf
@@ -559,7 +560,7 @@ def test_sync_reconciliation_integration_success(
 
     # Re-plan against the repaired remote inventory rather than repeating the
     # expensive local recovery audit; the full CLI no-op remains covered separately.
-    prepared = run_sync._prepare_sync_plan(
+    prepared = sync_planning.prepare_sync_plan(
         Namespace(input=data_root.raw),
         data_root=data_root,
         settings=Settings(
@@ -1039,7 +1040,7 @@ def test_upload_failure_remains_retryable(
     def failing_upload(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("HF upload failed")
 
-    monkeypatch.setattr(run_sync, "upload_files", failing_upload)
+    monkeypatch.setattr(sync_publication, "upload_files", failing_upload)
 
     pbf_file = data_root.raw / f"{stem}.osm.pbf"
     pbf_file.touch()
@@ -1291,7 +1292,7 @@ def test_augmentation_is_current_called_exactly_once_per_stem(
         return original_is_current(*args, **kwargs)
 
     monkeypatch.setattr(orch, "augmentation_is_current", spy_is_current)
-    monkeypatch.setattr(run_sync, "augmentation_is_current", spy_is_current)
+    monkeypatch.setattr(sync_reconciliation, "augmentation_is_current", spy_is_current)
 
     stub = StubHfHub(remote_files=set())
     setup_test_hub(monkeypatch, stub)
@@ -1532,7 +1533,7 @@ def test_logging_upload_failure(
     def failing_upload(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("Upload failure")
 
-    monkeypatch.setattr(run_sync, "upload_files", failing_upload)
+    monkeypatch.setattr(sync_publication, "upload_files", failing_upload)
 
     pbf_file = data_root.raw / f"{stem}.osm.pbf"
     pbf_file.touch()
@@ -1568,28 +1569,28 @@ def test_log_remote_reconciliation_summary_unit() -> None:
     spy = _LoggerSpy()
 
     # Core + metadata refresh with repaired regions
-    run_sync._log_remote_reconciliation_summary(
+    sync_reconciliation.log_remote_reconciliation_summary(
         stems_with_gaps={"mexico-latest"},
         core_repaired=True,
         metadata_repaired=False,
         log=spy.info,
     )
     # Maps refreshed but no repaired regions
-    run_sync._log_remote_reconciliation_summary(
+    sync_reconciliation.log_remote_reconciliation_summary(
         stems_with_gaps=set(),
         core_repaired=True,
         metadata_repaired=False,
         log=spy.info,
     )
     # Repaired regions but maps NOT refreshed
-    run_sync._log_remote_reconciliation_summary(
+    sync_reconciliation.log_remote_reconciliation_summary(
         stems_with_gaps={"andorra-latest", "mexico-latest"},
         core_repaired=False,
         metadata_repaired=False,
         log=spy.info,
     )
     # Converged
-    run_sync._log_remote_reconciliation_summary(
+    sync_reconciliation.log_remote_reconciliation_summary(
         stems_with_gaps=set(),
         core_repaired=False,
         metadata_repaired=False,

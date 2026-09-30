@@ -579,12 +579,13 @@ def test_cli_shell_forwards_runtime_cache_to_process_extracted_pbf(
     from types import SimpleNamespace
 
     from osm_polygon_wikidata_only.cli import run_sync as cli_run_sync_mod
+    from osm_polygon_wikidata_only.cli import sync_runtime as cli_sync_runtime_mod
     from osm_polygon_wikidata_only.io import manifest as manifest_mod
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
 
     root = _data_root(tmp_path)
     monkeypatch.setattr(
-        cli_run_sync_mod,
+        cli_sync_runtime_mod,
         "audit_wikidata_integrity",
         _empty_recovery_audit,
     )
@@ -626,7 +627,7 @@ def test_cli_shell_forwards_runtime_cache_to_process_extracted_pbf(
         cli_run_sync_mod, "build_wikimedia_runtime", lambda s, data_root: fake_runtime
     )
     monkeypatch.setattr(
-        cli_run_sync_mod,
+        cli_sync_runtime_mod,
         "augment_region",
         lambda *args, **kwargs: SimpleNamespace(
             counts="ok", manifest_path=tmp_path / "aug_manifest.json"
@@ -673,12 +674,13 @@ def test_cli_shell_forwards_none_runtime_cache_when_disabled(
     from types import SimpleNamespace
 
     from osm_polygon_wikidata_only.cli import run_sync as cli_run_sync_mod
+    from osm_polygon_wikidata_only.cli import sync_runtime as cli_sync_runtime_mod
     from osm_polygon_wikidata_only.io import manifest as manifest_mod
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
 
     root = _data_root(tmp_path)
     monkeypatch.setattr(
-        cli_run_sync_mod,
+        cli_sync_runtime_mod,
         "audit_wikidata_integrity",
         _empty_recovery_audit,
     )
@@ -718,7 +720,7 @@ def test_cli_shell_forwards_none_runtime_cache_when_disabled(
         cli_run_sync_mod, "build_wikimedia_runtime", lambda s, data_root: fake_runtime
     )
     monkeypatch.setattr(
-        cli_run_sync_mod,
+        cli_sync_runtime_mod,
         "augment_region",
         lambda *args, **kwargs: SimpleNamespace(
             counts="ok", manifest_path=tmp_path / "aug_manifest.json"
@@ -772,12 +774,13 @@ def test_cli_shell_real_process_state_executes_without_type_error(
     from types import SimpleNamespace
 
     from osm_polygon_wikidata_only.cli import run_sync as cli_run_sync_mod
+    from osm_polygon_wikidata_only.cli import sync_runtime as cli_sync_runtime_mod
     from osm_polygon_wikidata_only.io import manifest as manifest_mod
     from osm_polygon_wikidata_only.io import pbf_reader as pbf_reader_mod
 
     root = _data_root(tmp_path)
     monkeypatch.setattr(
-        cli_run_sync_mod,
+        cli_sync_runtime_mod,
         "audit_wikidata_integrity",
         _empty_recovery_audit,
     )
@@ -828,7 +831,7 @@ def test_cli_shell_real_process_state_executes_without_type_error(
     # ``augment_region`` with a no-op so the augmentation step
     # doesn't try to talk to the fake runtime's session.
     monkeypatch.setattr(
-        cli_run_sync_mod,
+        cli_sync_runtime_mod,
         "augment_region",
         lambda *args, **kwargs: SimpleNamespace(
             counts="ok", manifest_path=tmp_path / "aug_manifest.json"

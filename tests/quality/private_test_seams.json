@@ -101,21 +101,12 @@
       "_run_benchmark": 1,
       "_run_worker": 1
     },
-    "migration/test_crash_restart_lifecycle.py": {
-      "_post_upload_publication_cleanup": 1
-    },
     "migration/test_single_transaction.py": {
       "_commit_ordered_replacements": 3
     },
     "migration/test_wikipedia_document_backfill.py": {
       "_file_content_hash": 5,
       "_read_article_table": 3
-    },
-    "pipeline/test_publish_before_process.py": {
-      "_build_upload_queue": 1
-    },
-    "pipeline/test_sync_reconciliation.py": {
-      "_build_upload_queue": 2
     },
     "pipeline/test_wikidata_recovery_repair_fetch.py": {
       "_fetch_recovery_document": 1

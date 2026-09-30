@@ -25,7 +25,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     section_schema,
 )
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
-from osm_polygon_wikidata_only.cli import commands, run_sync
+from osm_polygon_wikidata_only.cli import commands, sync_publication
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
@@ -160,13 +160,13 @@ def _setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
         return RemoteInventory(set(files))
 
     monkeypatch.setattr(RemoteInventory, "fetch", mock_fetch)
-    original_build_queue = run_sync._build_upload_queue
+    original_build_queue = sync_publication.build_upload_queue
 
     def mock_build_queue(*args: Any, **kwargs: Any) -> Any:
         kwargs["_hub"] = stub
         return original_build_queue(*args, **kwargs)
 
-    monkeypatch.setattr(run_sync, "_build_upload_queue", mock_build_queue)
+    monkeypatch.setattr(sync_publication, "build_upload_queue", mock_build_queue)
 
 
 def _synthesize_pending_publication(data_root: DataRoot, stem: str) -> None:

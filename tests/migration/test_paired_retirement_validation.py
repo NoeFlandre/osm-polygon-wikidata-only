@@ -1,4 +1,4 @@
-"""Tests verifying that ``_post_upload_publication_cleanup`` requires paired remote retirement.
+"""Tests verifying that ``post_upload_publication_cleanup`` requires paired remote retirement.
 
 Cleanup is authorized only when the operation list contains BOTH:
 
@@ -19,7 +19,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.cli.run_sync import _post_upload_publication_cleanup
+from osm_polygon_wikidata_only.cli.sync_publication import post_upload_publication_cleanup
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
@@ -112,7 +112,7 @@ def test_add_without_matching_delete_does_not_cleanup(tmp_path: Path) -> None:
         add_op(canonical, path_in_repo=f"wikipedia/documents/{STEM}.parquet")
     ]
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert legacy.exists()
     assert STEM in load_pending_publications(data_root)
@@ -136,7 +136,7 @@ def test_delete_for_other_stem_does_not_cleanup_first_stem(
         delete_op(f"articles/{OTHER_STEM}.parquet"),
     ]
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert legacy.exists()
     assert STEM in load_pending_publications(data_root)
@@ -156,7 +156,7 @@ def test_delete_without_add_does_not_cleanup(tmp_path: Path) -> None:
         delete_op(f"articles/{STEM}.parquet"),
     ]
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert legacy.exists()
     assert STEM in load_pending_publications(data_root)
@@ -181,7 +181,7 @@ def test_mixed_multi_stem_only_paired_stems_are_cleaned(tmp_path: Path) -> None:
         delete_op(f"articles/{OTHER_STEM}.parquet"),
     ]
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     # STEM is correctly paired — cleaned.
     assert not stem_legacy.exists()
@@ -213,7 +213,7 @@ def test_two_stems_fully_paired_are_both_cleaned(tmp_path: Path) -> None:
         delete_op(f"articles/{OTHER_STEM}.parquet"),
     ]
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert not stem_legacy.exists()
     assert not other_legacy.exists()
@@ -229,7 +229,7 @@ def test_two_stems_fully_paired_are_both_cleaned(tmp_path: Path) -> None:
 def test_empty_ops_does_not_cleanup(tmp_path: Path) -> None:
     data_root = _seed_migrated_two_stems(tmp_path)
 
-    _post_upload_publication_cleanup(data_root, [], dry_run=False)
+    post_upload_publication_cleanup(data_root, [], dry_run=False)
 
     pending = load_pending_publications(data_root)
     assert STEM in pending
