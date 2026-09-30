@@ -207,6 +207,8 @@ pytest_add_cli_args_test_selection = [
     "tests/cli/test_run_sync_preparation.py",
     "tests/cli/test_migration_coordination.py",
     "tests/cli/test_sync_application.py",
+    "tests/cli/test_sync_wiring.py",
+    "tests/cli/test_sync_publication.py",
     "tests/migration/test_crash_restart_lifecycle.py",
     "tests/migration/test_paired_retirement_path_validation.py",
     "tests/migration/test_paired_retirement_validation.py",
