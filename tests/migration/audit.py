@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -25,6 +25,10 @@ from osm_polygon_wikidata_only.domain.schema import (
     article_schema,
     polygon_article_schema,
 )
+
+# PyArrow's C++-generated compute kernels are available at runtime but
+# omitted from the published ``pyarrow.compute`` stubs.
+compute_kernels: Any = cast(Any, pc)
 
 # Order matching actual canonical ARTICLE_COLUMNS layout
 CANONICAL_UPGRADE_COLUMNS = (
@@ -444,12 +448,12 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                 doc_table = doc_file.read(columns=doc_cols_to_read)
 
                 # Deterministic document_id & project validation in C++
-                expected_doc_ids = pc.binary_join_element_wise(
+                expected_doc_ids = compute_kernels.binary_join_element_wise(
                     doc_table.column("wikidata"),
                     pa.scalar("wikipedia"),
                     doc_table.column("language"),
-                    pc.cast(doc_table.column("page_id"), pa.string()),
-                    pc.cast(doc_table.column("revision_id"), pa.string()),
+                    compute_kernels.cast(doc_table.column("page_id"), pa.string()),
+                    compute_kernels.cast(doc_table.column("revision_id"), pa.string()),
                     ":",
                 )
                 if not doc_table.column("document_id").equals(expected_doc_ids):
@@ -464,8 +468,8 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                                 f"expected '{exp}', got '{act}'"
                             )
 
-                proj_eq = pc.equal(doc_table.column("project"), pa.scalar("wikipedia"))
-                if not pc.all(proj_eq).as_py():
+                proj_eq = compute_kernels.equal(doc_table.column("project"), pa.scalar("wikipedia"))
+                if not compute_kernels.all(proj_eq).as_py():
                     for proj, a_id in zip(
                         doc_table.column("project").to_pylist(),
                         doc_table.column("article_id").to_pylist(),
@@ -585,7 +589,7 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                 )
                 # C++ unique section_id check
                 sec_ids = sec_table.column("section_id")
-                sec_ids_unique = pc.unique(sec_ids)
+                sec_ids_unique = compute_kernels.unique(sec_ids)
                 if len(sec_ids_unique) != len(sec_ids):
                     stem_discrepancies.append(
                         "Duplicate section_id values found in sections Parquet"
@@ -594,11 +598,11 @@ def run_audit(data_root: Path) -> dict[str, Any]:
 
                 # Check resolutions in articles
                 if has_art:
-                    in_art = pc.is_in(
+                    in_art = compute_kernels.is_in(
                         sec_table.column("article_id"), value_set=pa.array(list(art_ids_set))
                     )
-                    if not pc.all(in_art).as_py():
-                        unresolved_mask = pc.invert(in_art)
+                    if not compute_kernels.all(in_art).as_py():
+                        unresolved_mask = compute_kernels.invert(in_art)
                         unresolved_table = sec_table.filter(unresolved_mask)
                         for s_id, s_art_id in zip(
                             unresolved_table.column("section_id").to_pylist(),
@@ -611,11 +615,11 @@ def run_audit(data_root: Path) -> dict[str, Any]:
 
                 # Check resolutions in documents
                 if has_doc:
-                    in_doc = pc.is_in(
+                    in_doc = compute_kernels.is_in(
                         sec_table.column("document_id"), value_set=pa.array(list(doc_ids_set))
                     )
-                    if not pc.all(in_doc).as_py():
-                        unresolved_mask = pc.invert(in_doc)
+                    if not compute_kernels.all(in_doc).as_py():
+                        unresolved_mask = compute_kernels.invert(in_doc)
                         unresolved_table = sec_table.filter(unresolved_mask)
                         for s_id, s_doc_id in zip(
                             unresolved_table.column("section_id").to_pylist(),
@@ -629,12 +633,14 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                 # Match identities at PyArrow C++ level to avoid Python loops
                 if has_doc:
                     # 1. Check section article_id matching document_id (strip project wikipedia)
-                    expected_art_ids = pc.replace_substring(
+                    expected_art_ids = compute_kernels.replace_substring(
                         sec_table.column("document_id"), pattern=":wikipedia:", replacement=":"
                     )
-                    art_id_match = pc.equal(sec_table.column("article_id"), expected_art_ids)
-                    if not pc.all(art_id_match).as_py():
-                        mismatched_rows = sec_table.filter(pc.invert(art_id_match))
+                    art_id_match = compute_kernels.equal(
+                        sec_table.column("article_id"), expected_art_ids
+                    )
+                    if not compute_kernels.all(art_id_match).as_py():
+                        mismatched_rows = sec_table.filter(compute_kernels.invert(art_id_match))
                         for row in mismatched_rows.to_pylist():
                             s_id = row["section_id"]
                             s_art_id = row["article_id"]
@@ -645,17 +651,19 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                             )
 
                     # 2. Check section row fields match document_id parts (build expected document_id in C++)
-                    expected_doc_ids = pc.binary_join_element_wise(
+                    expected_doc_ids = compute_kernels.binary_join_element_wise(
                         sec_table.column("wikidata"),
                         pa.scalar("wikipedia"),
                         sec_table.column("language"),
-                        pc.cast(sec_table.column("page_id"), pa.string()),
-                        pc.cast(sec_table.column("revision_id"), pa.string()),
+                        compute_kernels.cast(sec_table.column("page_id"), pa.string()),
+                        compute_kernels.cast(sec_table.column("revision_id"), pa.string()),
                         ":",
                     )
-                    doc_id_match = pc.equal(sec_table.column("document_id"), expected_doc_ids)
-                    if not pc.all(doc_id_match).as_py():
-                        mismatched_rows = sec_table.filter(pc.invert(doc_id_match))
+                    doc_id_match = compute_kernels.equal(
+                        sec_table.column("document_id"), expected_doc_ids
+                    )
+                    if not compute_kernels.all(doc_id_match).as_py():
+                        mismatched_rows = sec_table.filter(compute_kernels.invert(doc_id_match))
                         for row in mismatched_rows.to_pylist():
                             s_id = row["section_id"]
                             s_doc_id = row["document_id"]
@@ -673,9 +681,11 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                 poly_ids_col = link_table.column("polygon_id")
                 link_art_ids_col = link_table.column("article_id")
                 if has_art:
-                    in_art = pc.is_in(link_art_ids_col, value_set=pa.array(list(art_ids_set)))
-                    if not pc.all(in_art).as_py():
-                        unresolved_mask = pc.invert(in_art)
+                    in_art = compute_kernels.is_in(
+                        link_art_ids_col, value_set=pa.array(list(art_ids_set))
+                    )
+                    if not compute_kernels.all(in_art).as_py():
+                        unresolved_mask = compute_kernels.invert(in_art)
                         unresolved_table = link_table.filter(unresolved_mask)
                         for poly_id, l_art_id in zip(
                             unresolved_table.column("polygon_id").to_pylist(),
@@ -686,9 +696,11 @@ def run_audit(data_root: Path) -> dict[str, Any]:
                             )
                             total_unresolved_links += 1
                 if has_doc:
-                    in_doc = pc.is_in(link_art_ids_col, value_set=pa.array(list(doc_art_ids_set)))
-                    if not pc.all(in_doc).as_py():
-                        unresolved_mask = pc.invert(in_doc)
+                    in_doc = compute_kernels.is_in(
+                        link_art_ids_col, value_set=pa.array(list(doc_art_ids_set))
+                    )
+                    if not compute_kernels.all(in_doc).as_py():
+                        unresolved_mask = compute_kernels.invert(in_doc)
                         unresolved_table = link_table.filter(unresolved_mask)
                         for poly_id, l_art_id in zip(
                             unresolved_table.column("polygon_id").to_pylist(),

@@ -725,7 +725,7 @@ def test_coverage_cell_is_immutable() -> None:
         is_low_sample=False,
     )
     with pytest.raises(Exception):
-        cell.coverage_rate = 0.0  # type: ignore[misc]
+        setattr(cell, "coverage_rate", 0.0)
 
 
 def test_default_h3_resolution_is_three() -> None:
@@ -1282,7 +1282,7 @@ def test_generate_polygon_count_writes_deterministic_path(tmp_path: Path) -> Non
 def test_polygon_count_cell_is_immutable() -> None:
     cell = PolygonCountCell(h3_cell="833969fffffffff", polygon_count=5, is_low_sample=False)
     with pytest.raises(Exception):
-        cell.polygon_count = 0  # type: ignore[misc]
+        setattr(cell, "polygon_count", 0)
 
 
 # --- PyArrow schema-introspection fallback -------------------------------

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
+from typing import cast
 
 import pytest
 
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair as repair_mod
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.checkpoints import (
     RecoveryBatchArtifacts,
+    RecoveryCheckpointStore,
 )
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.repair import (
     _execute_recovery_batches,
@@ -16,8 +19,13 @@ from osm_polygon_wikidata_only.utils import retry as retry_mod
 
 
 class _MemoryCheckpointStore:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        on_save: Callable[[int, RecoveryBatchArtifacts], None] | None = None,
+    ) -> None:
         self.saved: dict[int, RecoveryBatchArtifacts] = {}
+        self._on_save = on_save
 
     def load(self, index: int, expected_qids: tuple[str, ...]) -> RecoveryBatchArtifacts | None:
         artifact = self.saved.get(index)
@@ -25,6 +33,8 @@ class _MemoryCheckpointStore:
 
     def save(self, index: int, artifacts: RecoveryBatchArtifacts) -> None:
         self.saved[index] = artifacts
+        if self._on_save is not None:
+            self._on_save(index, artifacts)
 
 
 def _artifact(qids: tuple[str, ...]) -> RecoveryBatchArtifacts:
@@ -61,7 +71,7 @@ def test_recovery_keeps_three_independent_batches_active_and_returns_input_order
             _execute_recovery_batches(
                 stem="region-latest",
                 affected_qids=qids,
-                checkpoint_store=store,  # type: ignore[arg-type]
+                checkpoint_store=cast(RecoveryCheckpointStore, store),
                 build_batch=build,  # type: ignore[arg-type]
                 emit=lambda _message: None,
             )
@@ -99,7 +109,7 @@ def test_recovery_reuses_checkpoints_without_rebuilding_them() -> None:
     result = _execute_recovery_batches(
         stem="region-latest",
         affected_qids=qids,
-        checkpoint_store=store,  # type: ignore[arg-type]
+        checkpoint_store=cast(RecoveryCheckpointStore, store),
         build_batch=build,  # type: ignore[arg-type]
         emit=messages.append,
     )
@@ -128,7 +138,7 @@ def test_recovery_window_size_is_configurable_for_deterministic_benchmarks() -> 
     _execute_recovery_batches(
         stem="region-latest",
         affected_qids=qids,
-        checkpoint_store=store,  # type: ignore[arg-type]
+        checkpoint_store=cast(RecoveryCheckpointStore, store),
         build_batch=build,  # type: ignore[arg-type]
         emit=lambda _message: None,
         batch_window=1,
@@ -139,18 +149,15 @@ def test_recovery_window_size_is_configurable_for_deterministic_benchmarks() -> 
 
 def test_completed_batch_is_durable_while_slow_sibling_is_still_running() -> None:
     qids = tuple(f"Q{index}" for index in range(1, 51))
-    store = _MemoryCheckpointStore()
-    slow_started = threading.Event()
-    release_slow = threading.Event()
     fast_saved = threading.Event()
-    original_save = store.save
 
-    def save(index: int, artifacts: RecoveryBatchArtifacts) -> None:
-        original_save(index, artifacts)
+    def record_save(index: int, _artifacts: RecoveryBatchArtifacts) -> None:
         if index == 0:
             fast_saved.set()
 
-    store.save = save  # type: ignore[method-assign]
+    store = _MemoryCheckpointStore(on_save=record_save)
+    slow_started = threading.Event()
+    release_slow = threading.Event()
 
     def build(batch_qids: tuple[str, ...], _progress: object) -> RecoveryBatchArtifacts:
         if batch_qids == qids[25:50]:
@@ -162,7 +169,7 @@ def test_completed_batch_is_durable_while_slow_sibling_is_still_running() -> Non
         target=lambda: _execute_recovery_batches(
             stem="region-latest",
             affected_qids=qids,
-            checkpoint_store=store,  # type: ignore[arg-type]
+            checkpoint_store=cast(RecoveryCheckpointStore, store),
             build_batch=build,  # type: ignore[arg-type]
             emit=lambda _message: None,
         )
@@ -204,7 +211,7 @@ def test_interrupted_recovery_cancels_worker_retry_backoff(
         _execute_recovery_batches(
             stem="region-latest",
             affected_qids=tuple(f"Q{index}" for index in range(1, 51)),
-            checkpoint_store=_MemoryCheckpointStore(),  # type: ignore[arg-type]
+            checkpoint_store=cast(RecoveryCheckpointStore, _MemoryCheckpointStore()),
             build_batch=build,  # type: ignore[arg-type]
             emit=lambda _message: None,
         )

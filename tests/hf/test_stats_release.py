@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -60,14 +61,14 @@ def processed(tmp_path: Path) -> Path:
     return root
 
 
-def _release(processed: Path, staging: Path, **kwargs: object):
+def _release(processed: Path, staging: Path, **kwargs: Any):
     return release_polygon_stats(
         processed_dir=processed,
         staging_dir=staging,
         repo_id=_REPO,
         confirm_repo=str(kwargs.pop("confirm_repo", _REPO)),
         card_writer=_write_card,
-        **kwargs,  # type: ignore[arg-type]
+        **kwargs,
     )
 
 
@@ -443,7 +444,7 @@ def test_default_remote_verifier_normalizes_all_hub_revision_arguments(
         ReleasedFile("stats.json", hashlib.sha256(b"report").hexdigest(), 6),
     )
 
-    class FakeHub:
+    class FakeHub(StubHfHub):
         def __init__(self) -> None:
             self.paths_info_revisions: list[str] = []
             self.download_revisions: list[str] = []
@@ -453,11 +454,11 @@ def test_default_remote_verifier_normalizes_all_hub_revision_arguments(
             repo_id: str,
             paths: list[str],
             *,
-            revision: str,
+            revision: str | None = None,
             repo_type: str,
         ) -> list[object]:
             del repo_id, repo_type
-            self.paths_info_revisions.append(revision)
+            self.paths_info_revisions.append(revision or "")
             return [
                 SimpleNamespace(path=path, size=(4 if path == "README.md" else 6)) for path in paths
             ]
@@ -469,8 +470,9 @@ def test_default_remote_verifier_normalizes_all_hub_revision_arguments(
             *,
             revision: str,
             repo_type: str,
+            cache_dir: str | None = None,
         ) -> str:
-            del repo_id, repo_type
+            del repo_id, repo_type, cache_dir
             self.download_revisions.append(revision)
             return str(tmp_path / filename)
 
@@ -646,15 +648,19 @@ def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
 ) -> None:
     from osm_polygon_wikidata_only.hf._stats_release import remote
 
+    def legacy_call(function: object, *args: object, **kwargs: Any) -> Any:
+        """Invoke compatibility helpers with deliberately incomplete legacy clients."""
+        return cast(Any, function)(*args, **kwargs)
+
     repo_id = "owner/dataset"
-    assert remote._remote_revision(object(), repo_id) is None
+    assert legacy_call(remote._remote_revision, object(), repo_id) is None
 
     class RepoClient:
         def repo_info(self, *_args: object, **_kwargs: object) -> object:
             return object()
 
     monkeypatch.setattr(remote, "read_repo_sha", lambda *_args: "revision")
-    assert remote._remote_revision(RepoClient(), repo_id) == "revision"
+    assert legacy_call(remote._remote_revision, RepoClient(), repo_id) == "revision"
 
     class LegacyPathsClient:
         def __init__(self) -> None:
@@ -668,10 +674,10 @@ def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
             return [SimpleNamespace(path=paths[0])]
 
     legacy_paths = LegacyPathsClient()
-    entries = remote._remote_entries(legacy_paths, repo_id, "stats.json", "pinned")
+    entries = legacy_call(remote._remote_entries, legacy_paths, repo_id, "stats.json", "pinned")
     assert entries[0].path == "stats.json"
     assert legacy_paths.calls == 1
-    assert remote._remote_entries(object(), repo_id, "stats.json", "pinned") == []
+    assert legacy_call(remote._remote_entries, object(), repo_id, "stats.json", "pinned") == []
 
     downloaded = tmp_path / "remote.json"
     downloaded.write_bytes(b"remote")
@@ -688,28 +694,45 @@ def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
 
     client = LegacyDownloadClient()
     assert (
-        remote._download_remote_file(
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_file,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         == downloaded
     )
     assert len(client.calls) == 2
     assert "cache_dir" not in client.calls[1]
     with pytest.raises(StatsReleaseError, match="cannot download files"):
-        remote._download_remote_file(object(), repo_id, "stats.json", "pinned", cache_dir=None)
+        legacy_call(
+            remote._download_remote_file, object(), repo_id, "stats.json", "pinned", cache_dir=None
+        )
 
     monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [object()])
     monkeypatch.setattr(remote, "_download_remote_file", lambda *_args, **_kwargs: downloaded)
     assert (
-        remote._download_remote_content(
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_content,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         == b"remote"
     )
     monkeypatch.setattr(remote, "_remote_entries", lambda *_args: [])
     assert (
-        remote._download_remote_content(
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_content,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         is None
     )
@@ -720,18 +743,26 @@ def test_stats_release_remote_helpers_handle_legacy_clients_and_failures(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("offline")),
     )
     assert (
-        remote._download_remote_content(
-            client, repo_id, "stats.json", "pinned", cache_dir=tmp_path / "cache"
+        legacy_call(
+            remote._download_remote_content,
+            client,
+            repo_id,
+            "stats.json",
+            "pinned",
+            cache_dir=tmp_path / "cache",
         )
         is None
     )
 
-    assert remote._remote_revision_for_verifier(client, repo_id, "upload-rev") == "upload-rev"
+    assert (
+        legacy_call(remote._remote_revision_for_verifier, client, repo_id, "upload-rev")
+        == "upload-rev"
+    )
     monkeypatch.setattr(remote, "_remote_revision", lambda *_args: "head-rev")
-    assert remote._remote_revision_for_verifier(client, repo_id, None) == "head-rev"
+    assert legacy_call(remote._remote_revision_for_verifier, client, repo_id, None) == "head-rev"
     monkeypatch.setattr(remote, "_remote_revision", lambda *_args: None)
     with pytest.raises(StatsReleaseError, match="returned an empty revision"):
-        remote._remote_revision_for_verifier(client, repo_id, None)
+        legacy_call(remote._remote_revision_for_verifier, client, repo_id, None)
 
     released = ReleasedFile("stats.json", "hash", 6)
     remote._verify_remote_size(SimpleNamespace(size=6), released)

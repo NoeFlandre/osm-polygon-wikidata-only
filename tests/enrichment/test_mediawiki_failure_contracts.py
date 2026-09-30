@@ -39,8 +39,6 @@ def _client(cache: _Cache, *, attempts: int = 1) -> mediawiki.AugmentationWikime
         Settings(request_max_retries=attempts, request_base_delay_s=0),
         cache,
         environ={},
-        scheduler=object(),
-        session=object(),
     )
 
 

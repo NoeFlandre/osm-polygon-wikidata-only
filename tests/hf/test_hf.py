@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterable
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -443,13 +445,19 @@ def _fake_hf_response(status_code: int, body: str) -> httpx.Response:
 def test_upload_files_translates_repository_not_found_to_auth_hint(tmp_path: Path) -> None:
     from huggingface_hub.errors import RepositoryNotFoundError
 
-    class _AuthFailingApi:
+    class _AuthFailingApi(StubHfHub):
         token = "good"
 
-        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
-            return repo_id
-
-        def create_commit(self, **_kwargs: object) -> str:
+        def create_commit(
+            self,
+            *,
+            repo_id: str,
+            operations: Iterable[Any],
+            commit_message: str,
+            repo_type: str,
+            num_threads: int,
+        ) -> str:
+            del repo_id, operations, commit_message, repo_type, num_threads
             raise RepositoryNotFoundError(
                 "401 Client Error",
                 response=_fake_hf_response(401, "Invalid username or password"),
@@ -469,13 +477,19 @@ def test_upload_files_translates_repository_not_found_to_auth_hint(tmp_path: Pat
 def test_upload_files_translates_401_to_token_hint(tmp_path: Path) -> None:
     from huggingface_hub.errors import HfHubHTTPError
 
-    class _BadTokenApi:
+    class _BadTokenApi(StubHfHub):
         token = "expired"
 
-        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
-            return repo_id
-
-        def create_commit(self, **_kwargs: object) -> str:
+        def create_commit(
+            self,
+            *,
+            repo_id: str,
+            operations: Iterable[Any],
+            commit_message: str,
+            repo_type: str,
+            num_threads: int,
+        ) -> str:
+            del repo_id, operations, commit_message, repo_type, num_threads
             raise HfHubHTTPError(
                 "Invalid user token.",
                 response=_fake_hf_response(401, "Invalid user token."),
@@ -505,13 +519,19 @@ def test_upload_files_translates_unexpected_exception_to_upload_error(
     """
     from huggingface_hub.errors import HfHubHTTPError
 
-    class _ServerErrorApi:
+    class _ServerErrorApi(StubHfHub):
         token = "good"
 
-        def create_repo(self, *, repo_id: str, repo_type: str, exist_ok: bool) -> str:
-            return repo_id
-
-        def create_commit(self, **_kwargs: object) -> str:
+        def create_commit(
+            self,
+            *,
+            repo_id: str,
+            operations: Iterable[Any],
+            commit_message: str,
+            repo_type: str,
+            num_threads: int,
+        ) -> str:
+            del repo_id, operations, commit_message, repo_type, num_threads
             raise HfHubHTTPError(
                 "500 Server Error",
                 response=_fake_hf_response(500, "Internal Server Error: disk full"),

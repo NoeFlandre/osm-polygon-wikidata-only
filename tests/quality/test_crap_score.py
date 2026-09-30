@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -49,7 +50,7 @@ def test_crap_score_rejects_invalid_inputs(
     complexity: object, coverage: object, message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        crap_score(complexity, coverage)  # type: ignore[arg-type]
+        cast(Any, crap_score)(complexity, coverage)
 
 
 def test_evaluate_threshold_fails_scores_at_or_above_the_limit_worst_first() -> None:
@@ -133,7 +134,7 @@ def test_entries_from_reports_fails_closed_on_malformed_reports(
     coverage: dict[str, object], complexity: dict[object, object], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        entries_from_reports(coverage, complexity)  # type: ignore[arg-type]
+        cast(Any, entries_from_reports)(coverage, complexity)
 
 
 def test_crap_cli_reports_pass_failure_and_unreadable_reports(

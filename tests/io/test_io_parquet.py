@@ -80,7 +80,7 @@ def test_write_table_handles_empty_input(tmp_path: Path) -> None:
 
 def test_write_polygon_articles_writes_proper_schema(tmp_path: Path) -> None:
     out = tmp_path / "links.parquet"
-    rows = [
+    rows: list[dict[str, object]] = [
         {
             "polygon_id": "monaco-latest:way:1",
             "article_id": "Q235:en:1:1",
@@ -103,7 +103,7 @@ def test_write_polygon_articles_writes_proper_schema(tmp_path: Path) -> None:
 
 def test_write_articles_handles_optional_ints(tmp_path: Path) -> None:
     out = tmp_path / "articles.parquet"
-    rows = [
+    rows: list[dict[str, object]] = [
         {
             "article_id": "Q1:en:1:1",
             "wikidata": "Q1",

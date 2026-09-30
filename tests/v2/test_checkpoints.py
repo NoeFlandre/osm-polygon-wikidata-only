@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
 from osm_polygon_wikidata_only.v2 import extractor
 from osm_polygon_wikidata_only.v2.checkpoints import (
@@ -53,14 +54,14 @@ def test_extraction_checkpoint_resumes_after_partial_pbf_failure(
     with pytest.raises(RuntimeError, match="interrupted PBF"):
         extractor.extract_v2_pbf(
             pbf,
-            settings=type("Settings", (), {"limit": None})(),
+            settings=Settings(),
             checkpoint_dir=checkpoint_dir,
             checkpoint_every=1,
         )
 
     resumed = extractor.extract_v2_pbf(
         pbf,
-        settings=type("Settings", (), {"limit": None})(),
+        settings=Settings(),
         checkpoint_dir=checkpoint_dir,
         checkpoint_every=1,
     )
@@ -75,7 +76,7 @@ def test_completed_extraction_checkpoint_skips_pbf_scan(
     pbf = tmp_path / "region-latest.osm.pbf"
     pbf.write_bytes(b"stable source")
     checkpoint_dir = tmp_path / "checkpoints"
-    settings = type("Settings", (), {"limit": None})()
+    settings = Settings()
 
     class Reader:
         def __init__(self, _path: Path, *, include_wikipedia_tagged: bool) -> None:
@@ -110,16 +111,14 @@ def test_extraction_checkpoint_is_invalidated_when_source_changes(tmp_path: Path
     pbf = tmp_path / "region-latest.osm.pbf"
     pbf.write_bytes(b"source-a")
     checkpoint = ExtractionCheckpoint(tmp_path / "checkpoints", pbf)
-    checkpoint.append(
-        [
-            candidate_to_v2_row(
-                _candidate(1),
-                source_pbf_stem="region-latest",
-                region="region",
-                source_pbf=pbf.name,
-            )
-        ]
+    row = candidate_to_v2_row(
+        _candidate(1),
+        source_pbf_stem="region-latest",
+        region="region",
+        source_pbf=pbf.name,
     )
+    assert row is not None
+    checkpoint.append([row])
     pbf.write_bytes(b"source-b")
     changed = ExtractionCheckpoint(tmp_path / "checkpoints", pbf)
     assert changed.load_rows() == []
@@ -415,7 +414,8 @@ def test_region_fetch_checkpoint_reuses_article_after_section_failure(
         calls = 0
         fail = True
 
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             self.calls += 1
             if self.fail:
                 self.fail = False

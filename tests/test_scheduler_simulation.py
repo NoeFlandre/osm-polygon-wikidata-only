@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import threading
 import urllib.error
+from collections.abc import Callable
 from email.message import Message
 
 import pytest
@@ -77,10 +78,9 @@ class _SimulatedClock:
         with self._lock:
             return self._now
 
-    def sleep(self, seconds: float) -> float:
+    def sleep(self, seconds: float) -> None:
         with self._lock:
             self._now += seconds
-            return self._now
 
 
 def _build_scheduler(clock: _SimulatedClock, *, threshold: int) -> AdaptiveRequestScheduler:
@@ -466,7 +466,7 @@ def test_production_topology_proportional_vs_fixed_improvement(tmp_path) -> None
             bad_counter_fixed[host] = bad_counter_fixed.get(host, 0) + 1
             should_throttle = bad_counter_fixed[host] % 5 == 0
 
-        def make_op_fixed(h: str, throttle: bool) -> object:
+        def make_op_fixed(h: str, throttle: bool) -> Callable[[], str]:
             def op() -> str:
                 if throttle:
                     import urllib.error
@@ -512,7 +512,7 @@ def test_production_topology_proportional_vs_fixed_improvement(tmp_path) -> None
             bad_counter_prop[host] = bad_counter_prop.get(host, 0) + 1
             should_throttle = bad_counter_prop[host] % 5 == 0
 
-        def make_op_prop(h: str, throttle: bool) -> object:
+        def make_op_prop(h: str, throttle: bool) -> Callable[[], str]:
             def op() -> str:
                 if throttle:
                     import urllib.error

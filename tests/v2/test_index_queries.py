@@ -14,7 +14,9 @@ def test_persistent_index_uses_separate_query_boundary() -> None:
 
 def test_partition_title_cache_returns_hits_and_ordered_misses_only_when_complete() -> None:
     normalized = (("en", "page"), ("fr", "missing"), ("de", "also-missing"))
-    cached = {("en", "page"): ({"document_id": "doc-1"},)}
+    cached: dict[tuple[str, str], tuple[dict[str, object], ...]] = {
+        ("en", "page"): ({"document_id": "doc-1"},)
+    }
 
     assert partition_title_cache(normalized, cached, complete=True) == (
         {("en", "page"): ({"document_id": "doc-1"},)},

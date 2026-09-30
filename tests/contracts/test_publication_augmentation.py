@@ -53,7 +53,7 @@ _POLYGON_TABLE = pa.table(
         "lat": [43.73],
     }
 )
-_ARTICLE_ROW = {
+_ARTICLE_ROW: dict[str, object] = {
     field.name: ("" if pa.types.is_string(field.type) else None) for field in article_schema()
 }
 _ARTICLE_ROW.update(
@@ -178,7 +178,15 @@ def _stub_augmentation_result(data_root_processed: Path) -> AugmentationResult:
     pq.write_table(_SECTIONS_TABLE, paths["wikivoyage_sections_path"])
     pq.write_table(_FACT_TABLE, paths["wikidata_facts_path"])
     paths["manifest_path"].write_text("{}", encoding="utf-8")
-    return AugmentationResult(**paths, counts={"wikipedia_documents": 1})
+    return AugmentationResult(
+        wikipedia_documents_path=paths["wikipedia_documents_path"],
+        wikipedia_sections_path=paths["wikipedia_sections_path"],
+        wikivoyage_documents_path=paths["wikivoyage_documents_path"],
+        wikivoyage_sections_path=paths["wikivoyage_sections_path"],
+        wikidata_facts_path=paths["wikidata_facts_path"],
+        manifest_path=paths["manifest_path"],
+        counts={"wikipedia_documents": 1},
+    )
 
 
 def _stub_coverage_assets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,6 +240,7 @@ def test_write_readme_snapshot_includes_core_and_augmentation_stats(
     # README is the 7th add (index -2 in legacy core; legacy coverage map
     # is the last add).
     readme_path = add_ops[-2].local_path
+    assert readme_path is not None
     md = readme_path.read_text(encoding="utf-8")
     # The compact public card carries one snapshot table and the shared
     # sections; per-corpus and storage detail lives in stats.json.
@@ -262,6 +271,7 @@ def test_write_readme_snapshot_core_only_when_no_augmentation_dirs(
     )
     add_ops = [op for op in files if op.action == "add"]
     readme_path = add_ops[-2].local_path
+    assert readme_path is not None
     md = readme_path.read_text(encoding="utf-8")
     # The shared skeleton renders identically whether or not augmentation
     # sidecars exist, so the README contract is stable across pipeline states.

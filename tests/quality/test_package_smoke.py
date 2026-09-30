@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from importlib.metadata import EntryPoint
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -17,7 +19,7 @@ def test_verify_resources_accepts_nested_files_and_reports_missing_files(tmp_pat
     resource.parent.mkdir(parents=True)
     resource.write_bytes(b"asset")
 
-    package_smoke.verify_resources(package_root, ("assets/hero.png",))
+    package_smoke.verify_resources(cast(Traversable, package_root), ("assets/hero.png",))
 
     with pytest.raises(
         package_smoke.PackageSmokeError,
@@ -36,7 +38,7 @@ def test_verify_resources_splits_resource_paths_for_traversables() -> None:
 
     package_root = SimpleNamespace(joinpath=joinpath)
 
-    package_smoke.verify_resources(package_root, ("assets/hero.png",))
+    package_smoke.verify_resources(cast(Traversable, package_root), ("assets/hero.png",))
     assert calls == [("assets", "hero.png")]
 
 

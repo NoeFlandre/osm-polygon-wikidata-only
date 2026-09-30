@@ -20,7 +20,7 @@ import threading
 from collections.abc import Iterable
 from typing import Any
 
-from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.io.cache import JsonCache
 
 from .models import FetchResult, WikipediaArticle, WikipediaClient
 from .transport import HttpWikipediaClient
@@ -32,7 +32,7 @@ class CachedWikipediaClient(WikipediaClient):
     def __init__(
         self,
         inner: WikipediaClient,
-        cache: JsonFileCache,
+        cache: JsonCache,
         *,
         failed_ttl_s: int = 60 * 60,
     ) -> None:

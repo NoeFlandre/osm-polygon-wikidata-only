@@ -1,11 +1,16 @@
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
-from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
+from osm_polygon_wikidata_only.enrichment.wikipedia.models import (
+    FetchResult,
+    WikipediaArticle,
+    WikipediaClient,
+)
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
@@ -13,7 +18,7 @@ from osm_polygon_wikidata_only.v2.direct_enrichment import (
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
 )
-from osm_polygon_wikidata_only.v2.v1_index import build_v1_reuse_index
+from osm_polygon_wikidata_only.v2.v1_index import V1ReuseIndex, build_v1_reuse_index
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
 
 
@@ -180,7 +185,7 @@ def test_direct_enrichment_batches_v1_title_lookups() -> None:
     result = enrich_wikipedia_refs(
         "polygon-1",
         refs,
-        index=index,  # type: ignore[arg-type]
+        index=cast(V1ReuseIndex, index),
         wikipedia_client=InMemoryWikipediaClient({}),
     )
 
@@ -217,9 +222,27 @@ def test_successful_direct_fetch_is_cached_for_the_next_run(tmp_path: Path) -> N
     class CountingClient(InMemoryWikipediaClient):
         calls = 0
 
-        def fetch_article(self, *args: object, **kwargs: object) -> FetchResult:
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
             self.calls += 1
-            return super().fetch_article(*args, **kwargs)  # type: ignore[arg-type]
+            return super().fetch_article(
+                language,
+                site,
+                title,
+                wikidata_label=wikidata_label,
+                wikidata_description=wikidata_description,
+                wikidata_aliases=wikidata_aliases,
+                fetch_full_text=fetch_full_text,
+            )
 
     client = CountingClient({("enwiki", "New page"): FetchResult("ok", _article("New page"))})
     ref = WikipediaTagRef("en", "New page", "wikipedia", "en:New page")
@@ -255,10 +278,29 @@ def test_direct_enrichment_prefers_v1_after_speculative_fetch() -> None:
             self.waited = True
             self.is_ready = True
 
-    class RecordingClient:
+    class RecordingClient(WikipediaClient):
         calls = 0
 
-        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
+            _ = (
+                language,
+                site,
+                title,
+                wikidata_label,
+                wikidata_description,
+                wikidata_aliases,
+                fetch_full_text,
+            )
             self.calls += 1
             return FetchResult("ok", _article("Douglas Adams"))
 
@@ -266,8 +308,8 @@ def test_direct_enrichment_prefers_v1_after_speculative_fetch() -> None:
     result = enrich_wikipedia_refs(
         "region:relation:1",
         (WikipediaTagRef("en", "Douglas Adams", "wikipedia:en", "Douglas Adams"),),
-        index=index,  # type: ignore[arg-type]
-        wikipedia_client=RecordingClient(),  # type: ignore[arg-type]
+        index=cast(V1ReuseIndex, index),
+        wikipedia_client=RecordingClient(),
     )
     assert result.statuses[0].status == "reused_v1"
     assert result.statuses[0].reused_v1
@@ -289,13 +331,29 @@ def test_direct_enrichment_fetches_pending_title_while_index_builds() -> None:
             self.waited = True
             self.is_ready = True
 
-    class RecordingClient:
+    class RecordingClient(WikipediaClient):
         def __init__(self) -> None:
             self.calls: list[str] = []
 
         def fetch_article(
-            self, _language: str, _site: str, title: str, **_kwargs: object
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
         ) -> FetchResult:
+            _ = (
+                language,
+                site,
+                wikidata_label,
+                wikidata_description,
+                wikidata_aliases,
+                fetch_full_text,
+            )
             self.calls.append(title)
             return FetchResult("ok", _article(title))
 
@@ -304,8 +362,8 @@ def test_direct_enrichment_fetches_pending_title_while_index_builds() -> None:
     result = enrich_wikipedia_refs(
         "region:relation:1",
         (WikipediaTagRef("en", "New page", "wikipedia:en", "New page"),),
-        index=index,  # type: ignore[arg-type]
-        wikipedia_client=client,  # type: ignore[arg-type]
+        index=cast(V1ReuseIndex, index),
+        wikipedia_client=client,
     )
 
     assert client.calls == ["New page"]
@@ -337,8 +395,27 @@ def test_speculative_enrichment_returns_before_index_and_reconciles_afterward() 
         def wait_until_ready(self) -> None:
             raise AssertionError("speculative phase must not wait for the index")
 
-    class RecordingClient:
-        def fetch_article(self, *_args: object, **_kwargs: object) -> FetchResult:
+    class RecordingClient(WikipediaClient):
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
+            _ = (
+                language,
+                site,
+                title,
+                wikidata_label,
+                wikidata_description,
+                wikidata_aliases,
+                fetch_full_text,
+            )
             return FetchResult("ok", _article("Douglas Adams"))
 
     index = BackgroundIndex()
@@ -346,8 +423,8 @@ def test_speculative_enrichment_returns_before_index_and_reconciles_afterward() 
     speculative = enrich_wikipedia_refs(
         "region:relation:1",
         (ref,),
-        index=index,  # type: ignore[arg-type]
-        wikipedia_client=RecordingClient(),  # type: ignore[arg-type]
+        index=cast(V1ReuseIndex, index),
+        wikipedia_client=RecordingClient(),
         wait_for_index=False,
     )
     assert speculative.statuses[0].status == "ok"
@@ -358,7 +435,7 @@ def test_speculative_enrichment_returns_before_index_and_reconciles_afterward() 
         "region:relation:1",
         (ref,),
         speculative,
-        index=index,  # type: ignore[arg-type]
+        index=cast(V1ReuseIndex, index),
     )
     assert reconciled.statuses[0].status == "reused_v1"
     assert reconciled.statuses[0].reused_v1
@@ -383,6 +460,6 @@ def test_direct_enrichment_preserves_operator_interrupts() -> None:
         enrich_wikipedia_refs(
             "region:relation:1",
             (WikipediaTagRef("en", "New page", "wikipedia:en", "New page"),),
-            index=BackgroundIndex(),  # type: ignore[arg-type]
-            wikipedia_client=InterruptingClient(),  # type: ignore[arg-type]
+            index=cast(V1ReuseIndex, BackgroundIndex()),
+            wikipedia_client=cast(WikipediaClient, InterruptingClient()),
         )

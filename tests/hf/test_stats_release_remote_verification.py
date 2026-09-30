@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,11 +15,13 @@ from osm_polygon_wikidata_only.hf._stats_release.models import (
     RemoteState,
     StatsReleaseError,
 )
+from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
+from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 
 REVISION = "a" * 40
 
 
-class FakeHub:
+class FakeHub(StubHfHub):
     """In-memory dataset repository at one revision."""
 
     def __init__(
@@ -32,6 +34,7 @@ class FakeHub:
         legacy_paths_info: bool = False,
         legacy_download: bool = False,
     ) -> None:
+        super().__init__(remote_files=set(files), remote_content=files)
         self.root = root
         self.files = files
         self.sha = sha
@@ -40,12 +43,21 @@ class FakeHub:
         self.legacy_download = legacy_download
         self.downloads: list[dict[str, Any]] = []
 
-    def repo_info(self, repo_id: str, *, repo_type: str) -> object:
+    def repo_info(self, repo_id: str, *, repo_type: str) -> Any:
+        del repo_id
         assert repo_type == "dataset"
         return SimpleNamespace(sha=self.sha)
 
-    def get_paths_info(self, repo_id: str, *, paths: list[str], repo_type: str, **kwargs: Any):
-        if self.legacy_paths_info and "revision" in kwargs:
+    def get_paths_info(
+        self,
+        repo_id: str,
+        paths: list[str],
+        *,
+        revision: str | None = None,
+        repo_type: str,
+    ) -> list[Any]:
+        del repo_id
+        if self.legacy_paths_info and revision is not None:
             raise TypeError("unexpected keyword 'revision'")
         return [
             SimpleNamespace(path=path, size=self.sizes.get(path, len(self.files[path])))
@@ -53,10 +65,22 @@ class FakeHub:
             if path in self.files
         ]
 
-    def hf_hub_download(self, repo_id: str, filename: str, **kwargs: Any) -> str:
-        if self.legacy_download and "cache_dir" in kwargs:
+    def hf_hub_download(
+        self,
+        repo_id: str,
+        filename: str,
+        *,
+        revision: str,
+        repo_type: str,
+        cache_dir: str | None = None,
+    ) -> str:
+        del repo_id, revision, repo_type
+        if self.legacy_download and cache_dir is not None:
             raise TypeError("unexpected keyword 'cache_dir'")
-        self.downloads.append(kwargs)
+        if cache_dir is not None:
+            self.downloads.append({"cache_dir": cache_dir})
+        else:
+            self.downloads.append({})
         target = self.root / "downloads" / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(self.files[filename])
@@ -167,7 +191,9 @@ def test_verification_requires_a_download_capable_client(tmp_path: Path) -> None
 
     with pytest.raises(StatsReleaseError, match="cannot download files"):
         remote.default_remote_verifier(
-            "o/r", (_released("a", b"x"),), hub=NoDownload(tmp_path, {"a": b"x"})
+            "o/r",
+            (_released("a", b"x"),),
+            hub=cast(HfHub, NoDownload(tmp_path, {"a": b"x"})),
         )
 
 

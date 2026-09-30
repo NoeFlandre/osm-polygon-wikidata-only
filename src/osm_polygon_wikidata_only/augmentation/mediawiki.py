@@ -23,15 +23,17 @@ from osm_polygon_wikidata_only.enrichment.wikimedia.transport import (
     NonObjectJsonError as _NonObjectJsonError,
 )
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
+    WikimediaHttpSession,
     WikimediaSession,
     load_wikimedia_credentials,
 )
-from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.io.cache import JsonResponseCache
 from osm_polygon_wikidata_only.utils.request_scheduler import (
     SYSTEMIC_ACTIVE_HOST_WINDOW_S,
     SYSTEMIC_HOST_FRACTION,
     SYSTEMIC_MINIMUM_HOSTS,
     AdaptiveRequestScheduler,
+    RequestScheduler,
 )
 from osm_polygon_wikidata_only.utils.retry import (
     is_transient_network_error,
@@ -72,7 +74,7 @@ def _build_scheduler(rate: float, authenticated: bool) -> AdaptiveRequestSchedul
 
 
 def _build_session(
-    scheduler: AdaptiveRequestScheduler,
+    scheduler: RequestScheduler,
     settings: Settings,
     credentials: Any,
 ) -> WikimediaSession:
@@ -168,11 +170,11 @@ class AugmentationWikimediaClient:
     def __init__(
         self,
         settings: Settings,
-        cache: JsonFileCache,
+        cache: JsonResponseCache,
         *,
         environ: Mapping[str, str] | None = None,
-        scheduler: AdaptiveRequestScheduler | None = None,
-        session: WikimediaSession | None = None,
+        scheduler: RequestScheduler | None = None,
+        session: WikimediaHttpSession | None = None,
     ) -> None:
         source = os.environ if environ is None else environ
         credentials = load_wikimedia_credentials(source)
@@ -180,8 +182,20 @@ class AugmentationWikimediaClient:
         effective = replace(settings, request_timeout_s=max(settings.request_timeout_s, 60.0))
         self._settings = effective
         self._scheduler = scheduler or _build_scheduler(rate, bool(credentials))
-        self._session = session or _build_session(self._scheduler, effective, credentials)
+        self._session: WikimediaHttpSession = session or _build_session(
+            self._scheduler, effective, credentials
+        )
         self._cache = cache
+
+    @property
+    def scheduler(self) -> RequestScheduler:
+        """Return the shared request scheduler supplied to this client."""
+        return self._scheduler
+
+    @property
+    def session(self) -> WikimediaHttpSession:
+        """Return the injected Wikimedia transport session."""
+        return self._session
 
     def get_json(self, url: str, *, key: str) -> dict[str, Any]:
         # Cache hits short-circuit BEFORE any URL validation or transport

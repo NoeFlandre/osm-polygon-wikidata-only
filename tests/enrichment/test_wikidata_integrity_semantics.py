@@ -38,8 +38,19 @@ class _StubSession:
 
 
 class _Scheduler:
-    def report_host_throttled(self, host: str, delay: float) -> None:
-        del host, delay
+    max_in_flight = 3
+
+    def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None:
+        del host, min_interval_s
+
+    def report_success(self) -> None:
+        return None
+
+    def report_host_throttled(self, host: str, delay_s: float) -> None:
+        del host, delay_s
+
+    def run(self, operation):
+        return operation()
 
 
 def _settings(**overrides: Any) -> Any:

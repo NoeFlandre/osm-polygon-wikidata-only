@@ -128,15 +128,32 @@ def test_processor_facade_re_exports_extractor_symbols() -> None:
 
 def test_enrichment_phase_owns_unique_qids_helper() -> None:
     """The ``unique_qids`` helper exposes a deterministic QID tuple."""
-    from dataclasses import dataclass
-
+    from osm_polygon_wikidata_only.domain.models import Polygon
     from osm_polygon_wikidata_only.pipeline.enrichment_phase import unique_qids
 
-    @dataclass(slots=True)
-    class _Stub:
-        wikidata: str
+    def polygon(wikidata: str, osm_id: int) -> Polygon:
+        return Polygon(
+            polygon_id=f"region:way:{osm_id}",
+            region="region",
+            source_pbf="region.osm.pbf",
+            osm_type="way",
+            osm_id=osm_id,
+            wikidata=wikidata,
+            name="",
+            tags="{}",
+            tag_keys="[]",
+            tag_count=0,
+            osm_primary_tag="",
+            centroid="{}",
+            lat=0.0,
+            lon=0.0,
+            bbox="[]",
+            area_m2=0.0,
+            area_km2=0.0,
+            area_bucket="tiny",
+        )
 
-    assert unique_qids([_Stub(wikidata="Q3"), _Stub(wikidata="Q1"), _Stub(wikidata="Q1")]) == (
+    assert unique_qids([polygon("Q3", 3), polygon("Q1", 1), polygon("Q1", 2)]) == (
         "Q1",
         "Q3",
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 
 import pytest
-from conftest import NetworkAccessError  # ty: ignore[unresolved-import]
+from conftest import NetworkAccessError
 
 
 def test_outbound_connection_is_refused() -> None:

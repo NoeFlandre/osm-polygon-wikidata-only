@@ -28,6 +28,7 @@ from osm_polygon_wikidata_only.hf.language_split_release import (
     LanguageSplitReleasePlan,
     LanguageSplitReleaseResult,
     LanguageSplitVersion,
+    LanguageSplitVersionPlan,
     _expected_file_sort_key,
     _expected_files,
     _generate_version,
@@ -893,10 +894,12 @@ def test_generate_version_forwards_paths_and_batch_size(
 ) -> None:
     processed_root = tmp_path / "processed"
     output_root = processed_root / "language_splits"
-    plan = SimpleNamespace(
+    plan = LanguageSplitVersionPlan(
         version=version,
         processed_root=processed_root,
         output_root=output_root,
+        manifest_path=output_root / "language_splits.json",
+        inventory=cast(LanguageInventory, object()),
     )
     calls: list[tuple[object, ...]] = []
 
@@ -925,10 +928,12 @@ def test_generate_version_forwards_paths_and_batch_size(
 def test_generate_version_wraps_generator_failures(
     tmp_path: Path, version: LanguageSplitVersion, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    plan = SimpleNamespace(
+    plan = LanguageSplitVersionPlan(
         version=version,
         processed_root=tmp_path / "processed",
         output_root=tmp_path / "output",
+        manifest_path=tmp_path / "output/language_splits.json",
+        inventory=cast(LanguageInventory, object()),
     )
 
     def fail(*_args: object, **_kwargs: object) -> object:
@@ -964,23 +969,28 @@ def test_release_version_selection_and_inventory_error(
         raise LanguageInventoryError("manifest changed")
 
     monkeypatch.setattr(language_split_release, "build_language_inventory", fail)
-    plan = SimpleNamespace(
+    inventory = LanguageInventory(
+        contract=DatasetContract.V2,
+        dataset_id="test",
+        contract_version="v2",
+        source_manifest="manifest.json",
+        source_manifest_sha256="digest",
+        artifact_fingerprint="fingerprint",
+        tables=(),
+        validated_artifacts=(),
+    )
+    plan = LanguageSplitVersionPlan(
         version=LanguageSplitVersion.V2,
         processed_root=tmp_path,
-        inventory=SimpleNamespace(source_manifest="manifest.json"),
+        output_root=tmp_path / "output",
+        manifest_path=tmp_path / "output/language_splits.json",
+        inventory=inventory,
     )
     with pytest.raises(LanguageSplitReleaseError, match="fingerprint check failed"):
         _recompute_inventory(plan)
 
 
 def test_generated_payload_prefers_the_published_manifest_path(tmp_path: Path) -> None:
-    plan = SimpleNamespace(
-        version=LanguageSplitVersion.V2,
-        to_dict=lambda data_root: {
-            "manifest_path": "planned/manifest.json",
-            "expected_files": [],
-        },
-    )
     generated = SimpleNamespace(
         manifest_path=tmp_path / "processed_v2/manifests/generated.json",
         inventory=cast(LanguageInventory, object()),
@@ -1009,18 +1019,18 @@ def test_generated_payload_passes_recomputed_inventory_to_plan_serializer(
     captured: dict[str, object] = {}
 
     def fake_to_dict(
-        data_root: Path, *, inventory: LanguageInventory | None = None
+        self: LanguageSplitVersionPlan,
+        data_root: Path,
+        *,
+        inventory: LanguageInventory | None = None,
     ) -> dict[str, object]:
+        del self
         captured["data_root"] = data_root
         captured["inventory"] = inventory
         return {"expected_files": []}
 
-    plan = SimpleNamespace(
-        version=LanguageSplitVersion.V2,
-        inventory=planned.inventory,
-        processed_root=planned.processed_root,
-        to_dict=fake_to_dict,
-    )
+    plan = planned
+    monkeypatch.setattr(LanguageSplitVersionPlan, "to_dict", fake_to_dict)
     generated = SimpleNamespace(
         manifest_path=root / "manifests/language_splits.json",
         inventory=actual,
@@ -1063,10 +1073,22 @@ def test_recompute_inventory_passes_planned_source_manifest(
         return expected_inventory
 
     monkeypatch.setattr(language_split_release, "build_language_inventory", fake_build_inventory)
-    plan = SimpleNamespace(
+    inventory = LanguageInventory(
+        contract=DatasetContract.V1 if version is LanguageSplitVersion.V1 else DatasetContract.V2,
+        dataset_id="test",
+        contract_version=version.value,
+        source_manifest=source_manifest,
+        source_manifest_sha256="digest",
+        artifact_fingerprint="fingerprint",
+        tables=(),
+        validated_artifacts=(),
+    )
+    plan = LanguageSplitVersionPlan(
         version=version,
         processed_root=processed_root,
-        inventory=SimpleNamespace(source_manifest=source_manifest),
+        output_root=processed_root / "output",
+        manifest_path=processed_root / "output/language_splits.json",
+        inventory=inventory,
     )
 
     assert _recompute_inventory(plan) is expected_inventory

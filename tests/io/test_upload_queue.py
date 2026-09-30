@@ -476,7 +476,9 @@ def _write(path: Path, content: bytes) -> Path:
     return path
 
 
-def test_submit_failure_cleans_up_partial_artifacts(tmp_path: Path) -> None:
+def test_submit_failure_cleans_up_partial_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """If the snapshot copy itself fails (e.g. the canonical file
     disappears mid-submit), the queue must clean up the partial
     envelope and partial snapshot directory.
@@ -490,13 +492,11 @@ def test_submit_failure_cleans_up_partial_artifacts(tmp_path: Path) -> None:
     # constructing the queue, so the worker also sees the patched copy.
     from osm_polygon_wikidata_only.hf import upload_queue as uq_mod
 
-    real_copy = uq_mod._independent_copy
-
-    def _flaky_copy(source, target):
+    def _flaky_copy(source: Path, target: Path) -> None:
         raise RuntimeError("simulated copy failure")
 
-    uq_mod._independent_copy = _flaky_copy
-    try:
+    with monkeypatch.context() as patcher:
+        patcher.setattr(uq_mod, "_independent_copy", _flaky_copy)
         q = mod(upload=lambda ops, msg: None, state_dir=state_dir)
         with pytest.raises(RuntimeError, match="simulated copy failure"):
             q.submit(
@@ -505,8 +505,6 @@ def test_submit_failure_cleans_up_partial_artifacts(tmp_path: Path) -> None:
             )
         # Close queue and wait for worker to finish.
         q.close_and_wait()
-    finally:
-        uq_mod._independent_copy = real_copy
 
     # State directory must NOT contain a leftover envelope file for
     # this submission.
@@ -519,7 +517,9 @@ def test_submit_failure_cleans_up_partial_artifacts(tmp_path: Path) -> None:
         assert leftovers == [], f"submit failure left snapshot directories: {leftovers}"
 
 
-def test_snapshot_hash_is_computed_after_copy_during_race(tmp_path: Path) -> None:
+def test_snapshot_hash_is_computed_after_copy_during_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Mutate the canonical file DURING the snapshot copy. The
     recorded hash in the envelope must describe the snapshot bytes
     (post-copy), not the source bytes (pre-copy).
@@ -534,11 +534,9 @@ def test_snapshot_hash_is_computed_after_copy_during_race(tmp_path: Path) -> Non
     # canonical file while we are snapshotting.
     from osm_polygon_wikidata_only.hf import upload_queue as uq_mod
 
-    real_copy = uq_mod._independent_copy
-
     snapshot_seen: dict[str, bytes] = {}
 
-    def _racy_copy(source, target):
+    def _racy_copy(source: Path, target: Path) -> None:
         # Start the copy, mutate the source mid-stream.
         target.parent.mkdir(parents=True, exist_ok=True)
         # Read-then-write with a race window.
@@ -549,7 +547,6 @@ def test_snapshot_hash_is_computed_after_copy_during_race(tmp_path: Path) -> Non
             dst.write(src.read())  # Rest of source after mutation
         snapshot_seen["bytes"] = target.read_bytes()
 
-    uq_mod._independent_copy = _racy_copy
     captured_envelope: dict[str, Any] = {}
 
     def upload(ops, message):
@@ -559,15 +556,14 @@ def test_snapshot_hash_is_computed_after_copy_during_race(tmp_path: Path) -> Non
         if envelope_files:
             captured_envelope["payload"] = json.loads(envelope_files[0].read_text())
 
-    try:
+    with monkeypatch.context() as patcher:
+        patcher.setattr(uq_mod, "_independent_copy", _racy_copy)
         q = mod(upload=upload, state_dir=state_dir)
         q.submit(
             [_op()(action="add", path_in_repo="data.parquet", local_path=canonical)],
             "race",
         )
         q.close_and_wait()
-    finally:
-        uq_mod._independent_copy = real_copy
 
     assert "payload" in captured_envelope, (
         "Upload callback must be invoked; the test failed to capture the envelope"

@@ -193,9 +193,14 @@ def test_upload_failure_preserves_legacy_and_intent(
 
     original_cleanup = run_sync_mod._post_upload_publication_cleanup
 
-    def tracking_cleanup(*args: object, **kwargs: object) -> None:
+    def tracking_cleanup(
+        cleanup_root: DataRoot,
+        operations: list[PublicationOp],
+        *,
+        dry_run: bool,
+    ) -> None:
         cleanup_calls.append(True)
-        original_cleanup(*args, **kwargs)
+        original_cleanup(cleanup_root, operations, dry_run=dry_run)
 
     monkeypatch.setattr(run_sync_mod, "_post_upload_publication_cleanup", tracking_cleanup)
 

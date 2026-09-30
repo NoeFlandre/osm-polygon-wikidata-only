@@ -146,7 +146,7 @@ def test_manifest_references_resolve_each_required_artifact_path(tmp_path: Path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
 
-    entries = {
+    entries: dict[object, object] = {
         "fixture.osm.pbf": {
             "polygons_path": "polygons/fixture.parquet",
             "polygon_articles_path": "polygon_articles/fixture.parquet",
@@ -460,8 +460,10 @@ def test_v1_inventory_uses_each_textual_language_row_without_polygon_deduplicati
 
     assert inventory.languages == ("en", "fr")
     assert inventory.table("polygon_articles").row_count == 2
-    assert inventory.table("polygon_articles").bucket("en").row_count == 1
-    assert inventory.table("polygon_articles").bucket("fr").row_count == 1
+    article_inventory = inventory.table("polygon_articles")
+    assert isinstance(article_inventory, LanguageTableInventory)
+    assert article_inventory.bucket("en").row_count == 1
+    assert article_inventory.bucket("fr").row_count == 1
     assert inventory.table("polygons", allow_non_language=True).row_count == 1
 
 
@@ -488,7 +490,9 @@ def test_v1_inventory_routes_missing_blank_malformed_and_legacy_values_to_unknow
     _write_v1_manifest(processed)
 
     inventory = build_language_inventory(processed, DatasetContract.V1)
-    unknown = inventory.table("polygon_articles").bucket("unknown")
+    article_inventory = inventory.table("polygon_articles")
+    assert isinstance(article_inventory, LanguageTableInventory)
+    unknown = article_inventory.bucket("unknown")
 
     assert inventory.languages == ("be-tarask",)
     assert unknown.row_count == 4
@@ -496,7 +500,7 @@ def test_v1_inventory_routes_missing_blank_malformed_and_legacy_values_to_unknow
     assert unknown.blank_rows == 1
     assert unknown.malformed_rows == 1
     assert unknown.legacy_unusable_rows == 1
-    assert inventory.table("polygon_articles").bucket("be-tarask").legacy_alias_rows == 1
+    assert article_inventory.bucket("be-tarask").legacy_alias_rows == 1
 
 
 def test_v2_inventory_is_separate_and_uses_v2_schemas(tmp_path: Path) -> None:
@@ -541,7 +545,9 @@ def test_v2_inventory_is_separate_and_uses_v2_schemas(tmp_path: Path) -> None:
         "wikipedia_documents",
         "wikipedia_sections",
     )
-    assert inventory.table("polygon_document_links").bucket("fr").row_count == 1
+    link_inventory = inventory.table("polygon_document_links")
+    assert isinstance(link_inventory, LanguageTableInventory)
+    assert link_inventory.bucket("fr").row_count == 1
 
 
 def test_inventory_rejects_an_unvalidated_textual_schema(tmp_path: Path) -> None:

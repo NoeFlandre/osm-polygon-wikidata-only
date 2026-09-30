@@ -2,6 +2,7 @@ import sqlite3
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -11,6 +12,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
 from osm_polygon_wikidata_only.v2.v1_index import (
     V1ReuseIndex,
+    _PersistentV1Index,
     build_v1_reuse_index,
     start_v1_reuse_index,
 )
@@ -81,15 +83,20 @@ def test_index_lookup_by_title_page_and_qid(tmp_path: Path) -> None:
 
 
 def test_persistent_index_deletes_stale_paths_and_invalidates_row_cache(tmp_path: Path) -> None:
-    from osm_polygon_wikidata_only.v2.v1_index import _PersistentV1Index
+    path = _write_documents(tmp_path, [_document()])
+    cache_dir = tmp_path / "cache"
+    index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
+    assert index.by_page("en", 1)[0]["document_id"] == "Q42:wikipedia:en:1:2"
+    index.close()
 
-    index = _PersistentV1Index(tmp_path / "cache", ())
-    index._row_cache["stale"] = {"document_id": "stale"}
+    # A fresh public index must drop rows belonging to files that disappeared
+    # since the previous build, including rows persisted in its cache.
+    path.unlink()
+    refreshed = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     try:
-        index._delete_stale_paths({"removed.parquet"})
-        assert not index._row_cache
+        assert refreshed.by_page("en", 1) == ()
     finally:
-        index.close()
+        refreshed.close()
 
 
 def test_cached_row_count_rejects_missing_invalid_and_negative_values() -> None:
@@ -628,8 +635,8 @@ def test_persistent_index_does_not_write_for_unchanged_shards(
     statements: list[str] = []
     original = v1_index._PersistentV1Index._open_connection
 
-    def open_traced(store: object):
-        connection = original(store)  # type: ignore[arg-type]
+    def open_traced(store: _PersistentV1Index) -> sqlite3.Connection:
+        connection = original(store)
         connection.set_trace_callback(statements.append)
         return connection
 
@@ -670,24 +677,41 @@ def test_persistent_index_reads_next_row_group_during_current_commit(
         *,
         legacy_articles: bool,
         row_group: int,
-        parquet_file: object = None,
-    ):
+        parquet_file: pq.ParquetFile | None = None,
+    ) -> list[tuple[str, str, str, int, int, str, int, int]]:
         if row_group == 1:
             second_scanned.set()
         return original_scan(
             path_arg,
             legacy_articles=legacy_articles,
             row_group=row_group,
-            parquet_file=parquet_file,  # type: ignore[arg-type]
+            parquet_file=parquet_file,
         )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
     original_commit = v1_index._PersistentV1Index._commit_indexed_row_group
 
-    def commit(store: object, *args: object, **kwargs: object) -> None:
-        if kwargs["row_group"] == 0:
+    def commit(
+        store: v1_index._PersistentV1Index,
+        connection: sqlite3.Connection,
+        indexed: list[tuple[str, str, str, int, int, str, int, int]],
+        *,
+        resolved: str,
+        fingerprint: tuple[int, int, int, int, bool],
+        total_row_groups: int,
+        row_group: int,
+    ) -> None:
+        if row_group == 0:
             assert second_scanned.wait(timeout=2)
-        original_commit(store, *args, **kwargs)  # type: ignore[arg-type]
+        original_commit(
+            store,
+            connection,
+            indexed,
+            resolved=resolved,
+            fingerprint=fingerprint,
+            total_row_groups=total_row_groups,
+            row_group=row_group,
+        )
 
     monkeypatch.setattr(v1_index._PersistentV1Index, "_commit_indexed_row_group", commit)
     index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "cache")
@@ -714,7 +738,7 @@ def test_persistent_index_reuses_one_reader_executor_for_multiple_shards(
     original_executor = v1_index.ThreadPoolExecutor
     created: list[object] = []
 
-    def record_executor(*args: object, **kwargs: object) -> ThreadPoolExecutor:
+    def record_executor(*args: Any, **kwargs: Any) -> ThreadPoolExecutor:
         executor = original_executor(*args, **kwargs)
         created.append(executor)
         return executor
@@ -784,7 +808,7 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
         *,
         legacy_articles: bool,
         row_group: int,
-        parquet_file: object = None,
+        parquet_file: pq.ParquetFile | None = None,
     ):
         scanned.append(path.name)
         if path.name == second_path.name:
@@ -793,7 +817,7 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
             path,
             legacy_articles=legacy_articles,
             row_group=row_group,
-            parquet_file=parquet_file,  # type: ignore[arg-type]
+            parquet_file=parquet_file,
         )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", fail_on_second)
@@ -837,7 +861,7 @@ def test_background_index_exposes_committed_rows_before_final_shard(
         *,
         legacy_articles: bool,
         row_group: int,
-        parquet_file: object = None,
+        parquet_file: pq.ParquetFile | None = None,
     ):
         if path == second:
             second_started.set()
@@ -846,7 +870,7 @@ def test_background_index_exposes_committed_rows_before_final_shard(
             path,
             legacy_articles=legacy_articles,
             row_group=row_group,
-            parquet_file=parquet_file,  # type: ignore[arg-type]
+            parquet_file=parquet_file,
         )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
@@ -873,10 +897,10 @@ def test_background_index_handle_returns_before_storage_initialization(
 
     original = v1_index._PersistentV1Index._initialize_schema
 
-    def initialize_slow(store: object) -> None:
+    def initialize_slow(store: _PersistentV1Index) -> None:
         initialized.set()
         assert release.wait(timeout=2)
-        original(store)  # type: ignore[arg-type]
+        original(store)
 
     monkeypatch.setattr(v1_index._PersistentV1Index, "_initialize_schema", initialize_slow)
     index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
@@ -905,10 +929,10 @@ def test_background_index_opens_sqlite_on_worker_thread(
 
     original = v1_index._PersistentV1Index._open_connection
 
-    def open_slow(store: object):
+    def open_slow(store: _PersistentV1Index) -> sqlite3.Connection:
         opened.set()
         assert release.wait(timeout=2)
-        return original(store)  # type: ignore[arg-type]
+        return original(store)
 
     monkeypatch.setattr(v1_index._PersistentV1Index, "_open_connection", open_slow)
 
@@ -965,7 +989,7 @@ def test_persistent_index_resumes_inside_an_interrupted_shard(
         *,
         legacy_articles: bool,
         row_group: int,
-        parquet_file: object = None,
+        parquet_file: pq.ParquetFile | None = None,
     ):
         calls.append(row_group)
         if row_group == 1 and len(calls) == 2:
@@ -974,7 +998,7 @@ def test_persistent_index_resumes_inside_an_interrupted_shard(
             path_arg,
             legacy_articles=legacy_articles,
             row_group=row_group,
-            parquet_file=parquet_file,  # type: ignore[arg-type]
+            parquet_file=parquet_file,
         )
 
     monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)

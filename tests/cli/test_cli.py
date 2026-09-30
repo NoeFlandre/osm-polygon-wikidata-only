@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -189,7 +190,7 @@ def test_load_augmentation_result_skips_a_current_canonical_region(
             args,
             data_root=data_root,
             stem="andorra-latest",
-            augmentation_client=object(),  # type: ignore[arg-type]
+            augmentation_client=cast(commands.AugmentationWikimediaClient, object()),
         )
         is None
     )
@@ -228,7 +229,7 @@ def test_load_augmentation_result_skip_existing_plans_link_migration_once(
         args,
         data_root=data_root,
         stem="andorra-latest",
-        augmentation_client=object(),  # type: ignore[arg-type]
+        augmentation_client=cast(commands.AugmentationWikimediaClient, object()),
     )
 
     assert result is marker
@@ -262,7 +263,7 @@ def test_load_augmentation_result_augments_and_loads_when_not_current(
         args,
         data_root=data_root,
         stem="andorra-latest",
-        augmentation_client=object(),  # type: ignore[arg-type]
+        augmentation_client=cast(commands.AugmentationWikimediaClient, object()),
     )
 
     assert result is marker
@@ -295,7 +296,7 @@ def test_publish_augmentation_submits_the_assembled_operations(
         settings,
         data_root=data_root,
         stem="andorra-latest",
-        result=object(),  # type: ignore[arg-type]
+        result=cast(commands.AugmentationResult, object()),
     )
 
     assert submitted == [(["op"], "Add text augmentation for andorra-latest")]

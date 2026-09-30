@@ -295,7 +295,7 @@ def test_v2_resume_file_rows_requires_a_list_and_an_integer() -> None:
 
 def test_v2_resume_file_texts_requires_every_field_to_be_text() -> None:
     """A shard record missing any text field is rejected."""
-    complete = {
+    complete: dict[str, object] = {
         "configuration": "c",
         "language": "fr",
         "split": "lang-fr",

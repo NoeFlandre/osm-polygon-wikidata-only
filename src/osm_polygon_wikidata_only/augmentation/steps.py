@@ -90,6 +90,18 @@ class AugmentationClient(Protocol):
     ) -> Document | None: ...
 
 
+class EntityResolver(Protocol):
+    """Client surface needed to resolve Wikidata entities."""
+
+    def entities(self, qids: list[str] | set[str], *, props: str) -> dict[str, dict[str, Any]]: ...
+
+
+class RevisionHtmlParser(Protocol):
+    """Client surface needed to retrieve a revision's HTML."""
+
+    def parse_html(self, project: str, language: str, revision_id: int) -> str: ...
+
+
 CONTRACT_VERSION = "text-sidecars-v1"
 
 
@@ -277,7 +289,7 @@ def _core_qids(polygon_rows: list[dict[str, Any]]) -> list[str]:
 
 
 def resolve_entities(
-    client: AugmentationClient,
+    client: EntityResolver,
     qids: list[str],
     *,
     progress: AugmentationProgress,
@@ -333,7 +345,7 @@ def fetch_wikivoyage_documents(
 
 
 def fetch_document_sections(
-    client: AugmentationClient,
+    client: RevisionHtmlParser,
     *,
     documents: list[Document],
     progress: AugmentationProgress,
@@ -353,7 +365,7 @@ def fetch_document_sections(
 
 
 def fetch_document_sections_batch(
-    client: AugmentationClient,
+    client: RevisionHtmlParser,
     *,
     documents: list[Document],
     progress: AugmentationProgress,

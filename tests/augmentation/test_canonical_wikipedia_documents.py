@@ -90,6 +90,13 @@ def _make_article_row(
     return row
 
 
+def _make_invalid_article_row(**overrides: Any) -> dict[str, Any]:
+    """Use ``Any`` only for fields deliberately supplied with the wrong runtime type."""
+    row = _make_article_row()
+    row.update(overrides)
+    return row
+
+
 def _make_article_table(rows: list[dict[str, Any]] | None = None) -> pa.Table:
     """Build a PyArrow Table from article rows."""
     if rows is None:
@@ -348,7 +355,7 @@ class TestRowConversion:
         row = _make_article_row()
         doc = wikipedia_document_from_article_row(row)
         with pytest.raises(AttributeError):
-            doc.title = "changed"  # type: ignore[misc]
+            setattr(doc, "title", "changed")
 
 
 # ===========================================================================
@@ -360,12 +367,12 @@ class TestStrictTypeRejection:
     """Prove that numeric strings, booleans, floats, and arbitrary objects are rejected."""
 
     def test_string_page_id_rejected(self) -> None:
-        row = _make_article_row(page_id="3649")
+        row = _make_invalid_article_row(page_id="3649")
         with pytest.raises(WikipediaDocumentConversionError, match="page_id"):
             wikipedia_document_from_article_row(row)
 
     def test_string_revision_id_rejected(self) -> None:
-        row = _make_article_row(revision_id="1234567")
+        row = _make_invalid_article_row(revision_id="1234567")
         with pytest.raises(WikipediaDocumentConversionError, match="revision_id"):
             wikipedia_document_from_article_row(row)
 
@@ -385,7 +392,7 @@ class TestStrictTypeRejection:
             wikipedia_document_from_article_row(row)
 
     def test_float_integer_field_rejected(self) -> None:
-        row = _make_article_row(page_id=3649.0)
+        row = _make_invalid_article_row(page_id=3649.0)
         with pytest.raises(WikipediaDocumentConversionError, match="page_id"):
             wikipedia_document_from_article_row(row)
 
@@ -494,7 +501,7 @@ class TestIdentityValidation:
         assert doc.language == "zh-min-nan"
 
     def test_non_string_language_rejected(self) -> None:
-        row = _make_article_row(language=123)
+        row = _make_invalid_article_row(language=123)
         with pytest.raises(WikipediaDocumentConversionError, match="language"):
             wikipedia_document_from_article_row(row)
 
@@ -525,7 +532,7 @@ class TestIdentityValidation:
             wikipedia_document_from_article_row(row)
 
     def test_null_wikidata_rejected(self) -> None:
-        row = _make_article_row(wikidata=None)
+        row = _make_invalid_article_row(wikidata=None)
         with pytest.raises(WikipediaDocumentConversionError, match="wikidata"):
             wikipedia_document_from_article_row(row)
 

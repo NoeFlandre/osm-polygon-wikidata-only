@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -56,9 +57,9 @@ def test_absent_delete_filter_is_a_noop_without_delete_paths() -> None:
         def file_exists(self, *_args: object, **_kwargs: object) -> bool:
             raise AssertionError("file_exists must not be called for an empty delete set")
 
-    assert operations._drop_absent_deletes(NoQueryHub(), "owner/repo", [operation], set()) == [
-        operation
-    ]
+    assert operations._drop_absent_deletes(
+        cast(operations.HfHub, NoQueryHub()), "owner/repo", [operation], set()
+    ) == [operation]
 
 
 def test_existing_delete_paths_filters_remote_absences_and_translates_errors() -> None:
@@ -68,7 +69,7 @@ def test_existing_delete_paths_filters_remote_absences_and_translates_errors() -
             return path == "present.parquet"
 
     assert operations._existing_delete_paths(
-        Hub(), "owner/repo", {"present.parquet", "absent.parquet"}
+        cast(operations.HfHub, Hub()), "owner/repo", {"present.parquet", "absent.parquet"}
     ) == {"present.parquet"}
 
     class FailingHub:
@@ -76,7 +77,9 @@ def test_existing_delete_paths_filters_remote_absences_and_translates_errors() -
             raise RuntimeError("request failed")
 
     with pytest.raises(UploadError, match="request failed"):
-        operations._existing_delete_paths(FailingHub(), "owner/repo", {"present.parquet"})
+        operations._existing_delete_paths(
+            cast(operations.HfHub, FailingHub()), "owner/repo", {"present.parquet"}
+        )
 
 
 def test_response_message_falls_back_when_response_text_cannot_be_read() -> None:
@@ -86,7 +89,7 @@ def test_response_message_falls_back_when_response_text_cannot_be_read() -> None
             raise RuntimeError("response body unavailable")
 
     error = RuntimeError("request failed")
-    error.server_message = "server detail"  # type: ignore[attr-defined]
+    setattr(error, "server_message", "server detail")
     assert operations._response_message(BrokenResponse(), error) == "server detail"
 
     error = RuntimeError("request failed")

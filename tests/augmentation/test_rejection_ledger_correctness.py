@@ -11,6 +11,7 @@ but before the ledger commit must still allow roll-forward.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import pyarrow as pa
@@ -18,6 +19,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation import rejection_ledger
+from osm_polygon_wikidata_only.augmentation.rejection_ledger import RejectionRecord
 
 
 def _write_documents(path: Path, rows: list[dict]) -> None:
@@ -201,7 +203,9 @@ def test_apply_merges_with_existing_cumulative_ledger(tmp_path: Path) -> None:
     assert stem_b in shards_in_ledger
 
 
-def test_apply_is_recoverable_after_mid_flight_crash(tmp_path: Path) -> None:
+def test_apply_is_recoverable_after_mid_flight_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A crash before the cumulative-ledger write must allow a fresh
     apply to complete (idempotent roll-forward)."""
     from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -223,18 +227,16 @@ def test_apply_is_recoverable_after_mid_flight_crash(tmp_path: Path) -> None:
     calls = {"count": 0}
     real_save_ledger = rl.save_ledger
 
-    def _crash_once(*args, **kwargs):
+    def _crash_once(path: Path, records: Iterable[RejectionRecord]) -> None:
         calls["count"] += 1
         if calls["count"] == 1:
             raise RuntimeError("simulated crash before ledger commit")
-        return real_save_ledger(*args, **kwargs)
+        real_save_ledger(path, records)
 
-    rl.save_ledger = _crash_once
-    try:
+    with monkeypatch.context() as patch:
+        patch.setattr(rl, "save_ledger", _crash_once)
         with pytest.raises(RuntimeError, match="simulated crash"):
             rejection_ledger.apply_integrity_normalization(plan)
-    finally:
-        rl.save_ledger = real_save_ledger
 
     # The documents/sections may already be on disk; re-running apply
     # with the original plan should reach ledger commit.

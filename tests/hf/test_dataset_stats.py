@@ -9,7 +9,9 @@ the expected figures.
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -245,10 +247,10 @@ def test_polygon_language_values_are_decoded_once_per_scan(
             "wikipedia_languages": [repeated, repeated, malformed, "[]"],
         }
     )
-    decoded: list[object] = []
+    decoded: list[str] = []
     original_loads = aggregation.json.loads
 
-    def counting_loads(value: object) -> object:
+    def counting_loads(value: str) -> object:
         decoded.append(value)
         return original_loads(value)
 
@@ -266,10 +268,10 @@ def test_polygon_language_cache_cap_preserves_uncached_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(aggregation, "_LANGUAGE_CACHE_MAX_ENTRIES", 1)
-    decoded: list[object] = []
+    decoded: list[str] = []
     original_loads = aggregation.json.loads
 
-    def counting_loads(value: object) -> object:
+    def counting_loads(value: str) -> object:
         decoded.append(value)
         return original_loads(value)
 
@@ -450,7 +452,7 @@ def test_link_stats_use_bounded_parallel_metadata_reads(
     worker_counts: list[int] = []
     thread_name_prefixes: list[str] = []
 
-    def tracking_executor(*args: object, **kwargs: object):
+    def tracking_executor(*args: Any, **kwargs: Any) -> ThreadPoolExecutor:
         worker_counts.append(int(kwargs["max_workers"]))
         thread_name_prefixes.append(str(kwargs["thread_name_prefix"]))
         return original_executor(*args, **kwargs)

@@ -2,26 +2,59 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import pytest
 
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 
 
-class _BrokenHub:
-    def list_repo_files(self, **_kwargs: object) -> list[str]:
+class _BrokenHub(StubHfHub):
+    def list_repo_files(
+        self,
+        repo_id: str,
+        *,
+        revision: str | None = None,
+        repo_type: str,
+    ) -> list[str]:
+        del repo_id, revision, repo_type
         raise RuntimeError("unexpected Hub client bug")
 
-    def get_paths_info(self, **_kwargs: object) -> list[object]:
+    def get_paths_info(
+        self,
+        repo_id: str,
+        paths: list[str],
+        *,
+        revision: str | None = None,
+        repo_type: str,
+    ) -> list[Any]:
+        del repo_id, paths, revision, repo_type
         raise RuntimeError("unexpected Hub client bug")
 
 
-class _OfflineHub:
-    def list_repo_files(self, **_kwargs: object) -> list[str]:
+class _OfflineHub(StubHfHub):
+    def list_repo_files(
+        self,
+        repo_id: str,
+        *,
+        revision: str | None = None,
+        repo_type: str,
+    ) -> list[str]:
+        del repo_id, revision, repo_type
         raise httpx.ConnectError("Hub is unreachable")
 
-    def get_paths_info(self, **_kwargs: object) -> list[object]:
+    def get_paths_info(
+        self,
+        repo_id: str,
+        paths: list[str],
+        *,
+        revision: str | None = None,
+        repo_type: str,
+    ) -> list[Any]:
+        del repo_id, paths, revision, repo_type
         raise httpx.ConnectError("Hub is unreachable")
 
 
