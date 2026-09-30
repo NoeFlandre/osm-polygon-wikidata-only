@@ -59,6 +59,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation.rejection_ledger import attach_cascade_counts
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     SECTION_COLUMNS,
@@ -434,25 +435,6 @@ def _partition_wikivoyage_sections(
     return retained, cascaded_count, cascades_by_document
 
 
-def _backfill_wikivoyage_rejections(
-    rejections: list[RejectionRecord],
-    cascades_by_document: dict[str, int],
-) -> list[RejectionRecord]:
-    """Attach section cascade counts to each rejected document record."""
-    return [
-        RejectionRecord(
-            shard=record.shard,
-            source_table=record.source_table,
-            identifier=record.identifier,
-            wikidata=record.wikidata,
-            expected=record.expected,
-            reason=record.reason,
-            cascaded_sections=cascades_by_document.get(record.identifier, 0),
-        )
-        for record in rejections
-    ]
-
-
 def _load_wikivoyage_integrity_inputs(
     data_root: DataRoot,
     stem: str,
@@ -544,7 +526,7 @@ def enforce_wikivoyage_integrity(
     retained_sections, cascaded_count, cascades_by_document = _partition_wikivoyage_sections(
         sections_rows, rejected_document_ids
     )
-    rejections = _backfill_wikivoyage_rejections(rejections, cascades_by_document)
+    rejections = attach_cascade_counts(rejections, cascades_by_document)
 
     original_document_count = len(documents_rows)
     retained_document_count = len(retained_documents)

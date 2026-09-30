@@ -19,7 +19,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import FetchResult
 from osm_polygon_wikidata_only.hf import v1_language_splits
 from osm_polygon_wikidata_only.hf._polygon_geometry import validation
 from osm_polygon_wikidata_only.pipeline import link_migration, pending_publications
-from osm_polygon_wikidata_only.v2 import language_splits, reuse_load
+from osm_polygon_wikidata_only.v2 import language_split_manifest, language_splits, reuse_load
 
 
 @pytest.mark.parametrize("stem", ["", ".", "..", "a/b", "a\\b"])
@@ -89,17 +89,19 @@ def _shard(tmp_path: Path, row_count: int) -> Any:
 def test_validated_output_file_branches(tmp_path: Path) -> None:
     schema = pa.schema([("id", pa.int64())])
     spec = cast(Any, SimpleNamespace(table="t", configuration="c"))
-    result = language_splits._validated_output_file(tmp_path, spec, _shard(tmp_path, 1), schema)
+    result = language_split_manifest.validate_output_file(
+        tmp_path, spec, _shard(tmp_path, 1), schema
+    )
     assert result.row_count == 1
     with pytest.raises(language_splits.V2LanguageSplitError, match="row count mismatch"):
-        language_splits._validated_output_file(tmp_path, spec, _shard(tmp_path, 2), schema)
+        language_split_manifest.validate_output_file(tmp_path, spec, _shard(tmp_path, 2), schema)
     other = pa.schema([("id", pa.string())])
     with pytest.raises(language_splits.V2LanguageSplitError, match="schema mismatch"):
-        language_splits._validated_output_file(tmp_path, spec, _shard(tmp_path, 1), other)
+        language_split_manifest.validate_output_file(tmp_path, spec, _shard(tmp_path, 1), other)
     broken = _shard(tmp_path, 1)
     broken.staged_path.write_text("not parquet", encoding="utf-8")
     with pytest.raises(language_splits.V2LanguageSplitError, match="Could not validate"):
-        language_splits._validated_output_file(tmp_path, spec, broken, schema)
+        language_split_manifest.validate_output_file(tmp_path, spec, broken, schema)
 
 
 def test_polygon_refs_branches() -> None:

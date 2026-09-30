@@ -20,10 +20,10 @@ cumulative ledger in a single ordered transaction.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -44,6 +44,11 @@ LEDGER_CONTRACT_VERSION = "rejection-ledger-v1"
 LEDGER_FILENAME = "rejection_ledger.json"
 
 SUPPORTED_SOURCE_TABLES: frozenset[str] = frozenset({"polygon_articles", "wikivoyage_documents"})
+
+
+class _CascadeRecord(Protocol):
+    @property
+    def identifier(self) -> str: ...
 
 
 def supported_source_tables() -> frozenset[str]:
@@ -274,7 +279,7 @@ def plan_integrity_normalization(data_root: DataRoot, stem: str) -> IntegrityPla
         stem, valid_qids, documents_rows
     )
     retained_sections, cascades_by_document = _retain_sections(rejected_document_ids, sections_rows)
-    rejections = _attach_cascade_counts(rejections, cascades_by_document)
+    rejections = attach_cascade_counts(rejections, cascades_by_document)
 
     rejections_sorted = merge_records(rejections)
     return IntegrityPlan(
@@ -356,19 +361,19 @@ def _retain_sections(
     return retained, cascades
 
 
-def _attach_cascade_counts(
-    rejections: list[RejectionRecord],
-    cascades: dict[str, int],
-) -> list[RejectionRecord]:
+def attach_cascade_counts[CascadeRecordT: _CascadeRecord](
+    rejections: list[CascadeRecordT],
+    cascades: Mapping[str, int],
+) -> list[CascadeRecordT]:
+    """Copy rejection records with the section count for each identifier.
+
+    Both integrity passes use this transformation while retaining their
+    distinct rejection record classes and validation contracts.
+    """
     return [
-        RejectionRecord(
-            shard=record.shard,
-            source_table=record.source_table,
-            identifier=record.identifier,
-            wikidata=record.wikidata,
-            expected=record.expected,
-            reason=record.reason,
-            cascaded_sections=cascades.get(record.identifier, 0),
+        cast(
+            CascadeRecordT,
+            replace(cast(Any, record), cascaded_sections=cascades.get(record.identifier, 0)),
         )
         for record in rejections
     ]

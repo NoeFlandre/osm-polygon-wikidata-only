@@ -17,7 +17,12 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     language_table_specs,
     normalize_language,
 )
-from osm_polygon_wikidata_only.v2 import language_splits
+from osm_polygon_wikidata_only.v2 import (
+    language_split_models,
+    language_split_resume,
+    language_split_writer,
+    language_splits,
+)
 from osm_polygon_wikidata_only.v2.language_splits import (
     V2LanguageSplitFile,
 )
@@ -72,7 +77,7 @@ def _buffer_shard() -> tuple[Any, Any, list[pa.Table]]:
         def write_table(self, table: pa.Table) -> None:
             written.append(table)
 
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
     shard = SimpleNamespace(
         source_files=[], row_count=0, writer=Writer(), pending=[], pending_bytes=0
     )
@@ -85,13 +90,13 @@ def _rows(count: int) -> pa.RecordBatch:
 
 def test_v2_buffer_rows_accumulates_bytes_across_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each buffered batch adds to the shard and to the global total."""
-    monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", 10**9)
-    monkeypatch.setattr(language_splits, "_TOTAL_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "SHARD_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "TOTAL_FLUSH_BYTES", 10**9)
     state, shard, written = _buffer_shard()
     first, second = _rows(2), _rows(3)
 
-    language_splits._buffer_rows(state, shard, first)
-    language_splits._buffer_rows(state, shard, second)
+    language_split_writer._buffer_rows(state, shard, first)
+    language_split_writer._buffer_rows(state, shard, second)
 
     assert shard.pending_bytes == first.nbytes + second.nbytes
     assert state.pending_bytes == first.nbytes + second.nbytes
@@ -103,14 +108,14 @@ def test_v2_buffer_rows_tracks_every_shard_in_the_global_total(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The global budget sums all open shards, not just the last one."""
-    monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", 10**9)
-    monkeypatch.setattr(language_splits, "_TOTAL_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "SHARD_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "TOTAL_FLUSH_BYTES", 10**9)
     state, first_shard, _ = _buffer_shard()
     _, second_shard, _ = _buffer_shard()
     batch = _rows(2)
 
-    language_splits._buffer_rows(state, first_shard, batch)
-    language_splits._buffer_rows(state, second_shard, batch)
+    language_split_writer._buffer_rows(state, first_shard, batch)
+    language_split_writer._buffer_rows(state, second_shard, batch)
 
     assert state.pending_bytes == batch.nbytes * 2
 
@@ -121,10 +126,10 @@ def test_v2_buffer_rows_flushes_when_the_shard_reaches_the_threshold(
     """Reaching the threshold exactly is enough to flush."""
     state, shard, written = _buffer_shard()
     batch = _rows(2)
-    monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", batch.nbytes)
-    monkeypatch.setattr(language_splits, "_TOTAL_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "SHARD_FLUSH_BYTES", batch.nbytes)
+    monkeypatch.setattr(language_split_writer, "TOTAL_FLUSH_BYTES", 10**9)
 
-    language_splits._buffer_rows(state, shard, batch)
+    language_split_writer._buffer_rows(state, shard, batch)
 
     assert [t.num_rows for t in written] == [2]
     assert shard.pending == []
@@ -139,14 +144,14 @@ def test_v2_buffer_rows_drains_every_shard_when_the_global_budget_is_hit(
     state, first_shard, first_written = _buffer_shard()
     _, second_shard, second_written = _buffer_shard()
     batch = _rows(2)
-    monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", 10**9)
-    monkeypatch.setattr(language_splits, "_TOTAL_FLUSH_BYTES", batch.nbytes * 2)
+    monkeypatch.setattr(language_split_writer, "SHARD_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "TOTAL_FLUSH_BYTES", batch.nbytes * 2)
     state.current["a"] = first_shard
     state.current["b"] = second_shard
 
-    language_splits._buffer_rows(state, first_shard, batch)
+    language_split_writer._buffer_rows(state, first_shard, batch)
     assert first_written == []
-    language_splits._buffer_rows(state, second_shard, batch)
+    language_split_writer._buffer_rows(state, second_shard, batch)
 
     assert [t.num_rows for t in first_written] == [2]
     assert [t.num_rows for t in second_written] == [2]
@@ -161,20 +166,20 @@ def test_v2_flush_shard_resets_the_buffer_and_is_a_no_op_when_empty() -> None:
     shard.pending_bytes = batch.nbytes
     state.pending_bytes = batch.nbytes
 
-    language_splits._flush_shard(state, shard)
+    language_split_writer._flush_shard(state, shard)
     assert shard.pending == []
     assert shard.pending_bytes == 0
     assert state.pending_bytes == 0
     assert [t.num_rows for t in written] == [4]
 
-    language_splits._flush_shard(state, shard)
+    language_split_writer._flush_shard(state, shard)
     assert [t.num_rows for t in written] == [4]
 
 
 def test_v2_resume_marker_lives_at_a_stable_path() -> None:
     """The marker path is part of the on-disk resume contract."""
     spec = language_table_specs(DatasetContract.V2)[0]
-    marker = language_splits._resume_marker_path(Path("/stage"), spec)
+    marker = language_split_resume._resume_marker_path(Path("/stage"), spec)
 
     assert marker == Path("/stage/.resume") / f"{spec.table.value}.json"
 
@@ -191,7 +196,9 @@ def test_v2_staged_table_reuses_a_completed_table_without_writing(
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
     record = _resume_file_record("language_splits/lang-fr.parquet")
-    language_splits._record_completed_table(stage_root, spec, inventory, [record], {final: staged})
+    language_split_resume.record_completed_table(
+        stage_root, spec, inventory, [record], {final: staged}
+    )
 
     def fail(*_args: object) -> None:
         raise AssertionError("_write_table must not run for a completed table")
@@ -216,7 +223,7 @@ def test_v2_staged_table_rebuilds_when_the_inventory_no_longer_matches(
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
-    language_splits._record_completed_table(
+    language_split_resume.record_completed_table(
         stage_root,
         spec,
         _resume_inventory(row_count=4),
@@ -250,7 +257,7 @@ def test_v2_resume_rejects_a_shard_record_missing_its_row_count(tmp_path: Path) 
     entry = _resume_file_record("language_splits/lang-fr.parquet").to_dict()
     entry["row_count"] = "four"
 
-    assert language_splits._resume_file(entry, spec) is None
+    assert language_split_resume._resume_file(entry, spec) is None
 
 
 def test_v2_resume_rejects_a_staged_path_map_with_a_non_string_key(tmp_path: Path) -> None:
@@ -262,35 +269,43 @@ def test_v2_resume_rejects_a_staged_path_map_with_a_non_string_key(tmp_path: Pat
     staged = tmp_path / "lang-fr.parquet"
     staged.write_bytes(b"staged")
 
-    assert language_splits._resume_staged_paths({4: str(staged)}) is None
-    assert language_splits._resume_staged_paths({str(tmp_path / "f.parquet"): 4}) is None
-    assert language_splits._resume_staged_paths({str(tmp_path / "f.parquet"): str(staged)}) == {
-        tmp_path / "f.parquet": staged
-    }
+    assert language_split_resume._resume_staged_paths({4: str(staged)}) is None
+    assert language_split_resume._resume_staged_paths({str(tmp_path / "f.parquet"): 4}) is None
+    assert language_split_resume._resume_staged_paths(
+        {str(tmp_path / "f.parquet"): str(staged)}
+    ) == {tmp_path / "f.parquet": staged}
 
 
 def test_v2_resume_payload_rejects_a_marker_that_is_not_an_object(tmp_path: Path) -> None:
     """A marker holding a JSON array is not a payload."""
     spec = language_table_specs(DatasetContract.V2)[0]
-    marker = language_splits._resume_marker_path(tmp_path, spec)
+    marker = language_split_resume._resume_marker_path(tmp_path, spec)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("[1, 2, 3]", encoding="utf-8")
 
-    assert language_splits._resume_payload(tmp_path, spec) is None
+    assert language_split_resume._resume_payload(tmp_path, spec) is None
 
 
 def test_v2_resume_payload_is_none_when_no_marker_was_written(tmp_path: Path) -> None:
     """A table that never completed has no marker to resume from."""
     spec = language_table_specs(DatasetContract.V2)[0]
 
-    assert language_splits._resume_payload(tmp_path, spec) is None
+    assert language_split_resume._resume_payload(tmp_path, spec) is None
 
 
 def test_v2_resume_file_rows_requires_a_list_and_an_integer() -> None:
     """The row accounting of a shard record is validated field by field."""
-    assert language_splits._resume_file_rows({"source_files": "a.parquet", "row_count": 1}) is None
-    assert language_splits._resume_file_rows({"source_files": ["a"], "row_count": "1"}) is None
-    assert language_splits._resume_file_rows({"source_files": ["a"], "row_count": 2}) == (("a",), 2)
+    assert (
+        language_split_resume._resume_file_rows({"source_files": "a.parquet", "row_count": 1})
+        is None
+    )
+    assert (
+        language_split_resume._resume_file_rows({"source_files": ["a"], "row_count": "1"}) is None
+    )
+    assert language_split_resume._resume_file_rows({"source_files": ["a"], "row_count": 2}) == (
+        ("a",),
+        2,
+    )
 
 
 def test_v2_resume_file_texts_requires_every_field_to_be_text() -> None:
@@ -302,9 +317,9 @@ def test_v2_resume_file_texts_requires_every_field_to_be_text() -> None:
         "path": "p",
         "sha256": "d",
     }
-    assert language_splits._resume_file_texts(complete) == ("c", "fr", "lang-fr", "p", "d")
-    assert language_splits._resume_file_texts({**complete, "sha256": None}) is None
-    assert language_splits._resume_file_texts({}) is None
+    assert language_split_resume._resume_file_texts(complete) == ("c", "fr", "lang-fr", "p", "d")
+    assert language_split_resume._resume_file_texts({**complete, "sha256": None}) is None
+    assert language_split_resume._resume_file_texts({}) is None
 
 
 def test_v2_resume_staged_entry_validates_one_pair(tmp_path: Path) -> None:
@@ -312,19 +327,22 @@ def test_v2_resume_staged_entry_validates_one_pair(tmp_path: Path) -> None:
     staged = tmp_path / "s.parquet"
     staged.write_bytes(b"x")
 
-    assert language_splits._resume_staged_entry("final", str(staged)) == (Path("final"), staged)
-    assert language_splits._resume_staged_entry(4, str(staged)) is None
-    assert language_splits._resume_staged_entry("final", 4) is None
-    assert language_splits._resume_staged_entry("final", str(tmp_path / "gone")) is None
+    assert language_split_resume._resume_staged_entry("final", str(staged)) == (
+        Path("final"),
+        staged,
+    )
+    assert language_split_resume._resume_staged_entry(4, str(staged)) is None
+    assert language_split_resume._resume_staged_entry("final", 4) is None
+    assert language_split_resume._resume_staged_entry("final", str(tmp_path / "gone")) is None
 
 
 def test_v2_resume_files_rejects_a_non_list_and_a_bad_entry() -> None:
     """The shard list must be a list of well-formed records."""
     spec = language_table_specs(DatasetContract.V2)[0]
 
-    assert language_splits._resume_files({"not": "a list"}, spec) is None
-    assert language_splits._resume_files([{"bad": "entry"}], spec) is None
-    assert language_splits._resume_files([], spec) == []
+    assert language_split_resume._resume_files({"not": "a list"}, spec) is None
+    assert language_split_resume._resume_files([{"bad": "entry"}], spec) is None
+    assert language_split_resume._resume_files([], spec) == []
 
 
 def test_v2_staged_table_reports_the_resumed_table_and_shard_count(
@@ -338,7 +356,7 @@ def test_v2_staged_table_reports_the_resumed_table_and_shard_count(
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
-    language_splits._record_completed_table(
+    language_split_resume.record_completed_table(
         stage_root,
         spec,
         inventory,

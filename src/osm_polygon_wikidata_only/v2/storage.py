@@ -14,6 +14,7 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.staged_install import cleanup_transaction as _cleanup_transaction
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
@@ -88,13 +89,6 @@ def _restore_backups(backups: dict[Path, Path], replaced: list[Path]) -> None:
     for final, backup in backups.items():
         if backup.exists():
             os.replace(backup, final)
-
-
-def _cleanup_transaction(staged: dict[Path, Path], backups: dict[Path, Path]) -> None:
-    for temporary in staged.values():
-        temporary.unlink(missing_ok=True)
-    for backup in backups.values():
-        backup.unlink(missing_ok=True)
 
 
 def load_v2_manifest(processed_v2: Path) -> dict[str, dict[str, Any]]:

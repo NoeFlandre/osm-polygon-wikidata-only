@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.parquet import write_typed_table
 from osm_polygon_wikidata_only.utils.json import dumps, loads
 
 CHECKPOINT_CONTRACT_VERSION = "wikidata-recovery-batches-v1"
@@ -108,19 +109,27 @@ class RecoveryCheckpointStore:
         self._plan_root.mkdir(parents=True, exist_ok=True)
         temporary = Path(tempfile.mkdtemp(prefix=f".batch-{index:06d}-", dir=self._plan_root))
         try:
-            self._write(
+            write_typed_table(
                 temporary / "documents.parquet",
                 artifacts.documents,
                 WIKIPEDIA_DOCUMENT_COLUMNS,
                 wikipedia_document_schema(),
+                empty_input_placeholder=False,
             )
-            self._write(
+            write_typed_table(
                 temporary / "sections.parquet",
                 artifacts.sections,
                 SECTION_COLUMNS,
                 section_schema(),
+                empty_input_placeholder=False,
             )
-            self._write(temporary / "facts.parquet", artifacts.facts, FACT_COLUMNS, fact_schema())
+            write_typed_table(
+                temporary / "facts.parquet",
+                artifacts.facts,
+                FACT_COLUMNS,
+                fact_schema(),
+                empty_input_placeholder=False,
+            )
             atomic_write_text(
                 temporary / "metadata.json",
                 dumps(
@@ -155,16 +164,6 @@ class RecoveryCheckpointStore:
         table: pa.Table = pq.read_table(path)
         rows: list[dict[str, Any]] = table.to_pylist()
         return rows
-
-    @staticmethod
-    def _write(
-        path: Path,
-        rows: tuple[dict[str, Any], ...],
-        columns: tuple[str, ...],
-        schema: pa.Schema,
-    ) -> None:
-        normalized = [{column: row.get(column) for column in columns} for row in rows]
-        pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path, compression="snappy")
 
 
 __all__: list[str] = []

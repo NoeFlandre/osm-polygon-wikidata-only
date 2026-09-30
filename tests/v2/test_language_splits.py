@@ -25,7 +25,13 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     language_table_specs,
 )
 from osm_polygon_wikidata_only.io import staged_install
-from osm_polygon_wikidata_only.v2 import language_splits
+from osm_polygon_wikidata_only.v2 import (
+    language_split_manifest,
+    language_split_models,
+    language_split_resume,
+    language_split_writer,
+    language_splits,
+)
 from osm_polygon_wikidata_only.v2.language_splits import (
     DEFAULT_BATCH_SIZE,
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
@@ -33,10 +39,6 @@ from osm_polygon_wikidata_only.v2.language_splits import (
     V2LanguageSplitError,
     V2LanguageSplitFile,
     V2LanguageSplitResult,
-    _file_sort_key,
-    _language_sort_key,
-    _manifest_partition_paths,
-    _validate_conservation,
     build_v2_language_splits,
     main,
 )
@@ -63,8 +65,8 @@ def _shard_state(
     language: str = "en",
     row_count: int = 0,
     source_files: list[str] | None = None,
-) -> language_splits._ShardWriteState:
-    return language_splits._ShardWriteState(
+) -> language_split_models.LanguageShardWriteState:
+    return language_split_models.LanguageShardWriteState(
         language=language,
         shard_index=0,
         writer=cast(pq.ParquetWriter, writer),
@@ -297,8 +299,13 @@ def test_v2_sort_keys_put_unknown_after_known_languages() -> None:
         sha256="",
     )
 
-    assert _language_sort_key("en") < _language_sort_key("unknown")
-    assert [file.language for file in sorted((unknown, known), key=_file_sort_key)] == [
+    assert language_split_manifest._language_sort_key(
+        "en"
+    ) < language_split_manifest._language_sort_key("unknown")
+    assert [
+        file.language
+        for file in sorted((unknown, known), key=language_split_manifest.file_sort_key)
+    ] == [
         "en",
         "unknown",
     ]
@@ -434,7 +441,7 @@ def test_v2_write_batch_routes_rows_to_language_shard(
     """``_write_batch`` routes selected rows to the language's shard writer."""
     batch = pa.record_batch([pa.array(["en", "en"])], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
     observed: dict[str, object] = {}
 
     class FakeWriter:
@@ -446,14 +453,14 @@ def test_v2_write_batch_routes_rows_to_language_shard(
     state.current["en"] = shard
     state.shards.append(shard)
 
-    def fake_writer_for_language(*args: object) -> language_splits._ShardWriteState:
+    def fake_writer_for_language(*args: object) -> language_split_models.LanguageShardWriteState:
         observed["max_rows_per_shard"] = args[4]
         return shard
 
-    monkeypatch.setattr(language_splits, "_writer_for_language", fake_writer_for_language)
+    monkeypatch.setattr(language_split_writer, "_writer_for_language", fake_writer_for_language)
 
     with ExitStack() as stack:
-        language_splits._write_batch(
+        language_split_writer._write_batch(
             batch,
             0,
             tmp_path / "destination",
@@ -468,7 +475,7 @@ def test_v2_write_batch_routes_rows_to_language_shard(
         )
 
     # Rows are buffered rather than written per slice, so flush before asserting.
-    language_splits._flush_shard(state, shard)
+    language_split_writer._flush_shard(state, shard)
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
     assert observed["max_rows_per_shard"] == 10
 
@@ -507,7 +514,7 @@ def test_v2_writer_and_resume_helpers_keep_boundary_contracts_explicit(
         row_count=1,
         buckets=(zero, one),
     )
-    assert language_splits._table_shard_counts(inventory, 100) == {"fr": 1}
+    assert language_split_writer._table_shard_counts(inventory, 100) == {"fr": 1}
 
     written: list[pa.Table] = []
 
@@ -515,47 +522,47 @@ def test_v2_writer_and_resume_helpers_keep_boundary_contracts_explicit(
         def write_table(self, table: pa.Table) -> None:
             written.append(table)
 
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
     shard = _shard_state(Writer())
     first = pa.record_batch([pa.array(["en"] * 2)], names=["language"])
     second = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
-    monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", 10**9)
-    monkeypatch.setattr(language_splits, "_TOTAL_FLUSH_BYTES", 10**9)
-    language_splits._buffer_rows(state, shard, first)
-    language_splits._buffer_rows(state, shard, second)
+    monkeypatch.setattr(language_split_writer, "SHARD_FLUSH_BYTES", 10**9)
+    monkeypatch.setattr(language_split_writer, "TOTAL_FLUSH_BYTES", 10**9)
+    language_split_writer._buffer_rows(state, shard, first)
+    language_split_writer._buffer_rows(state, shard, second)
     assert shard.pending_bytes == first.nbytes + second.nbytes
     assert state.pending_bytes == shard.pending_bytes
-    language_splits._flush_shard(state, shard)
+    language_split_writer._flush_shard(state, shard)
     assert [table.num_rows for table in written] == [5]
     assert shard.pending == []
     assert shard.pending_bytes == state.pending_bytes == 0
 
     shard.source_files = ["source-a.parquet"]
-    language_splits._record_source_file(shard, "source-a.parquet")
-    language_splits._record_source_file(shard, "source-b.parquet")
+    language_split_writer._record_source_file(shard, "source-a.parquet")
+    language_split_writer._record_source_file(shard, "source-b.parquet")
     assert shard.source_files == ["source-a.parquet", "source-b.parquet"]
 
-    marker = language_splits._resume_marker_path(tmp_path, spec)
+    marker = language_split_resume._resume_marker_path(tmp_path, spec)
     assert marker == tmp_path / ".resume" / f"{spec.table.value}.json"
     staged = tmp_path / "staged.parquet"
     staged.write_bytes(b"staged")
-    assert language_splits._resume_staged_entry("final.parquet", str(staged)) == (
+    assert language_split_resume._resume_staged_entry("final.parquet", str(staged)) == (
         Path("final.parquet"),
         staged,
     )
-    assert language_splits._resume_staged_entry(4, str(staged)) is None
+    assert language_split_resume._resume_staged_entry(4, str(staged)) is None
 
     record = _resume_file_record("language_splits/lang-fr.parquet").to_dict()
-    restored = language_splits._resume_file(record, spec)
+    restored = language_split_resume._resume_file(record, spec)
     assert restored is not None
     assert restored.path == record["path"]
-    assert language_splits._resume_file({**record, "source_files": "bad"}, spec) is None
-    assert language_splits._resume_file({**record, "configuration": None}, spec) is None
-    assert language_splits._resume_file_rows({"source_files": ["a"], "row_count": 2}) == (
+    assert language_split_resume._resume_file({**record, "source_files": "bad"}, spec) is None
+    assert language_split_resume._resume_file({**record, "configuration": None}, spec) is None
+    assert language_split_resume._resume_file_rows({"source_files": ["a"], "row_count": 2}) == (
         ("a",),
         2,
     )
-    assert language_splits._resume_file_rows({"source_files": "a", "row_count": 2}) is None
+    assert language_split_resume._resume_file_rows({"source_files": "a", "row_count": 2}) is None
 
 
 def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
@@ -564,7 +571,7 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
     """A slice is written once, then the next shard receives only its remainder."""
     batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
 
     class FakeWriter:
         def __init__(self) -> None:
@@ -583,15 +590,15 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
     state.current["en"] = first
     writers = iter((first, second))
 
-    def next_writer(*_args: object) -> language_splits._ShardWriteState:
+    def next_writer(*_args: object) -> language_split_models.LanguageShardWriteState:
         try:
             return next(writers)
         except StopIteration as error:
             raise AssertionError("the writer loop consumed more than two shards") from error
 
-    monkeypatch.setattr(language_splits, "_writer_for_language", next_writer)
+    monkeypatch.setattr(language_split_writer, "_writer_for_language", next_writer)
     with ExitStack() as stack:
-        language_splits._write_language_indices(
+        language_split_writer._write_language_indices(
             "en",
             pa.array([0, 1, 2], type=pa.int64()),
             batch,
@@ -605,7 +612,7 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
             state,
             stack,
         )
-    language_splits._flush_shard(state, second)
+    language_split_writer._flush_shard(state, second)
 
     assert first.row_count == 10
     assert second.row_count == 2
@@ -655,7 +662,7 @@ def test_v2_writer_increments_shard_indices_after_rotation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_splits._TableWriteState({}, defaultdict(int), [], {})
+    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
     created: list[Path] = []
 
     @contextmanager
@@ -666,14 +673,14 @@ def test_v2_writer_increments_shard_indices_after_rotation(
         def __init__(self, path: Path, schema: pa.Schema, *, compression: str) -> None:
             created.append(path)
 
-    monkeypatch.setattr(language_splits, "atomic_replacement", fake_atomic)
-    monkeypatch.setattr(language_splits.pq, "ParquetWriter", FakeWriter)
+    monkeypatch.setattr(language_split_writer, "atomic_replacement", fake_atomic)
+    monkeypatch.setattr(language_split_writer.pq, "ParquetWriter", FakeWriter)
 
     with ExitStack() as stack:
         shards = []
         for _ in range(3):
             shards.append(
-                language_splits._writer_for_language(
+                language_split_writer._writer_for_language(
                     "en",
                     tmp_path / "destination",
                     tmp_path / "stage",
@@ -721,13 +728,13 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
         def __exit__(self, *args: object) -> None:
             return None
 
-    monkeypatch.setattr(language_splits, "open_parquet", FakeParquetFile)
-    monkeypatch.setattr(language_splits, "sha256_file", lambda path: "digest")
+    monkeypatch.setattr(language_split_manifest, "open_parquet", FakeParquetFile)
+    monkeypatch.setattr(language_split_manifest, "sha256_file", lambda path: "digest")
     root = tmp_path / "processed_v2"
     staged = root / "stage/file.parquet"
     final = root / "language_splits/table/lang-fr/file.parquet"
 
-    shard = language_splits._ShardWriteState(
+    shard = language_split_models.LanguageShardWriteState(
         language="fr",
         shard_index=0,
         writer=cast(pq.ParquetWriter, object()),
@@ -736,7 +743,7 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
         row_count=0,
         source_files=["source.parquet"],
     )
-    result = language_splits._validated_output_file(root, spec, shard, schema)
+    result = language_split_manifest.validate_output_file(root, spec, shard, schema)
 
     assert checks == [True]
     assert result == V2LanguageSplitFile(
@@ -880,7 +887,9 @@ def test_v2_manifest_path_helper_ignores_unowned_records(tmp_path: Path) -> None
         }
     )
 
-    actual = _manifest_partition_paths(payload, root, root / "language_splits")
+    actual = language_split_manifest._manifest_partition_paths(
+        payload, root, root / "language_splits"
+    )
     expected = {
         path.resolve() for path in (root / "language_splits").rglob("*.parquet") if path.is_file()
     }
@@ -896,11 +905,11 @@ def test_v2_manifest_records_preserves_the_typed_mapping_contract(
         observed.append((type_arg, value))
         return value
 
-    monkeypatch.setattr(language_splits, "cast", fake_cast)
+    monkeypatch.setattr(language_split_manifest, "cast", fake_cast)
 
-    assert language_splits._manifest_records([{"path": "language_splits/file.parquet"}]) == (
-        {"path": "language_splits/file.parquet"},
-    )
+    assert language_split_manifest._manifest_records(
+        [{"path": "language_splits/file.parquet"}]
+    ) == ({"path": "language_splits/file.parquet"},)
     assert observed == [(dict[str, object], {"path": "language_splits/file.parquet"})]
 
 
@@ -1080,7 +1089,7 @@ def test_v2_nested_output_files_are_installed_before_manifest(
 
     monkeypatch.setattr(staged_install.os, "replace", recording_replace)
 
-    language_splits._install_staged_files(
+    language_split_manifest.install_staged_files(
         root,
         destination,
         {data_final: data_stage, manifest_final: manifest_stage},
@@ -1196,7 +1205,7 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
         observed["previous"] = (root_arg, destination_arg)
         return {stale}
 
-    monkeypatch.setattr(language_splits, "_previous_partition_paths", fake_previous)
+    monkeypatch.setattr(language_split_manifest, "_previous_partition_paths", fake_previous)
 
     def fake_backup(targets: list[SortPath], backups: dict[SortPath, SortPath]) -> None:
         observed["backup"] = targets
@@ -1218,9 +1227,11 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
     monkeypatch.setattr(staged_install, "backup_targets", fake_backup)
     monkeypatch.setattr(staged_install, "install_files", fake_install)
     monkeypatch.setattr(staged_install, "cleanup_transaction", fake_cleanup)
-    monkeypatch.setattr(language_splits, "_remove_empty_output_directories", fake_remove)
+    monkeypatch.setattr(language_split_manifest, "_remove_empty_output_directories", fake_remove)
 
-    cast(Any, language_splits._install_staged_files)(tmp_path, tmp_path / "language_splits", staged)
+    cast(Any, language_split_manifest.install_staged_files)(
+        tmp_path, tmp_path / "language_splits", staged
+    )
 
     assert observed["previous"] == (tmp_path, tmp_path / "language_splits")
     assert observed["backup"] == [final_a, stale, final_z]
@@ -1355,7 +1366,7 @@ def test_v2_previous_manifest_reader_requires_utf8(
 
     monkeypatch.setattr(Path, "read_text", fake_read_text)
 
-    assert language_splits._read_previous_manifest(path) == {}
+    assert language_split_manifest._read_previous_manifest(path) == {}
     assert encodings == ["utf-8"]
 
 
@@ -1366,18 +1377,18 @@ def test_v2_previous_manifest_reader_ignores_invalid_or_non_object_json(
     path = tmp_path / "manifest.json"
     path.write_bytes(payload)
 
-    assert language_splits._read_previous_manifest(path) is None
+    assert language_split_manifest._read_previous_manifest(path) is None
 
 
 def test_v2_previous_manifest_reader_ignores_missing_path(tmp_path: Path) -> None:
-    assert language_splits._read_previous_manifest(tmp_path / "missing.json") is None
+    assert language_split_manifest._read_previous_manifest(tmp_path / "missing.json") is None
 
 
 def test_v2_output_directories_are_derived_only_from_owned_paths(tmp_path: Path) -> None:
     destination = tmp_path / "language_splits"
     owned_path = destination / "configuration/lang-en/source.parquet"
 
-    assert language_splits._output_directories_for_paths(destination, {owned_path}) == {
+    assert language_split_manifest._output_directories_for_paths(destination, {owned_path}) == {
         destination / "configuration",
         destination / "configuration/lang-en",
     }
@@ -1388,7 +1399,7 @@ def test_v2_output_directories_continue_after_unowned_paths(tmp_path: Path) -> N
     owned_path = destination / "configuration/lang-en/source.parquet"
     unowned_path = tmp_path / "outside/source.parquet"
 
-    directories = language_splits._output_directories_for_paths(
+    directories = language_split_manifest._output_directories_for_paths(
         destination,
         cast(set[Path], (unowned_path, owned_path)),
     )
@@ -1404,7 +1415,7 @@ def test_v2_remove_empty_output_directories_prunes_deepest_first(tmp_path: Path)
     owned_path = destination / "configuration/lang-en/source.parquet"
     owned_path.parent.mkdir(parents=True)
 
-    language_splits._remove_empty_output_directories(destination, {owned_path})
+    language_split_manifest._remove_empty_output_directories(destination, {owned_path})
 
     assert not (destination / "configuration/lang-en").exists()
     assert not (destination / "configuration").exists()
@@ -1426,12 +1437,12 @@ def test_v2_remove_empty_output_directories_requires_depth_order(
     outer = Directory("outer", 2, events)
     inner = Directory("inner", 3, events)
     monkeypatch.setattr(
-        language_splits,
+        language_split_manifest,
         "_output_directories_for_paths",
         lambda destination, owned_paths: {outer, inner},
     )
 
-    language_splits._remove_empty_output_directories(tmp_path, set())
+    language_split_manifest._remove_empty_output_directories(tmp_path, set())
 
     assert events == ["inner", "outer"]
 
@@ -1454,12 +1465,12 @@ def test_v2_remove_empty_output_directories_continues_after_nonempty_directory(
     outer = Directory("outer", 2, events)
     inner = Directory("inner", 3, events)
     monkeypatch.setattr(
-        language_splits,
+        language_split_manifest,
         "_output_directories_for_paths",
         lambda destination, owned_paths: {outer, inner},
     )
 
-    language_splits._remove_empty_output_directories(tmp_path, set())
+    language_split_manifest._remove_empty_output_directories(tmp_path, set())
 
     assert events == ["inner", "outer"]
 
@@ -1469,7 +1480,7 @@ def test_v2_split_conservation_guard_rejects_missing_output(tmp_path: Path) -> N
     inventory = build_language_inventory(root, DatasetContract.V2)
 
     with pytest.raises(V2LanguageSplitError, match="row conservation failed"):
-        _validate_conservation(inventory, ())
+        language_split_manifest.validate_conservation(inventory, ())
 
 
 def test_v2_split_can_be_loaded_with_standard_datasets(tmp_path: Path) -> None:
@@ -1539,9 +1550,11 @@ def test_v2_completed_table_is_reused_instead_of_rebuilt(tmp_path: Path) -> None
     final = tmp_path / "language_splits/lang-fr.parquet"
     record = _resume_file_record("language_splits/lang-fr.parquet")
 
-    language_splits._record_completed_table(stage_root, spec, inventory, [record], {final: staged})
+    language_split_resume.record_completed_table(
+        stage_root, spec, inventory, [record], {final: staged}
+    )
 
-    resumed = language_splits._resume_completed_table(stage_root, spec, inventory)
+    resumed = language_split_resume.resume_completed_table(stage_root, spec, inventory)
     assert resumed is not None
     files, staged_paths = resumed
     assert [file.to_dict() for file in files] == [record.to_dict()]
@@ -1556,7 +1569,7 @@ def test_v2_resume_is_rejected_when_the_sources_changed(tmp_path: Path) -> None:
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
-    language_splits._record_completed_table(
+    language_split_resume.record_completed_table(
         stage_root,
         spec,
         _resume_inventory(row_count=4),
@@ -1565,7 +1578,9 @@ def test_v2_resume_is_rejected_when_the_sources_changed(tmp_path: Path) -> None:
     )
 
     assert (
-        language_splits._resume_completed_table(stage_root, spec, _resume_inventory(row_count=5))
+        language_split_resume.resume_completed_table(
+            stage_root, spec, _resume_inventory(row_count=5)
+        )
         is None
     )
 
@@ -1579,7 +1594,7 @@ def test_v2_resume_is_rejected_when_a_staged_file_disappeared(tmp_path: Path) ->
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
-    language_splits._record_completed_table(
+    language_split_resume.record_completed_table(
         stage_root,
         spec,
         inventory,
@@ -1588,15 +1603,17 @@ def test_v2_resume_is_rejected_when_a_staged_file_disappeared(tmp_path: Path) ->
     )
     staged.unlink()
 
-    assert language_splits._resume_completed_table(stage_root, spec, inventory) is None
+    assert language_split_resume.resume_completed_table(stage_root, spec, inventory) is None
 
 
 def test_v2_resume_is_rejected_when_the_marker_is_corrupt(tmp_path: Path) -> None:
     """A truncated or non-JSON marker falls back to rebuilding the table."""
     spec = language_table_specs(DatasetContract.V2)[0]
     stage_root = tmp_path / "stage"
-    marker = language_splits._resume_marker_path(stage_root, spec)
+    marker = language_split_resume._resume_marker_path(stage_root, spec)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("{not json", encoding="utf-8")
 
-    assert language_splits._resume_completed_table(stage_root, spec, _resume_inventory()) is None
+    assert (
+        language_split_resume.resume_completed_table(stage_root, spec, _resume_inventory()) is None
+    )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from argparse import Namespace
 from pathlib import Path
@@ -27,16 +26,9 @@ from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction, plan_sync_states
 from tests._support import write_publication_map_placeholders, write_tiny_png
+from tests.helpers import sha256_file
 
 pytestmark = pytest.mark.map_orchestration
-
-
-def compute_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _setup_mock_region(
@@ -154,8 +146,8 @@ def _setup_mock_region(
         aug_manifest[stem] = {
             "contract_version": "text-sidecars-v1",
             "core_hashes": {
-                str(polygons_path): compute_sha256(polygons_path),
-                str(wikipedia_documents_path): compute_sha256(wikipedia_documents_path),
+                str(polygons_path): sha256_file(polygons_path),
+                str(wikipedia_documents_path): sha256_file(wikipedia_documents_path),
             },
             "counts": {
                 "wikipedia_documents": 1,
@@ -471,7 +463,10 @@ def test_recovered_region_publication_loads_repaired_core(tmp_path: Path) -> Non
 
 
 def test_sync_reconciliation_integration_success(
-    tmp_path: Path, mock_hf_auth: None, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    mock_hf_auth: None,
+    monkeypatch: pytest.MonkeyPatch,
+    no_op_wikimedia_runtime: None,
 ) -> None:
     data_root = DataRoot(tmp_path)
     data_root.ensure()
@@ -551,20 +546,6 @@ def test_sync_reconciliation_integration_success(
         "fake-token",
         "--skip-existing",
     ]
-
-    # Mock runtime with None clients to prove they are never invoked
-    def mock_build_wikimedia_runtime(*args: Any, **kwargs: Any) -> Any:
-        class DummyRuntime:
-            settings = Settings(repo_id="test", user_agent="test")
-            scheduler = type("DummyScheduler", (), {"snapshot": {}})()
-            session = type("DummySession", (), {"auth_snapshot": {}})()
-            wikidata = None
-            wikipedia = None
-            cache = None
-
-        return DummyRuntime()
-
-    monkeypatch.setattr(run_sync, "build_wikimedia_runtime", mock_build_wikimedia_runtime)
 
     # First run: should repair the remote region by uploading core parquets, README, manifests, maps.
     rc = commands.main(args)
