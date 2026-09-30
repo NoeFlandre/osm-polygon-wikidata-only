@@ -419,6 +419,22 @@ def test_validate_upgrade_target_accepts_unchanged_document_and_rejects_drift(
     assert str(error.value) == "Stem 'stem-a': document unreadable before write (OSError)"
 
 
+def test_target_validation_is_limited_to_writing_operations(tmp_path: Path) -> None:
+    already_canonical = StemPlan(
+        stem="stem-a",
+        operation=MigrationOperation.ALREADY_CANONICAL,
+        reason="",
+        article_hash="article-hash",
+        document_hash="document-hash",
+        row_count=1,
+        canonical_digest="digest",
+    )
+
+    migration_application._validate_target_before_write(
+        already_canonical, tmp_path / "already-canonical.parquet"
+    )
+
+
 def test_article_validation_and_plan_inputs_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -474,6 +490,8 @@ def test_article_validation_and_plan_inputs_fail_closed(
         )
         blocked = migration_planning._article_plan_inputs("stem-a", article_path)
         assert isinstance(blocked, StemPlan) and "unreadable article file" in blocked.reason
+        assert blocked.stem == "stem-a"
+        assert blocked.reason == "unreadable article file (OSError)"
         assert blocked.article_hash == ""
         assert blocked.row_count == 0
         assert blocked.canonical_digest is None
@@ -1632,3 +1650,99 @@ def test_missing_stem_plan_classifies_absent_and_unreadable_documents(
     article.parent.mkdir(parents=True)
     article.write_bytes(b"article")
     assert migration_planning._missing_stem_plan("stem", article, document) is None
+
+
+def test_classify_stem_keeps_the_missing_article_blocker(tmp_path: Path) -> None:
+    blocked = migration_planning._classify_stem("orphan", tmp_path)
+
+    assert blocked.operation == MigrationOperation.BLOCKED
+    assert blocked.stem == "orphan"
+    assert blocked.reason == "no article file found"
+
+
+def test_wikipedia_table_digest_is_stable_across_arrow_chunk_layouts() -> None:
+    values = list(range(65_537))
+    single_chunk = pa.Table.from_arrays([pa.array(values)], names=["row"])
+    split_chunks = pa.Table.from_arrays(
+        [pa.chunked_array([pa.array(values[:65_536]), pa.array(values[65_536:])])],
+        names=["row"],
+    )
+
+    assert migration_planning._table_digest(single_chunk) == migration_planning._table_digest(
+        split_chunks
+    )
+
+
+def test_blocked_document_plans_keep_stem_and_both_input_hashes() -> None:
+    existing_canonical = pa.table({"document_id": ["doc-1"], "value": [1]})
+    rebuilt_canonical = pa.table({"document_id": ["doc-1"], "value": [2]})
+
+    blocked_canonical = migration_planning._canonical_document_plan(
+        "alpha",
+        existing_canonical,
+        rebuilt_canonical,
+        article_hash="article-hash",
+        document_hash="document-hash",
+    )
+
+    assert blocked_canonical.operation == MigrationOperation.BLOCKED
+    assert blocked_canonical.stem == "alpha"
+    assert blocked_canonical.article_hash == "article-hash"
+    assert blocked_canonical.document_hash == "document-hash"
+    assert "Stem 'alpha':" in blocked_canonical.reason
+
+    legacy = pa.table({"document_id": ["doc-1"], "language": ["en"]})
+    canonical = pa.table({"document_id": ["doc-1"], "language": ["fr"]})
+    blocked_legacy = migration_planning._legacy_document_plan(
+        "alpha",
+        legacy,
+        canonical,
+        article_hash="article-hash",
+        document_hash="document-hash",
+    )
+    assert blocked_legacy.operation == MigrationOperation.BLOCKED
+    assert blocked_legacy.stem == "alpha"
+    assert blocked_legacy.article_hash == "article-hash"
+    assert blocked_legacy.document_hash == "document-hash"
+    assert "Stem 'alpha': shared-value conflict" in blocked_legacy.reason
+
+    upgrade = migration_planning._legacy_document_plan(
+        "alpha",
+        legacy,
+        legacy,
+        article_hash="article-hash",
+        document_hash="document-hash",
+    )
+    assert upgrade.operation == MigrationOperation.UPGRADE_LEGACY
+    assert upgrade.document_hash == "document-hash"
+
+
+def test_existing_document_plan_preserves_unreadable_diagnostic_and_hash(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "document.parquet"
+    path.write_bytes(b"unreadable")
+    blocked = migration_planning._existing_document_plan(
+        "alpha",
+        path,
+        pa.table({"document_id": ["doc-1"]}),
+        article_hash="article-hash",
+    )
+
+    assert blocked.stem == "alpha"
+    assert blocked.reason == "unreadable document file (ArrowInvalid)"
+    assert blocked.article_hash == "article-hash"
+    assert blocked.document_hash == _file_sha256(path)
+
+
+def test_stem_path_escape_diagnostic_keeps_the_stem(tmp_path: Path) -> None:
+    docs_dir = tmp_path / "documents"
+    outside = tmp_path / "outside.parquet"
+    docs_dir.mkdir()
+    outside.write_bytes(b"outside")
+    (docs_dir / "alpha.parquet").symlink_to(outside)
+
+    with pytest.raises(MigrationError) as error:
+        migration_planning._validate_stem_path("alpha", docs_dir)
+
+    assert str(error.value) == "Stem 'alpha': target path escapes documents directory"

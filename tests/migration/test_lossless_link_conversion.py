@@ -328,6 +328,43 @@ def test_conversion_defaults_missing_optional_values_without_inventing_them() ->
     ]
 
 
+def test_legacy_identity_uses_empty_string_for_missing_identity_fields() -> None:
+    identity, normalized = conversion._legacy_identity({})
+
+    assert identity == ("", "")
+    assert normalized["polygon_id"] is None
+    assert normalized["article_id"] is None
+
+
+def test_missing_optional_identity_values_do_not_create_false_conflicts() -> None:
+    conversion._validate_legacy_identity({}, {}, "polygon-1", "article-1")
+
+
+def test_invalid_legacy_relationship_does_not_stop_later_valid_rows() -> None:
+    legacy = pa.Table.from_pylist(
+        [
+            _legacy_row("p-bad", "a-bad", "Q1"),
+            _legacy_row("p-good", "a-good", "Q1", page_id=200, revision_id=2),
+        ],
+        schema=polygon_article_schema(),
+    )
+    polygons = pa.Table.from_pylist(
+        [_poly_row("p-bad", "Q2"), _poly_row("p-good", "Q1")],
+        schema=polygon_schema(),
+    )
+    documents = pa.Table.from_pylist(
+        [
+            _doc_row("a-bad", "Q1:wikipedia:en:100:1", "Q1", 100, 1),
+            _doc_row("a-good", "Q1:wikipedia:en:200:2", "Q1", 200, 2),
+        ],
+        schema=wikipedia_document_schema(),
+    )
+
+    rows = conversion.build_canonical_rows("alpha-latest", legacy, polygons, documents)
+
+    assert [row["polygon_id"] for row in rows] == ["p-good"]
+
+
 @pytest.mark.parametrize(
     ("field", "conflicting_value"),
     [
@@ -438,6 +475,8 @@ def test_legacy_article_id_missing_from_documents_blocks_stem(tmp_path: Path) ->
     sp = next(s for s in plan.stems if s.stem == stem)
     assert sp.classification == link_migration.StemClassification.BLOCKED
     assert "a-MISSING" in sp.reason
+    assert "polygon_id='p1'" in sp.reason
+    assert f"wikipedia/documents/{stem}.parquet" in sp.reason
 
 
 def test_ambiguous_article_id_blocks_stem(tmp_path: Path) -> None:

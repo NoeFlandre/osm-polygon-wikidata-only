@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     document_schema,
 )
+from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_COLUMNS,
     polygon_schema,
@@ -333,6 +335,201 @@ def test_read_legacy_rejection_tables_requests_only_relationship_columns(
             ["polygon_id", "wikidata", "article_id"],
         ),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Mutation contracts for migration planning helpers
+# ---------------------------------------------------------------------------
+
+
+def test_read_legacy_rejection_tables_returns_none_when_either_file_is_missing(
+    tmp_path: Path,
+) -> None:
+    stem = "alpha"
+    _write_polygons(
+        tmp_path / "polygons" / f"{stem}.parquet",
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    assert not (tmp_path / "polygon_articles" / f"{stem}.parquet").exists()
+
+    stem_plan = link_planning.StemPlan(
+        stem=stem,
+        classification=link_planning.StemClassification.MIGRATABLE,
+        reason="",
+        polygons_fingerprint="p",
+        links_fingerprint="l",
+        documents_fingerprint="d",
+        row_count=0,
+        canonical_digest=None,
+    )
+    assert link_planning._read_legacy_rejection_tables(tmp_path, stem_plan) is None
+
+
+def test_legacy_rejection_for_unknown_polygon_keeps_empty_qid_fallback() -> None:
+    pa = _pyarrow()
+    links = pa.Table.from_pylist(
+        [{"polygon_id": "missing", "article_id": "Q1:en:1:1", "wikidata": "Q1"}]
+    )
+
+    rejections = link_planning._legacy_rejection_records("alpha", links, {})
+
+    assert rejections == [
+        {
+            "shard": "alpha",
+            "source_table": "polygon_articles",
+            "identifier": "Q1:en:1:1",
+            "wikidata": "Q1",
+            "expected": None,
+            "reason": "wikidata_not_in_polygon_qids",
+            "cascaded_sections": 0,
+        }
+    ]
+
+
+def test_canonical_stem_plan_keeps_fingerprints_and_reports_schema_reason(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    links_path = tmp_path / "links.parquet"
+    canonical = pa.Table.from_pylist([], schema=polygon_document_link_schema())
+    pa.parquet.write_table(canonical, links_path)
+    fingerprints = ("polygon-hash", "link-hash", "document-hash")
+
+    plan = link_planning._canonical_stem_plan("alpha", links_path, fingerprints)
+
+    assert plan.polygons_fingerprint == "polygon-hash"
+    assert plan.links_fingerprint == "link-hash"
+    assert plan.documents_fingerprint == "document-hash"
+    assert plan.canonical_digest == hashlib.sha256(links_path.read_bytes()).hexdigest()
+
+    wrong_schema = pa.table({name: [] for name in EXPECTED_CANONICAL_COLUMNS})
+    pa.parquet.write_table(wrong_schema, links_path)
+    blocked = link_planning._canonical_stem_plan("alpha", links_path, fingerprints)
+    assert (
+        blocked.reason
+        == "link table columns match canonical but schema differs (types or metadata)"
+    )
+
+
+def test_classification_warnings_keep_path_and_error_context(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "links.parquet"
+    path.write_bytes(b"invalid parquet")
+    caplog.set_level(logging.WARNING)
+    classification, reason = link_planning._link_classification(path)
+    assert classification is None
+    assert reason is not None and reason.startswith(
+        "polygon_articles file unreadable: ArrowInvalid:"
+    )
+    assert (
+        caplog.records[-1]
+        .getMessage()
+        .startswith(f"Could not read polygon_articles schema at {path}: ArrowInvalid:")
+    )
+
+    with pytest.raises(link_planning._UnreadableStemInputError):
+        link_planning._read_stem_table(path, "polygon_articles")
+    assert (
+        caplog.records[-1]
+        .getMessage()
+        .startswith(f"Could not read polygon_articles data at {path}: ArrowInvalid:")
+    )
+
+
+def test_legacy_stem_plan_keeps_the_canonical_schema_for_empty_rows(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    stem = "alpha"
+    polygons_path = tmp_path / "polygons.parquet"
+    links_path = tmp_path / "links.parquet"
+    docs_path = tmp_path / "documents.parquet"
+    _write_polygons(
+        polygons_path,
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    _write_legacy_links(links_path, [])
+    _write_legacy_documents(docs_path, [])
+
+    plan = link_planning._legacy_stem_plan(
+        stem, polygons_path, links_path, docs_path, ("p", "l", "d")
+    )
+
+    assert plan.row_count == 0
+    expected = pa.Table.from_pylist([], schema=polygon_document_link_schema())
+    assert link_planning._table_digest(expected) == plan.canonical_digest
+
+
+def test_missing_link_shard_reason_is_specific(tmp_path: Path) -> None:
+    stem = "alpha-latest"
+    _write_polygons(
+        tmp_path / "polygons" / f"{stem}.parquet",
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+
+    plan = link_planning.classify_stem(stem, tmp_path)
+
+    assert plan.reason == "polygon_articles file missing"
+
+
+def test_apply_inputs_keep_source_paths_and_stem_diagnostics(tmp_path: Path) -> None:
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        tmp_path,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    docs_path = tmp_path / "wikipedia" / "documents" / f"{stem}.parquet"
+    _write_legacy_documents(docs_path, [])
+    plan = link_planning.classify_stem(stem, tmp_path)
+
+    inputs = link_application._load_stem_apply_inputs(tmp_path, plan)
+
+    assert inputs.links_path == tmp_path / "polygon_articles" / f"{stem}.parquet"
+    assert inputs.polygons_path == tmp_path / "polygons" / f"{stem}.parquet"
+    assert inputs.docs_path == docs_path
+    with pytest.raises(ValueError) as error:
+        link_application._build_stem_context(inputs)
+    assert f"wikipedia/documents/{stem}.parquet" in str(error.value)
+
+
+def test_link_migration_stages_replacements_under_a_hidden_per_stem_directory(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        processed,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    plan = link_migration.plan_link_migration(processed, stems={stem})
+
+    def interrupt_after_second_replacement(index: int, target: Path) -> None:
+        if index == 1:
+            raise RuntimeError(f"simulated interruption at {target}")
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        link_migration.apply_link_migration(
+            processed,
+            plan=plan,
+            _crash_hook=interrupt_after_second_replacement,
+        )
+
+    staging_dir = processed / ".link_migration_staging" / stem
+    journal_path = processed / ".link_migration_journal" / stem / "journal.json"
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    staged_paths = [Path(entry["staged"]) for entry in journal["entries"]]
+
+    assert staging_dir.is_dir()
+    assert staged_paths
+    assert all(staging_dir.resolve() in path.parents for path in staged_paths)
 
 
 # ---------------------------------------------------------------------------
