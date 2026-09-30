@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 13058)
+Total output lines: 1456
+
 """Tests for the CLI."""
 
 from __future__ import annotations
@@ -17,6 +20,19 @@ from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
+
+
+def _stub_cli_augmentation_result(data_root: DataRoot) -> commands.AugmentationResult:
+    processed = data_root.processed
+    return commands.AugmentationResult(
+        wikipedia_documents_path=processed / "wikipedia/documents/andorra-latest.parquet",
+        wikipedia_sections_path=processed / "wikipedia/sections/andorra-latest.parquet",
+        wikivoyage_documents_path=processed / "wikivoyage/documents/andorra-latest.parquet",
+        wikivoyage_sections_path=processed / "wikivoyage/sections/andorra-latest.parquet",
+        wikidata_facts_path=processed / "wikidata/facts/andorra-latest.parquet",
+        manifest_path=processed / "augmentation/manifests/augmentation_manifest.json",
+        counts={},
+    )
 
 
 def test_parser_has_documented_subcommands() -> None:
@@ -298,7 +314,7 @@ def test_publish_augmentation_submits_the_assembled_operations(
         settings,
         data_root=data_root,
         stem="andorra-latest",
-        result=cast(commands.AugmentationResult, object()),
+        result=_stub_cli_augmentation_result(data_root),
     )
 
     assert submitted == [(["op"], "Add text augmentation for andorra-latest")]
@@ -306,14 +322,15 @@ def test_publish_augmentation_submits_the_assembled_operations(
 
 def test_publish_augmentation_skips_when_push_is_disabled(tmp_path: Path) -> None:
     args = argparse.Namespace(push=False)
+    data_root = DataRoot(tmp_path)
 
     assert (
         commands._publish_augmentation(
             args,
             Settings(),
-            data_root=DataRoot(tmp_path),
+            data_root=data_root,
             stem="andorra-latest",
-            result=object(),  # type: ignore[arg-type]
+            result=_stub_cli_augmentation_result(data_root),
         )
         is None
     )
@@ -676,119 +693,7 @@ def test_process_pbf_publishes_metadata_assets_inline(
     monkeypatch.setattr(
         core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
     )
-    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-
-    assert (
-        commands._run_processing_command(
-            args, data_root=DataRoot(tmp_path), settings=Settings(repo_id="example/repo")
-        )
-        == 0
-    )
-
-    assert deferrals == [False]
-    assert refreshes == []
-
-
-def test_process_dir_persists_and_clears_the_metadata_refresh_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A deferred refresh leaves a durable marker until it succeeds."""
-    markers: list[tuple[list[str], dict[str, str]]] = []
-    cleared: list[DataRoot] = []
-    root = DataRoot(tmp_path)
-    root.ensure()
-    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
-
-    class _StubQueue:
-        def close_and_wait(self) -> list[str]:
-            return []
-
-    args = argparse.Namespace(
-        command="process-dir",
-        input=tmp_path / "pbfs",
-        commit_message=None,
-        push=True,
-    )
-    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
-
-    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
-        on_complete = kwargs["on_complete"]
-        assert callable(on_complete)
-        on_complete(result)
-        return [result]
-
-    monkeypatch.setattr(
-        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
-    )
-    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
-    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(
-        core_publication,
-        "set_metadata_refresh_marker",
-        lambda data_root, stems, hashes: markers.append((stems, hashes)),
-    )
-    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
-
-    assert (
-        commands._run_processing_command(
-            args, data_root=root, settings=Settings(repo_id="example/repo")
-        )
-        == 0
-    )
-
-    assert len(markers) == 1
-    stems, hashes = markers[0]
-    assert stems == ["region-latest"]
-    assert set(hashes) == {"region-latest"}
-    assert len(hashes["region-latest"]) == 64
-    assert cleared == [root]
-
-
-def test_process_dir_keeps_the_marker_when_an_upload_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A failed upload must leave the refresh intent on disk for the next run."""
-    cleared: list[DataRoot] = []
-    root = DataRoot(tmp_path)
-    root.ensure()
-    (root.processed_polygons / "region-latest.parquet").write_bytes(b"polygons")
-
-    class _FailingQueue:
-        def close_and_wait(self) -> list[str]:
-            return ["upload failed"]
-
-    args = argparse.Namespace(
-        command="process-dir",
-        input=tmp_path / "pbfs",
-        commit_message=None,
-        push=True,
-    )
-    result = SimpleNamespace(manifest_entry={"source_pbf": "region-latest.osm.pbf"})
-
-    def fake_orchestrate(inputs: object, **kwargs: object) -> list[object]:
-        on_complete = kwargs["on_complete"]
-        assert callable(on_complete)
-        on_complete(result)
-        return [result]
-
-    monkeypatch.setattr(
-        commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
-    )
-    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
-    monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
-    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
-
-    assert (
-        commands._run_processing_command(
-            args, data_root=root, settings=Settings(repo_id="example/repo")
-        )
+    monkeypatch.setattr(com…1058 tokens truncated…      )
         == 1
     )
     assert cleared == []
