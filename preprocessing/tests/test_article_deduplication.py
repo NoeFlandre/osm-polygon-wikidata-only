@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 import duckdb
 import pytest
@@ -61,7 +62,7 @@ def test_execute_one_rejects_an_aggregate_query_without_a_row() -> None:
             return None
 
     with pytest.raises(RuntimeError, match="aggregate query returned no row"):
-        articles_module._execute_one(EmptyConnection(), "SELECT 1")
+        articles_module._execute_one(cast(duckdb.DuckDBPyConnection, EmptyConnection()), "SELECT 1")
 
 
 def test_input_path_validation_rejects_a_missing_file_after_valid_inputs(
