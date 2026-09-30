@@ -1518,7 +1518,7 @@ class TestPathTraversal:
                 ),
             ),
         )
-        with pytest.raises(MigrationError, match="Invalid stem name: '..'"):
+        with pytest.raises(MigrationError, match=r"Invalid stem name: '\.\.'"):
             apply_migration(malicious_plan)
 
     @pytest.mark.parametrize(
