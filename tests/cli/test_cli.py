@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import osm_polygon_wikidata_only.cli.commands as commands
+import osm_polygon_wikidata_only.hf.core_publication as core_publication
 from osm_polygon_wikidata_only.cli.commands import _build_settings, build_parser, main
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
@@ -139,9 +140,9 @@ def test_processing_command_forwards_completion_to_optional_upload_queue(
         enqueue_calls.append((received_queue, data_root, repo_id, commit_message, result))
 
     monkeypatch.setattr(commands, "_build_clients", fake_build_clients)
-    monkeypatch.setattr(commands, "_build_upload_queue", fake_build_upload_queue)
+    monkeypatch.setattr(core_publication, "_build_upload_queue", fake_build_upload_queue)
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", fake_enqueue_core_upload)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", fake_enqueue_core_upload)
 
     assert commands._run_processing_command(args, data_root=root, settings=config) == 0
     assert queue_closed is push
@@ -272,6 +273,7 @@ def test_load_augmentation_result_augments_and_loads_when_not_current(
 def test_publish_augmentation_submits_the_assembled_operations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import osm_polygon_wikidata_only.hf.augmentation_publication as augmentation_publication
     import osm_polygon_wikidata_only.hf.publication as publication
 
     data_root = DataRoot(tmp_path)
@@ -285,7 +287,7 @@ def test_publish_augmentation_submits_the_assembled_operations(
     submitted: list[tuple[object, str]] = []
     monkeypatch.setattr(publication, "assemble_augmentation_upload", lambda **_kwargs: ["op"])
     monkeypatch.setattr(
-        commands,
+        augmentation_publication,
         "upload_files",
         lambda repo_id, **kwargs: submitted.append((kwargs["ops"], kwargs["commit_message"])),
     )
@@ -299,6 +301,21 @@ def test_publish_augmentation_submits_the_assembled_operations(
     )
 
     assert submitted == [(["op"], "Add text augmentation for andorra-latest")]
+
+
+def test_publish_augmentation_skips_when_push_is_disabled(tmp_path: Path) -> None:
+    args = argparse.Namespace(push=False)
+
+    assert (
+        commands._publish_augmentation(
+            args,
+            Settings(),
+            data_root=DataRoot(tmp_path),
+            stem="andorra-latest",
+            result=object(),  # type: ignore[arg-type]
+        )
+        is None
+    )
 
 
 def test_run_augmentation_command_processes_selected_stems(
@@ -606,10 +623,10 @@ def test_process_dir_defers_metadata_assets_until_the_queue_drains(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: queue)
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", fake_enqueue_core_upload)
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", fake_metadata_refresh)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", fake_enqueue_core_upload)
+    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", fake_metadata_refresh)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
 
     assert commands._run_processing_command(args, data_root=root, settings=config) == 0
@@ -648,14 +665,16 @@ def test_process_pbf_publishes_metadata_assets_inline(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: queue)
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: queue)
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(
-        commands,
+        core_publication,
         "_enqueue_core_upload",
         lambda *a, **kw: deferrals.append(bool(kw["defer_metadata_assets"])),
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
 
     assert (
@@ -700,17 +719,17 @@ def test_process_dir_persists_and_clears_the_metadata_refresh_marker(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(
-        commands,
+        core_publication,
         "set_metadata_refresh_marker",
         lambda data_root, stems, hashes: markers.append((stems, hashes)),
     )
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -757,13 +776,13 @@ def test_process_dir_keeps_the_marker_when_an_upload_fails(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", lambda *a, **kw: None)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -817,13 +836,15 @@ def test_a_failed_regional_upload_skips_the_metadata_refresh(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _FailingQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -856,14 +877,18 @@ def test_a_resumed_run_never_refreshes_from_a_marker_alone(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+        core_publication,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["region-latest"]),
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -900,18 +925,20 @@ def test_a_marker_naming_an_unpublished_region_blocks_the_refresh(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands,
+        core_publication,
         "load_metadata_refresh_marker",
         lambda data_root: _marker(["published-latest", "stranded-latest"]),
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -952,16 +979,18 @@ def test_a_failed_metadata_refresh_closes_the_queue_and_keeps_its_marker(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+        core_publication,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["region-latest"]),
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", failing_refresh)
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", failing_refresh)
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -997,15 +1026,17 @@ def test_the_refresh_marker_is_written_before_the_regional_job_is_submitted(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: order.append("submit"))
     monkeypatch.setattr(
-        commands, "set_metadata_refresh_marker", lambda *a, **kw: order.append("marker")
+        core_publication, "_enqueue_core_upload", lambda *a, **kw: order.append("submit")
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", lambda data_root: None)
+    monkeypatch.setattr(
+        core_publication, "set_metadata_refresh_marker", lambda *a, **kw: order.append("marker")
+    )
+    monkeypatch.setattr(core_publication, "_upload_metadata_refresh", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", lambda data_root: None)
 
     assert (
         commands._run_processing_command(
@@ -1043,12 +1074,12 @@ def test_a_malformed_marker_cannot_leave_the_upload_queue_open(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
-    monkeypatch.setattr(commands, "load_metadata_refresh_marker", malformed_marker)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "load_metadata_refresh_marker", malformed_marker)
 
     with pytest.raises(ValueError, match="malformed metadata refresh marker"):
         commands._run_processing_command(
@@ -1090,16 +1121,20 @@ def test_an_aborted_run_drains_without_publishing_metadata(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", failing_enqueue)
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", failing_enqueue)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+        core_publication,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["region-latest"]),
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     with pytest.raises(RuntimeError, match="canonical document snapshot failed"):
         commands._run_processing_command(
@@ -1142,16 +1177,20 @@ def test_recording_a_region_preserves_a_surviving_marker(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["stranded-latest"])
+        core_publication,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["stranded-latest"]),
     )
-    monkeypatch.setattr(commands, "set_metadata_refresh_marker", record)
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(core_publication, "set_metadata_refresh_marker", record)
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(
@@ -1183,11 +1222,13 @@ def test_an_unverifiable_marker_is_reported_to_the_operator(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", lambda inputs, **kwargs: [])
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["stranded-latest"])
+        core_publication,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["stranded-latest"]),
     )
 
     with caplog.at_level("WARNING"):
@@ -1228,18 +1269,22 @@ def test_a_dry_run_never_touches_the_refresh_marker(
     monkeypatch.setattr(
         commands, "_build_clients", lambda *a, **kw: ("wikidata", "wikipedia", "cache")
     )
-    monkeypatch.setattr(commands, "_build_upload_queue", lambda *a, **kw: _StubQueue())
+    monkeypatch.setattr(core_publication, "_build_upload_queue", lambda *a, **kw: _StubQueue())
     monkeypatch.setattr(commands, "orchestrate", fake_orchestrate)
     monkeypatch.setattr(commands, "_log_process_results", lambda results: None)
-    monkeypatch.setattr(commands, "_enqueue_core_upload", lambda *a, **kw: None)
+    monkeypatch.setattr(core_publication, "_enqueue_core_upload", lambda *a, **kw: None)
     monkeypatch.setattr(
-        commands, "set_metadata_refresh_marker", lambda *a, **kw: recorded.append(kw)
+        core_publication, "set_metadata_refresh_marker", lambda *a, **kw: recorded.append(kw)
     )
     monkeypatch.setattr(
-        commands, "load_metadata_refresh_marker", lambda data_root: _marker(["region-latest"])
+        core_publication,
+        "load_metadata_refresh_marker",
+        lambda data_root: _marker(["region-latest"]),
     )
-    monkeypatch.setattr(commands, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw))
-    monkeypatch.setattr(commands, "clear_metadata_refresh_marker", cleared.append)
+    monkeypatch.setattr(
+        core_publication, "_upload_metadata_refresh", lambda *a, **kw: refreshes.append(kw)
+    )
+    monkeypatch.setattr(core_publication, "clear_metadata_refresh_marker", cleared.append)
 
     assert (
         commands._run_processing_command(

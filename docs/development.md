@@ -250,20 +250,24 @@ visible for context. A source function missing from a coverage report fails
 the gate. `just crap-all` is the standalone variant that refreshes both
 coverage reports before reporting. Historical `crap-*` aliases delegate to
 that same full-source run; they are compatibility names, not separate focused
-inventories.
+inventories. The complexity cap of 5 and the 80% coverage floor for functions
+with complexity at least 3 bound every reported CRAP score below 6 (the maximum
+under those limits is 5.20).
 
-`just mutation` runs mutmut over the explicit deterministic helper and quality
-tool scope. The gate rejects unreviewed survivors, timeouts, untested results,
-and other non-killed statuses; exact source-bound equivalent mutations may
-pass only through the reviewed equivalence mechanism. Mutation remains
-intentionally scoped: network clients, large data, publication, live GPU work,
-and other external side effects are covered by focused integration or
-operational checks instead. Static Ruff and ty checks constrain source shape
-and types; they do not prove runtime side-effect safety. Reports and temporary
-files stay under the configured quality runtime. Mutation uses two workers by
-default to bound local memory; CI sets four workers for the same deterministic
-population without changing the gate. HTMLParser trampoline
-mutations remain unsupported by mutmut 3.7 and are not actionable.
+`just mutation` runs mutmut over the explicit deterministic helper, quality
+tool, and offline publication-orchestration scope. Its selected publication
+tests stub external upload effects while exercising queueing, deferral, and
+submission decisions. The gate rejects unreviewed survivors, timeouts,
+untested results, and other non-killed statuses; exact source-bound equivalent
+mutations may pass only through the reviewed equivalence mechanism. Network
+clients, large data, live GPU work, and other external effects remain outside
+the mutation scope and use focused integration or operational checks instead.
+Static Ruff and ty checks constrain source shape and types; they do not prove
+runtime side-effect safety. Reports and temporary files stay under the
+configured quality runtime. Mutation uses two workers by default to bound
+local memory; CI sets four workers for the same deterministic population
+without changing the gate. HTMLParser trampoline mutations remain unsupported
+by mutmut 3.7 and are not actionable.
 
 ```bash
 just crap
