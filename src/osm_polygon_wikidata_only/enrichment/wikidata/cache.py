@@ -21,7 +21,7 @@ import threading
 from collections.abc import Iterable
 from typing import Any
 
-from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.io.cache import JsonCache
 
 from .models import WikidataClient, WikidataEntity
 from .parsing import is_valid_qid
@@ -41,7 +41,7 @@ class CachedWikidataClient(WikidataClient):
     def __init__(
         self,
         inner: WikidataClient,
-        cache: JsonFileCache,
+        cache: JsonCache,
         *,
         failed_ttl_s: int = 60 * 60,
     ) -> None:

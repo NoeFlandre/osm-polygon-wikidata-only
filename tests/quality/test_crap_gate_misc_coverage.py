@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -10,12 +11,18 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation import integrity
 from osm_polygon_wikidata_only.augmentation.schema import document_schema
-from osm_polygon_wikidata_only.cli.sync_application import SyncApplication
+from osm_polygon_wikidata_only.cli.sync_application import (
+    SyncApplication,
+    SyncApplicationContext,
+    SyncApplicationServices,
+)
+from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000.sentence_controller_policy import (
     is_source_commit_migration_safe,
 )
 from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import _boundary_points
+from osm_polygon_wikidata_only.hf.language_splits import LanguageTable, LanguageTableSpec
 from osm_polygon_wikidata_only.hf.publication import _integrity_audit
 from osm_polygon_wikidata_only.pipeline import link_migration
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
@@ -48,7 +55,14 @@ def test_language_file_scan_checks_row_count_and_wraps_stream_errors(
         lambda *_args, **_kwargs: [Batch()],
     )
     monkeypatch.setattr(hf_language_splits, "_observe_language_batch", lambda *_args: None)
-    spec = SimpleNamespace(language_column="language")
+    spec = LanguageTableSpec(
+        table=LanguageTable.WIKIPEDIA_DOCUMENTS,
+        relative_dir="wikipedia/documents",
+        language_column="language",
+        identity_columns=("document_id",),
+        schema_factory=lambda: pa.schema([]),
+        configuration="test",
+    )
     path = tmp_path / "table.parquet"
 
     hf_language_splits._scan_language_file(path, spec, {}, expected_rows=2)
@@ -68,11 +82,11 @@ def test_language_file_scan_checks_row_count_and_wraps_stream_errors(
 def test_integrity_audit_handles_missing_corrupt_non_object_and_valid_payloads(
     tmp_path: Path,
 ) -> None:
-    data_root = SimpleNamespace(processed=tmp_path)
-    path = tmp_path / "integrity" / "integrity_audit.json"
+    data_root = DataRoot(tmp_path)
+    path = data_root.processed / "integrity" / "integrity_audit.json"
     assert _integrity_audit(data_root) is None
 
-    path.parent.mkdir()
+    path.parent.mkdir(parents=True)
     path.write_text("{broken", encoding="utf-8")
     assert _integrity_audit(data_root) is None
     path.write_text("[]", encoding="utf-8")
@@ -138,7 +152,10 @@ def test_metadata_repair_needed_accepts_a_clean_repository_refresh() -> None:
         core_will_be_repaired=False,
         containment_enqueued=False,
     )
-    application = SyncApplication(context=context, services=SimpleNamespace())
+    application = SyncApplication(
+        context=cast(SyncApplicationContext, context),
+        services=cast(SyncApplicationServices, SimpleNamespace()),
+    )
 
     assert application._metadata_repair_needed(0)
 

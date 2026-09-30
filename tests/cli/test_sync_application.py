@@ -713,14 +713,23 @@ def test_prepare_publication_records_recovery_receipt_and_submit_handles_no_queu
     tmp_path: Path,
 ) -> None:
     module = _application_module()
+    link_plan = SimpleNamespace(
+        stems=[SimpleNamespace(classification=SimpleNamespace(value="migratable"))]
+    )
+    audit = SimpleNamespace(
+        region=lambda _stem: SimpleNamespace(
+            requires_repair=False, classifications={"Q1": "current"}
+        ),
+    )
     application = module.SyncApplication(
         context=_context(module, tmp_path),
-        services=_services(module, []),
+        services=_services(module, [], link_plan=link_plan, audit=audit),
     )
-    application._recovery_classifications["alpha"] = {"Q1": "current"}
 
+    state = _state("alpha", SyncAction.RECOVERY, tmp_path)
+    assert application._recover(state) is None
     application._prepare_publication(
-        _state("alpha", SyncAction.AUGMENT, tmp_path),
+        state,
         SimpleNamespace(wikipedia_documents_path=Path("documents.parquet")),
     )
     application._submit_upload(["op"], "message")

@@ -410,7 +410,7 @@ def test_partial_commit_never_marks_stem_current(tmp_path: Path) -> None:
     assert augmentation_is_current(data_root, stem) is False
 
     # Apply and verify the stem is now marked current.
-    link_migration.apply_link_migration(data_root.processed, stems=[stem])
+    link_migration.apply_link_migration(data_root.processed, stems={stem})
     assert augmentation_is_current(data_root, stem) is True
 
     # Crash before apply (with a single replacement) must NOT mark current.

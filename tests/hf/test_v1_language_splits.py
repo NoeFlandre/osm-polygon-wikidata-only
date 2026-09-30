@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
+from osm_polygon_wikidata_only.hf.language_splits import LanguageTableInventory
 from osm_polygon_wikidata_only.hf.v1_language_splits import (
     V1_LANGUAGE_SPLIT_MANIFEST,
     V1LanguageSplitError,
@@ -306,6 +307,7 @@ def test_v1_partition_routes_invalid_values_to_unknown_and_conserves_rows(
     unknown_links = _rows(_partition_path(output, "polygon_articles_by_language", "lang-unknown"))
     legacy_links = _rows(_partition_path(output, "polygon_articles_by_language", "lang-be-tarask"))
     link_inventory = release.inventory.table("polygon_articles")
+    assert isinstance(link_inventory, LanguageTableInventory)
 
     assert [row["document_id"] for row in unknown_links] == [
         "a-null",
@@ -438,6 +440,7 @@ def test_v1_partition_validates_conservation_and_previous_paths(tmp_path: Path) 
     _write_fixture(processed)
     release = generate_v1_language_splits(processed, output, batch_size=1)
     inventory = release.inventory.table("polygon_articles")
+    assert isinstance(inventory, LanguageTableInventory)
     expected = {bucket.language: bucket.row_count for bucket in inventory.buckets}
 
     with pytest.raises(V1LanguageSplitError, match="row count changed"):

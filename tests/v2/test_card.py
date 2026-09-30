@@ -1,6 +1,8 @@
 import json
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -644,7 +646,7 @@ def test_sum_metadata_uses_bounded_parallel_reads(
     original_executor = card.ThreadPoolExecutor
     worker_counts: list[int] = []
 
-    def tracking_executor(*args: object, **kwargs: object):
+    def tracking_executor(*args: Any, **kwargs: Any) -> ThreadPoolExecutor:
         worker_counts.append(int(kwargs["max_workers"]))
         return original_executor(*args, **kwargs)
 

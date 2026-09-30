@@ -43,6 +43,7 @@ from osm_polygon_wikidata_only.config.paths import (
 )
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.ids import polygon_id
+from osm_polygon_wikidata_only.domain.models import Polygon
 from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary
 from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     InMemoryWikidataClient,
@@ -146,9 +147,9 @@ def _heartbeat_recorder(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]
     real_heartbeat = enrichment_phase_mod.EnrichmentHeartbeat
 
     class _RecordingHeartbeat:
-        def __init__(self, *, region: str, **_: object) -> None:
+        def __init__(self, *, region: str, **options: Any) -> None:
             events["regions"].append(region)
-            self._real = real_heartbeat(region=region, **_)
+            self._real = real_heartbeat(region=region, **options)
 
         def __enter__(self) -> _RecordingHeartbeat:
             self._real.__enter__()
@@ -348,20 +349,26 @@ def test_row_construction_phase_produces_exact_rows_and_links() -> None:
         statuses={"enwiki": "ok", "frwiki": "ok"},
         errors={},
     )
-    polygon = type(
-        "Polygon",
-        (),
-        {
-            "polygon_id": "tiny-latest:way:1",
-            "region": "tiny",
-            "source_pbf": "tiny-latest.osm.pbf",
-            "osm_type": "way",
-            "osm_id": 1,
-            "wikidata": "Q42",
-            "page_id": None,
-            "revision_id": None,
-        },
-    )()
+    polygon = Polygon(
+        polygon_id="tiny-latest:way:1",
+        region="tiny",
+        source_pbf="tiny-latest.osm.pbf",
+        osm_type="way",
+        osm_id=1,
+        wikidata="Q42",
+        name="X",
+        tags='{"landuse":"forest"}',
+        tag_keys='["landuse"]',
+        tag_count=1,
+        osm_primary_tag="landuse=forest",
+        centroid='{"type":"Point","coordinates":[7.42,43.73]}',
+        lat=43.73,
+        lon=7.42,
+        bbox="[7.42,43.73,7.43,43.74]",
+        area_m2=1.0,
+        area_km2=0.000001,
+        area_bucket="tiny",
+    )
 
     articles, links = build_articles_and_links([polygon], {"Q42": summary})
 

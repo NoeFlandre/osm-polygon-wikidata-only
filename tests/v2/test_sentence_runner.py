@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -72,7 +74,7 @@ class _FakeSegmenter:
     def __post_init__(self) -> None:
         self.calls = 0
 
-    def split(self, texts: list[str], *, language: str) -> list[list[str]]:
+    def split(self, texts: Sequence[str], *, language: str) -> Sequence[Sequence[str]]:
         self.calls += 1
         if self.fail_on_call == self.calls:
             raise RuntimeError("segmentation interruption")
@@ -533,7 +535,7 @@ def test_checkpoint_batch_writer_skips_empty_tables(tmp_path: Path) -> None:
     written_rows: list[int] = []
 
     class _Writer:
-        def write_table(self, table: object) -> None:
+        def write_table(self, table: pa.Table) -> None:
             written_rows.append(table.num_rows)
 
     _write_checkpoint_batches(_Writer(), checkpoint, batch_count=2)

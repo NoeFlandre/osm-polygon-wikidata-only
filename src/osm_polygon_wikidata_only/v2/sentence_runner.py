@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -31,6 +31,12 @@ DEFAULT_SENTENCE_BATCH_SIZE = 256
 SENTENCE_CHECKPOINT_DIRECTORY = "sentence-checkpoints"
 SENTENCE_MANIFEST_RELATIVE_PATH = Path("manifests/sentence_splitting.json")
 SENTENCE_SPLIT_CONTRACT_VERSION = "v2-sentence-splitting-v1"
+
+
+class _CheckpointTableWriter(Protocol):
+    """Writer operation required by checkpoint batch persistence."""
+
+    def write_table(self, table: pa.Table) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +362,7 @@ def _write_output(output_path: Path, checkpoint: SentenceCheckpoint, *, batch_co
 
 
 def _write_checkpoint_batches(
-    writer: pq.ParquetWriter,
+    writer: _CheckpointTableWriter,
     checkpoint: SentenceCheckpoint,
     *,
     batch_count: int,

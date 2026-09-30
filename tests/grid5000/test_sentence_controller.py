@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.grid5000 import (
     sentence_controller_policy,
     sentence_publication,
 )
+from osm_polygon_wikidata_only.grid5000.sentence_controller_policy import BatchDict
 from osm_polygon_wikidata_only.grid5000.sentence_job import GpuIdentity, JobReceipt
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
     FileDigest,
@@ -512,7 +513,7 @@ def test_process_batch_publishes_a_ready_batch_without_submitting(
 ) -> None:
     data_root = _data_root(tmp_path)
     controller = _controller(data_root, _FakeTransport(tmp_path), _FakePublisher())
-    batch = {"index": 0, "state": "ready_to_publish", "stems": ["alpha-latest"]}
+    batch: BatchDict = {"index": 0, "state": "ready_to_publish", "stems": ["alpha-latest"]}
     published: list[dict[str, object]] = []
     monkeypatch.setattr(controller, "_publish_batch", published.append)
 
@@ -542,7 +543,7 @@ def test_reconcile_batch_polls_until_terminal_then_retrieves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
-    batch = {"index": 0, "state": "running", "oar_job_id": "12345"}
+    batch: BatchDict = {"index": 0, "state": "running", "oar_job_id": "12345"}
     states = iter(("Running", "Terminated exit_code=0"))
     retrieved: list[tuple[str, int | None]] = []
 

@@ -156,7 +156,7 @@ def test_shared_pyarrow_types() -> None:
 
 def test_document_from_article_row_mapping() -> None:
     # A dummy article row containing distinct values for each field to verify exact copying
-    dummy_row = {
+    dummy_row: dict[str, object] = {
         "article_id": "Q123:en:456:789",
         "wikidata": "Q123",
         "language": "en",

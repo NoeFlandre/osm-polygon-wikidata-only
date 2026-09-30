@@ -109,7 +109,14 @@ def test_remote_inventory_failure_raises_sanitized_error() -> None:
     never leaking the underlying network payload."""
 
     class FailingHub(StubHfHub):
-        def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
+        def list_repo_files(
+            self,
+            repo_id: str,
+            *,
+            revision: str | None = None,
+            repo_type: str,
+        ) -> list[str]:
+            del repo_id, revision, repo_type
             # Simulate HF 401 with a body that includes sensitive-looking content
             raise httpx.HTTPError(
                 "401 Unauthorized: token=hf_secretXYZ; request_id=abc-123; "
@@ -136,7 +143,14 @@ def test_remote_inventory_failure_preserves_chaining() -> None:
     """The translated error must chain the original exception."""
 
     class FailingHub(StubHfHub):
-        def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
+        def list_repo_files(
+            self,
+            repo_id: str,
+            *,
+            revision: str | None = None,
+            repo_type: str,
+        ) -> list[str]:
+            del repo_id, revision, repo_type
             raise httpx.ConnectError("connection refused")
 
     with pytest.raises(Exception) as excinfo:
@@ -149,7 +163,14 @@ def test_remote_inventory_failure_message_does_not_contain_user_paths() -> None:
     full filesystem path or user-home directory."""
 
     class FailingHub(StubHfHub):
-        def list_repo_files(self, repo_id: str, *, repo_type: str = "dataset") -> list[str]:
+        def list_repo_files(
+            self,
+            repo_id: str,
+            *,
+            revision: str | None = None,
+            repo_type: str,
+        ) -> list[str]:
+            del repo_id, revision, repo_type
             raise httpx.HTTPError(
                 "OSError: [Errno 2] No such file or directory: '/Users/alice/private/x.json'"
             )

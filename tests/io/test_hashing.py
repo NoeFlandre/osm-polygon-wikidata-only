@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -28,11 +29,11 @@ def test_digest_is_reused_while_the_file_is_untouched(tmp_path: Path) -> None:
     reads = 0
     original = Path.open
 
-    def counting_open(self: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+    def counting_open(self: Path, *args: Any, **kwargs: Any) -> Any:
         nonlocal reads
         if self == payload:
             reads += 1
-        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+        return original(self, *args, **kwargs)
 
     hashing._CACHE.clear()
     with pytest.MonkeyPatch.context() as patch:
@@ -120,10 +121,12 @@ def test_a_malformed_entry_is_dropped(entry: object) -> None:
     assert hashing._restored_entry(entry) is None
 
 
-def test_flushing_without_an_enabled_cache_writes_nothing(tmp_path: Path) -> None:
-    hashing._CACHE_DIR = None
-
-    hashing.flush_hash_cache()
+def test_flushing_without_an_enabled_cache_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with monkeypatch.context() as patcher:
+        patcher.setattr(hashing, "_CACHE_DIR", None)
+        hashing.flush_hash_cache()
 
     assert list(tmp_path.iterdir()) == []
 
@@ -146,12 +149,12 @@ def _raise_os_error(*args: object, **kwargs: object) -> None:
 
 
 def test_a_failed_flush_is_reported_without_raising(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hashing._CACHE.clear()
-    hashing._CACHE_DIR = tmp_path / "cache"
 
-    with pytest.MonkeyPatch.context() as patch:
+    with monkeypatch.context() as patch:
+        patch.setattr(hashing, "_CACHE_DIR", tmp_path / "cache")
         patch.setattr(hashing, "atomic_write_text", _raise_os_error)
         with caplog.at_level(logging.WARNING):
             hashing.flush_hash_cache()

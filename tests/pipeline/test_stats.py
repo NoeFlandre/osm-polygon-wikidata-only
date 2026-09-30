@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import cast
+
+from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
 from osm_polygon_wikidata_only.pipeline.stats import accumulate_stats
 
 
@@ -13,11 +17,11 @@ def test_accumulate_stats_consumes_links_without_materializing_them() -> None:
         def __iter__(self) -> LinkStream:
             return self
 
-        def __next__(self) -> object:
+        def __next__(self) -> PolygonArticleLink:
             if self._remaining == 0:
                 raise StopIteration
             self._remaining -= 1
-            return object()
+            return cast(PolygonArticleLink, object())
 
         def __len__(self) -> int:
             raise AssertionError("link iterables must not be materialized")
@@ -43,7 +47,11 @@ def test_accumulate_stats_preserves_manifest_values() -> None:
     )
     article = SimpleNamespace(language="en", article_length_chars=12)
 
-    actual = accumulate_stats((polygon,), (article,), (object(),))
+    actual = accumulate_stats(
+        cast(Iterable[Polygon], (polygon,)),
+        cast(Iterable[Article], (article,)),
+        cast(Iterable[PolygonArticleLink], (object(),)),
+    )
 
     assert actual.to_dict() == {
         "polygon_count": 1,

@@ -17,6 +17,7 @@ prevent cleanup for that stem.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -117,7 +118,7 @@ def test_canonical_add_non_path_local_value_rejected(tmp_path: Path) -> None:
     operation = PublicationOp(
         action="add",
         path_in_repo=f"wikipedia/documents/{STEM}.parquet",
-        local_path=object(),  # type: ignore[arg-type]
+        local_path=cast(Path, object()),
     )
 
     ops = [operation, delete_op(f"articles/{STEM}.parquet")]

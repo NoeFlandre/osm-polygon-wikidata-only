@@ -15,6 +15,7 @@ expected data-root directories before replay.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pyarrow as pa
@@ -25,6 +26,7 @@ from osm_polygon_wikidata_only.augmentation.schema import document_schema, secti
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
+from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
 )
@@ -182,11 +184,9 @@ def _setup_processed(processed: Path, stem: str) -> None:
     )
 
 
-def _fresh_process(tmp_path: Path) -> tuple:
+def _fresh_process(tmp_path: Path) -> DataRoot:
     """Simulate a fresh process restart by constructing a new
     BackgroundUploadQueue / apply context from disk state."""
-    from osm_polygon_wikidata_only.config.paths import DataRoot
-
     return DataRoot(tmp_path)
 
 
@@ -195,7 +195,9 @@ def _fresh_process(tmp_path: Path) -> tuple:
 # ---------------------------------------------------------------------------
 
 
-def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
+def test_crash_after_link_parquet_rollforward_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A crash between the link parquet commit and the manifest
     updates must allow a fresh restart to complete the transaction
     (link parquet, processed manifest, augmentation manifest,
@@ -213,9 +215,15 @@ def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
 
     crash_after_first = {"raised": False}
 
-    def _crashing_commit(directory, stem, replacements, _crash_hook=None):
+    def _crashing_commit(
+        directory: Path,
+        stem: str,
+        replacements: list[tuple[Path, Path]],
+        *,
+        _crash_hook: Callable[[int, Path], None] | None = None,
+    ) -> None:
         # Replace the crash hook to fire after the first replacement.
-        def _hook(index, target):
+        def _hook(index: int, target: Path) -> None:
             if index == 0 and not crash_after_first["raised"]:
                 crash_after_first["raised"] = True
                 raise RuntimeError("simulated crash after link parquet")
@@ -229,12 +237,10 @@ def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
             _crash_hook=_hook,
         )
 
-    lm._commit_ordered_replacements = _crashing_commit
-    try:
+    with monkeypatch.context() as patcher:
+        patcher.setattr(lm, "_commit_ordered_replacements", _crashing_commit)
         with pytest.raises(RuntimeError, match="simulated crash"):
             link_migration.apply_link_migration(processed, stems={stem})
-    finally:
-        lm._commit_ordered_replacements = real_commit
 
     # State after crash:
     # - Link parquet IS committed (atomic file replace already
@@ -272,7 +278,9 @@ def test_crash_after_link_parquet_rollforward_completes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
+def test_crash_before_any_commit_does_not_mark_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A crash BEFORE any write must leave the stem un-migrated and
     not-current. A fresh apply then completes the transaction.
     """
@@ -285,18 +293,19 @@ def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
     stem = "alpha-latest"
     _setup_processed(processed, stem)
 
-    # Save the real function BEFORE patching.
-    real_commit = lm._commit_ordered_replacements
-
-    def _always_crash(directory, stem, replacements, _crash_hook=None):
+    def _always_crash(
+        directory: Path,
+        stem: str,
+        replacements: list[tuple[Path, Path]],
+        *,
+        _crash_hook: Callable[[int, Path], None] | None = None,
+    ) -> None:
         raise RuntimeError("simulated pre-commit crash")
 
-    lm._commit_ordered_replacements = _always_crash
-    try:
+    with monkeypatch.context() as patcher:
+        patcher.setattr(lm, "_commit_ordered_replacements", _always_crash)
         with pytest.raises(RuntimeError, match="simulated pre-commit crash"):
             link_migration.apply_link_migration(processed, stems={stem})
-    finally:
-        lm._commit_ordered_replacements = real_commit
 
     data_root = _fresh_process(tmp_path)
     assert augmentation_is_current(data_root, stem) is False

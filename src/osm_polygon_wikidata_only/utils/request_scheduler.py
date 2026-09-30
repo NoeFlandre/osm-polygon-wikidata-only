@@ -22,9 +22,29 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import Protocol, TypeVar
 
 T = TypeVar("T")
+
+
+class RequestPacer(Protocol):
+    """Scheduling operations required by the authenticated HTTP session."""
+
+    def pace_host(self, host: str, *, min_interval_s: float = 0.0) -> None: ...
+
+    def report_success(self) -> None: ...
+
+    def run(self, operation: Callable[[], T]) -> T: ...
+
+
+class RequestScheduler(RequestPacer, Protocol):
+    """Public scheduling surface consumed by Wikimedia transport clients."""
+
+    @property
+    def max_in_flight(self) -> int: ...
+
+    def report_host_throttled(self, host: str, delay_s: float) -> None: ...
+
 
 # Length of the rolling window used for "requests/429s in the last
 # minute" telemetry. Centralised so the snapshot and pruning agree.

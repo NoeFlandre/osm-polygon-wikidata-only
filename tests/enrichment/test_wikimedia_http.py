@@ -4,12 +4,17 @@ import gzip
 import io
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from typing import cast
 
 import httpx
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaSession
+from osm_polygon_wikidata_only.enrichment.wikimedia_auth import (
+    WikimediaHttpOpener,
+    WikimediaSession,
+)
 from osm_polygon_wikidata_only.enrichment.wikimedia_http import PooledWikimediaOpener
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import HttpWikipediaClient
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
@@ -201,7 +206,7 @@ def test_wikipedia_client_retries_remote_disconnect_without_returning_http_error
         scheduler=scheduler,
         timeout_s=1.0,
         user_agent="test-agent",
-        opener_factory=lambda: opener,
+        opener_factory=cast(Callable[[], WikimediaHttpOpener], lambda: opener),
     )
     client = HttpWikipediaClient(
         Settings(

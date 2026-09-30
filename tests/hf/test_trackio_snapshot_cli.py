@@ -89,7 +89,9 @@ def test_v2_publish_command_uses_data_derived_stats(
     assert str(data_root / "cache" / "trackio" / V2_TRACKIO_RUN_NAME) in result.output
     assert len(seen) == 1
     assert fake.logged is not None
-    assert fake.logged["metrics"]["scale/polygons"] == 11
+    metrics = fake.logged["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["scale/polygons"] == 11
     assert fake.sync_kwargs is not None
     assert fake.sync_kwargs["space_id"] == "example/v2-space"
 

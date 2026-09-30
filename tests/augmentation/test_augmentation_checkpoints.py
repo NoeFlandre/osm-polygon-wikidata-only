@@ -101,18 +101,26 @@ def _fact() -> WikidataFact:
 def test_plan_key_is_deterministic_and_input_sensitive() -> None:
     from osm_polygon_wikidata_only.augmentation.checkpoints import augmentation_plan_key
 
-    kwargs = {
-        "core_hashes": {"/data/polygons.parquet": "a" * 64},
-        "qids": ("Q1",),
-        "document_identities": (("Q1:wikipedia:en:10:20", 20, "abc"),),
-    }
+    core_hashes = {"/data/polygons.parquet": "a" * 64}
+    qids = ("Q1",)
+    document_identities = (("Q1:wikipedia:en:10:20", 20, "abc"),)
 
-    first = augmentation_plan_key(**kwargs)
+    first = augmentation_plan_key(
+        core_hashes=core_hashes,
+        qids=qids,
+        document_identities=document_identities,
+    )
 
-    assert first == augmentation_plan_key(**kwargs)
+    assert first == augmentation_plan_key(
+        core_hashes=core_hashes,
+        qids=qids,
+        document_identities=document_identities,
+    )
     assert len(first) == 64
     assert first != augmentation_plan_key(
-        **{**kwargs, "qids": ("Q1", "Q2")},
+        core_hashes=core_hashes,
+        qids=("Q1", "Q2"),
+        document_identities=document_identities,
     )
 
 

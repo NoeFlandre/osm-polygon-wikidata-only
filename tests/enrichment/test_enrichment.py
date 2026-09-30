@@ -10,6 +10,7 @@ import urllib.request
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -34,6 +35,7 @@ from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     CachedWikidataClient,
     HttpWikidataClient,
     InMemoryWikidataClient,
+    WikidataClient,
     WikidataEntity,
     is_valid_qid,
     language_from_site,
@@ -117,7 +119,11 @@ def test_apply_article_result_records_status_article_and_error(
     article_linker._apply_article_result(
         summary,
         "enwiki",
-        FetchResult(status=status, article=article, error=error),  # type: ignore[arg-type]
+        FetchResult(
+            status=status,
+            article=cast(WikipediaArticle | None, article),
+            error=error,
+        ),
     )
 
     assert summary.statuses == {"enwiki": status}
@@ -306,15 +312,22 @@ def test_http_wikidata_client_reports_429_as_host_scoped_throttle(
 
 
 def test_cached_wikidata_client_serves_from_cache(tmp_path: Path) -> None:
+    class MutableWikidataClient(WikidataClient):
+        def __init__(self, entities: dict[str, WikidataEntity]) -> None:
+            self.entities = entities
+
+        def get_entity(self, qid: str) -> WikidataEntity | None:
+            return self.entities.get(qid)
+
     entity = WikidataEntity(qid="Q42", sitelinks={"enwiki": "Foo"})
-    inner = InMemoryWikidataClient({"Q42": entity})
+    inner = MutableWikidataClient({"Q42": entity})
     cache = JsonFileCache(tmp_path)
     client = CachedWikidataClient(inner, cache)
 
     assert client.get_entity("Q42") is entity
     # Replace the underlying mapping; the cache should still serve the
     # first value because it was cached on first access.
-    inner._mapping = {}  # type: ignore[attr-defined]
+    inner.entities = {}
     out = client.get_entity("Q42")
     assert out is not None
     assert out.qid == "Q42"
@@ -546,7 +559,11 @@ def test_http_wikipedia_client_fetch_articles_returns_results_by_requested_title
     }
     monkeypatch.setattr(client, "_http_get", lambda url: data)
     results = client.fetch_articles("en", "enwiki", ["Alpha", "Beta"], fetch_full_text=False)
-    assert [results[title].article.title for title in ("Alpha", "Beta")] == ["Alpha", "Beta"]
+    alpha = results["Alpha"].article
+    beta = results["Beta"].article
+    assert alpha is not None
+    assert beta is not None
+    assert [alpha.title, beta.title] == ["Alpha", "Beta"]
 
 
 def test_http_wikipedia_client_routes_requests_through_injected_session(
@@ -628,7 +645,7 @@ def test_http_wikipedia_client_falls_back_to_exact_revision_parse_when_extract_i
     }
     urls: list[str] = []
 
-    def http_get(url: str) -> dict[str, object]:
+    def http_get(url: str) -> dict[str, Any]:
         urls.append(url)
         return query if len(urls) == 1 else parsed
 
@@ -728,7 +745,11 @@ def test_cached_wikipedia_client_batches_only_cache_misses(
 
     monkeypatch.setattr(inner, "fetch_articles", fetch_articles, raising=False)
     results = client.fetch_articles("en", "enwiki", ["Foo", "Bar"])
-    assert [results[title].article.title for title in ("Foo", "Bar")] == ["Foo", "Bar"]
+    foo = results["Foo"].article
+    bar = results["Bar"].article
+    assert foo is not None
+    assert bar is not None
+    assert [foo.title, bar.title] == ["Foo", "Bar"]
     assert calls == [["Bar"]]
     assert client.fetch_article("en", "enwiki", "X").status == "article_not_found"
 

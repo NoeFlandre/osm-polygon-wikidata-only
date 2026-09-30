@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -94,7 +95,7 @@ def _write_manifest_with_hashes(data_root: DataRoot, core_hashes: object) -> Non
             data_root.processed / "wikivoyage" / "sections" / f"{STEM}.parquet",
             data_root.processed / "wikidata" / "facts" / f"{STEM}.parquet",
         ),
-        core_hashes=core_hashes,  # type: ignore[arg-type]
+        core_hashes=cast(dict[str, str], core_hashes),
         counts={
             "wikipedia_documents": 1,
             "wikipedia_sections": 0,

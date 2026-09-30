@@ -179,10 +179,10 @@ format-check: quality-runtime
     uv run ruff format --check src tests scripts preprocessing/src preprocessing/tests
 
 typecheck: quality-runtime
-    uv run ty check src scripts
+    uv run ty check src scripts tests
 
 ty: quality-runtime
-    uv run ty check src scripts
+    uv run ty check src scripts tests
 
 # Recompute and validate both dataset cards and reports without uploading.
 release-stats-dry-run data_root: quality-runtime
@@ -258,7 +258,7 @@ docker-check:
         uv run pytest -q && \
         uv run ruff check src tests scripts && \
         uv run ruff format --check src tests scripts && \
-        uv run ty check src scripts'
+        uv run ty check src scripts tests'
 
 # Opt-in data/publish operation for a host root containing `raw/` and resumable state.
 docker-run data_root: docker-build

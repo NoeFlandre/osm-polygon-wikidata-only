@@ -120,9 +120,9 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
     )
     existing_section = Section(
         "existing-section",
-        document["document_id"],
-        document["article_id"],
-        document["wikidata"],
+        str(document["document_id"]),
+        str(document["article_id"]),
+        str(document["wikidata"]),
         "wikipedia",
         "en",
         "enwiki",
@@ -204,9 +204,27 @@ def test_merge_reuses_v1_and_fetches_only_missing_direct_pages(tmp_path: Path) -
     class CountingClient(InMemoryWikipediaClient):
         calls = 0
 
-        def fetch_article(self, *args: object, **kwargs: object) -> FetchResult:
+        def fetch_article(
+            self,
+            language: str,
+            site: str,
+            title: str,
+            *,
+            wikidata_label: str = "",
+            wikidata_description: str = "",
+            wikidata_aliases: list[str] | None = None,
+            fetch_full_text: bool = True,
+        ) -> FetchResult:
             self.calls += 1
-            return super().fetch_article(*args, **kwargs)  # type: ignore[arg-type]
+            return super().fetch_article(
+                language,
+                site,
+                title,
+                wikidata_label=wikidata_label,
+                wikidata_description=wikidata_description,
+                wikidata_aliases=wikidata_aliases,
+                fetch_full_text=fetch_full_text,
+            )
 
     class SectionClient:
         def parse_html(self, project: str, language: str, revision_id: int) -> str:
@@ -405,7 +423,8 @@ def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically
                     self.active -= 1
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>text</p>"
 
     client = ConcurrentClient()
@@ -466,7 +485,8 @@ def test_merge_batches_v1_title_lookups_across_region(tmp_path: Path) -> None:
             return FetchResult("ok", _article(title))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>text</p>"
 
     index = CountingIndex()
@@ -534,7 +554,8 @@ def test_merge_rechecks_only_titles_missing_from_initial_v1_lookup(tmp_path: Pat
             return FetchResult("ok", _article(title, page_id=2))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>text</p>"
 
     index = CountingIndex()
@@ -592,7 +613,8 @@ def test_merge_fetches_sections_before_waiting_for_final_index(tmp_path: Path) -
             return FetchResult("ok", _article("Speculative page"))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             sections_started.set()
             return "<p>speculative section</p>"
 
@@ -657,7 +679,8 @@ def test_reconcile_v2_region_discards_speculative_duplicate_after_index_scan(
             return FetchResult("ok", _article("Speculative page", page_id=10))
 
     class SectionClient:
-        def parse_html(self, _project: str, _language: str, _revision_id: int) -> str:
+        def parse_html(self, project: str, language: str, revision_id: int) -> str:
+            _ = (project, language, revision_id)
             return "<p>speculative section</p>"
 
     merge_v2_region(

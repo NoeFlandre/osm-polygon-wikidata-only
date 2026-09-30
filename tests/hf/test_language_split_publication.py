@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -112,17 +113,17 @@ def test_remote_revision_requires_a_nonempty_pinned_sha(monkeypatch: pytest.Monk
     from osm_polygon_wikidata_only.hf import language_split_publication
 
     monkeypatch.setattr(language_split_publication, "read_repo_sha", lambda *_args: "revision")
-    assert _remote_revision(object(), V1_REPO) == "revision"
+    assert cast(Any, _remote_revision)(object(), V1_REPO) == "revision"
     monkeypatch.setattr(language_split_publication, "read_repo_sha", lambda *_args: "")
     with pytest.raises(LanguagePublicationError, match="revision unavailable"):
-        _remote_revision(object(), V1_REPO)
+        cast(Any, _remote_revision)(object(), V1_REPO)
 
     def fail(*_args: object) -> str:
         raise RuntimeError("offline")
 
     monkeypatch.setattr(language_split_publication, "read_repo_sha", fail)
     with pytest.raises(LanguagePublicationError, match="could not read remote revision"):
-        _remote_revision(object(), V1_REPO)
+        cast(Any, _remote_revision)(object(), V1_REPO)
 
 
 def test_remote_card_handles_missing_and_invalid_utf8_readme(
@@ -130,12 +131,12 @@ def test_remote_card_handles_missing_and_invalid_utf8_readme(
 ) -> None:
     from osm_polygon_wikidata_only.hf import language_split_publication
 
-    assert _remote_card(object(), V1_REPO, "rev", set(), tmp_path) == f"# {V1_REPO}\n"
+    assert cast(Any, _remote_card)(object(), V1_REPO, "rev", set(), tmp_path) == f"# {V1_REPO}\n"
     monkeypatch.setattr(
         language_split_publication, "_remote_bytes", lambda *_args, **_kwargs: b"\xff"
     )
     with pytest.raises(LanguagePublicationError, match="not valid UTF-8"):
-        _remote_card(object(), V1_REPO, "rev", {"README.md"}, tmp_path)
+        cast(Any, _remote_card)(object(), V1_REPO, "rev", {"README.md"}, tmp_path)
 
 
 def test_language_card_merge_preserves_unmanaged_content() -> None:
@@ -165,16 +166,23 @@ def test_language_card_merge_is_idempotent_at_section_boundary() -> None:
         "## Language partitions\n\nOld release.\n\n"
         "## Data sources & licenses\n\nKeep this section.\n"
     )
-    kwargs = {
-        "version": LanguageSplitVersion.V1,
-        "configurations": ("polygon_articles_by_language",),
-        "languages": ("en", "unknown"),
-    }
-
-    merged = _merge_language_card(existing, **kwargs)
+    merged = _merge_language_card(
+        existing,
+        version=LanguageSplitVersion.V1,
+        configurations=("polygon_articles_by_language",),
+        languages=("en", "unknown"),
+    )
 
     assert "\n\n## Data sources & licenses" in merged
-    assert _merge_language_card(merged, **kwargs) == merged
+    assert (
+        _merge_language_card(
+            merged,
+            version=LanguageSplitVersion.V1,
+            configurations=("polygon_articles_by_language",),
+            languages=("en", "unknown"),
+        )
+        == merged
+    )
 
 
 @pytest.mark.parametrize(
@@ -366,9 +374,10 @@ def test_plan_and_evidence_serialization_are_stable(tmp_path: Path) -> None:
         }
 
     version_plan.to_dict = as_dict
-    plan = _plan_from_version_plan(version_plan)
+    plan = cast(Any, _plan_from_version_plan)(version_plan)
     assert plan.manifest_remote_path == "manifests/language_splits_v1.json"
-    assert plan.to_dict()["files"][0]["path_in_repo"].startswith("data/")
+    plan_payload = cast(dict[str, Any], plan.to_dict())
+    assert plan_payload["files"][0]["path_in_repo"].startswith("data/")
 
     report = LanguagePublicationReport(
         version=LanguageSplitVersion.V1,
@@ -538,10 +547,11 @@ def test_cli_publication_handler_forwards_release_arguments(
 def test_remote_matches_lfs_blob_and_size_paths(tmp_path: Path) -> None:
     local_path = tmp_path / "part.parquet"
     local_path.write_bytes(b"fixture")
+    size_bytes = local_path.stat().st_size
     local = LanguagePublishedFile(
         local_path=local_path,
         path_in_repo="part.parquet",
-        size_bytes=local_path.stat().st_size,
+        size_bytes=size_bytes,
         sha256=hashlib.sha256(b"fixture").hexdigest(),
     )
     lfs_remote = SimpleNamespace(
@@ -553,7 +563,7 @@ def test_remote_matches_lfs_blob_and_size_paths(tmp_path: Path) -> None:
         lfs=None,
         blob_id=_git_blob_sha1(local_path),
     )
-    wrong_size = SimpleNamespace(size=local.size_bytes + 1, lfs=None, blob_id=None)
+    wrong_size = SimpleNamespace(size=size_bytes + 1, lfs=None, blob_id=None)
 
     assert _remote_matches(local, lfs_remote, StubHfHub(), V1_REPO, "rev", tmp_path)
     assert _remote_matches(local, blob_remote, StubHfHub(), V1_REPO, "rev", tmp_path)
@@ -608,9 +618,9 @@ def test_remote_digest_fallback_hashes_downloaded_file(tmp_path: Path) -> None:
     remote = SimpleNamespace(size=local.size_bytes, lfs=None, blob_id=None)
     hub = SimpleNamespace(hf_hub_download=lambda *args, **kwargs: str(downloaded))
 
-    assert _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
+    assert _remote_matches(local, remote, cast(Any, hub), V1_REPO, "rev", tmp_path)
     downloaded.write_bytes(b"changed-content")
-    assert not _remote_matches(local, remote, hub, V1_REPO, "rev", tmp_path)  # type: ignore[arg-type]
+    assert not _remote_matches(local, remote, cast(Any, hub), V1_REPO, "rev", tmp_path)
 
 
 def test_remote_verification_rejects_missing_and_stale_files(tmp_path: Path) -> None:
@@ -708,13 +718,24 @@ def test_manifest_owned_paths_are_limited_to_language_namespaces(
 
 
 def test_remote_reads_require_the_initial_immutable_revision() -> None:
-    class RecordingHub:
-        def list_repo_files(self, **kwargs: object) -> list[str]:
-            assert kwargs["revision"] == "immutable-rev"
+    class RecordingHub(StubHfHub):
+        def list_repo_files(
+            self, repo_id: str, *, revision: str | None = None, repo_type: str
+        ) -> list[str]:
+            del repo_id, repo_type
+            assert revision == "immutable-rev"
             return []
 
-        def get_paths_info(self, **kwargs: object) -> list[object]:
-            assert kwargs["revision"] == "immutable-rev"
+        def get_paths_info(
+            self,
+            repo_id: str,
+            paths: list[str],
+            *,
+            revision: str | None = None,
+            repo_type: str,
+        ) -> list[object]:
+            del repo_id, paths, repo_type
+            assert revision == "immutable-rev"
             return [SimpleNamespace(path=object())]
 
     hub = RecordingHub()
@@ -727,7 +748,9 @@ def test_remote_entries_rejects_clients_without_path_reads() -> None:
         pass
 
     with pytest.raises(LanguagePublicationError, match="could not read remote paths"):
-        _remote_entries(NoPathInfoHub(), V1_REPO, ("README.md",), revision="immutable-rev")
+        _remote_entries(
+            cast(Any, NoPathInfoHub()), V1_REPO, ("README.md",), revision="immutable-rev"
+        )
 
 
 def test_remote_path_fallback_cannot_drop_revision_pin() -> None:
@@ -737,7 +760,7 @@ def test_remote_path_fallback_cannot_drop_revision_pin() -> None:
             return []
 
     with pytest.raises(LanguagePublicationError, match="revision"):
-        _remote_entries(LegacyHub(), V1_REPO, ("README.md",), revision="immutable-rev")
+        _remote_entries(cast(Any, LegacyHub()), V1_REPO, ("README.md",), revision="immutable-rev")
 
 
 def test_empty_upload_result_is_verified_as_a_noop(
@@ -801,7 +824,7 @@ def test_empty_upload_result_is_verified_as_a_noop(
         lambda *args, **kwargs: verified_revisions.append(kwargs["revision"]),
     )
 
-    report = _publish_one_version(
+    report = cast(Any, _publish_one_version)(
         tmp_path,
         SimpleNamespace(version=LanguageSplitVersion.V1),
         SimpleNamespace(),

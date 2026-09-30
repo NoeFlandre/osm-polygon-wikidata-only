@@ -19,7 +19,8 @@ def test_hf_client_uses_ipv4_and_bounded_network_timeouts() -> None:
         assert client.timeout.read == 120.0
         assert client.timeout.write == 120.0
         assert client.timeout.pool == 30.0
-        assert client._transport._pool._local_address == "0.0.0.0"  # type: ignore[attr-defined]
+        pool = getattr(client._transport, "_pool")
+        assert getattr(pool, "_local_address") == "0.0.0.0"
     finally:
         client.close()
 
@@ -78,7 +79,7 @@ def test_token_helpers_cover_no_token_default_client_and_rejection(
             return {"name": "verified"}
 
     hub = ModuleType("huggingface_hub")
-    hub.HfApi = Api  # type: ignore[attr-defined]
+    setattr(hub, "HfApi", Api)
     monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
     assert token._whoami_client(None)("secret") == {"name": "verified"}
     assert calls == ["secret"]

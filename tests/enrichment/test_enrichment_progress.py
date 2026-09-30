@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
 import pytest
 
@@ -53,7 +54,7 @@ def test_progress_tracker_starts_with_an_immutable_snapshot() -> None:
         phase="wikidata",
     )
     with pytest.raises(AttributeError):
-        snapshot.qids_completed = 1  # type: ignore[misc]
+        setattr(snapshot, "qids_completed", 1)
 
 
 def test_progress_tracker_records_qid_totals_and_completion() -> None:
@@ -118,11 +119,13 @@ def test_concurrent_site_updates_never_lose_counts() -> None:
         lambda progress: progress.complete_site(-1),
     ],
 )
-def test_progress_tracker_rejects_negative_counts(operation: object) -> None:
+def test_progress_tracker_rejects_negative_counts(
+    operation: Callable[[EnrichmentProgress], object],
+) -> None:
     progress = EnrichmentProgress(total_qids=0)
 
     with pytest.raises(ValueError):
-        operation(progress)  # type: ignore[operator]
+        operation(progress)
 
 
 def test_heartbeat_logs_one_snapshot_after_each_two_minute_wait() -> None:
