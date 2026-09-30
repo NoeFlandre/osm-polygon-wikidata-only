@@ -38,16 +38,20 @@ These tests pin the exact behavior of the extracted
 
 from __future__ import annotations
 
+import argparse
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
+from osm_polygon_wikidata_only.pipeline.processor import ExtractedPbf, ProcessResult
 from osm_polygon_wikidata_only.pipeline import sync_runner as sync_runner_mod
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryAuditResult,
@@ -591,14 +595,16 @@ def test_cli_shell_forwards_runtime_cache_to_process_extracted_pbf(
         def __init__(self, pbf_path: Path) -> None:
             self.pbf_path = pbf_path
 
-        def iter_polygon_candidates(self, add_candidate: object) -> None:
+        def iter_polygon_candidates(
+            self, add_candidate: Callable[[PolygonCandidate], None]
+        ) -> None:
             coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
             geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
             add_candidate(
                 ("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json)
             )
 
-        def collect_polygon_candidates(self) -> list[object]:
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
             return []
 
     monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
@@ -633,13 +639,13 @@ def test_cli_shell_forwards_runtime_cache_to_process_extracted_pbf(
 
     real_process = processor_mod.process_extracted_pbf
 
-    def spy_process(extracted: object, **kwargs: object) -> object:
+    def spy_process(extracted: ExtractedPbf, **kwargs: Any) -> ProcessResult:
         seen_caches.append(kwargs.get("cache"))
         return real_process(extracted, **kwargs)
 
     monkeypatch.setattr(processor_mod, "process_extracted_pbf", spy_process)
 
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         input=tmp_path,
         commit_message="x",
         push=False,
@@ -683,14 +689,16 @@ def test_cli_shell_forwards_none_runtime_cache_when_disabled(
         def __init__(self, pbf_path: Path) -> None:
             self.pbf_path = pbf_path
 
-        def iter_polygon_candidates(self, add_candidate: object) -> None:
+        def iter_polygon_candidates(
+            self, add_candidate: Callable[[PolygonCandidate], None]
+        ) -> None:
             coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
             geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
             add_candidate(
                 ("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json)
             )
 
-        def collect_polygon_candidates(self) -> list[object]:
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
             return []
 
     monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
@@ -723,13 +731,13 @@ def test_cli_shell_forwards_none_runtime_cache_when_disabled(
 
     real_process = processor_mod.process_extracted_pbf
 
-    def spy_process(extracted: object, **kwargs: object) -> object:
+    def spy_process(extracted: ExtractedPbf, **kwargs: Any) -> ProcessResult:
         seen_caches.append(kwargs.get("cache"))
         return real_process(extracted, **kwargs)
 
     monkeypatch.setattr(processor_mod, "process_extracted_pbf", spy_process)
 
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         input=tmp_path,
         commit_message="x",
         push=False,
@@ -780,7 +788,9 @@ def test_cli_shell_real_process_state_executes_without_type_error(
         def __init__(self, pbf_path: Path) -> None:
             self.pbf_path = pbf_path
 
-        def iter_polygon_candidates(self, add_candidate: object) -> None:
+        def iter_polygon_candidates(
+            self, add_candidate: Callable[[PolygonCandidate], None]
+        ) -> None:
             # Real polygon candidate the production extractor can parse.
             coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
             geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
@@ -788,7 +798,7 @@ def test_cli_shell_real_process_state_executes_without_type_error(
                 ("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json)
             )
 
-        def collect_polygon_candidates(self) -> list[object]:
+        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
             return []
 
     monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
@@ -832,7 +842,7 @@ def test_cli_shell_real_process_state_executes_without_type_error(
         publication_calls.append((args, kwargs))
         return []
 
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         input=tmp_path,
         commit_message="x",
         push=False,
@@ -843,7 +853,7 @@ def test_cli_shell_real_process_state_executes_without_type_error(
         args,
         data_root=root,
         settings=settings,
-        build_upload_files=fake_build_upload_files,
+        build_upload_files=cast(Any, fake_build_upload_files),
     )
     assert rc == 0
     # Publication assembly is gated behind --push in cli.run_sync;
@@ -995,7 +1005,7 @@ def test_enrichment_phase_heartbeat_records_use_processor_logger(
             *,
             region: str,
             snapshot: object,
-            log: object,
+            log: Callable[[str], None],
             interval_s: float = 60.0,
             clock: object = _time.monotonic,
         ) -> None:

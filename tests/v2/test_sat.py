@@ -39,8 +39,8 @@ class _FakeORTWrapper:
 
 def _fake_wtpsplit() -> ModuleType:
     module = ModuleType("wtpsplit")
-    module.__version__ = "2.2.1"
-    module.SaT = _FakeSaT  # type: ignore[attr-defined]
+    setattr(module, "__version__", "2.2.1")
+    setattr(module, "SaT", _FakeSaT)
     return module
 
 
@@ -109,10 +109,11 @@ def test_sat_3l_segmenter_prefers_coreml_when_available(
 ) -> None:
     monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
     ort = ModuleType("onnxruntime")
-    ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
-        "CoreMLExecutionProvider",
-        "CPUExecutionProvider",
-    ]
+    setattr(
+        ort,
+        "get_available_providers",
+        lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+    )
     monkeypatch.setitem(sys.modules, "onnxruntime", ort)
 
     SaT3lSegmenter(cache_dir=tmp_path, revision="model-revision")
@@ -127,7 +128,7 @@ def test_sat_3l_segmenter_prefers_coreml_when_available(
 def test_gpu_mode_requires_cuda_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
     ort = ModuleType("onnxruntime")
-    ort.get_available_providers = lambda: ["CPUExecutionProvider"]  # type: ignore[attr-defined]
+    setattr(ort, "get_available_providers", lambda: ["CPUExecutionProvider"])
     monkeypatch.setitem(sys.modules, "onnxruntime", ort)
 
     with pytest.raises(RuntimeError, match="CUDAExecutionProvider"):
@@ -141,10 +142,11 @@ def test_gpu_mode_requires_cuda_provider(tmp_path: Path, monkeypatch: pytest.Mon
 def test_gpu_mode_passes_cuda_before_cpu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
     ort = ModuleType("onnxruntime")
-    ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
-        "CUDAExecutionProvider",
-        "CPUExecutionProvider",
-    ]
+    setattr(
+        ort,
+        "get_available_providers",
+        lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
     monkeypatch.setitem(sys.modules, "onnxruntime", ort)
 
     segmenter = SaT3lSegmenter(
@@ -169,10 +171,11 @@ def test_gpu_mode_rejects_a_cpu_fallback_session(
 ) -> None:
     monkeypatch.setitem(sys.modules, "wtpsplit", _fake_wtpsplit())
     ort = ModuleType("onnxruntime")
-    ort.get_available_providers = lambda: [  # type: ignore[attr-defined]
-        "CUDAExecutionProvider",
-        "CPUExecutionProvider",
-    ]
+    setattr(
+        ort,
+        "get_available_providers",
+        lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
     monkeypatch.setitem(sys.modules, "onnxruntime", ort)
     monkeypatch.setattr(_FakeSaT, "effective_providers", ("CPUExecutionProvider",))
 

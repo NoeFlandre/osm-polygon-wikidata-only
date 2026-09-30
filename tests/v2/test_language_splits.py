@@ -10,7 +10,7 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -41,6 +41,8 @@ from osm_polygon_wikidata_only.v2.language_splits import (
     build_v2_language_splits,
     main,
 )
+
+
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
     wikipedia_document_v2_schema,
@@ -56,6 +58,24 @@ from tests.v2.language_splits_support import (
     _write_table,
     _write_v2_fixture,
 )
+
+
+def _shard_state(
+    writer: object,
+    *,
+    language: str = "en",
+    row_count: int = 0,
+    source_files: list[str] | None = None,
+) -> language_splits._ShardWriteState:
+    return language_splits._ShardWriteState(
+        language=language,
+        shard_index=0,
+        writer=cast(pq.ParquetWriter, writer),
+        final_path=Path("final.parquet"),
+        staged_path=Path("stage.parquet"),
+        row_count=row_count,
+        source_files=[] if source_files is None else source_files,
+    )
 
 
 def test_v2_split_keeps_each_multilingual_row_in_its_own_partition(tmp_path: Path) -> None:
@@ -404,7 +424,7 @@ def test_v2_stage_inventory_cast_keeps_the_runtime_table_contract(
         tmp_path / "root",
         tmp_path / "destination",
         tmp_path / "stage",
-        FakeInventory(),
+        cast(LanguageInventory, FakeInventory()),
         1,
         100_000,
     ) == ([], {})
@@ -425,13 +445,11 @@ def test_v2_write_batch_routes_rows_to_language_shard(
             observed["rows"] = selected.to_pylist()
 
     writer = FakeWriter()
-    shard = SimpleNamespace(
-        source_files=[], row_count=0, writer=writer, pending=[], pending_bytes=0
-    )
+    shard = _shard_state(writer)
     state.current["en"] = shard
     state.shards.append(shard)
 
-    def fake_writer_for_language(*args: object) -> SimpleNamespace:
+    def fake_writer_for_language(*args: object) -> language_splits._ShardWriteState:
         observed["max_rows_per_shard"] = args[4]
         return shard
 
@@ -501,9 +519,7 @@ def test_v2_writer_and_resume_helpers_keep_boundary_contracts_explicit(
             written.append(table)
 
     state = language_splits._TableWriteState({}, defaultdict(int), [], {})
-    shard = SimpleNamespace(
-        source_files=[], row_count=0, writer=Writer(), pending=[], pending_bytes=0
-    )
+    shard = _shard_state(Writer())
     first = pa.record_batch([pa.array(["en"] * 2)], names=["language"])
     second = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
     monkeypatch.setattr(language_splits, "_SHARD_FLUSH_BYTES", 10**9)
@@ -563,16 +579,14 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
         def close(self) -> None:
             return None
 
-    first = SimpleNamespace(
-        source_files=[], row_count=9, writer=FakeWriter(), pending=[], pending_bytes=0
-    )
-    second = SimpleNamespace(
-        source_files=[], row_count=0, writer=FakeWriter(), pending=[], pending_bytes=0
-    )
+    first_writer = FakeWriter()
+    second_writer = FakeWriter()
+    first = _shard_state(first_writer, row_count=9)
+    second = _shard_state(second_writer)
     state.current["en"] = first
     writers = iter((first, second))
 
-    def next_writer(*_args: object) -> SimpleNamespace:
+    def next_writer(*_args: object) -> language_splits._ShardWriteState:
         try:
             return next(writers)
         except StopIteration as error:
@@ -598,8 +612,8 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
 
     assert first.row_count == 10
     assert second.row_count == 2
-    assert [row for group in first.writer.rows for row in group] == [{"language": "en"}]
-    assert [row for group in second.writer.rows for row in group] == [
+    assert [row for group in first_writer.rows for row in group] == [{"language": "en"}]
+    assert [row for group in second_writer.rows for row in group] == [
         {"language": "en"},
         {"language": "en"},
     ]
@@ -1036,7 +1050,7 @@ def test_v2_install_files_sorts_by_final_path_and_records_every_install(
     monkeypatch.setattr(staged_install.os, "replace", recording_replace)
     installed: list[Path] = []
 
-    staged_install.install_files(
+    cast(Any, staged_install.install_files)(
         {final_z: temporary_z, final_a: temporary_a},
         installed,
     )
@@ -1150,7 +1164,7 @@ def test_v2_install_files_requires_explicit_final_path_order(
     )
     installed: list[InstallPath] = []
 
-    staged_install.install_files(
+    cast(Any, staged_install.install_files)(
         {final_z: temporary_z, final_a: temporary_a},
         installed,
     )
@@ -1209,7 +1223,9 @@ def test_v2_install_staged_files_requires_explicit_final_path_order(
     monkeypatch.setattr(staged_install, "cleanup_transaction", fake_cleanup)
     monkeypatch.setattr(language_splits, "_remove_empty_output_directories", fake_remove)
 
-    language_splits._install_staged_files(tmp_path, tmp_path / "language_splits", staged)
+    cast(Any, language_splits._install_staged_files)(
+        tmp_path, tmp_path / "language_splits", staged
+    )
 
     assert observed["previous"] == (tmp_path, tmp_path / "language_splits")
     assert observed["backup"] == [final_a, stale, final_z]
@@ -1238,7 +1254,7 @@ def test_v2_restore_files_is_missing_safe_and_sorts_backups_by_final_path(
 
     monkeypatch.setattr(staged_install.os, "replace", recording_replace)
 
-    staged_install.restore_files(
+    cast(Any, staged_install.restore_files)(
         [missing_final],
         {final_z: backup_z, final_a: backup_a},
     )
@@ -1297,7 +1313,7 @@ def test_v2_restore_files_requires_final_path_order_and_recursive_parent_creatio
         lambda source, destination: replacements.append((source, destination)),
     )
 
-    staged_install.restore_files(
+    cast(Any, staged_install.restore_files)(
         [missing],
         {final_z: backup_z_existing, final_a: backup_a_existing},
     )

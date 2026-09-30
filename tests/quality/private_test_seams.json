@@ -1,0 +1,194 @@
+{
+  "policy": "Existing tests may patch only these private seams, at or below their recorded call counts. New coverage should use public APIs or injected dependencies.",
+  "targets": {
+    "augmentation/test_augmentation_checkpoints.py": {
+      "_matches": 1,
+      "_read_table": 2
+    },
+    "cli/test_cli.py": {
+      "_augmentation_stems": 1,
+      "_build_clients": 15,
+      "_build_upload_queue": 15,
+      "_enqueue_core_upload": 13,
+      "_load_augmentation_result": 1,
+      "_log_process_results": 14,
+      "_publish_augmentation": 1,
+      "_require_push_token": 1,
+      "_upload_metadata_refresh": 12,
+      "_verify_push_access": 1
+    },
+    "enrichment/test_enrichment.py": {
+      "_http_get": 3
+    },
+    "enrichment/test_wikimedia_auth.py": {
+      "_read_json": 1
+    },
+    "enrichment/test_wikipedia_split.py": {
+      "_fetch_full_text_batch": 2,
+      "_parse_wikipedia_batch_response": 1,
+      "_request_article_data": 2
+    },
+    "grid5000/test_sentence_controller.py": {
+      "_download_hf_file": 3,
+      "_ensure_remote_namespace": 1,
+      "_publish_batch": 1,
+      "_required_executable": 8,
+      "_retrieve_batch": 1,
+      "_run_frontend": 1
+    },
+    "hf/test_coverage_map.py": {
+      "_CENTROID_BATCH_SIZE": 1
+    },
+    "hf/test_dataset_stats.py": {
+      "_LANGUAGE_CACHE_MAX_ENTRIES": 1,
+      "_accumulate_article_files": 1,
+      "_accumulate_link_files": 1,
+      "_accumulate_polygon_files": 1,
+      "_compute_array": 1,
+      "_count_language_buckets": 1,
+      "_count_link_rows": 1,
+      "_count_non_english": 1,
+      "_count_python_value_strings": 1,
+      "_count_serialized_value_strings": 1,
+      "_count_truthy": 1,
+      "_sum_numeric": 1,
+      "_update_unique_values": 1
+    },
+    "hf/test_hf_http_transport.py": {
+      "_configured": 1
+    },
+    "hf/test_language_split_publication.py": {
+      "_remote_bytes": 1
+    },
+    "hf/test_language_split_release.py": {
+      "_recompute_inventory": 1
+    },
+    "hf/test_stats_release.py": {
+      "_download_remote_file": 2,
+      "_remote_entries": 3,
+      "_remote_revision": 2
+    },
+    "hf/test_trackio_snapshot_cli.py": {
+      "_resolve_trackio": 1
+    },
+    "hf/test_upload_state.py": {
+      "_hash_file": 1,
+      "_upgrade_legacy_envelope": 1
+    },
+    "io/test_hashing.py": {
+      "_CACHE_DIR": 2
+    },
+    "io/test_pbf_reader_area_quality.py": {
+      "_PolygonHandler": 1
+    },
+    "io/test_pbf_reader_contracts.py": {
+      "_PolygonHandler": 4
+    },
+    "io/test_pending_publications_marker.py": {
+      "_load_envelope": 1
+    },
+    "io/test_upload_queue.py": {
+      "_independent_copy": 2
+    },
+    "migration/test_containment_manifest_stats.py": {
+      "_canonical_manifest_stats": 1,
+      "_parquet_row_count": 1
+    },
+    "migration/test_containment_projection_benchmark.py": {
+      "_BATCH_ROWS": 1,
+      "_measure": 2,
+      "_peak_rss_mib": 1,
+      "_run_benchmark": 1,
+      "_run_worker": 1
+    },
+    "migration/test_crash_restart_lifecycle.py": {
+      "_post_upload_publication_cleanup": 1
+    },
+    "migration/test_single_transaction.py": {
+      "_commit_ordered_replacements": 3
+    },
+    "migration/test_wikipedia_document_backfill.py": {
+      "_file_content_hash": 5,
+      "_read_article_table": 3
+    },
+    "pipeline/test_publish_before_process.py": {
+      "_build_upload_queue": 1
+    },
+    "pipeline/test_sync_reconciliation.py": {
+      "_build_upload_queue": 2
+    },
+    "pipeline/test_wikidata_recovery_repair_fetch.py": {
+      "_fetch_recovery_document": 1
+    },
+    "quality/test_crap_gate_cli_migration_coverage.py": {
+      "_read_row_group": 1
+    },
+    "quality/test_crap_gate_misc_coverage.py": {
+      "_observe_language_batch": 1
+    },
+    "quality/test_crap_gate_receipt_transport_coverage.py": {
+      "_http_get": 2,
+      "_request_article_data": 2
+    },
+    "quality/test_crap_gate_remaining_coverage.py": {
+      "_identity_set": 1,
+      "_region_artifacts_are_current": 1
+    },
+    "v2/test_card.py": {
+      "_sum_first_available": 1,
+      "_sum_metadata": 1,
+      "_unique_values": 2
+    },
+    "v2/test_checkpoints.py": {
+      "_load_section_payload": 1
+    },
+    "v2/test_language_splits.py": {
+      "_SHARD_FLUSH_BYTES": 1,
+      "_TOTAL_FLUSH_BYTES": 1,
+      "_install_staged_files": 1,
+      "_manifest_payload": 1,
+      "_output_directories_for_paths": 2,
+      "_previous_partition_paths": 1,
+      "_remove_empty_output_directories": 1,
+      "_resume_completed_table": 1,
+      "_stage_v2_files": 2,
+      "_validate_conservation": 1,
+      "_verify_source_inventory": 1,
+      "_write_table": 2,
+      "_writer_for_language": 2
+    },
+    "v2/test_language_splits_partition_writing.py": {
+      "_install_staged_files": 1,
+      "_manifest_payload": 1,
+      "_stage_v2_files": 1,
+      "_validate_conservation": 1,
+      "_verify_source_inventory": 1,
+      "_writer_for_language": 2
+    },
+    "v2/test_language_splits_resume_buffers.py": {
+      "_SHARD_FLUSH_BYTES": 4,
+      "_TOTAL_FLUSH_BYTES": 4,
+      "_write_table": 3
+    },
+    "v2/test_reconcile_helpers.py": {
+      "_existing_sibling_land": 2
+    },
+    "v2/test_sat.py": {
+      "_available_ort_providers": 3
+    },
+    "v2/test_sentence_cli.py": {
+      "_run_v2_sentence_split": 1
+    },
+    "v2/test_v1_index.py": {
+      "_INDEX_SHUTDOWN_TIMEOUT_S": 1,
+      "_commit_indexed_row_group": 1,
+      "_count_distinct_documents": 2,
+      "_initialize_schema": 1,
+      "_log_row_group_stop": 1,
+      "_open_connection": 2,
+      "_scan_index_row_group": 7,
+      "_scan_index_rows": 1,
+      "_sync": 1
+    }
+  }
+}

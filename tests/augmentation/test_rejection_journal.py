@@ -16,6 +16,7 @@ converges without losing rejection history.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import pyarrow as pa
@@ -25,6 +26,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation import rejection_ledger
 from osm_polygon_wikidata_only.augmentation.rejection_ledger import (
     LEDGER_FILENAME,
+    RejectionRecord,
 )
 from osm_polygon_wikidata_only.augmentation.schema import document_schema, section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -148,7 +150,9 @@ def _seed(data_root: DataRoot, stem: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_crash_after_documents_write_resumes(tmp_path: Path) -> None:
+def test_crash_after_documents_write_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A crash after the documents parquet write but before the
     cumulative ledger write must allow a fresh process to resume
     safely. After resume, the cumulative ledger must include the
@@ -164,17 +168,13 @@ def test_crash_after_documents_write_resumes(tmp_path: Path) -> None:
 
     # Patch save_ledger to crash on first call (cumulative ledger
     # write).
-    real_save = rejection_ledger.save_ledger
-
-    def _crash_save(*args, **kwargs):
+    def _crash_save(_path: Path, _records: Iterable[RejectionRecord]) -> None:
         raise RuntimeError("simulated crash before cumulative ledger commit")
 
-    rejection_ledger.save_ledger = _crash_save
-    try:
+    with monkeypatch.context() as patch:
+        patch.setattr(rejection_ledger, "save_ledger", _crash_save)
         with pytest.raises(RuntimeError, match="simulated crash"):
             rejection_ledger.apply_integrity_normalization(plan)
-    finally:
-        rejection_ledger.save_ledger = real_save
 
     # Documents may have been written; cumulative ledger NOT.
     # A fresh apply with the same plan must complete the transaction.
@@ -191,7 +191,9 @@ def test_crash_after_documents_write_resumes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_crash_after_sections_write_resumes(tmp_path: Path) -> None:
+def test_crash_after_sections_write_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data_root = _fresh_data_root(tmp_path)
     data_root.ensure()
     stem = "alpha-latest"
@@ -202,18 +204,16 @@ def test_crash_after_sections_write_resumes(tmp_path: Path) -> None:
 
     call_count = {"n": 0}
 
-    def _crash_after_sections(*args, **kwargs):
+    def _crash_after_sections(path: Path, records: Iterable[RejectionRecord]) -> None:
         call_count["n"] += 1
         if call_count["n"] == 2:
             raise RuntimeError("simulated crash after sections write")
-        return real_save(*args, **kwargs)
+        real_save(path, records)
 
-    rejection_ledger.save_ledger = _crash_after_sections
-    try:
+    with monkeypatch.context() as patch:
+        patch.setattr(rejection_ledger, "save_ledger", _crash_after_sections)
         with pytest.raises(RuntimeError, match="simulated crash after sections"):
             rejection_ledger.apply_integrity_normalization(plan)
-    finally:
-        rejection_ledger.save_ledger = real_save
 
     rejection_ledger.apply_integrity_normalization(plan)
 
@@ -228,7 +228,9 @@ def test_crash_after_sections_write_resumes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_crash_after_per_stem_ledger_resumes(tmp_path: Path) -> None:
+def test_crash_after_per_stem_ledger_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data_root = _fresh_data_root(tmp_path)
     data_root.ensure()
     stem = "alpha-latest"
@@ -241,18 +243,17 @@ def test_crash_after_per_stem_ledger_resumes(tmp_path: Path) -> None:
     # the SECOND call -- the cumulative ledger merge).
     call_count = {"n": 0}
 
-    def _crash_after_per_stem(*args, **kwargs):
+    def _crash_after_per_stem(path: Path, records: Iterable[RejectionRecord]) -> None:
         call_count["n"] += 1
         if call_count["n"] == 1:
-            return real_save(*args, **kwargs)
+            real_save(path, records)
+            return
         raise RuntimeError("simulated crash after per-stem ledger")
 
-    rejection_ledger.save_ledger = _crash_after_per_stem
-    try:
+    with monkeypatch.context() as patch:
+        patch.setattr(rejection_ledger, "save_ledger", _crash_after_per_stem)
         with pytest.raises(RuntimeError, match="simulated crash after per-stem"):
             rejection_ledger.apply_integrity_normalization(plan)
-    finally:
-        rejection_ledger.save_ledger = real_save
 
     rejection_ledger.apply_integrity_normalization(plan)
 
@@ -267,7 +268,9 @@ def test_crash_after_per_stem_ledger_resumes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_process_resume_after_crash_converges(tmp_path: Path) -> None:
+def test_fresh_process_resume_after_crash_converges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """After a crash mid-transaction, a brand-new process that does
     NOT share state with the failed one must still converge by
     re-running the plan against the source artifacts that have NOT
@@ -279,17 +282,14 @@ def test_fresh_process_resume_after_crash_converges(tmp_path: Path) -> None:
     _seed(data_root, stem)
 
     plan = rejection_ledger.plan_integrity_normalization(data_root, stem)
-    real_save = rejection_ledger.save_ledger
 
-    def _always_crash(*args, **kwargs):
+    def _always_crash(_path: Path, _records: Iterable[RejectionRecord]) -> None:
         raise RuntimeError("crash")
 
-    rejection_ledger.save_ledger = _always_crash
-    try:
+    with monkeypatch.context() as patch:
+        patch.setattr(rejection_ledger, "save_ledger", _always_crash)
         with pytest.raises(RuntimeError):
             rejection_ledger.apply_integrity_normalization(plan)
-    finally:
-        rejection_ledger.save_ledger = real_save
 
     # Documents/sections may have been overwritten by the failed
     # apply. Re-seed the SOURCE artifacts and re-apply with the

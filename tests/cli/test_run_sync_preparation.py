@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import MigrationOperation
+from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import (
+    StemPlan as ArticleStemPlan,
+)
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.cli.run_sync import (
     _active_pbfs,
     _containment_publications_for_remote,
@@ -21,6 +26,17 @@ from osm_polygon_wikidata_only.cli.run_sync import (
     _reconciliation_gap_counts,
     _reconciliation_summary_message,
     _remote_child_has_artifact,
+)
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, delete_op
+from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.pipeline._link_migration.models import (
+    MigrationPlan as LinkMigrationPlan,
+    StemClassification,
+    StemPlan as LinkStemPlan,
+)
+from osm_polygon_wikidata_only.pipeline.containment_migration import (
+    PreparedRule,
+    RuleAudit,
 )
 from osm_polygon_wikidata_only.pipeline.sync_planner import SyncAction
 
@@ -38,9 +54,9 @@ def test_prepare_containment_rules_reports_prepared_and_blocked_rules() -> None:
     warnings: list[tuple[str, tuple[Any, ...]]] = []
     calls: list[tuple[Path, bool]] = []
 
-    def prepare(path: Path, *, dry_run: bool) -> tuple[list[object], list[Any]]:
+    def prepare(path: Path, *, dry_run: bool) -> tuple[list[PreparedRule], list[RuleAudit]]:
         calls.append((path, dry_run))
-        return [object()], [SimpleNamespace(parent="parent", blockers=["reason"])]
+        return [PreparedRule("prepared", ())], [RuleAudit("parent", (), ("reason",))]
 
     _prepare_containment_rules(
         enabled=True,
@@ -69,8 +85,20 @@ def test_core_repair_required_matches_action_and_missing_artifacts() -> None:
 
 def test_plan_sync_states_adds_noncanonical_link_migrations_to_recovery() -> None:
     """Legacy link layouts are included in the recovery action set."""
-    link_plan = SimpleNamespace(
-        stems=[SimpleNamespace(stem="region", classification=SimpleNamespace(value="legacy"))]
+    link_plan = LinkMigrationPlan(
+        processed_dir=Path("processed"),
+        stems=(
+            LinkStemPlan(
+                stem="region",
+                classification=StemClassification.MIGRATABLE,
+                reason="",
+                polygons_fingerprint="",
+                links_fingerprint="",
+                documents_fingerprint="",
+                row_count=0,
+                canonical_digest=None,
+            ),
+        ),
     )
 
     states = _plan_sync_states(
@@ -115,12 +143,12 @@ def test_reconciliation_gap_counts_separate_core_and_text_artifacts() -> None:
     assert _reconciliation_gap_counts({"a", "b", "c"}, missing) == (1, 2)
 
 
-def test_prepare_remote_reconciliation_disabled_returns_empty_state() -> None:
+def test_prepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Path) -> None:
     """Non-push runs avoid all remote inventory and validation work."""
     result = _prepare_remote_reconciliation(
         enabled=False,
-        data_root=None,
-        settings=None,
+        data_root=DataRoot(tmp_path),
+        settings=Settings(),
         input_stems=set(),
         hub=None,
         inventory_override=None,
@@ -141,9 +169,9 @@ def test_prepare_remote_reconciliation_disabled_returns_empty_state() -> None:
 def test_migration_stems_to_persist_selects_only_creating_operations() -> None:
     """Only operations that create or upgrade canonical documents persist intent."""
     plans = [
-        SimpleNamespace(stem="create", operation=MigrationOperation.CREATE_MISSING),
-        SimpleNamespace(stem="upgrade", operation=MigrationOperation.UPGRADE_LEGACY),
-        SimpleNamespace(stem="canonical", operation=MigrationOperation.ALREADY_CANONICAL),
+        ArticleStemPlan("create", MigrationOperation.CREATE_MISSING, "", "", None, 0, None),
+        ArticleStemPlan("upgrade", MigrationOperation.UPGRADE_LEGACY, "", "", None, 0, None),
+        ArticleStemPlan("canonical", MigrationOperation.ALREADY_CANONICAL, "", "", None, 0, None),
     ]
 
     assert _migration_stems_to_persist(plans) == {"create", "upgrade"}
@@ -151,7 +179,7 @@ def test_migration_stems_to_persist_selects_only_creating_operations() -> None:
 
 def test_containment_publications_keep_children_present_on_remote() -> None:
     """Only contained children with any canonical remote artifact are published."""
-    inventory = SimpleNamespace(contains=lambda path: path == "child/polygons.parquet")
+    inventory = RemoteInventory({"child/polygons.parquet"})
 
     def paths(stem: str) -> dict[str, str]:
         return {"polygons": f"{stem}/polygons.parquet"}
@@ -181,10 +209,10 @@ def test_enqueue_containment_retirement_skips_ineligible_runs(
 ) -> None:
     assert (
         _enqueue_containment_retirement(
-            data_root=SimpleNamespace(processed=tmp_path),
-            settings=SimpleNamespace(repo_id="org/repo"),
+            data_root=DataRoot(tmp_path),
+            settings=Settings(repo_id="org/repo"),
             parent_children=parent_children,
-            upload_queue=queue,
+            upload_queue=cast(Any, queue),
             push_enabled=push_enabled,
         )
         is False
@@ -196,13 +224,13 @@ def test_enqueue_containment_retirement_submits_one_remote_operation(
 ) -> None:
     submitted: list[tuple[object, str]] = []
 
-    def assemble(**kwargs: object) -> list[str]:
+    def assemble(**kwargs: object) -> list[PublicationOp]:
         assert kwargs["repo_id"] == "org/repo"
         assert kwargs["parent_children"] == {"parent": ("child", "other")}
-        return ["operation"]
+        return [delete_op("child/polygons.parquet")]
 
     class Queue:
-        def submit(self, operations: object, description: str) -> None:
+        def submit(self, operations: list[PublicationOp], description: str) -> None:
             submitted.append((operations, description))
 
     monkeypatch.setattr(
@@ -212,12 +240,14 @@ def test_enqueue_containment_retirement_submits_one_remote_operation(
 
     assert (
         _enqueue_containment_retirement(
-            data_root=SimpleNamespace(processed=tmp_path),
-            settings=SimpleNamespace(repo_id="org/repo"),
+            data_root=DataRoot(tmp_path),
+            settings=Settings(repo_id="org/repo"),
             parent_children={"parent": ("child", "other")},
-            upload_queue=Queue(),
+            upload_queue=cast(Any, Queue()),
             push_enabled=True,
         )
         is True
     )
-    assert submitted == [(["operation"], "Retire losslessly contained regional dataset shards")]
+    assert submitted == [
+        ([delete_op("child/polygons.parquet")], "Retire losslessly contained regional dataset shards")
+    ]

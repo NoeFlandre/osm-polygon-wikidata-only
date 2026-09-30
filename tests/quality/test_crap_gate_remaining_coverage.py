@@ -378,7 +378,9 @@ def test_sentence_ledger_creation_and_immutable_validation() -> None:
         ledger_path=Path("missing-ledger.json"),
         _ledger=None,
         _create_ledger=lambda: _coverage_call(mixin._create_ledger, controller),
-        _new_ledger=lambda: cast(sentence_controller_policy.LedgerDict, {"run_id": "generated"}),
+        _new_ledger=lambda: cast(
+            sentence_controller_policy.LedgerDict, {"run_id": controller.run_id}
+        ),
         _write_ledger=lambda ledger=None: written.append(ledger),
     )
     ledger = _coverage_call(mixin.initialize, controller)

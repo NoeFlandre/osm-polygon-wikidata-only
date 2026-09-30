@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pyarrow as pa
 import pytest
 
+from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.models import Polygon
+from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
+from osm_polygon_wikidata_only.enrichment.wikipedia_client import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.hf.uploader import UploadError
 from osm_polygon_wikidata_only.pipeline import link_migration, row_construction
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
@@ -23,7 +27,7 @@ def test_v2_inventory_handles_disabled_success_and_unavailable_remote(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = argparse.Namespace(push=False)
-    settings = SimpleNamespace(hf_token="token")
+    settings = Settings(hf_token="token")
     assert v2_cli._fetch_inventory(args, "owner/repo", settings, None) is None
 
     inventory = object()
@@ -45,19 +49,19 @@ def test_v2_inventory_handles_disabled_success_and_unavailable_remote(
 def test_v2_trackio_publisher_is_only_built_for_live_pushes(tmp_path: Path) -> None:
     assert (
         v2_cli._build_trackio_publisher(
-            argparse.Namespace(push=False, dry_run=False), SimpleNamespace()
+            argparse.Namespace(push=False, dry_run=False), DataRoot(tmp_path)
         )
         is None
     )
     assert (
         v2_cli._build_trackio_publisher(
-            argparse.Namespace(push=True, dry_run=True), SimpleNamespace()
+            argparse.Namespace(push=True, dry_run=True), DataRoot(tmp_path)
         )
         is None
     )
     assert callable(
         v2_cli._build_trackio_publisher(
-            argparse.Namespace(push=True, dry_run=False), SimpleNamespace(cache=tmp_path)
+            argparse.Namespace(push=True, dry_run=False), DataRoot(tmp_path)
         )
     )
 
@@ -72,10 +76,14 @@ def test_v1_index_row_group_errors_keep_their_contract(
 
     if isinstance(error, ValueError):
         with pytest.raises(ValueError, match="bad value"):
-            index_scanning._read_index_rows(object(), Path("shard.parquet"), False, 0)
+            cast(Any, index_scanning._read_index_rows)(
+                object(), Path("shard.parquet"), False, 0
+            )
     else:
         with pytest.raises(ValueError, match="V1 document shard is unreadable"):
-            index_scanning._read_index_rows(object(), Path("shard.parquet"), False, 0)
+            cast(Any, index_scanning._read_index_rows)(
+                object(), Path("shard.parquet"), False, 0
+            )
 
 
 def test_v1_legacy_row_conversion_wraps_bad_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,7 +170,7 @@ def test_source_pbf_helper_rejects_zero_or_multiple_values() -> None:
             polygons_table=Table(values),
         )
         with pytest.raises(RuntimeError, match=f"{count} distinct source_pbf"):
-            link_migration._source_pbf_for_stem(inputs)
+            cast(Any, link_migration._source_pbf_for_stem)(inputs)
 
 
 def test_enrich_polygon_fetches_and_summarizes_missing_qid(
@@ -204,8 +212,8 @@ def test_enrich_polygon_fetches_and_summarizes_missing_qid(
 
     enriched = row_construction.enrich_polygon(
         polygon,
-        wikidata_client=object(),
-        wikipedia_client=object(),
+        wikidata_client=InMemoryWikidataClient({}),
+        wikipedia_client=InMemoryWikipediaClient({}),
         settings=Settings(languages=("en", "fr")),
         summaries=summaries,
     )
