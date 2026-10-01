@@ -43,7 +43,7 @@ def missing(baseline: Mapping[str, float], current: Mapping[str, float]) -> list
 
 
 def _load(path: Path) -> dict[str, float]:
-    return medians(json.loads(path.read_text(encoding="utf-8")))
+    return medians(json.loads(path.read_bytes()))
 
 
 def _missing_lines(baseline: Mapping[str, float], current: Mapping[str, float]) -> list[str]:
@@ -72,13 +72,17 @@ def _report(baseline: Mapping[str, float], current: Mapping[str, float], thresho
     return bool(found or absent)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--current", type=Path, required=True)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument("--mode", choices=("warn", "enforce"), default="warn")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     if not args.baseline.is_file():
         print(f"No baseline at {args.baseline}; nothing to compare against.")
         return 0

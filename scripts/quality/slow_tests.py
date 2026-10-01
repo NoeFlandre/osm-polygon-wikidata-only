@@ -38,19 +38,24 @@ def over_budget(
     return [entry for entry in durations if entry[0] > limits.get(entry[1], budget)]
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--junit-xml", type=Path, required=True)
     parser.add_argument("--budget", type=float, default=DEFAULT_BUDGET_SECONDS)
     parser.add_argument("--overrides", type=Path, default=DEFAULT_OVERRIDES)
-    args = parser.parse_args(argv)
+    return parser
+
+
+def _load_overrides(path: Path) -> dict[str, float]:
+    return dict(json.loads(path.read_bytes())) if path.is_file() else {}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     durations = test_durations(args.junit_xml)
     for seconds, name in durations[:_TOP]:
         print(f"{seconds:7.2f}s  {name}")
-    overrides = (
-        json.loads(args.overrides.read_text(encoding="utf-8")) if args.overrides.is_file() else {}
-    )
-    offenders = over_budget(durations, args.budget, overrides)
+    offenders = over_budget(durations, args.budget, _load_overrides(args.overrides))
     for seconds, name in offenders:
         print(f"OVER BUDGET {seconds:.2f}s > {args.budget:.2f}s: {name}", file=sys.stderr)
     return 1 if offenders else 0
