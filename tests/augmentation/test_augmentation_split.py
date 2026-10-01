@@ -586,7 +586,8 @@ def test_build_wikidata_facts_calls_labels_with_property_plus_value_ids() -> Non
 
 
 def test_fact_label_ids_include_properties_and_entity_values() -> None:
-    from osm_polygon_wikidata_only.augmentation.steps import FACT_PROPERTIES, _fact_label_ids
+    from osm_polygon_wikidata_only.augmentation.steps import FACT_PROPERTIES
+    from osm_polygon_wikidata_only.augmentation.wikidata_facts import _fact_label_ids
 
     assert _fact_label_ids(
         {

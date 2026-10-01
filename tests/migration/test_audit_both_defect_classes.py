@@ -28,83 +28,11 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.augmentation import rejection_ledger as rl
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.pipeline import link_migration as lm
-from tests.migration._builders import write_polygon_qid_membership
-
-
-def _seed_legacy_links(path: Path, polygon_id: str, wikidata: str, page_id: int = 1) -> None:
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist(
-            [
-                {
-                    "polygon_id": polygon_id,
-                    "article_id": f"{wikidata}:en:{page_id}:1",
-                    "wikidata": wikidata,
-                    "language": "en",
-                    "source_pbf": "test.osm.pbf",
-                    "region": "r",
-                    "osm_type": "way",
-                    "osm_id": 1,
-                    "page_id": page_id,
-                    "revision_id": 1,
-                    "is_best_language": True,
-                }
-            ],
-            schema=polygon_article_schema(),
-        ),
-        path,
-    )
-
-
-def _seed_wiki_docs(processed: Path, stem: str, qid: str, page_id: int) -> None:
-    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-        wikipedia_document_schema,
-    )
-
-    # Match the canonical document_id format: {qid}:{project}:{language}:{page_id}:{revision_id}
-    document_id = f"{qid}:wikipedia:en:{page_id}:1"
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist(
-            [
-                {
-                    "document_id": document_id,
-                    "article_id": f"{qid}:en:{page_id}:1",
-                    "wikidata": qid,
-                    "language": "en",
-                    "site": "enwiki",
-                    "title": "T",
-                    "url": f"https://en.wikipedia.org/wiki/{qid}",
-                    "page_id": page_id,
-                    "revision_id": 1,
-                    "revision_timestamp": "2026-07-24T00:00:00Z",
-                    "retrieved_at": "2026-07-24T00:00:00Z",
-                    "wikidata_label": "L",
-                    "wikidata_description": "D",
-                    "wikidata_aliases": "",
-                    "lead_text": "",
-                    "extract": "",
-                    "full_text": "",
-                    "full_text_format": "plain_text",
-                    "article_length_chars": 0,
-                    "article_length_words": 0,
-                    "article_length_tokens_estimate": 0,
-                    "thumbnail_url": "",
-                    "thumbnail_width": None,
-                    "thumbnail_height": None,
-                    "categories": "",
-                    "license": "CC-BY-SA",
-                    "attribution": "A",
-                    "source_api": "mediawiki_action_api",
-                    "fetch_status": "ok",
-                    "fetch_error": "",
-                    "content_hash": "h",
-                }
-            ],
-            schema=wikipedia_document_schema(),
-        ),
-        processed / "wikipedia" / "documents" / f"{stem}.parquet",
-    )
+from tests.migration._builders import (
+    write_legacy_polygon_article,
+    write_polygon_qid_membership,
+    write_wikipedia_document,
+)
 
 
 def _seed_minimal_sidecars(processed: Path, stem: str) -> None:
@@ -151,8 +79,12 @@ def test_invalid_wikipedia_relationships_are_rejected(tmp_path: Path) -> None:
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
     write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1", "Q2"])
-    _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q99", page_id=1)
-    _seed_wiki_docs(processed, stem, "Q99", 1)
+    write_legacy_polygon_article(
+        processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q99", page_id=1
+    )
+    write_wikipedia_document(
+        processed / "wikipedia" / "documents" / f"{stem}.parquet", "Q99", page_id=1
+    )
     _seed_minimal_sidecars(processed, stem)
     (processed / "manifests" / "processed_pbfs.json").write_text(
         json.dumps({f"{stem}.osm.pbf": {"source_pbf": f"{stem}.osm.pbf"}})
@@ -185,8 +117,10 @@ def test_valid_wikipedia_relationships_are_not_rejected(tmp_path: Path) -> None:
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
     write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
-    _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")
-    _seed_wiki_docs(processed, stem, "Q1", 100)
+    write_legacy_polygon_article(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")
+    write_wikipedia_document(
+        processed / "wikipedia" / "documents" / f"{stem}.parquet", "Q1", page_id=100
+    )
     _seed_minimal_sidecars(processed, stem)
     (processed / "manifests" / "processed_pbfs.json").write_text(
         json.dumps({f"{stem}.osm.pbf": {"source_pbf": f"{stem}.osm.pbf"}})
@@ -219,8 +153,10 @@ def test_invalid_wikivoyage_relationships_are_rejected(tmp_path: Path) -> None:
         (processed / sub).mkdir(parents=True, exist_ok=True)
     write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
     # No wikipedia document needed for the wikivoyage defect class.
-    _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")
-    _seed_wiki_docs(processed, stem, "Q1", 1)
+    write_legacy_polygon_article(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")
+    write_wikipedia_document(
+        processed / "wikipedia" / "documents" / f"{stem}.parquet", "Q1", page_id=1
+    )
     _seed_minimal_sidecars(processed, stem)
 
     # Add an invalid wikivoyage document (Q99 not in polygons).

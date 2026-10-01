@@ -28,6 +28,7 @@ from .wikidata_client import (
     is_valid_qid,
     language_from_site,
 )
+from .wikipedia.entity_context import entity_context_for_language
 from .wikipedia_client import BatchWikipediaClient, FetchResult, WikipediaArticle, WikipediaClient
 
 LOGGER = logging.getLogger(__name__)
@@ -149,13 +150,14 @@ def _fetch_entity_article(
     *,
     fetch_full_text: bool,
 ) -> FetchResult:
+    context = entity_context_for_language(entity, language)
     return wikipedia_client.fetch_article(
         language,
         site,
         title,
-        wikidata_label=entity.labels.get(language) or entity.labels.get("en", ""),
-        wikidata_description=entity.descriptions.get(language) or entity.descriptions.get("en", ""),
-        wikidata_aliases=entity.aliases.get(language) or entity.aliases.get("en", []),
+        wikidata_label=context.label,
+        wikidata_description=context.description,
+        wikidata_aliases=context.aliases,
         fetch_full_text=fetch_full_text,
     )
 

@@ -248,3 +248,10 @@ def test_init_axes_applies_shared_world_style() -> None:
         "tick_params",
         "set_aspect",
     ]
+
+
+def test_init_axes_can_defer_aspect_policy() -> None:
+    axes = _AxesSpy()
+    basemap.init_axes(axes, equal_aspect=False)
+
+    assert "set_aspect" not in [name for name, _args, _kwargs in axes.calls]

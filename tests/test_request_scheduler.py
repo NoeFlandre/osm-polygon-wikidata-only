@@ -51,6 +51,27 @@ def test_pace_host_does_not_delay_an_unrelated_host() -> None:
     assert sleeps == []
 
 
+def test_global_throttle_updates_cooldown_rate_and_success_window() -> None:
+    _now, _sleeps, clock, sleep = _fake_clock()
+    scheduler = AdaptiveRequestScheduler(
+        requests_per_minute=200,
+        minimum_requests_per_minute=60,
+        successes_per_increase=2,
+        clock=clock,
+        sleep=sleep,
+    )
+    scheduler.report_success()
+
+    scheduler.report_throttled(30.0)
+
+    assert scheduler.current_requests_per_minute == 100
+    assert scheduler.snapshot().cooldown_remaining_s == 30
+    scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 100
+    scheduler.report_success()
+    assert scheduler.current_requests_per_minute == 125
+
+
 def test_report_host_throttled_delays_only_that_host() -> None:
     """A 429 from one host must cool down only that host."""
     _now, sleeps, clock, sleep = _fake_clock()

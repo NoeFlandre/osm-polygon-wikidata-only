@@ -16,11 +16,12 @@ specific (colormap, alpha, threshold, caption) belongs here.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
 
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement
 
@@ -44,6 +45,28 @@ def save_map_figure(fig: Any, output_path: Path) -> None:
         atomic_save_png(fig, output_path)
     finally:
         plt.close(fig)
+
+
+def decorate_color_scale(
+    fig: Any,
+    ax: Any,
+    cmap: Any,
+    norm: Any,
+    *,
+    title: str,
+    caption: str,
+    colorbar_label: str,
+    tick_formatter: Callable[[float, int | None], str],
+) -> None:
+    """Apply the shared title, caption, and colorbar layout for metric maps."""
+    fig.suptitle(title, fontsize=14, color="#222222", y=0.98)
+    fig.text(0.5, 0.02, caption, ha="center", va="bottom", fontsize=7, color="#444444", wrap=True)
+    mappable = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    mappable.set_array([])
+    colorbar = fig.colorbar(mappable, ax=ax, fraction=0.025, pad=0.02)
+    colorbar.set_label(colorbar_label, fontsize=8, color="#333333")
+    colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(tick_formatter))
+    colorbar.ax.tick_params(labelsize=7)
 
 
 def atomic_save_png(fig: Any, output_path: Path) -> None:
@@ -77,6 +100,7 @@ def format_count_tick(value: float, _position: int | None = None) -> str:
 __all__ = [
     "atomic_save_png",
     "create_map_axes",
+    "decorate_color_scale",
     "format_count_tick",
     "format_percent_tick",
     "save_map_figure",

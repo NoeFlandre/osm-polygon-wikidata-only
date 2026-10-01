@@ -17,7 +17,6 @@ from typing import Any
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mtick
 
 from .aggregation import aggregate_geographic_polygon_count
 from .h3_geometry import (
@@ -26,7 +25,14 @@ from .h3_geometry import (
     cell_rings,
 )
 from .models import CoverageMapError, PolygonCountCell, RenderResult
-from .rendering import create_map_axes, format_count_tick, save_map_figure
+from .rendering import (
+    create_map_axes,
+    decorate_color_scale,
+    save_map_figure,
+)
+from .rendering import (
+    format_count_tick as format_count_tick,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -132,7 +138,16 @@ def render_count_map(
     cmap, norm = _count_scale(coerced)
     for cell in coerced:
         draw_count_cell(ax, cell, cmap=cmap, norm=norm)
-    _decorate_count_map(fig, ax, cmap, norm, title, caption, colorbar_label)
+    decorate_color_scale(
+        fig,
+        ax,
+        cmap,
+        norm,
+        title=title,
+        caption=caption,
+        colorbar_label=colorbar_label,
+        tick_formatter=format_count_tick,
+    )
     save_map_figure(fig, output_path)
 
     LOGGER.info("Wrote geographic polygon count map to %s", output_path)
@@ -144,25 +159,6 @@ def _count_scale(cells: Sequence[PolygonCountCell]) -> tuple[mcolors.Colormap, m
     minimum = max(min(counts), 1)
     maximum = max(*counts, minimum + 1)
     return plt.get_cmap(_COUNT_COLORMAP_NAME), mcolors.LogNorm(vmin=minimum, vmax=maximum)
-
-
-def _decorate_count_map(
-    fig: Any,
-    ax: Any,
-    cmap: mcolors.Colormap,
-    norm: mcolors.LogNorm,
-    title: str,
-    caption: str,
-    colorbar_label: str,
-) -> None:
-    fig.suptitle(title, fontsize=14, color="#222222", y=0.98)
-    fig.text(0.5, 0.02, caption, ha="center", va="bottom", fontsize=7, color="#444444", wrap=True)
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    colorbar = fig.colorbar(sm, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label(colorbar_label, fontsize=8, color="#333333")
-    colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_count_tick))
-    colorbar.ax.tick_params(labelsize=7)
 
 
 def generate_geographic_polygon_count(

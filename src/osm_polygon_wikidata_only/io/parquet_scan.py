@@ -53,4 +53,27 @@ def iter_record_batches(
     return parquet_file.iter_batches(**kwargs)
 
 
-__all__ = ["DEFAULT_BATCH_SIZE", "iter_record_batches", "open_parquet"]
+def iter_record_batches_if_columns_present(
+    path: Path | str,
+    *,
+    columns: Sequence[str],
+    batch_size: int,
+) -> Iterator[pa.RecordBatch]:
+    """Scan a projected Parquet table when its complete column set is available.
+
+    Some card metrics read files produced by older layouts. A missing column
+    means that file contributes no rows to that metric; the open file stays
+    alive for the duration of iteration and batches are read synchronously.
+    """
+    with open_parquet(path) as parquet_file:
+        if not set(columns).issubset(parquet_file.schema_arrow.names):
+            return
+        yield from iter_record_batches(parquet_file, columns=columns, batch_size=batch_size)
+
+
+__all__ = [
+    "DEFAULT_BATCH_SIZE",
+    "iter_record_batches",
+    "iter_record_batches_if_columns_present",
+    "open_parquet",
+]

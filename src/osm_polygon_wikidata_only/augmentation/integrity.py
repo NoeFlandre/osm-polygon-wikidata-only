@@ -57,6 +57,9 @@ from typing import Any
 
 import pyarrow as pa
 
+from osm_polygon_wikidata_only.augmentation._wikivoyage_membership import (
+    partition_wikivoyage_documents,
+)
 from osm_polygon_wikidata_only.augmentation.integrity_io import (
     read_polygon_wikidata_set,
     read_table_required,
@@ -100,28 +103,21 @@ def _partition_wikivoyage_documents(
     valid_qids: set[str],
 ) -> tuple[list[dict[str, Any]], set[str], list[RejectionRecord]]:
     """Split Wikivoyage documents into retained rows and rejected identities."""
-    retained: list[dict[str, Any]] = []
-    rejected_ids: set[str] = set()
-    rejections: list[RejectionRecord] = []
-    for row in rows:
-        document_id = str(row.get("document_id", ""))
-        wikidata = str(row.get("wikidata", ""))
-        if wikidata not in valid_qids:
-            rejected_ids.add(document_id)
-            rejections.append(
-                RejectionRecord(
-                    shard=stem,
-                    source_table="wikivoyage_documents",
-                    identifier=document_id,
-                    wikidata=wikidata,
-                    expected=None,
-                    reason=REASON_WIKIVOYAGE_ABSENT,
-                    cascaded_sections=0,
-                )
-            )
-            continue
-        retained.append({column: row.get(column) for column in DOCUMENT_COLUMNS})
-    return retained, rejected_ids, rejections
+    partition = partition_wikivoyage_documents(rows, valid_qids)
+    rejected_ids = {rejection.document_id for rejection in partition.rejected_documents}
+    rejections = [
+        RejectionRecord(
+            shard=stem,
+            source_table="wikivoyage_documents",
+            identifier=rejection.document_id,
+            wikidata=rejection.wikidata,
+            expected=None,
+            reason=REASON_WIKIVOYAGE_ABSENT,
+            cascaded_sections=0,
+        )
+        for rejection in partition.rejected_documents
+    ]
+    return partition.retained_rows, rejected_ids, rejections
 
 
 def _partition_wikivoyage_sections(

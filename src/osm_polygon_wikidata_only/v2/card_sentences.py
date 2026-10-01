@@ -14,7 +14,11 @@ from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
     PolygonIdentity,
     PolygonIndex,
 )
-from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+from osm_polygon_wikidata_only.io.parquet_scan import (
+    iter_record_batches,
+    iter_record_batches_if_columns_present,
+    open_parquet,
+)
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.card_models import SentenceCardStats as _SentenceCardStats
 from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
@@ -304,16 +308,12 @@ def _collect_sentence_polygon_ids(
     polygon_index: PolygonIndex,
     polygon_ids: set[PolygonIdentity],
 ) -> None:
-    with open_parquet(path) as parquet_file:
-        columns = {"polygon_id", "document_id", "project"}
-        if not columns.issubset(parquet_file.schema_arrow.names):
-            return
-        for batch in iter_record_batches(
-            parquet_file,
-            columns=["polygon_id", "document_id", "project"],
-            batch_size=65_536,
-        ):
-            polygon_ids.update(_sentence_polygon_ids_from_batch(batch, value_sets, polygon_index))
+    for batch in iter_record_batches_if_columns_present(
+        path,
+        columns=["polygon_id", "document_id", "project"],
+        batch_size=65_536,
+    ):
+        polygon_ids.update(_sentence_polygon_ids_from_batch(batch, value_sets, polygon_index))
 
 
 def _sentence_polygon_ids_from_batch(

@@ -23,76 +23,11 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
 from osm_polygon_wikidata_only.pipeline import link_migration as lm
-from tests.migration._builders import write_polygon_qid_membership
-
-
-def _seed_wiki_doc(path: Path, document_id: str, qid: str, page_id: int = 1) -> None:
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist(
-            [
-                {
-                    "document_id": document_id,
-                    "article_id": f"{qid}:en:{page_id}:1",
-                    "wikidata": qid,
-                    "language": "en",
-                    "site": "enwiki",
-                    "title": "T",
-                    "url": f"https://en.wikipedia.org/wiki/{qid}",
-                    "page_id": page_id,
-                    "revision_id": 1,
-                    "revision_timestamp": "2026-07-24T00:00:00Z",
-                    "retrieved_at": "2026-07-24T00:00:00Z",
-                    "wikidata_label": "L",
-                    "wikidata_description": "D",
-                    "wikidata_aliases": "",
-                    "lead_text": "",
-                    "extract": "",
-                    "full_text": "",
-                    "full_text_format": "plain_text",
-                    "article_length_chars": 0,
-                    "article_length_words": 0,
-                    "article_length_tokens_estimate": 0,
-                    "thumbnail_url": "",
-                    "thumbnail_width": None,
-                    "thumbnail_height": None,
-                    "categories": "",
-                    "license": "CC-BY-SA",
-                    "attribution": "A",
-                    "source_api": "mediawiki_action_api",
-                    "fetch_status": "ok",
-                    "fetch_error": "",
-                    "content_hash": "h",
-                }
-            ],
-            schema=wikipedia_document_schema(),
-        ),
-        path,
-    )
-
-
-def _seed_legacy(path: Path, polygon_id: str, qid: str, page_id: int = 1) -> None:
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist(
-            [
-                {
-                    "polygon_id": polygon_id,
-                    "article_id": f"{qid}:en:{page_id}:1",
-                    "wikidata": qid,
-                    "language": "en",
-                    "source_pbf": "test.osm.pbf",
-                    "region": "r",
-                    "osm_type": "way",
-                    "osm_id": 1,
-                    "page_id": page_id,
-                    "revision_id": 1,
-                    "is_best_language": True,
-                }
-            ],
-            schema=polygon_article_schema(),
-        ),
-        path,
-    )
-
+from tests.migration._builders import (
+    write_legacy_polygon_article,
+    write_polygon_qid_membership,
+    write_wikipedia_document,
+)
 
 # ---------------------------------------------------------------------------
 # 1. Per-polygon QID membership: reject if the document's QID is not
@@ -131,7 +66,9 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
         ),
         processed / "polygons" / "alpha-latest.parquet",
     )
-    _seed_legacy(processed / "polygon_articles" / "alpha-latest.parquet", "p1", "Q2")
+    write_legacy_polygon_article(
+        processed / "polygon_articles" / "alpha-latest.parquet", "p1", "Q2"
+    )
     links_path = processed / "polygon_articles" / "alpha-latest.parquet"
     legacy_rows = pq.read_table(links_path).to_pylist()
     second_legacy_row = {
@@ -146,14 +83,7 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
         ),
         links_path,
     )
-    _seed_wiki_doc(
-        processed / "wikipedia" / "documents" / "alpha-latest.parquet",
-        "Q2:wikipedia:en:1:1",
-        "Q2",
-    )
-    from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-        wikipedia_document_schema,
-    )
+    write_wikipedia_document(processed / "wikipedia" / "documents" / "alpha-latest.parquet", "Q2")
 
     documents_path = processed / "wikipedia" / "documents" / "alpha-latest.parquet"
     document_rows = pq.read_table(documents_path).to_pylist()
@@ -270,11 +200,7 @@ def test_conflicting_duplicate_legacy_rows_block_migration_contract(tmp_path: Pa
         ),
         processed / "polygon_articles" / "alpha-latest.parquet",
     )
-    _seed_wiki_doc(
-        processed / "wikipedia" / "documents" / "alpha-latest.parquet",
-        "Q1:wikipedia:en:1:1",
-        "Q1",
-    )
+    write_wikipedia_document(processed / "wikipedia" / "documents" / "alpha-latest.parquet", "Q1")
     (processed / "manifests" / "processed_pbfs.json").write_text(
         '{"test.osm.pbf": {"source_pbf": "test.osm.pbf"}}'
     )
@@ -366,11 +292,7 @@ def test_byte_identical_duplicate_legacy_rows_collapse(tmp_path: Path) -> None:
         ),
         processed / "polygon_articles" / "alpha-latest.parquet",
     )
-    _seed_wiki_doc(
-        processed / "wikipedia" / "documents" / "alpha-latest.parquet",
-        "Q1:wikipedia:en:1:1",
-        "Q1",
-    )
+    write_wikipedia_document(processed / "wikipedia" / "documents" / "alpha-latest.parquet", "Q1")
     (processed / "manifests" / "processed_pbfs.json").write_text(
         '{"test.osm.pbf": {"source_pbf": "test.osm.pbf"}}'
     )

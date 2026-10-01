@@ -28,6 +28,9 @@ from typing import Any, Protocol, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.augmentation._wikivoyage_membership import (
+    partition_wikivoyage_documents,
+)
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     SECTION_COLUMNS,
@@ -323,27 +326,20 @@ def _retain_documents(
     valid_qids: set[str],
     rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], set[str], list[RejectionRecord]]:
-    retained: list[dict[str, Any]] = []
-    rejected_ids: set[str] = set()
-    rejections: list[RejectionRecord] = []
-    for row in rows:
-        document_id = str(row.get("document_id", ""))
-        wikidata = str(row.get("wikidata", ""))
-        if wikidata in valid_qids:
-            retained.append({col: row.get(col) for col in DOCUMENT_COLUMNS})
-        else:
-            rejected_ids.add(document_id)
-            rejections.append(
-                RejectionRecord(
-                    shard=stem,
-                    source_table="wikivoyage_documents",
-                    identifier=document_id,
-                    wikidata=wikidata,
-                    expected=None,
-                    reason="wikidata_absent_from_polygons",
-                )
-            )
-    return retained, rejected_ids, rejections
+    partition = partition_wikivoyage_documents(rows, valid_qids)
+    rejected_ids = {rejection.document_id for rejection in partition.rejected_documents}
+    rejections = [
+        RejectionRecord(
+            shard=stem,
+            source_table="wikivoyage_documents",
+            identifier=rejection.document_id,
+            wikidata=rejection.wikidata,
+            expected=None,
+            reason="wikidata_absent_from_polygons",
+        )
+        for rejection in partition.rejected_documents
+    ]
+    return partition.retained_rows, rejected_ids, rejections
 
 
 def _retain_sections(
