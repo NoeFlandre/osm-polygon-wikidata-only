@@ -21,9 +21,8 @@ from __future__ import annotations
 import argparse
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -39,6 +38,14 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     language_table_specs,
     partition_row_indices,
 )
+from osm_polygon_wikidata_only.hf.v1_language_split_writer import (
+    BufferedWriter,
+    V1LanguageSplitError,
+    buffer_rows,
+    close_writers,
+    new_parquet_writer,
+    validate_staged_schema,
+)
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
@@ -53,14 +60,6 @@ V1_LANGUAGE_SPLIT_MANIFEST = "manifests/language_splits_v1.json"
 V1_LANGUAGE_DATA_DIR = "data"
 V1_LANGUAGE_FILE_SUFFIX = "-00000-of-00001.parquet"
 DEFAULT_BATCH_SIZE = 65_536
-_PARQUET_COMPRESSION = "snappy"
-# One shard is written once it holds this many bytes, turning a burst of tiny
-# per-language writes into a single sequential one.
-_SHARD_FLUSH_BYTES = 16 * 1024 * 1024
-
-
-class V1LanguageSplitError(ValueError):
-    """Raised when a V1 partition release cannot be completed safely."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +270,7 @@ def _partition_table_sources(
     batch_size: int,
 ) -> tuple[int, dict[str, Path], dict[str, int]]:
     staged_paths: dict[str, Path] = {}
-    writers: dict[str, Any] = {}
+    writers: dict[str, BufferedWriter] = {}
     written_counts: dict[str, int] = {}
     observed_rows = 0
     try:
@@ -287,7 +286,7 @@ def _partition_table_sources(
                 written_counts,
             )
     finally:
-        _close_writers(writers)
+        close_writers(writers)
     return observed_rows, staged_paths, written_counts
 
 
@@ -336,7 +335,7 @@ def _build_staged_partitions(
     results: list[_StagedPartition] = []
     for language in sorted(written_counts):
         staged_path = staged_paths[language]
-        _validate_staged_schema(staged_path, schema, spec.table.value, language)
+        validate_staged_schema(staged_path, schema, spec.table.value, language)
         split = f"lang-{language}"
         final_path = release_root / _relative_partition_path(spec.configuration, split)
         results.append(
@@ -362,7 +361,7 @@ def _stream_source_file(
     schema: pa.Schema,
     stage_root: Path,
     batch_size: int,
-    writers: dict[str, Any],
+    writers: dict[str, BufferedWriter],
     staged_paths: dict[str, Path],
     written_counts: dict[str, int],
 ) -> int:
@@ -402,7 +401,7 @@ def _stream_batches(
     schema: pa.Schema,
     batch_size: int,
     stage_root: Path,
-    writers: dict[str, Any],
+    writers: dict[str, BufferedWriter],
     staged_paths: dict[str, Path],
     written_counts: dict[str, int],
 ) -> int:
@@ -425,7 +424,7 @@ def _stream_batch(
     spec: LanguageTableSpec,
     schema: pa.Schema,
     stage_root: Path,
-    writers: dict[str, Any],
+    writers: dict[str, BufferedWriter],
     staged_paths: dict[str, Path],
     written_counts: dict[str, int],
 ) -> int:
@@ -443,7 +442,7 @@ def _stream_batch(
             staged_paths,
         )
         indices = groups[language]
-        _buffer_rows(writer, batch.take(indices))
+        buffer_rows(writer, batch.take(indices))
         written_counts[language] = written_counts.get(language, 0) + len(indices)
     return batch.num_rows
 
@@ -453,93 +452,18 @@ def _writer_for_language(
     spec: LanguageTableSpec,
     schema: pa.Schema,
     stage_root: Path,
-    writers: dict[str, Any],
+    writers: dict[str, BufferedWriter],
     staged_paths: dict[str, Path],
-) -> Any:
+) -> BufferedWriter:
     writer = writers.get(language)
     if writer is not None:
         return writer
     staged_path = stage_root / _relative_partition_path(spec.configuration, f"lang-{language}")
     staged_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = _BufferedWriter(_new_writer(staged_path, schema))
+    writer = BufferedWriter(new_parquet_writer(staged_path, schema))
     writers[language] = writer
     staged_paths[language] = staged_path
     return writer
-
-
-@dataclass(slots=True)
-class _BufferedWriter:
-    """Hold batches until one shard has enough rows to justify a seek.
-
-    A source batch fans out across every language it mentions, so writing each
-    slice straight through produced one tiny row group per language per batch,
-    interleaved across hundreds of open files. That is seek-bound on an
-    external drive.
-    """
-
-    writer: Any
-    pending: list[pa.RecordBatch] = field(default_factory=list)
-    pending_bytes: int = 0
-
-    def flush(self) -> None:
-        """Write the buffered batches as a single row group."""
-        if not self.pending:
-            return
-        self.writer.write_table(pa.Table.from_batches(self.pending))
-        self.pending = []
-        self.pending_bytes = 0
-
-    def close(self) -> None:
-        """Flush anything buffered, then close the underlying writer."""
-        self.flush()
-        self.writer.close()
-
-
-def _buffer_rows(writer: _BufferedWriter, rows: pa.RecordBatch) -> None:
-    """Buffer ``rows``, writing once the shard is worth a seek."""
-    writer.pending.append(rows)
-    writer.pending_bytes += rows.nbytes
-    if writer.pending_bytes >= _SHARD_FLUSH_BYTES:
-        writer.flush()
-
-
-def _new_writer(path: Path, schema: pa.Schema) -> Any:
-    return pq.ParquetWriter(
-        str(path),
-        schema,
-        compression=_PARQUET_COMPRESSION,
-        version="2.6",
-        data_page_version="1.0",
-        use_dictionary=True,
-        write_statistics=True,
-    )
-
-
-def _close_writers(writers: dict[str, Any]) -> None:
-    for language in sorted(writers):
-        writers[language].close()
-
-
-def _validate_staged_schema(
-    path: Path,
-    schema: pa.Schema,
-    table: str,
-    language: str,
-) -> None:
-    actual = _read_staged_schema(path)
-    if not actual.equals(schema, check_metadata=True):
-        raise V1LanguageSplitError(
-            f"generated {table} {language} artifact has a schema mismatch: {path}"
-        )
-
-
-def _read_staged_schema(path: Path) -> pa.Schema:
-    try:
-        return pq.read_schema(path)
-    except Exception as error:
-        raise V1LanguageSplitError(
-            f"Could not validate generated artifact {path}: {error}"
-        ) from error
 
 
 def _relative_partition_path(configuration: str, split: str) -> Path:

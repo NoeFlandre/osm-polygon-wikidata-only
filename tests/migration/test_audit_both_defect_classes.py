@@ -219,51 +219,58 @@ def test_invalid_wikivoyage_relationships_are_rejected(tmp_path: Path) -> None:
         (processed / sub).mkdir(parents=True, exist_ok=True)
     write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
     # No wikipedia document needed for the wikivoyage defect class.
-    # Skip writing wikipedia documents.
     _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")
+    _seed_wiki_docs(processed, stem, "Q1", 1)
     _seed_minimal_sidecars(processed, stem)
 
     # Add an invalid wikivoyage document (Q99 not in polygons).
     from osm_polygon_wikidata_only.augmentation.schema import document_schema
 
+    invalid_document = {
+        "document_id": "Q99:wikivoyage:en:2:1",
+        "article_id": "Q99:en:2:1",
+        "wikidata": "Q99",
+        "project": "wikivoyage",
+        "language": "en",
+        "site": "enwikivoyage",
+        "title": "T",
+        "url": "https://en.wikivoyage.org/wiki/T",
+        "page_id": 2,
+        "revision_id": 1,
+        "revision_timestamp": "2026-07-24T00:00:00Z",
+        "retrieved_at": "2026-07-24T00:00:00Z",
+        "wikidata_label": "L",
+        "wikidata_description": "D",
+        "wikidata_aliases": "",
+        "lead_text": "",
+        "extract": "",
+        "full_text": "",
+        "full_text_format": "plain_text",
+        "article_length_chars": 0,
+        "article_length_words": 0,
+        "article_length_tokens_estimate": 0,
+        "thumbnail_url": "",
+        "thumbnail_width": None,
+        "thumbnail_height": None,
+        "categories": "",
+        "license": "CC-BY-SA",
+        "attribution": "A",
+        "source_api": "mediawiki_action_api",
+        "fetch_status": "ok",
+        "fetch_error": "",
+        "content_hash": "h",
+    }
+    valid_document = {
+        **invalid_document,
+        "document_id": "Q1:wikivoyage:en:1:1",
+        "article_id": "Q1:en:1:1",
+        "wikidata": "Q1",
+        "page_id": 1,
+        "url": "https://en.wikivoyage.org/wiki/Valid",
+    }
     pq.write_table(  # type: ignore[no-untyped-call]
         pa.Table.from_pylist(
-            [
-                {
-                    "document_id": "Q99:wikivoyage:en:1:1",
-                    "article_id": "Q99:en:1:1",
-                    "wikidata": "Q99",
-                    "project": "wikivoyage",
-                    "language": "en",
-                    "site": "enwikivoyage",
-                    "title": "T",
-                    "url": "https://en.wikivoyage.org/wiki/T",
-                    "page_id": 1,
-                    "revision_id": 1,
-                    "revision_timestamp": "2026-07-24T00:00:00Z",
-                    "retrieved_at": "2026-07-24T00:00:00Z",
-                    "wikidata_label": "L",
-                    "wikidata_description": "D",
-                    "wikidata_aliases": "",
-                    "lead_text": "",
-                    "extract": "",
-                    "full_text": "",
-                    "full_text_format": "plain_text",
-                    "article_length_chars": 0,
-                    "article_length_words": 0,
-                    "article_length_tokens_estimate": 0,
-                    "thumbnail_url": "",
-                    "thumbnail_width": None,
-                    "thumbnail_height": None,
-                    "categories": "",
-                    "license": "CC-BY-SA",
-                    "attribution": "A",
-                    "source_api": "mediawiki_action_api",
-                    "fetch_status": "ok",
-                    "fetch_error": "",
-                    "content_hash": "h",
-                }
-            ],
+            [valid_document, invalid_document],
             schema=document_schema(),
         ),
         processed / "wikivoyage" / "documents" / f"{stem}.parquet",
@@ -279,3 +286,23 @@ def test_invalid_wikivoyage_relationships_are_rejected(tmp_path: Path) -> None:
     assert wikivoyage_rejections, (
         f"Invalid Wikivoyage relationships must be rejected; got {plan.rejections}"
     )
+
+    lm.apply_link_migration(processed)
+
+    normalized_documents = pq.read_table(
+        processed / "wikivoyage" / "documents" / f"{stem}.parquet"
+    ).to_pylist()
+    assert [row["document_id"] for row in normalized_documents] == ["Q1:wikivoyage:en:1:1"]
+    canonical_links = pq.read_table(processed / "polygon_articles" / f"{stem}.parquet").to_pylist()
+    assert ("p1", "Q1:wikivoyage:en:1:1") in {
+        (row["polygon_id"], row["document_id"]) for row in canonical_links
+    }
+    assert all(row["document_id"] != "Q99:wikivoyage:en:2:1" for row in canonical_links)
+    assert not (processed / ".link_migration_staging" / stem).exists()
+    ledger = json.loads((processed / "integrity" / "rejection_ledger.json").read_text())
+    voyage_records = [
+        record for record in ledger["records"] if record["source_table"] == "wikivoyage_documents"
+    ]
+    assert len(voyage_records) == 1
+    assert voyage_records[0]["identifier"] == "Q99:wikivoyage:en:2:1"
+    assert voyage_records[0]["wikidata"] == "Q99"

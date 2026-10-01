@@ -102,7 +102,7 @@
       "_run_worker": 1
     },
     "migration/test_wikipedia_document_backfill.py": {
-      "_file_content_hash": 5,
+      "_file_content_hash": 3,
       "_read_article_table": 3
     },
     "pipeline/test_wikidata_recovery_repair_fetch.py": {

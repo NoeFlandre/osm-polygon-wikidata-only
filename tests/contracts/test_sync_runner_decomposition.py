@@ -59,6 +59,21 @@ from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
 from tests.helpers import ensured_data_root
 
 
+class _SinglePolygonPbfReader:
+    """Supply one deterministic polygon to CLI-shell integration tests."""
+
+    def __init__(self, pbf_path: Path) -> None:
+        self.pbf_path = pbf_path
+
+    def iter_polygon_candidates(self, add_candidate: Callable[[PolygonCandidate], None]) -> None:
+        coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
+        geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
+        add_candidate(("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json))
+
+    def collect_polygon_candidates(self) -> list[PolygonCandidate]:
+        return []
+
+
 def _empty_recovery_audit(*args: object, **kwargs: object) -> RecoveryAuditResult:
     del kwargs
     stems = args[1] if len(args) > 1 else ()
@@ -591,23 +606,7 @@ def test_cli_shell_forwards_runtime_cache_to_process_extracted_pbf(
     )
     (tmp_path / "real.osm.pbf").write_bytes(b"")
 
-    class _StubReader:
-        def __init__(self, pbf_path: Path) -> None:
-            self.pbf_path = pbf_path
-
-        def iter_polygon_candidates(
-            self, add_candidate: Callable[[PolygonCandidate], None]
-        ) -> None:
-            coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
-            geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
-            add_candidate(
-                ("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json)
-            )
-
-        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
-            return []
-
-    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _SinglePolygonPbfReader)
     monkeypatch.setattr(manifest_mod, "load_manifest", lambda p: {})
 
     from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
@@ -686,23 +685,7 @@ def test_cli_shell_forwards_none_runtime_cache_when_disabled(
     )
     (tmp_path / "real.osm.pbf").write_bytes(b"")
 
-    class _StubReader:
-        def __init__(self, pbf_path: Path) -> None:
-            self.pbf_path = pbf_path
-
-        def iter_polygon_candidates(
-            self, add_candidate: Callable[[PolygonCandidate], None]
-        ) -> None:
-            coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
-            geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
-            add_candidate(
-                ("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json)
-            )
-
-        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
-            return []
-
-    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _SinglePolygonPbfReader)
     monkeypatch.setattr(manifest_mod, "load_manifest", lambda p: {})
 
     from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
@@ -786,24 +769,7 @@ def test_cli_shell_real_process_state_executes_without_type_error(
     )
     (tmp_path / "real.osm.pbf").write_bytes(b"")
 
-    class _StubReader:
-        def __init__(self, pbf_path: Path) -> None:
-            self.pbf_path = pbf_path
-
-        def iter_polygon_candidates(
-            self, add_candidate: Callable[[PolygonCandidate], None]
-        ) -> None:
-            # Real polygon candidate the production extractor can parse.
-            coords = [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]
-            geom_json = '{"type": "Polygon", "coordinates": ' + str(coords) + "}"
-            add_candidate(
-                ("way", 1, {"wikidata": "Q1", "name": "X", "landuse": "forest"}, geom_json)
-            )
-
-        def collect_polygon_candidates(self) -> list[PolygonCandidate]:
-            return []
-
-    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _StubReader)
+    monkeypatch.setattr(pbf_reader_mod, "PBFReader", _SinglePolygonPbfReader)
     monkeypatch.setattr(manifest_mod, "load_manifest", lambda p: {})
 
     # InMemory clients and cache — no network, no real HF.

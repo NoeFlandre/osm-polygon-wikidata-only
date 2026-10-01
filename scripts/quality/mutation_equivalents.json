@@ -1,4 +1,14 @@
 {
+  "osm_polygon_wikidata_only.augmentation._wikipedia_document_migration.planning.x__shared_comparison_inputs__mutmut_21": {
+    "mutant_sha256": "b220351f5e5e2793e69eda81b4b89eb462c26237dd2d0c8c78027bd82fa98dfe",
+    "reason": "The changed exclusion lets select_cols include document_id before appending it again. _validate_shared_identities has already established equal identity sets; Arrow preserves the duplicate column and to_pylist collapses the identical key, leaving the same comparison rows.",
+    "source_sha256": "bbcb23935876d8a3ab1acc558e4047298b74e32119fa5e90128a7f572657343d"
+  },
+  "osm_polygon_wikidata_only.augmentation._wikipedia_document_migration.planning.x__shared_comparison_inputs__mutmut_22": {
+    "mutant_sha256": "b0ed6c91c5773e1ca26e6c35b5fa68e6045f033d85af0e9c2bd05198a2d24146",
+    "reason": "The changed exclusion lets select_cols include document_id before appending it again. _validate_shared_identities has already established equal identity sets; Arrow preserves the duplicate column and to_pylist collapses the identical key, leaving the same comparison rows.",
+    "source_sha256": "bbcb23935876d8a3ab1acc558e4047298b74e32119fa5e90128a7f572657343d"
+  },
   "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_16": {
     "mutant_sha256": "606bfeddebd7d6aa169a001e21c2217d3c1078c969cde40d141db83adb10d311",
     "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
@@ -14,35 +24,30 @@
     "reason": "Omitting logger from SyncApplicationServices uses its default LOGGER; this module obtains the same named logging.Logger singleton, so the constructed service object is unchanged.",
     "source_sha256": "0b23fc4cf4b85f7fd3e40000202d09c5f47104e4793b9403ef7504e2d438c3a8"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__area_and_centroid_for_geom__mutmut_29": {
-    "mutant_sha256": "431cf2281233face08871c63b8e333b17e9d8868ccc2b7cf73dd77bc498d8972",
-    "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected before a result can expose the denominator.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_10": {
+    "mutant_sha256": "ed1846f9572e7c1b52eb5f96b3aecd45dd6e866cc09f3a3921cfed0ff890544b",
+    "reason": "For GeoJSON linear rings the closing coordinate is repeated and a valid ring has at least four entries, so the outer ring has at least three distinct vertices. max(1, count) and max(2, count) are then equal. Shorter rings are rejected by _ring_signed_area_and_centroid before the computed reference point can escape.",
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_12": {
-    "mutant_sha256": "35753dd003c7db7e100d51e7ff784fcec5dff2301025c0b2aabdedd8184acb06",
-    "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected by ring validation.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
-  },
-  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_22": {
-    "mutant_sha256": "209d2fe7d7bb37c11cc7a472789b9882197e2e0ff14773a12fd2534f5cbadfb9",
-    "reason": "For valid GeoJSON latitudes in [-90, 90], cosine is nonnegative. At the exact positive floor, both comparison branches return 1e-12, so changing >= to > cannot change the projection factor.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_26": {
+    "mutant_sha256": "a4ca89f3645818d2c1489c39101fc92499d74a0eabde17984010afc4b3c9ce1f",
+    "reason": "For valid GeoJSON latitudes in [-90, 90], cos(latitude) is nonnegative. At the exact positive 1e-12 floor, both >= and > branches return the same value, so the changed comparison cannot alter the projection factor.",
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_14": {
     "mutant_sha256": "e9bfdcc5c2a25e82716b351e0d09c1eca2d0e10bbef5221855b7d6a1b53572d7",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; ensure_ascii=True serializes identically.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_2": {
     "mutant_sha256": "d3a9c473a9ba2a18b011f8dd729135a9d3d8961a0e138f740ea5c0672911602b",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; ensure_ascii=None therefore serializes identically.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_5": {
     "mutant_sha256": "fc11e5c80ada2535080c675ba92aa951dd2575726a2bbd62e33308a526798802",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; the json default ensure_ascii=True serializes identically.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.ids.x_content_hash__mutmut_4": {
     "mutant_sha256": "1c2e8b4532c957b2b8ed20a9ce08ecb4602505a20c117fc8d30cc9aee7494bd9",

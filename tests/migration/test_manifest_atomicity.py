@@ -132,3 +132,33 @@ def test_stem_classified_current_only_after_all_writes(tmp_path: Path) -> None:
     assert augmentation_is_current(dr, stem), (
         "After apply completes, stem must be classified current"
     )
+
+
+def test_apply_loads_expected_shard_paths_and_uses_its_journal(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    seed_processed_migration_stem(processed, stem, region="alpha")
+    plan = link_migration.plan_link_migration(processed, stems={stem})
+    journal_path = processed / ".link_migration_journal" / stem / "journal.json"
+    captured: list[Path] = []
+    journal_stems: list[str] = []
+
+    def capture(_index: int, target: Path) -> None:
+        captured.append(target)
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal_stems.append(journal["stem"])
+        assert journal["phase"] == "prepared"
+
+    link_migration.apply_link_migration(processed, plan=plan, _crash_hook=capture)
+
+    assert set(captured) == {
+        processed / "polygon_articles" / f"{stem}.parquet",
+        processed / "integrity" / "rejection_ledger.json",
+        processed / "manifests" / "processed_pbfs.json",
+        processed / "augmentation" / "manifests" / "augmentation_manifest.json",
+        processed / "manifests" / "pending_migration_publications.json",
+    }
+    assert journal_stems == [stem] * len(captured)
+    assert not journal_path.exists()
