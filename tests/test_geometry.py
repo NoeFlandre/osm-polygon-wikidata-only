@@ -83,9 +83,7 @@ def test_geometry_helpers_keep_the_zero_origin_default() -> None:
     assert _ring_signed_area_and_centroid(ring, 1.0) == _ring_signed_area_and_centroid(
         ring, 1.0, origin_lon=0.0, origin_lat=0.0
     )
-    assert _ring_moments([ring], 1.0) == _ring_moments(
-        [ring], 1.0, origin_lon=0.0, origin_lat=0.0
-    )
+    assert _ring_moments([ring], 1.0) == _ring_moments([ring], 1.0, origin_lon=0.0, origin_lat=0.0)
     assert _centroid_from_moments(1.0, 6.0, 12.0, 1.0) == _centroid_from_moments(
         1.0, 6.0, 12.0, 1.0, origin_lon=0.0, origin_lat=0.0
     )
