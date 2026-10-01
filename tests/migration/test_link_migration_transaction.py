@@ -21,6 +21,7 @@ Two-phase testing:
 
 from __future__ import annotations
 
+import codecs
 import json
 import os
 from pathlib import Path
@@ -107,6 +108,25 @@ def test_ordered_replacements_applies_json_manifests_last(tmp_path: Path) -> Non
     assert seen_targets == [data_target, manifest_target]
     assert data_target.read_text() == "NEW"
     assert manifest_target.read_text() == '{"new": 1}'
+
+
+def test_replacement_order_uses_target_paths_not_staged_paths(tmp_path: Path) -> None:
+    target_a, staged_z = _make_text_pair(tmp_path, "target-a.parquet", "old-a", "new-a")
+    target_b, staged_a = _make_text_pair(tmp_path, "target-b.parquet", "old-b", "new-b")
+    staged_z = staged_z.with_name("z-staged.parquet")
+    staged_a = staged_a.with_name("a-staged.parquet")
+    staged_z.write_text("new-a")
+    staged_a.write_text("new-b")
+    seen: list[Path] = []
+
+    transaction_module.commit_ordered_replacements(
+        tmp_path / "txn",
+        "alpha",
+        [(target_b, staged_a), (target_a, staged_z)],
+        _crash_hook=lambda _index, target: seen.append(target),
+    )
+
+    assert seen == [target_a, target_b]
 
 
 def test_apply_replacements_helper_preserves_transaction_boundary(tmp_path: Path) -> None:
@@ -270,11 +290,88 @@ def test_file_content_hash_uses_an_empty_sentinel_for_missing_files(tmp_path: Pa
 def test_ordered_replacements_rejects_duplicate_targets(tmp_path: Path) -> None:
     """The helper must reject duplicate targets in the input list."""
     target, staged = _make_text_pair(tmp_path, "target.txt", "old", "new")
-    with pytest.raises(ValueError, match="contains duplicate targets"):
+    with pytest.raises(ValueError, match="contains duplicate targets") as error:
         link_migration.apply_link_migration(
             tmp_path,
             replacements=[(target, staged), (target, staged)],
         )
+    assert str(error.value) == "Link migration transaction contains duplicate targets"
+
+
+def test_first_replacement_failure_rolls_back_and_marks_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, staged = _make_text_pair(tmp_path, "target.txt", "old", "new")
+    journal_payloads = _capture_journal_writes(monkeypatch)
+
+    def fail_after_first_write(_index: int, _target: Path) -> None:
+        raise RuntimeError("first replacement interrupted")
+
+    with pytest.raises(RuntimeError, match="first replacement interrupted"):
+        link_migration.apply_link_migration(
+            tmp_path,
+            replacements=[(target, staged)],
+            _crash_hook=fail_after_first_write,
+        )
+
+    assert target.read_text() == "old"
+    assert [payload["phase"] for payload in journal_payloads] == ["prepared", "rolled_back"]
+    assert not (tmp_path / ".link_migration_journal" / "journal.json").exists()
+
+
+def test_recovery_with_missing_entries_defaults_to_empty_list(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "transaction"
+    journal_dir.mkdir()
+    journal = journal_dir / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "contract_version": transaction_module.TRANSACTION_VERSION,
+                "stem": "alpha",
+                "phase": "prepared",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transaction_module._recover_directory(journal_dir, "alpha")
+
+    assert not journal.exists()
+
+
+def test_recovery_journal_reader_requests_utf8_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "contract_version": transaction_module.TRANSACTION_VERSION,
+                "stem": "alpha",
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+    encodings: list[str | None] = []
+
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        encodings.append(encoding)
+        return original_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert transaction_module._load_recovery_journal(journal, "alpha")["entries"] == []
+    assert len(encodings) == 1
+    assert encodings[0] is not None
+    assert codecs.lookup(encodings[0]).name == "utf-8"
 
 
 def test_ordered_replacements_idempotent_second_run_preserves_mtime_and_hash(
@@ -356,6 +453,7 @@ def test_new_targets_have_no_backup_in_the_prepared_journal(
             "staged_hash": _sha256(target),
         }
     ]
+    assert journal_payloads[-1]["phase"] == "committed"
 
 
 def test_recovery_journal_rejects_wrong_version_and_stem(

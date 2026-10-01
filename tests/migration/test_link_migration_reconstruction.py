@@ -25,6 +25,29 @@ def test_reconstruct_missing_manifest_requires_one_polygon_region(tmp_path: Path
         new_processed_entry(inputs, "region-latest.osm.pbf")
 
 
+@pytest.mark.parametrize(
+    "polygon_row",
+    [
+        {"unused": "region column absent"},
+        {"region": None},
+        {"region": ""},
+    ],
+)
+def test_reconstruct_missing_manifest_rejects_an_empty_or_absent_region(
+    polygon_row: dict[str, str | None],
+) -> None:
+    inputs = cast(
+        StemApplyInputs,
+        SimpleNamespace(
+            polygons_table=pa.Table.from_pylist([polygon_row]),
+            stem_plan=SimpleNamespace(stem="region-latest"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="polygon region is not unique"):
+        new_processed_entry(inputs, "region-latest.osm.pbf")
+
+
 def test_reconstruct_missing_manifest_preserves_the_processed_manifest_contract() -> None:
     inputs = cast(
         StemApplyInputs,
