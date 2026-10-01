@@ -167,12 +167,20 @@ def _validate_batch_size(batch_size: int) -> None:
 
 
 def _selected_versions(dataset_version: str) -> tuple[LanguageSplitVersion, ...]:
+    try:
+        return select_language_split_versions(dataset_version)
+    except ValueError as error:
+        raise LanguageSplitReleaseError(str(error)) from error
+
+
+def select_language_split_versions(dataset_version: str) -> tuple[LanguageSplitVersion, ...]:
+    """Resolve one version selector, with a stable error for shared callers."""
     if dataset_version == "both":
         return (LanguageSplitVersion.V1, LanguageSplitVersion.V2)
     try:
         return (LanguageSplitVersion(dataset_version),)
     except ValueError as error:
-        raise LanguageSplitReleaseError(
+        raise ValueError(
             f"dataset_version must be one of v1, v2, both; got {dataset_version!r}"
         ) from error
 

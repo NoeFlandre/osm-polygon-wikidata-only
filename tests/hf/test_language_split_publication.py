@@ -15,6 +15,10 @@ import yaml
 import osm_polygon_wikidata_only.cli.commands as commands
 from osm_polygon_wikidata_only.cli.parser import build_parser
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf import language_split_remote
+from osm_polygon_wikidata_only.hf._publication.language_card import (
+    merge_language_card as _merge_language_card,
+)
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.language_split_publication import (
     MAX_ATOMIC_PUBLICATION_FILES,
@@ -23,25 +27,26 @@ from osm_polygon_wikidata_only.hf.language_split_publication import (
     LanguagePublicationReport,
     LanguagePublicationResult,
     LanguagePublishedFile,
-    _git_blob_sha1,
-    _manifest_owned_paths,
-    _merge_language_card,
     _plan_from_version_plan,
     _publish_one_version,
-    _remote_card,
-    _remote_entries,
-    _remote_files,
-    _remote_matches,
     _remote_path_for_local,
-    _remote_revision,
-    _verify_remote_release,
     plan_language_split_publication,
     run_language_split_publication,
 )
 from osm_polygon_wikidata_only.hf.language_split_publication import (
     _selected_versions as _selected_publication_versions,
 )
+from osm_polygon_wikidata_only.hf.language_split_publication_models import _git_blob_sha1
 from osm_polygon_wikidata_only.hf.language_split_release import LanguageSplitVersion
+from osm_polygon_wikidata_only.hf.language_split_remote import (
+    _manifest_owned_paths,
+    _remote_card,
+    _remote_entries,
+    _remote_files,
+    _remote_matches,
+    _remote_revision,
+    _verify_remote_release,
+)
 from osm_polygon_wikidata_only.hf.language_splits import DatasetContract
 
 V1_REPO = "NoeFlandre/osm-polygon-wikidata-only"
@@ -110,18 +115,16 @@ def test_publication_path_and_version_helpers_reject_invalid_inputs(tmp_path: Pa
 
 
 def test_remote_revision_requires_a_nonempty_pinned_sha(monkeypatch: pytest.MonkeyPatch) -> None:
-    from osm_polygon_wikidata_only.hf import language_split_publication
-
-    monkeypatch.setattr(language_split_publication, "read_repo_sha", lambda *_args: "revision")
+    monkeypatch.setattr(language_split_remote, "read_repo_sha", lambda *_args: "revision")
     assert cast(Any, _remote_revision)(object(), V1_REPO) == "revision"
-    monkeypatch.setattr(language_split_publication, "read_repo_sha", lambda *_args: "")
+    monkeypatch.setattr(language_split_remote, "read_repo_sha", lambda *_args: "")
     with pytest.raises(LanguagePublicationError, match="revision unavailable"):
         cast(Any, _remote_revision)(object(), V1_REPO)
 
     def fail(*_args: object) -> str:
         raise RuntimeError("offline")
 
-    monkeypatch.setattr(language_split_publication, "read_repo_sha", fail)
+    monkeypatch.setattr(language_split_remote, "read_repo_sha", fail)
     with pytest.raises(LanguagePublicationError, match="could not read remote revision"):
         cast(Any, _remote_revision)(object(), V1_REPO)
 
@@ -129,12 +132,8 @@ def test_remote_revision_requires_a_nonempty_pinned_sha(monkeypatch: pytest.Monk
 def test_remote_card_handles_missing_and_invalid_utf8_readme(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from osm_polygon_wikidata_only.hf import language_split_publication
-
     assert cast(Any, _remote_card)(object(), V1_REPO, "rev", set(), tmp_path) == f"# {V1_REPO}\n"
-    monkeypatch.setattr(
-        language_split_publication, "_remote_bytes", lambda *_args, **_kwargs: b"\xff"
-    )
+    monkeypatch.setattr(language_split_remote, "_remote_bytes", lambda *_args, **_kwargs: b"\xff")
     with pytest.raises(LanguagePublicationError, match="not valid UTF-8"):
         cast(Any, _remote_card)(object(), V1_REPO, "rev", {"README.md"}, tmp_path)
 
@@ -589,7 +588,7 @@ def test_git_blob_sha1_is_computed_once_per_published_file(
         return expected
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._git_blob_sha1", counted
+        "osm_polygon_wikidata_only.hf.language_split_publication_models._git_blob_sha1", counted
     )
     remote = SimpleNamespace(size=local.size_bytes, lfs=None, blob_id=expected)
 
@@ -788,31 +787,31 @@ def test_empty_upload_result_is_verified_as_a_noop(
         lambda *args, **kwargs: plan,
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._remote_revision",
+        "osm_polygon_wikidata_only.hf.language_split_remote._remote_revision",
         lambda *args, **kwargs: next(revisions),
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._remote_files",
+        "osm_polygon_wikidata_only.hf.language_split_remote._remote_files",
         lambda *args, **kwargs: set(),
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._remote_bytes",
+        "osm_polygon_wikidata_only.hf.language_split_remote._remote_bytes",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._remote_card",
+        "osm_polygon_wikidata_only.hf.language_split_remote._remote_card",
         lambda *args, **kwargs: "# card\n",
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._write_card_snapshot",
+        "osm_polygon_wikidata_only.hf.language_split_remote._write_card_snapshot",
         lambda *args, **kwargs: readme,
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._remote_entries",
+        "osm_polygon_wikidata_only.hf.language_split_remote._remote_entries",
         lambda *args, **kwargs: {},
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._publication_operations",
+        "osm_polygon_wikidata_only.hf.language_split_remote._publication_operations",
         lambda *args, **kwargs: [delete_op("language_splits/old.parquet")],
     )
     monkeypatch.setattr(
@@ -820,7 +819,7 @@ def test_empty_upload_result_is_verified_as_a_noop(
         lambda *args, **kwargs: "",
     )
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.language_split_publication._verify_remote_release",
+        "osm_polygon_wikidata_only.hf.language_split_remote._verify_remote_release",
         lambda *args, **kwargs: verified_revisions.append(kwargs["revision"]),
     )
 

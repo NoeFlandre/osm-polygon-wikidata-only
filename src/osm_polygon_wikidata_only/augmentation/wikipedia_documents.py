@@ -30,42 +30,14 @@ from osm_polygon_wikidata_only.enrichment.wikidata.parsing import is_valid_qid
 # Schema
 # ---------------------------------------------------------------------------
 
-# Canonical 32-column layout: document_id and project inserted at positions
-# 0 and 3 respectively (after wikidata, before language), with all 30 article
-# columns preserved in their original ARTICLE_COLUMNS order.
+# Canonical 32-column layout: document_id and project inserted before the
+# remaining article columns, with ARTICLE_COLUMNS defining every inherited
+# field and its order.
 WIKIPEDIA_DOCUMENT_COLUMNS: tuple[str, ...] = (
     "document_id",
-    "article_id",
-    "wikidata",
+    *ARTICLE_COLUMNS[:2],
     "project",
-    "language",
-    "site",
-    "title",
-    "url",
-    "page_id",
-    "revision_id",
-    "revision_timestamp",
-    "retrieved_at",
-    "wikidata_label",
-    "wikidata_description",
-    "wikidata_aliases",
-    "lead_text",
-    "extract",
-    "full_text",
-    "full_text_format",
-    "article_length_chars",
-    "article_length_words",
-    "article_length_tokens_estimate",
-    "thumbnail_url",
-    "thumbnail_width",
-    "thumbnail_height",
-    "categories",
-    "license",
-    "attribution",
-    "source_api",
-    "fetch_status",
-    "fetch_error",
-    "content_hash",
+    *ARTICLE_COLUMNS[2:],
 )
 
 WIKIPEDIA_DOCUMENT_DESCRIPTIONS: dict[str, str] = {
