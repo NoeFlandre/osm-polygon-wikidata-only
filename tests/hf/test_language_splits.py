@@ -16,6 +16,20 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
+from osm_polygon_wikidata_only.hf.language_artifact_manifest import (
+    _manifest_entry,
+    _manifest_field_path,
+    _manifest_fields_for,
+    _manifest_references,
+    _read_manifest_payload,
+    _safe_manifest_relative_path,
+    _validate_manifest_location,
+    require_manifest_references,
+)
+from osm_polygon_wikidata_only.hf.language_inventory_models import (
+    _find_named_inventory,
+    _normalize_language_text,
+)
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
     LanguageDisposition,
@@ -26,18 +40,8 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     _ArtifactSpec,
     _BucketCounter,
     _collect_inventories,
-    _find_named_inventory,
     _increment_disposition,
     _inventory_for_spec,
-    _manifest_entry,
-    _manifest_field_path,
-    _manifest_fields_for,
-    _manifest_references,
-    _normalize_language_text,
-    _read_manifest_payload,
-    _require_manifest_references,
-    _safe_manifest_relative_path,
-    _validate_manifest_location,
     build_language_inventory,
     language_config_name,
     language_split_name,
@@ -205,14 +209,14 @@ def test_validate_manifest_location_enforces_root_and_directory(
 def test_require_manifest_references_accepts_complete_paths(tmp_path: Path) -> None:
     artifact = tmp_path / "polygons/fixture.parquet"
 
-    _require_manifest_references((artifact,), {artifact}, "polygons")
+    require_manifest_references((artifact,), {artifact}, "polygons")
 
 
 def test_require_manifest_references_rejects_unreferenced_paths(tmp_path: Path) -> None:
     artifact = tmp_path / "polygons/fixture.parquet"
 
     with pytest.raises(LanguageInventoryError, match="not referenced by the manifest"):
-        _require_manifest_references((artifact,), set(), "polygons")
+        require_manifest_references((artifact,), set(), "polygons")
 
 
 def test_read_manifest_payload_rejects_a_missing_file(tmp_path: Path) -> None:

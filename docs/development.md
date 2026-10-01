@@ -292,6 +292,50 @@ hashes and fails on any known vulnerability reported by `pip-audit --strict`;
 run it locally before bumping dependencies. The CodeQL workflow analyses the
 Python sources on pull requests, pushes to `main` and weekly.
 
+## Benchmarks and the slow-test budget
+
+`benchmarks/` is outside the default test run. It holds the micro-benchmarks for
+the per-polygon hot paths and the workload benchmarks in
+`benchmarks/test_workloads.py`, which build seeded synthetic inputs (see
+`benchmarks/_workloads.py`) and call only public functions:
+
+| Area | Benchmark input |
+|---|---|
+| Coverage map | `generate_coverage_map` with the land layer, 10,000 points |
+| Parquet staging | containment `_canonical_manifest_stats`, 200,000 polygon rows |
+| Language splits | `partition_row_indices` plus `take`, 1,000,000 rows, 50 languages |
+| Link migration | `plan_link_migration` and `apply_link_migration`, 100,000 links |
+| CLI startup | `--version` in a fresh interpreter |
+
+The containment and language-partitioning cases also assert a
+peak of the Arrow memory pool in a fresh process (50 MiB and 40 MiB; `tracemalloc` cannot see Arrow buffers), so a memory regression fails even when elapsed time
+barely moves.
+
+```bash
+just bench                      # run and print timings
+just bench-json bench.json      # write the pytest-benchmark JSON
+just bench-compare warn         # compare with benchmarks/baseline.json
+```
+
+`scripts/quality/bench_compare.py` flags a benchmark whose median is more than
+25% slower than `benchmarks/baseline.json`. The CI `benchmarks` job runs in
+`warn` mode, so regressions are reported without failing the build, and a
+missing baseline is reported without failing. The baseline must be recorded on
+the CI runner type, not on a developer machine. After one week of stable
+warn-only runs, set `BENCH_MODE` to `enforce` in `.github/workflows/ci.yml`.
+
+`just baseline` (the un-instrumented full run) also writes a JUnit report and
+`scripts/quality/slow_tests.py` fails it when any single test takes longer than
+3 seconds; the 20 slowest tests are printed on every run. The budget is not
+measured under coverage, which inflates durations several-fold. A test that
+legitimately needs longer is listed with its own limit in
+`scripts/quality/slow_test_budgets.json`. CI runners are about three times
+slower than a laptop, so tests that take about a second locally are listed there
+with 10 seconds of headroom.
+
+The CI job prints `bench.json` to its job summary; copy it from there into
+`benchmarks/baseline.json` to record the baseline.
+
 ## Test strength checks
 
 The normal gate already runs full-source CRAP and the scoped mutation gate.

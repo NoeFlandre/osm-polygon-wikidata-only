@@ -13,9 +13,7 @@
       "_load_augmentation_result": 1,
       "_log_process_results": 14,
       "_publish_augmentation": 1,
-      "_require_push_token": 1,
-      "_upload_metadata_refresh": 12,
-      "_verify_push_access": 1
+      "_upload_metadata_refresh": 12
     },
     "enrichment/test_enrichment.py": {
       "_http_get": 3
@@ -166,7 +164,6 @@
     "v2/test_v1_index.py": {
       "_INDEX_SHUTDOWN_TIMEOUT_S": 1,
       "_commit_indexed_row_group": 1,
-      "_count_distinct_documents": 2,
       "_initialize_schema": 1,
       "_log_row_group_stop": 1,
       "_open_connection": 2,

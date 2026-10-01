@@ -22,8 +22,10 @@ from osm_polygon_wikidata_only.grid5000.sentence_controller_policy import (
 )
 from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf._geographic.h3_geometry import _boundary_points
+from osm_polygon_wikidata_only.hf._publication.readme_snapshot import (
+    integrity_audit as _integrity_audit,
+)
 from osm_polygon_wikidata_only.hf.language_splits import LanguageTable, LanguageTableSpec
-from osm_polygon_wikidata_only.hf.publication import _integrity_audit
 from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemClassification,

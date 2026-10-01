@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from osm_polygon_wikidata_only.hf._dataset_stats import augmentation
+from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augmentation
 
 
 def test_section_row_metrics_count_non_empty_text_and_lengths() -> None:

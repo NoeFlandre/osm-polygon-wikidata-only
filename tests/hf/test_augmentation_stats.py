@@ -1050,7 +1050,7 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(
     spying on :func:`safe_table` calls. A reuse must, by definition, not
     touch any PyArrow table IO.
     """
-    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
+    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augscan
 
     processed = _setup_processed_dir(tmp_path)
     _seed_one_augmented_region(processed)
@@ -1058,14 +1058,14 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(
     cache_dir = tmp_path / "cache"
 
     # Cold refresh: many safe_table calls.
-    real_safe_table = augmod.safe_table
+    real_safe_table = augscan.safe_table
     call_log: list[Path] = []
 
     def spy_safe_table(path: Path, columns: Iterable[str]) -> pa.Table | None:
         call_log.append(Path(path))
         return real_safe_table(path, columns)
 
-    monkeypatch.setattr(augmod, "safe_table", spy_safe_table)
+    monkeypatch.setattr(augscan, "safe_table", spy_safe_table)
     first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     cold_calls = len(call_log)
     assert cold_calls > 0
@@ -1088,7 +1088,7 @@ def test_one_changed_file_rescans_only_that_file(
     file (and its fingerprint change), and only that file's
     :func:`safe_table` is invoked.
     """
-    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
+    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augscan
 
     processed = _setup_processed_dir(tmp_path)
     docs_path = _seed_one_augmented_region(processed)
@@ -1129,14 +1129,14 @@ def test_one_changed_file_rescans_only_that_file(
     )
     assert docs_path.stat().st_size > 0  # touched.
 
-    real_safe_table = augmod.safe_table
+    real_safe_table = augscan.safe_table
     call_log: list[Path] = []
 
     def spy_safe_table(path: Path, columns: Iterable[str]) -> pa.Table | None:
         call_log.append(Path(path))
         return real_safe_table(path, columns)
 
-    monkeypatch.setattr(augmod, "safe_table", spy_safe_table)
+    monkeypatch.setattr(augscan, "safe_table", spy_safe_table)
     third = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     # Only the changed file's table is read.
     assert len(call_log) == 1
@@ -1386,16 +1386,16 @@ def test_cache_load_rejects_missing_version_and_rebuilds(
     raw.pop("__contract_version__", None)
     cachemod.index_path(cache_dir).write_text(json.dumps(raw), encoding="utf-8")
 
-    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
+    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augscan
 
-    real_safe_table = augmod.safe_table
+    real_safe_table = augscan.safe_table
     calls: list[Path] = []
 
     def spy(path: Path, cols: Iterable[str]) -> pa.Table | None:
         calls.append(Path(path))
         return real_safe_table(path, cols)
 
-    monkeypatch.setattr(augmod, "safe_table", spy)
+    monkeypatch.setattr(augscan, "safe_table", spy)
     stats = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
 
     assert stats.wikipedia_documents.rows == 1
@@ -1474,7 +1474,7 @@ def test_fingerprint_detects_same_size_replacement_preserving_mtime(
     """Replacing a cached file must trigger a rescan even when size and mtime match."""
     import os
 
-    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
+    from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augscan
 
     processed = _setup_processed_dir(tmp_path)
     docs_path = processed / "wikipedia" / "documents" / "monaco-latest.parquet"
@@ -1505,14 +1505,14 @@ def test_fingerprint_detects_same_size_replacement_preserving_mtime(
     assert (replaced.st_size, replaced.st_mtime_ns) == (stat.st_size, stat.st_mtime_ns)
     assert replaced.st_ino != stat.st_ino
 
-    real = augmod.safe_table
+    real = augscan.safe_table
     calls: list[Path] = []
 
     def spy(path, cols):
         calls.append(Path(path))
         return real(path, cols)
 
-    monkeypatch.setattr(augmod, "safe_table", spy)
+    monkeypatch.setattr(augscan, "safe_table", spy)
     stats = compute_augmentation_stats(processed, cache_index_dir=cache_dir)
     assert stats.wikipedia_documents == first.wikipedia_documents
     assert calls == [docs_path]

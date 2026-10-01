@@ -6,8 +6,9 @@ from typing import Any
 
 import pytest
 
-from osm_polygon_wikidata_only.cli import commands, run_sync
+from osm_polygon_wikidata_only.cli import run_sync
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.hf import push_authentication
 
 
 class _NoopScheduler:
@@ -37,10 +38,10 @@ def _build_noop_wikimedia_runtime(*_args: Any, **_kwargs: Any) -> _NoopWikimedia
 @pytest.fixture
 def mock_hf_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Provide deterministic Hugging Face authentication for local tests."""
-    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "fake-token")
-    monkeypatch.setattr(commands, "verify_hf_token", lambda value: "noeflandre")
+    monkeypatch.setattr(push_authentication, "resolve_hf_token", lambda value: "fake-token")
+    monkeypatch.setattr(push_authentication, "verify_hf_token", lambda value: "noeflandre")
     monkeypatch.setattr(
-        commands,
+        push_authentication,
         "verify_repo_authorization",
         lambda token, repo_id: "noeflandre",
     )

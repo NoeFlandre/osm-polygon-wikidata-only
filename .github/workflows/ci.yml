@@ -89,35 +89,35 @@ jobs:
               fi
               rm /data/.compose-writable-check'
 
-  # Advisory: times the base and the head on the same runner. Shared runners are
+  # Warn-only observation period (issue #125): regressions are reported but do not
+  # fail the build. Switch BENCH_MODE to ``enforce`` after one week of stable runs
+  # against a baseline recorded from this job's bench.json on the CI runner type. Shared runners are
   # noisy, so this is not part of ``all-green``.
   benchmarks:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
+    env:
+      BENCH_MODE: warn
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
       - uses: taiki-e/install-action@cb30b4c9cca98bbd320daf128741850f83d8a99f # v2 (just)
         with:
           tool: just
-      - name: Fetch the pull request head commit
-        run: git fetch --no-tags origin "refs/pull/${{ github.event.pull_request.number }}/head"
-      - name: Time the base
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: just sync
+      - name: Run the benchmark suite
+        run: just bench-json bench.json
+      - name: Publish the results to the job summary
+        if: always()
         run: |
-          just sync
-          git checkout "${{ github.event.pull_request.head.sha }}" -- benchmarks
-          # The base lockfile predates pytest-benchmark, so add it for this run only.
-          uv run --with "pytest-benchmark>=5.3,<6" python -m pytest benchmarks --no-cov \
-            -p no:cacheprovider -q --benchmark-save=base
-      - name: Time the head against it
-        run: |
-          git checkout --force "${{ github.event.pull_request.head.sha }}"
-          just sync
-          just bench-compare
+          { echo '```json'; cat bench.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compare with the committed baseline
+        run: just bench-compare "$BENCH_MODE" bench.json
 
   # The single required status check: it fails unless every needed job succeeded.
   all-green:

@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmentation_stats
+from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augmentation_stats
 from osm_polygon_wikidata_only.hf._stats_release import manifest, remote
 from osm_polygon_wikidata_only.hf._uploader import operations, token
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
@@ -124,13 +124,11 @@ def test_augmentation_scanner_dispatch_and_path_rejection(
             scanner,
             lambda _root, _path, selected=kind: calls.append(selected),
         )
-        assert augmentation_stats._scan_one_file(processed, processed / relative) is None
+        assert augmentation_stats.scan_one_file(processed, processed / relative) is None
         assert calls[-1] == kind
 
-    assert (
-        augmentation_stats._scan_one_file(processed, processed / "unmanaged/file.parquet") is None
-    )
-    assert augmentation_stats._scan_one_file(processed, tmp_path / "outside.parquet") is None
+    assert augmentation_stats.scan_one_file(processed, processed / "unmanaged/file.parquet") is None
+    assert augmentation_stats.scan_one_file(processed, tmp_path / "outside.parquet") is None
 
 
 @pytest.mark.parametrize("error", [OSError("unreadable"), KeyError("columns")])

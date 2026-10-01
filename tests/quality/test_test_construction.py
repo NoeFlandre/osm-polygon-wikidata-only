@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import json
 from collections import Counter
 from pathlib import Path
@@ -12,13 +13,21 @@ TESTS = Path(__file__).resolve().parents[1]
 SEAM_ALLOWLIST = Path(__file__).with_name("private_test_seams.json")
 
 
+@functools.cache
+def _parsed_tests() -> tuple[tuple[Path, ast.Module], ...]:
+    """Parse every test module once; the three guards below share the trees."""
+    return tuple(
+        (path, ast.parse(path.read_text(encoding="utf-8"))) for path in sorted(TESTS.rglob("*.py"))
+    )
+
+
 def test_no_test_builds_an_object_with_dunder_new() -> None:
     """``Cls.__new__(Cls)`` skips ``__init__``, so the object may not be constructible for real."""
     offenders = [
         f"{path.relative_to(TESTS).as_posix()}:{node.lineno}"
-        for path in sorted(TESTS.rglob("*.py"))
+        for path, tree in _parsed_tests()
         if path != Path(__file__).resolve()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "__new__"
@@ -61,9 +70,9 @@ def _private_patch_target(node: ast.Call) -> str | None:
 
 def _patch_counts() -> dict[str, Counter[str]]:
     counts: dict[str, Counter[str]] = {}
-    for path in sorted(TESTS.rglob("*.py")):
+    for path, tree in _parsed_tests():
         relative = path.relative_to(TESTS).as_posix()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 target = _private_patch_target(node)
                 if target is not None:
@@ -121,8 +130,7 @@ def test_private_test_seams_stay_within_documented_allowlist() -> None:
 def test_tests_do_not_write_private_attributes_on_other_objects() -> None:
     """Fake classes may own their internal state; tests cannot assign another object's private state."""
     offenders: list[str] = []
-    for path in sorted(TESTS.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in _parsed_tests():
         parents = {
             child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
         }
@@ -139,5 +147,20 @@ def test_tests_do_not_write_private_attributes_on_other_objects() -> None:
                     if _is_fixture_owned_attribute(child, parents):
                         continue
                     offenders.append(f"{path.relative_to(TESTS).as_posix()}:{node.lineno}")
+
+    assert offenders == []
+
+
+def test_no_test_function_name_escapes_pytest_collection() -> None:
+    """A name like ``testfoo`` starts with ``test`` but is never collected."""
+    offenders = [
+        f"{path.relative_to(TESTS).as_posix()}:{node.lineno}"
+        for path, tree in _parsed_tests()
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+        and not node.name.startswith("test_")
+        and node.name != "test"
+    ]
 
     assert offenders == []

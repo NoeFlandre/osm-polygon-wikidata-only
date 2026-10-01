@@ -20,7 +20,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
     polygon_schema,
 )
-from osm_polygon_wikidata_only.hf import publication
+from osm_polygon_wikidata_only.hf import publication, push_authentication
 from osm_polygon_wikidata_only.hf._publication.models import CorePublicationArtifacts
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
@@ -863,7 +863,7 @@ def test_inventory_auth_failure_raises_upload_error(
     def mock_verify_fail(token: str | None) -> str:
         raise UploadError("Invalid HF_TOKEN")
 
-    monkeypatch.setattr(commands, "verify_hf_token", mock_verify_fail)
+    monkeypatch.setattr(push_authentication, "verify_hf_token", mock_verify_fail)
 
     pbf_file = data_root.raw / "mexico-latest.osm.pbf"
     pbf_file.touch()
@@ -1326,7 +1326,7 @@ def test_token_resolver_failure_but_injected_hub_works(
     def failing_resolver(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("Token resolver failed")
 
-    monkeypatch.setattr(commands, "resolve_hf_token", failing_resolver)
+    monkeypatch.setattr(push_authentication, "resolve_hf_token", failing_resolver)
 
     stub = StubHfHub(remote_files=set())
     pbf_file = data_root.raw / f"{stem}.osm.pbf"

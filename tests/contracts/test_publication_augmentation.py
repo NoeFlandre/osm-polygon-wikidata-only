@@ -24,12 +24,14 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import article_schema
+from osm_polygon_wikidata_only.hf._publication.readme_snapshot import (
+    build_minimal_v1_release_snapshot,
+)
 from osm_polygon_wikidata_only.hf.minimal_card import render_minimal_card
 from osm_polygon_wikidata_only.hf.publication import (
     assemble_augmentation_upload,
     assemble_core_upload,
     assemble_region_upload,
-    build_minimal_v1_release_snapshot,
     write_readme_snapshot,
 )
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
@@ -489,7 +491,7 @@ def test_write_readme_snapshot_writes_to_destination_atomic(
         path.write_text(text, encoding="utf-8")
 
     monkeypatch.setattr(
-        "osm_polygon_wikidata_only.hf.publication.atomic_write_text",
+        "osm_polygon_wikidata_only.hf._publication.readme_snapshot.atomic_write_text",
         fake_atomic,
     )
     destination = tmp_path / "out.md"

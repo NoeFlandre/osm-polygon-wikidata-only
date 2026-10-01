@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -36,13 +35,8 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID, Settings
 from osm_polygon_wikidata_only.hf.core_publication import run_core_publication
-from osm_polygon_wikidata_only.hf.uploader import (
-    StubHfHub,
-    UploadError,
-    resolve_hf_token,
-    verify_hf_token,
-    verify_repo_authorization,
-)
+from osm_polygon_wikidata_only.hf.push_authentication import authenticate_push_targets
+from osm_polygon_wikidata_only.hf.uploader import StubHfHub
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.io.run_lock import RunLockError, exclusive_run_lock
 from osm_polygon_wikidata_only.pipeline.orchestrator import orchestrate
@@ -92,38 +86,18 @@ def _prepare_runtime(
     return data_root, settings
 
 
-def _require_push_token(parser: argparse.ArgumentParser, settings: Settings) -> None:
-    """Fail with an actionable parser error when a supplied token is invalid."""
-    resolved = resolve_hf_token(settings.hf_token)
-    if resolved:
-        return
-    env_token = os.environ.get("HF_TOKEN")
-    explicit = bool(settings.hf_token)
-    if env_token or explicit:
-        source = "--hf-token" if explicit else "HF_TOKEN"
-        parser.error(
-            f"--push: {source} is set but Hugging Face rejected it as invalid. "
-            "Generate a fresh write token at https://huggingface.co/settings/tokens "
-            "and replace the current value."
-        )
-    parser.error(
-        "--push requires a Hugging Face write token: pass --hf-token, "
-        "set HF_TOKEN, or run `huggingface-cli login`."
-    )
+def _release_apply_requested(args: argparse.Namespace) -> bool:
+    commands = {"release-stats", "publish-language-splits"}
+    return getattr(args, "command", None) in commands and bool(getattr(args, "apply", False))
 
 
-def _verify_push_access(parser: argparse.ArgumentParser, settings: Settings) -> None:
-    """Authenticate and authorize a publishing run."""
-    LOGGER.info("Connecting to Hugging Face using bounded IPv4 transport (connect timeout: 10s)")
-    try:
-        username = verify_hf_token(settings.hf_token)
-    except UploadError as error:
-        parser.error(str(error))
-    try:
-        verify_repo_authorization(settings.hf_token, settings.repo_id)
-    except UploadError as error:
-        parser.error(str(error))
-    LOGGER.info("Authenticated to Hugging Face as %s (target: %s)", username, settings.repo_id)
+def _push_target_repo_ids(args: argparse.Namespace, settings: Settings) -> list[str]:
+    """Return the repositories whose credentials a real push needs, if any."""
+    if args.dry_run:
+        return []
+    if _release_apply_requested(args):
+        return [_RELEASE_TARGETS[t] for t in _selected_release_targets(args.dataset_version)]
+    return [settings.repo_id] if args.push else []
 
 
 def _authenticate_for_push(
@@ -132,36 +106,9 @@ def _authenticate_for_push(
     settings: Settings,
 ) -> None:
     """Validate Hugging Face credentials when a real push was requested."""
-    release_apply = _release_apply_requested(args)
-    if not _push_authentication_required(args, release_apply) or args.dry_run:
-        return
-    if release_apply:
-        _authenticate_release_targets(parser, args, settings)
-        return
-    _require_push_token(parser, settings)
-    _verify_push_access(parser, settings)
-
-
-def _release_apply_requested(args: argparse.Namespace) -> bool:
-    return getattr(args, "command", None) in {
-        "release-stats",
-        "publish-language-splits",
-    } and getattr(args, "apply", False)
-
-
-def _push_authentication_required(args: argparse.Namespace, release_apply: bool) -> bool:
-    return bool(args.push or release_apply)
-
-
-def _authenticate_release_targets(
-    parser: argparse.ArgumentParser,
-    args: argparse.Namespace,
-    settings: Settings,
-) -> None:
-    for target in _selected_release_targets(args.dataset_version):
-        target_settings = replace(settings, repo_id=_RELEASE_TARGETS[target])
-        _require_push_token(parser, target_settings)
-        _verify_push_access(parser, target_settings)
+    repo_ids = _push_target_repo_ids(args, settings)
+    if repo_ids:
+        authenticate_push_targets(settings, repo_ids, parser.error)
 
 
 def _run_v2_sync(

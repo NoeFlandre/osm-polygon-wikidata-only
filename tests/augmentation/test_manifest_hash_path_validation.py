@@ -23,7 +23,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from osm_polygon_wikidata_only.augmentation.orchestrator import (
+from osm_polygon_wikidata_only.augmentation.existing_results import (
     _augmentation_inputs_exist,
     _core_hashes_are_current,
     _is_valid_core_hash_path,

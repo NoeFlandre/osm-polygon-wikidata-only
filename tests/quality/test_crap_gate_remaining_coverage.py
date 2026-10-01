@@ -29,6 +29,7 @@ from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as stats_au
 from osm_polygon_wikidata_only.hf._publication import artifacts as publication_artifacts
 from osm_polygon_wikidata_only.hf.language_split_publication import LanguagePublicationError
 from osm_polygon_wikidata_only.pipeline import (
+    containment_audit,
     containment_migration,
 )
 from osm_polygon_wikidata_only.pipeline import (
@@ -604,12 +605,12 @@ def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
     parent, child = Path("parent.parquet"), Path("child.parquet")
     schema = pa.schema([("identity", pa.string())])
     monkeypatch.setattr(
-        containment_migration.pq,
+        containment_audit.pq,
         "read_schema",
         lambda path: schema if path == parent else pa.schema([("other", pa.string())]),
     )
     audit, blockers = _coverage_call(
-        containment_migration._audit_present_contract,
+        containment_audit._audit_present_contract,
         Path("processed"),
         contract,
         "parent",
@@ -620,11 +621,11 @@ def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
     assert audit.child_rows == 0
     assert blockers == ["child: schema mismatch for polygons"]
 
-    monkeypatch.setattr(containment_migration.pq, "read_schema", lambda _path: schema)
+    monkeypatch.setattr(containment_audit.pq, "read_schema", lambda _path: schema)
     identities = iter((({("p",)}, 1), ({("c",)}, 2)))
-    monkeypatch.setattr(containment_migration, "_identity_set", lambda *_args: next(identities))
+    monkeypatch.setattr(containment_audit, "_identity_set", lambda *_args: next(identities))
     audit, blockers = _coverage_call(
-        containment_migration._audit_present_contract,
+        containment_audit._audit_present_contract,
         Path("processed"),
         contract,
         "parent",
@@ -642,9 +643,9 @@ def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
     def fail_read(_path: Path) -> pa.Schema:
         raise OSError("unreadable parquet")
 
-    monkeypatch.setattr(containment_migration.pq, "read_schema", fail_read)
+    monkeypatch.setattr(containment_audit.pq, "read_schema", fail_read)
     audit, blockers = _coverage_call(
-        containment_migration._audit_present_contract,
+        containment_audit._audit_present_contract,
         Path("processed"),
         contract,
         "parent",

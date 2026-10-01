@@ -26,11 +26,13 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.pipeline.containment_manifest_stats import (
+    POLYGON_MANIFEST_COLUMNS,
+    polygon_manifest_stats,
+)
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
-    _POLYGON_MANIFEST_COLUMNS,
     StagedRule,
     _canonical_manifest_stats,
-    _polygon_manifest_stats,
 )
 
 _DEFAULT_ROWS = 200_000
@@ -96,7 +98,7 @@ def _peak_rss_mib() -> float:
 def _worker_stats(mode: str, parquet_path: Path, documents_path: Path) -> dict[str, Any]:
     if mode == "all-columns":
         polygons = pq.read_table(parquet_path).to_pylist()
-        return _polygon_manifest_stats(polygons)
+        return polygon_manifest_stats(polygons)
     staged = StagedRule(
         "benchmark-latest",
         (),
@@ -228,7 +230,7 @@ def _benchmark_summary(
 ) -> dict[str, Any]:
     return {
         "rows": row_count,
-        "columns": len(_POLYGON_MANIFEST_COLUMNS) + _UNUSED_COLUMNS,
+        "columns": len(POLYGON_MANIFEST_COLUMNS) + _UNUSED_COLUMNS,
         "parquet_mib": parquet_path.stat().st_size / (1024 * 1024),
         "stats_equal": True,
         "all_columns": _measurement_metrics(all_columns),
