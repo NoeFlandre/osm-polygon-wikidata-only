@@ -123,3 +123,22 @@ def test_main_reads_overrides_from_the_given_file(tmp_path: Path) -> None:
 
     assert slow_tests.main(["--junit-xml", str(report), "--overrides", str(overrides)]) == 0
     assert slow_tests.main(["--junit-xml", str(report), "--overrides", str(tmp_path / "none")]) == 1
+
+
+def test_missing_lists_baseline_benchmarks_absent_from_the_run() -> None:
+    assert bench_compare.missing({"a": 1.0, "b": 1.0}, {"a": 1.0, "new": 1.0}) == ["b"]
+
+
+@pytest.mark.parametrize(("mode", "expected"), [("warn", 0), ("enforce", 1)])
+def test_compare_treats_a_dropped_benchmark_as_a_failure_only_in_enforce_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, expected: int
+) -> None:
+    baseline = _bench(tmp_path / "base.json", {"a": 1.0, "dropped": 1.0})
+    current = _bench(tmp_path / "now.json", {"a": 1.0})
+
+    status = bench_compare.main(
+        ["--baseline", str(baseline), "--current", str(current), "--mode", mode]
+    )
+
+    assert status == expected
+    assert "MISSING dropped" in capsys.readouterr().out

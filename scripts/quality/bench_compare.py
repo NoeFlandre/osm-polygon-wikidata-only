@@ -3,7 +3,8 @@
 A benchmark regresses when its median is more than ``--threshold`` slower than
 the baseline median. In ``warn`` mode regressions are reported but the exit
 status stays zero; ``enforce`` mode fails the build. Benchmarks absent from the
-baseline are listed as new and never fail. A missing baseline is reported and
+baseline are listed as new and never fail. A benchmark that is in the baseline but missing from the run also fails in
+enforce mode, so coverage cannot silently disappear. A missing baseline is reported and
 also never fails, so the first run on a new runner type can record one.
 """
 
@@ -36,20 +37,39 @@ def regressions(
     )
 
 
+def missing(baseline: Mapping[str, float], current: Mapping[str, float]) -> list[str]:
+    """Return baseline benchmarks absent from the current run (deleted or skipped)."""
+    return sorted(set(baseline) - set(current))
+
+
 def _load(path: Path) -> dict[str, float]:
     return medians(json.loads(path.read_text(encoding="utf-8")))
 
 
+def _missing_lines(baseline: Mapping[str, float], current: Mapping[str, float]) -> list[str]:
+    return [
+        f"MISSING {name}: in the baseline but not in this run"
+        for name in missing(baseline, current)
+    ]
+
+
+def _regression_lines(
+    baseline: Mapping[str, float], current: Mapping[str, float], threshold: float
+) -> list[str]:
+    return [
+        f"REGRESSION {name}: median {slowdown:+.0%} vs baseline"
+        for name, slowdown in regressions(baseline, current, threshold)
+    ]
+
+
 def _report(baseline: Mapping[str, float], current: Mapping[str, float], threshold: float) -> bool:
-    """Print the comparison and return whether any benchmark regressed."""
-    for name in sorted(set(current) - set(baseline)):
-        print(f"NEW {name}")
-    found = regressions(baseline, current, threshold)
-    for name, slowdown in found:
-        print(f"REGRESSION {name}: median {slowdown:+.0%} vs baseline")
-    if not found:
-        print(f"No median regression above {threshold:.0%}.")
-    return bool(found)
+    """Print the comparison and return whether any benchmark regressed or vanished."""
+    added = [f"NEW {name}" for name in sorted(set(current) - set(baseline))]
+    absent = _missing_lines(baseline, current)
+    found = _regression_lines(baseline, current, threshold)
+    clean = [] if found else [f"No median regression above {threshold:.0%}."]
+    print("\n".join([*added, *absent, *found, *clean]))
+    return bool(found or absent)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
