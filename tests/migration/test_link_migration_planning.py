@@ -1040,6 +1040,7 @@ def test_apply_migratable_stems_continues_after_a_canonical_stem(
     def fail_cleanup(_path: Path) -> None:
         raise OSError("staging directory is still in use")
 
+    staging_dir = processed / ".link_migration_staging" / "beta-legacy"
     monkeypatch.setattr(link_application.shutil, "rmtree", fail_cleanup)
 
     link_application._apply_migratable_stems(processed, plan, {})
@@ -1054,6 +1055,7 @@ def test_apply_migratable_stems_continues_after_a_canonical_stem(
         link_migration.classify_stem_schema(_pyarrow().parquet.read_schema(migrated_path).names)
         == "canonical"
     )
+    assert staging_dir.is_dir()
 
 
 def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> None:

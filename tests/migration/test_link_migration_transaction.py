@@ -290,7 +290,7 @@ def test_file_content_hash_uses_an_empty_sentinel_for_missing_files(tmp_path: Pa
 def test_ordered_replacements_rejects_duplicate_targets(tmp_path: Path) -> None:
     """The helper must reject duplicate targets in the input list."""
     target, staged = _make_text_pair(tmp_path, "target.txt", "old", "new")
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(ValueError, match="contains duplicate targets") as error:
         link_migration.apply_link_migration(
             tmp_path,
             replacements=[(target, staged), (target, staged)],
