@@ -14,11 +14,6 @@
     "reason": "Omitting logger from SyncApplicationServices uses its default LOGGER; this module obtains the same named logging.Logger singleton, so the constructed service object is unchanged.",
     "source_sha256": "0b23fc4cf4b85f7fd3e40000202d09c5f47104e4793b9403ef7504e2d438c3a8"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__area_and_centroid_for_geom__mutmut_29": {
-    "mutant_sha256": "431cf2281233face08871c63b8e333b17e9d8868ccc2b7cf73dd77bc498d8972",
-    "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected before a result can expose the denominator.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
-  },
   "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_12": {
     "mutant_sha256": "35753dd003c7db7e100d51e7ff784fcec5dff2301025c0b2aabdedd8184acb06",
     "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected by ring validation.",
