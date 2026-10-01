@@ -156,7 +156,7 @@ def test_reconciliation_gap_counts_separate_core_and_text_artifacts() -> None:
     assert _reconciliation_gap_counts({"a", "b", "c"}, missing) == (1, 2)
 
 
-def testprepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Path) -> None:
+def test_prepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Path) -> None:
     """Non-push runs avoid all remote inventory and validation work."""
     result = prepare_remote_reconciliation(
         enabled=False,

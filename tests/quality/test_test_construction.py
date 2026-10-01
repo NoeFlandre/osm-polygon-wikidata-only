@@ -149,3 +149,18 @@ def test_tests_do_not_write_private_attributes_on_other_objects() -> None:
                     offenders.append(f"{path.relative_to(TESTS).as_posix()}:{node.lineno}")
 
     assert offenders == []
+
+
+def test_no_test_function_name_escapes_pytest_collection() -> None:
+    """A name like ``testfoo`` starts with ``test`` but is never collected."""
+    offenders = [
+        f"{path.relative_to(TESTS).as_posix()}:{node.lineno}"
+        for path, tree in _parsed_tests()
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+        and not node.name.startswith("test_")
+        and node.name != "test"
+    ]
+
+    assert offenders == []

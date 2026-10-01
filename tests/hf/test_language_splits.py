@@ -206,13 +206,13 @@ def test_validate_manifest_location_enforces_root_and_directory(
         )
 
 
-def testrequire_manifest_references_accepts_complete_paths(tmp_path: Path) -> None:
+def test_require_manifest_references_accepts_complete_paths(tmp_path: Path) -> None:
     artifact = tmp_path / "polygons/fixture.parquet"
 
     require_manifest_references((artifact,), {artifact}, "polygons")
 
 
-def testrequire_manifest_references_rejects_unreferenced_paths(tmp_path: Path) -> None:
+def test_require_manifest_references_rejects_unreferenced_paths(tmp_path: Path) -> None:
     artifact = tmp_path / "polygons/fixture.parquet"
 
     with pytest.raises(LanguageInventoryError, match="not referenced by the manifest"):
