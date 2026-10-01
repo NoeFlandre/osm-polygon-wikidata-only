@@ -13,9 +13,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from osm_polygon_wikidata_only.cli.run_sync import (
-    _ensure_recovery_audit_unblocked,
+from osm_polygon_wikidata_only.pipeline.sync_planning import (
     _recovery_audit_stems,
+    ensure_recovery_audit_unblocked,
 )
 from osm_polygon_wikidata_only.pipeline.sync_runner import (
     RegionSyncState,
@@ -134,7 +134,7 @@ def test_blocked_recovery_audit_fails_closed() -> None:
     )
 
     try:
-        _ensure_recovery_audit_unblocked(audit)
+        ensure_recovery_audit_unblocked(audit)
     except RuntimeError as error:
         assert "broken" in str(error)
         assert "missing canonical document table" in str(error)

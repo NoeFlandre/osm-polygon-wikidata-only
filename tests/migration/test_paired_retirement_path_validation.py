@@ -21,10 +21,10 @@ from typing import cast
 
 import pytest
 
-from osm_polygon_wikidata_only.cli.run_sync import (
-    _paired_retirement_stems,
-    _post_upload_publication_cleanup,
+from osm_polygon_wikidata_only.cli._sync.retirement import (
+    paired_retirement_stems as _paired_retirement_stems,
 )
+from osm_polygon_wikidata_only.cli.sync_publication import post_upload_publication_cleanup
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
     add_pending_publications,
@@ -377,7 +377,7 @@ def test_duplicate_conflicting_add_does_not_block_other_stems(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
-# Integration with _post_upload_publication_cleanup
+# Integration with post_upload_publication_cleanup
 # ---------------------------------------------------------------------------
 
 
@@ -394,7 +394,7 @@ def test_post_upload_cleanup_respects_hardened_pairing(tmp_path: Path) -> None:
 
     add_pending_publications(data_root, {STEM})
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert (data_root.processed_articles / f"{STEM}.parquet").exists()
     assert STEM in load_pending_publications(data_root)

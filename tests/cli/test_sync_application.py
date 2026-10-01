@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from osm_polygon_wikidata_only.cli import run_sync
+from osm_polygon_wikidata_only.cli import sync_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
@@ -207,7 +207,7 @@ def test_execute_delegates_to_the_deep_application(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The CLI composition root must delegate post-plan work to one façade."""
-    source = Path(run_sync.__file__).read_text(encoding="utf-8")
+    source = Path(sync_runtime.__file__).read_text(encoding="utf-8")
     assert "SyncApplication(" in source
     assert "SyncApplicationContext(" in source
     assert "SyncApplicationServices(" in source

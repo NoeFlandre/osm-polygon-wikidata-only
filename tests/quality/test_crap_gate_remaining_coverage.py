@@ -15,11 +15,8 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.cli import commands
 from osm_polygon_wikidata_only.cli._sync import retirement as retirement_helpers
-from osm_polygon_wikidata_only.cli.run_sync import (
-    _load_existing_core_for_publication,
-    _require_remote_helpers,
-)
 from osm_polygon_wikidata_only.cli.sync_application import SyncApplication
+from osm_polygon_wikidata_only.cli.sync_runtime import load_existing_core_for_publication
 from osm_polygon_wikidata_only.enrichment.wikidata.models import WikidataEntity
 from osm_polygon_wikidata_only.grid5000 import (
     sentence_controller_batches,
@@ -42,6 +39,7 @@ from osm_polygon_wikidata_only.pipeline import (
 )
 from osm_polygon_wikidata_only.pipeline._link_migration import transaction
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair_fetch
+from osm_polygon_wikidata_only.pipeline.sync_reconciliation import require_remote_helpers
 from osm_polygon_wikidata_only.v2 import (
     checkpoints as v2_checkpoints,
 )
@@ -212,10 +210,10 @@ def test_remote_helpers_require_both_dependencies() -> None:
         return {}
 
     planner = type("Planner", (), {})
-    assert _coverage_call(_require_remote_helpers, canonical, planner) == (canonical, planner)
+    assert _coverage_call(require_remote_helpers, canonical, planner) == (canonical, planner)
     for args in ((None, planner), (canonical, None), (None, None)):
         with pytest.raises(RuntimeError, match="helpers are required"):
-            _coverage_call(_require_remote_helpers, *args)
+            _coverage_call(require_remote_helpers, *args)
 
 
 def test_core_stems_reports_missing_and_existing_polygon_directories(
@@ -466,7 +464,7 @@ def test_publication_core_loader_uses_existing_core_when_required(
     existing = object()
     assert (
         _coverage_call(
-            _load_existing_core_for_publication,
+            load_existing_core_for_publication,
             SimpleNamespace(),
             "region",
             existing,
@@ -476,13 +474,13 @@ def test_publication_core_loader_uses_existing_core_when_required(
     )
     assert (
         _coverage_call(
-            _load_existing_core_for_publication, SimpleNamespace(), "region", None, required=False
+            load_existing_core_for_publication, SimpleNamespace(), "region", None, required=False
         )
         is None
     )
     monkeypatch.setattr(publication, "load_existing_core_artifacts", lambda _root, stem: (stem,))
     assert _coverage_call(
-        _load_existing_core_for_publication, SimpleNamespace(), "region", None, required=True
+        load_existing_core_for_publication, SimpleNamespace(), "region", None, required=True
     ) == ("region",)
 
 

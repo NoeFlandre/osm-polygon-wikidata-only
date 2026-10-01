@@ -1,4 +1,19 @@
 {
+  "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_16": {
+    "mutant_sha256": "606bfeddebd7d6aa169a001e21c2217d3c1078c969cde40d141db83adb10d311",
+    "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
+    "source_sha256": "fe87b5ad675876d9c0e176bd95c84d2f301e1c937b56b4fd1c4c30f17f175d25"
+  },
+  "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_5": {
+    "mutant_sha256": "26eb82af89e3bd2178b333b9ef6fdbafc914b6dde3743c827c87392b28f5fb4c",
+    "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
+    "source_sha256": "fe87b5ad675876d9c0e176bd95c84d2f301e1c937b56b4fd1c4c30f17f175d25"
+  },
+  "osm_polygon_wikidata_only.cli.sync_runtime.x_build_sync_services__mutmut_72": {
+    "mutant_sha256": "d945f645849189824fb64157248e6b37c340c4c359bd4d7f979fe972db62e97c",
+    "reason": "Omitting logger from SyncApplicationServices uses its default LOGGER; this module obtains the same named logging.Logger singleton, so the constructed service object is unchanged.",
+    "source_sha256": "0b23fc4cf4b85f7fd3e40000202d09c5f47104e4793b9403ef7504e2d438c3a8"
+  },
   "osm_polygon_wikidata_only.domain.geometry.x__area_and_centroid_for_geom__mutmut_29": {
     "mutant_sha256": "431cf2281233face08871c63b8e333b17e9d8868ccc2b7cf73dd77bc498d8972",
     "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected before a result can expose the denominator.",

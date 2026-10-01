@@ -13,8 +13,8 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import (
     MigrationError,
 )
-from osm_polygon_wikidata_only.cli.run_sync import _run_pre_publication_migration
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.pipeline.sync_planning import run_pre_publication_migration
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "processed"
 STEM = "monaco-latest"
@@ -46,7 +46,7 @@ def _seed_legacy_only(tmp_path: Path) -> DataRoot:
 def test_migration_creates_canonical_and_persists_intent(tmp_path: Path) -> None:
     data_root = _seed_legacy_only(tmp_path)
 
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
     assert canonical.exists()
@@ -60,7 +60,7 @@ def test_migration_creates_canonical_and_persists_intent(tmp_path: Path) -> None
 def test_migration_repoints_manifest_to_canonical(tmp_path: Path) -> None:
     data_root = _seed_legacy_only(tmp_path)
 
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     entry = json.loads((data_root.processed_manifests / "processed_pbfs.json").read_text())[
         f"{STEM}.osm.pbf"
@@ -72,7 +72,7 @@ def test_migration_repoints_manifest_to_canonical(tmp_path: Path) -> None:
 def test_migration_preserves_legacy_during_staging(tmp_path: Path) -> None:
     data_root = _seed_legacy_only(tmp_path)
 
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     legacy = data_root.processed_articles / f"{STEM}.parquet"
     assert legacy.exists(), "Legacy article must survive until confirmed publication"
@@ -81,8 +81,8 @@ def test_migration_preserves_legacy_during_staging(tmp_path: Path) -> None:
 def test_migration_idempotent_on_restart(tmp_path: Path) -> None:
     data_root = _seed_legacy_only(tmp_path)
 
-    _run_pre_publication_migration(data_root, {STEM})
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
     assert canonical.exists()
@@ -106,7 +106,7 @@ def test_unsafe_plan_aborts_before_mutation(tmp_path: Path) -> None:
     pq.write_table(pa.Table.from_pylist([{"junk": "x"}], schema=bogus_schema), bogus)  # type: ignore[no-untyped-call]
 
     with pytest.raises(MigrationError, match="not safe to apply"):
-        _run_pre_publication_migration(data_root, {"orphan"})
+        run_pre_publication_migration(data_root, {"orphan"})
 
     # The conflicting document must not have been overwritten.
     actual_schema = pq.read_schema(bogus)  # type: ignore[no-untyped-call]
@@ -129,7 +129,7 @@ def test_intent_persisted_before_apply(tmp_path: Path, monkeypatch: pytest.Monke
     # Inject a failure in apply_migration (patched in run_sync's namespace,
     # which is where the helper calls it) so we can check whether intent was
     # already persisted at that point.
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
+    import osm_polygon_wikidata_only.pipeline.sync_planning as sync_planning_mod
 
     call_log: list[str] = []
 
@@ -143,10 +143,10 @@ def test_intent_persisted_before_apply(tmp_path: Path, monkeypatch: pytest.Monke
             call_log.append("intent_before_apply")
         raise RuntimeError("injected crash")
 
-    monkeypatch.setattr(run_sync_mod, "apply_migration", failing_apply)
+    monkeypatch.setattr(sync_planning_mod, "apply_migration", failing_apply)
 
     with pytest.raises(RuntimeError, match="injected crash"):
-        _run_pre_publication_migration(data_root, {STEM})
+        run_pre_publication_migration(data_root, {STEM})
 
     # intent_before_apply is appended only if the intent was already
     # persisted when apply_migration was invoked.
@@ -162,7 +162,7 @@ def test_scopes_to_legacy_stems_only(tmp_path: Path) -> None:
     data_root = _seed_legacy_only(tmp_path)
 
     # Pass an input stem that has no legacy article at all.
-    _run_pre_publication_migration(data_root, {"nonexistent-stem"})
+    run_pre_publication_migration(data_root, {"nonexistent-stem"})
 
     # Nothing should have been created for the nonexistent stem.
     assert not (

@@ -21,17 +21,19 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_retirement import (
     finalize_local_retirement,
     prepare_local_retirement,
 )
-from osm_polygon_wikidata_only.cli.run_sync import (
-    _execute_upload_job,
-    _post_upload_publication_cleanup,
-    _run_pre_publication_migration,
+from osm_polygon_wikidata_only.cli import sync_publication
+from osm_polygon_wikidata_only.cli.sync_publication import (
+    execute_upload_job,
+    post_upload_publication_cleanup,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
+from osm_polygon_wikidata_only.pipeline import sync_planning
 from osm_polygon_wikidata_only.pipeline.pending_publications import (
     load_pending_publications,
 )
+from osm_polygon_wikidata_only.pipeline.sync_planning import run_pre_publication_migration
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "processed"
 STEM = "monaco-latest"
@@ -77,7 +79,7 @@ def _seed_legacy(tmp_path: Path) -> DataRoot:
 def _seed_migrated(tmp_path: Path) -> DataRoot:
     """DataRoot after successful migration: canonical + legacy + manifest repointed."""
     data_root = _seed_legacy(tmp_path)
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
     return data_root
 
 
@@ -111,15 +113,13 @@ def test_crash_after_intent_before_apply(tmp_path: Path, monkeypatch: pytest.Mon
     data_root = _seed_legacy(tmp_path)
     legacy = data_root.processed_articles / f"{STEM}.parquet"
 
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
-
     def crash(_plan: object) -> None:
         raise RuntimeError("crash before apply")
 
-    monkeypatch.setattr(run_sync_mod, "apply_migration", crash)
+    monkeypatch.setattr(sync_planning, "apply_migration", crash)
 
     with pytest.raises(RuntimeError, match="crash before apply"):
-        _run_pre_publication_migration(data_root, {STEM})
+        run_pre_publication_migration(data_root, {STEM})
 
     assert legacy.exists()
     assert STEM in load_pending_publications(data_root)
@@ -127,7 +127,7 @@ def test_crash_after_intent_before_apply(tmp_path: Path, monkeypatch: pytest.Mon
 
     # Restart: undo the monkeypatch so apply_migration runs normally.
     monkeypatch.undo()
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     assert (data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet").exists()
     assert legacy.exists()
@@ -147,7 +147,7 @@ def test_crash_after_migration_before_upload(tmp_path: Path) -> None:
     assert legacy.exists()
     assert STEM in load_pending_publications(data_root)
 
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     assert canonical.exists()
     assert legacy.exists()
@@ -172,7 +172,7 @@ def test_restart_selects_canonical_only_source(tmp_path: Path) -> None:
     assert sources.canonical == canonical
     assert read_source_path(data_root, STEM) == canonical
 
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
 
 # ---------------------------------------------------------------------------
@@ -189,9 +189,8 @@ def test_upload_failure_preserves_legacy_and_intent(
     ops = _canonical_retirement_ops(data_root)
 
     cleanup_calls: list[bool] = []
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
 
-    original_cleanup = run_sync_mod._post_upload_publication_cleanup
+    original_cleanup = sync_publication.post_upload_publication_cleanup
 
     def tracking_cleanup(
         cleanup_root: DataRoot,
@@ -202,15 +201,15 @@ def test_upload_failure_preserves_legacy_and_intent(
         cleanup_calls.append(True)
         original_cleanup(cleanup_root, operations, dry_run=dry_run)
 
-    monkeypatch.setattr(run_sync_mod, "_post_upload_publication_cleanup", tracking_cleanup)
+    monkeypatch.setattr(sync_publication, "post_upload_publication_cleanup", tracking_cleanup)
 
     def crashing_upload(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("upload failed")
 
-    monkeypatch.setattr(run_sync_mod, "upload_files", crashing_upload)
+    monkeypatch.setattr(sync_publication, "upload_files", crashing_upload)
 
     with pytest.raises(RuntimeError, match="upload failed"):
-        _execute_upload_job(
+        execute_upload_job(
             data_root=data_root,
             settings=settings,
             ops=ops,
@@ -237,7 +236,7 @@ def test_dry_run_preserves_legacy_and_intent(tmp_path: Path) -> None:
     canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
     ops = _canonical_retirement_ops(data_root)
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=True)
+    post_upload_publication_cleanup(data_root, ops, dry_run=True)
 
     assert legacy.exists()
     assert STEM in load_pending_publications(data_root)
@@ -273,11 +272,9 @@ def test_successful_upload_retirement_and_cleanup(
 
     assert legacy.exists()
 
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
+    monkeypatch.setattr(sync_publication, "upload_files", lambda *_a, **_k: None)
 
-    monkeypatch.setattr(run_sync_mod, "upload_files", lambda *_a, **_k: None)
-
-    _execute_upload_job(
+    execute_upload_job(
         data_root=data_root,
         settings=settings,
         ops=ops,
@@ -309,16 +306,14 @@ def test_crash_after_deletion_before_cleanup(
     assert not legacy.exists()
     assert STEM in load_pending_publications(data_root)
 
-    _run_pre_publication_migration(data_root, {STEM})
+    run_pre_publication_migration(data_root, {STEM})
 
     assert canonical.exists()
     assert not legacy.exists()
 
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
-
-    monkeypatch.setattr(run_sync_mod, "upload_files", lambda *_a, **_k: None)
+    monkeypatch.setattr(sync_publication, "upload_files", lambda *_a, **_k: None)
     ops = _canonical_retirement_ops(data_root)
-    _execute_upload_job(
+    execute_upload_job(
         data_root=data_root,
         settings=settings,
         ops=ops,
@@ -338,9 +333,7 @@ def test_injected_cleanup_failure_leaves_intent_for_restart(
     data_root = _seed_migrated(tmp_path)
     ops = _canonical_retirement_ops(data_root)
 
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
-
-    original_remove = run_sync_mod.remove_pending_publications
+    original_remove = sync_publication.remove_pending_publications
     calls: list[str] = []
     crashed = {"flag": False}
 
@@ -353,16 +346,16 @@ def test_injected_cleanup_failure_leaves_intent_for_restart(
         crashed["flag"] = True
         raise RuntimeError("crash between delete and pending cleanup")
 
-    monkeypatch.setattr(run_sync_mod, "remove_pending_publications", remove_then_crash)
+    monkeypatch.setattr(sync_publication, "remove_pending_publications", remove_then_crash)
 
     with pytest.raises(RuntimeError, match="crash between delete and pending cleanup"):
-        _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+        post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert calls == ["delete"]
     assert not (data_root.processed_articles / f"{STEM}.parquet").exists()
     assert STEM in load_pending_publications(data_root)
 
-    _post_upload_publication_cleanup(data_root, ops, dry_run=False)
+    post_upload_publication_cleanup(data_root, ops, dry_run=False)
 
     assert STEM not in load_pending_publications(data_root)
 
@@ -452,17 +445,15 @@ def test_commit_message_does_not_affect_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
     message: str,
 ) -> None:
-    """``_execute_upload_job`` never inspects the commit message."""
+    """``execute_upload_job`` never inspects the commit message."""
     data_root = _seed_migrated(tmp_path)
     legacy = data_root.processed_articles / f"{STEM}.parquet"
     canonical = data_root.processed / "wikipedia" / "documents" / f"{STEM}.parquet"
     ops = _canonical_retirement_ops(data_root)
 
-    import osm_polygon_wikidata_only.cli.run_sync as run_sync_mod
+    monkeypatch.setattr(sync_publication, "upload_files", lambda *_a, **_k: None)
 
-    monkeypatch.setattr(run_sync_mod, "upload_files", lambda *_a, **_k: None)
-
-    _execute_upload_job(
+    execute_upload_job(
         data_root=data_root,
         settings=settings,
         ops=ops,
@@ -506,6 +497,6 @@ def test_unsafe_plan_aborts_before_build_wikimedia_runtime(
     )
 
     with pytest.raises(MigrationError, match="not safe to apply"):
-        _run_pre_publication_migration(data_root, {"orphan"})
+        run_pre_publication_migration(data_root, {"orphan"})
 
     assert runtime_calls == []
