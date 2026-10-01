@@ -230,8 +230,8 @@ def _multipolygon_rings(coords: Any) -> list[Sequence[Sequence[float]]]:
     return [polygon[0] for polygon in coords if polygon]
 
 
-def init_axes(ax: Any) -> None:
-    """Apply the shared world-extent styling used by every visualization."""
+def init_axes(ax: Any, *, equal_aspect: bool = True) -> None:
+    """Apply world-extent styling, optionally deferring the aspect policy."""
     ax.set_facecolor(_OCEAN_COLOR)
     ax.set_xlim(-180.0, 180.0)
     ax.set_ylim(-90.0, 90.0)
@@ -239,7 +239,8 @@ def init_axes(ax: Any) -> None:
     ax.set_yticks(range(-90, 91, 30))
     ax.grid(True, color="#ffffff", linewidth=0.3, alpha=0.4)
     ax.tick_params(colors="#666666", labelsize=7)
-    ax.set_aspect("equal", adjustable="box")
+    if equal_aspect:
+        ax.set_aspect("equal", adjustable="box")
 
 
 # Re-export the shared visual constants so coverage/polygon_count can

@@ -9,6 +9,21 @@
     "reason": "The changed exclusion lets select_cols include document_id before appending it again. _validate_shared_identities has already established equal identity sets; Arrow preserves the duplicate column and to_pylist collapses the identical key, leaving the same comparison rows.",
     "source_sha256": "bbcb23935876d8a3ab1acc558e4047298b74e32119fa5e90128a7f572657343d"
   },
+  "osm_polygon_wikidata_only.augmentation.wikidata_facts.x__label_map__mutmut_11": {
+    "mutant_sha256": "742a5d9a315e486769ea10f921c3743fb49f8b06accfb2b5b8d528683e29fc08",
+    "reason": "The comprehension retains a label only when value.get(\"value\") is truthy, which requires the value key to exist. The mutated dict.get default is therefore never used for included records; string conversion is unchanged.",
+    "source_sha256": "835824d4c209def1974c580990175f0a568e16069bff40703904a1debc4121b2"
+  },
+  "osm_polygon_wikidata_only.augmentation.wikidata_facts.x__label_map__mutmut_14": {
+    "mutant_sha256": "e43bf49fa1a9e06f825563e1e22e1debbd239ed7eef21bc17a23e4dc4f1cbe4e",
+    "reason": "The comprehension retains a label only when value.get(\"value\") is truthy, which requires the value key to exist. The mutated dict.get default is therefore never used for included records; string conversion is unchanged.",
+    "source_sha256": "835824d4c209def1974c580990175f0a568e16069bff40703904a1debc4121b2"
+  },
+  "osm_polygon_wikidata_only.augmentation.wikidata_facts.x__label_map__mutmut_9": {
+    "mutant_sha256": "7202ac2419f97f9fb52b6ffd6de430e3511c1979f0cf0e8107723dde1ec203d2",
+    "reason": "The comprehension retains a label only when value.get(\"value\") is truthy, which requires the value key to exist. The mutated dict.get default is therefore never used for included records; string conversion is unchanged.",
+    "source_sha256": "835824d4c209def1974c580990175f0a568e16069bff40703904a1debc4121b2"
+  },
   "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_16": {
     "mutant_sha256": "606bfeddebd7d6aa169a001e21c2217d3c1078c969cde40d141db83adb10d311",
     "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",

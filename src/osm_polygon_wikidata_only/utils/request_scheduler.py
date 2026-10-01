@@ -357,15 +357,7 @@ class AdaptiveRequestScheduler:
         systemic.
         """
         with self._lock:
-            self._rate.cooldown_until = max(
-                self._rate.cooldown_until,
-                self._clock() + max(0.0, delay_s),
-            )
-            self._rate.current_requests_per_minute = max(
-                self._limits.minimum_requests_per_minute,
-                self._rate.current_requests_per_minute / 2,
-            )
-            self._rate.successful_requests = 0
+            self._apply_global_throttle_locked(delay_s)
 
     def report_host_throttled(self, host: str, delay_s: float) -> None:
         """Record a per-host throttle and escalate globally only when systemic.
@@ -417,15 +409,19 @@ class AdaptiveRequestScheduler:
         with self._lock:
             if count_event:
                 self._record_recent(self._history.global_throttle_times, self._clock())
-            self._rate.cooldown_until = max(
-                self._rate.cooldown_until,
-                self._clock() + max(0.0, delay_s),
-            )
-            self._rate.current_requests_per_minute = max(
-                self._limits.minimum_requests_per_minute,
-                self._rate.current_requests_per_minute / 2,
-            )
-            self._rate.successful_requests = 0
+            self._apply_global_throttle_locked(delay_s)
+
+    def _apply_global_throttle_locked(self, delay_s: float) -> None:
+        """Update global backoff fields while the scheduler lock is held."""
+        self._rate.cooldown_until = max(
+            self._rate.cooldown_until,
+            self._clock() + max(0.0, delay_s),
+        )
+        self._rate.current_requests_per_minute = max(
+            self._limits.minimum_requests_per_minute,
+            self._rate.current_requests_per_minute / 2,
+        )
+        self._rate.successful_requests = 0
 
     def _systemic_threshold(self) -> int:
         """Compute the dynamic systemic threshold based on active host population.

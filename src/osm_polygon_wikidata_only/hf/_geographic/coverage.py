@@ -17,7 +17,6 @@ from typing import Any
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mtick
 
 from .aggregation import aggregate_geographic_text_coverage
 from .h3_geometry import (
@@ -29,7 +28,14 @@ from .models import CoverageCell, CoverageMapError, RenderResult
 from .parquet_inputs import (
     sorted_parquets,  # noqa: F401  (kept for downstream consumer compatibility)
 )
-from .rendering import create_map_axes, format_percent_tick, save_map_figure
+from .rendering import (
+    create_map_axes,
+    decorate_color_scale,
+    save_map_figure,
+)
+from .rendering import (
+    format_percent_tick as format_percent_tick,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -114,7 +120,16 @@ def render_geographic_text_coverage(
     for cell in coerced:
         draw_coverage_cell(ax, cell, cmap=cmap, norm=norm)
     caption = _coverage_caption(coerced, min_polygons_per_cell)
-    _decorate_coverage_figure(fig, ax, cmap, norm, caption)
+    decorate_color_scale(
+        fig,
+        ax,
+        cmap,
+        norm,
+        title="Geographic Wikipedia Text Coverage",
+        caption=caption,
+        colorbar_label="Polygons with non-empty Wikipedia text (%)",
+        tick_formatter=format_percent_tick,
+    )
     save_map_figure(fig, output_path)
 
     LOGGER.info("Wrote geographic Wikipedia text coverage map to %s", output_path)
@@ -146,23 +161,6 @@ def _coverage_totals(cells: Sequence[CoverageCell]) -> tuple[int, int, int]:
         sum(c.polygon_count for c in cells),
         sum(1 for c in cells if c.is_low_sample),
     )
-
-
-def _decorate_coverage_figure(
-    fig: Any,
-    ax: Any,
-    cmap: mcolors.Colormap,
-    norm: mcolors.Normalize,
-    caption: str,
-) -> None:
-    fig.suptitle("Geographic Wikipedia Text Coverage", fontsize=14, color="#222222", y=0.98)
-    fig.text(0.5, 0.02, caption, ha="center", va="bottom", fontsize=7, color="#444444", wrap=True)
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    colorbar = fig.colorbar(sm, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Polygons with non-empty Wikipedia text (%)", fontsize=8, color="#333333")
-    colorbar.ax.yaxis.set_major_formatter(mtick.FuncFormatter(format_percent_tick))
-    colorbar.ax.tick_params(labelsize=7)
 
 
 def generate_geographic_text_coverage(

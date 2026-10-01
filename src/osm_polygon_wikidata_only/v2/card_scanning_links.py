@@ -11,7 +11,11 @@ from osm_polygon_wikidata_only.hf._geographic.polygon_identities import (
     PolygonIdentity,
     PolygonIndex,
 )
-from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
+from osm_polygon_wikidata_only.io.parquet_scan import (
+    iter_record_batches,
+    iter_record_batches_if_columns_present,
+    open_parquet,
+)
 
 _SUCCESSFUL_FETCH_STATUS = "ok"
 _TEXT_DOCUMENT_PROJECTS = frozenset({"wikipedia", "wikivoyage"})
@@ -56,21 +60,17 @@ def _collect_linked_non_empty_text_polygons(
     polygon_index: PolygonIndex,
     polygon_identities: set[PolygonIdentity],
 ) -> None:
-    with open_parquet(path) as parquet_file:
-        columns = {"polygon_id", "document_id", "project"}
-        if not columns.issubset(parquet_file.schema_arrow.names):
-            return
-        for batch in iter_record_batches(
-            parquet_file,
-            columns=["polygon_id", "document_id", "project"],
-            batch_size=65_536,
-        ):
-            _merge_linked_non_empty_text_polygons(
-                batch,
-                eligible_document_keys,
-                polygon_index,
-                polygon_identities,
-            )
+    for batch in iter_record_batches_if_columns_present(
+        path,
+        columns=["polygon_id", "document_id", "project"],
+        batch_size=65_536,
+    ):
+        _merge_linked_non_empty_text_polygons(
+            batch,
+            eligible_document_keys,
+            polygon_index,
+            polygon_identities,
+        )
 
 
 def _merge_linked_non_empty_text_polygons(

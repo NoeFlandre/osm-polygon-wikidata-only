@@ -14,17 +14,16 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
-    wikipedia_document_schema,
-)
 from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
-from osm_polygon_wikidata_only.domain.schema import (
-    polygon_article_schema,
-)
 from osm_polygon_wikidata_only.pipeline import link_migration as lm
 from osm_polygon_wikidata_only.pipeline._link_migration import planning
+from tests.migration._builders import (
+    write_legacy_polygon_article,
+    write_polygon_qid_membership,
+    write_wikipedia_document,
+)
 
 
 def _setup_minimal_processed(processed: Path, stem: str) -> None:
@@ -41,79 +40,19 @@ def _setup_minimal_processed(processed: Path, stem: str) -> None:
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
 
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.table(
-            {
-                "polygon_id": ["p1"],
-                "wikidata": ["Q1"],
-                "source_pbf": [f"{stem}.osm.pbf"],
-                "region": ["r"],
-            }
-        ),
+    write_polygon_qid_membership(
         processed / "polygons" / f"{stem}.parquet",
+        "p1",
+        ["Q1"],
+        source_pbf=f"{stem}.osm.pbf",
     )
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist(
-            [
-                {
-                    "polygon_id": "p1",
-                    "article_id": "Q1:en:1:1",
-                    "wikidata": "Q1",
-                    "language": "en",
-                    "source_pbf": f"{stem}.osm.pbf",
-                    "region": "r",
-                    "osm_type": "way",
-                    "osm_id": 1,
-                    "page_id": 1,
-                    "revision_id": 1,
-                    "is_best_language": True,
-                }
-            ],
-            schema=polygon_article_schema(),
-        ),
+    write_legacy_polygon_article(
         processed / "polygon_articles" / f"{stem}.parquet",
+        "p1",
+        "Q1",
+        source_pbf=f"{stem}.osm.pbf",
     )
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.Table.from_pylist(
-            [
-                {
-                    "document_id": "Q1:wikipedia:en:1:1",
-                    "article_id": "Q1:en:1:1",
-                    "wikidata": "Q1",
-                    "language": "en",
-                    "site": "enwiki",
-                    "title": "T",
-                    "url": "https://en.wikipedia.org/wiki/T",
-                    "page_id": 1,
-                    "revision_id": 1,
-                    "revision_timestamp": "2026-07-24T00:00:00Z",
-                    "retrieved_at": "2026-07-24T00:00:00Z",
-                    "wikidata_label": "L",
-                    "wikidata_description": "D",
-                    "wikidata_aliases": "",
-                    "lead_text": "",
-                    "extract": "",
-                    "full_text": "",
-                    "full_text_format": "plain_text",
-                    "article_length_chars": 0,
-                    "article_length_words": 0,
-                    "article_length_tokens_estimate": 0,
-                    "thumbnail_url": "",
-                    "thumbnail_width": None,
-                    "thumbnail_height": None,
-                    "categories": "",
-                    "license": "CC-BY-SA",
-                    "attribution": "A",
-                    "source_api": "mediawiki_action_api",
-                    "fetch_status": "ok",
-                    "fetch_error": "",
-                    "content_hash": "h",
-                }
-            ],
-            schema=wikipedia_document_schema(),
-        ),
-        processed / "wikipedia" / "documents" / f"{stem}.parquet",
-    )
+    write_wikipedia_document(processed / "wikipedia" / "documents" / f"{stem}.parquet", "Q1")
 
     (processed / "manifests" / "processed_pbfs.json").write_text(
         f'{{"{stem}.osm.pbf": {{"source_pbf": "{stem}.osm.pbf"}}}}'

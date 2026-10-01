@@ -354,35 +354,43 @@ class SyncApplication:
         )
 
     def _audit_augmentation(self, state: RegionSyncState, result: Any) -> Any:
-        runtime = self.context.runtime
-        logger = self.services.logger
-        audit = self.services.audit_wikidata_integrity(
-            self.context.data_root,
-            [state.stem],
-            runtime.wikidata,
-            batch_size=self.context.settings.enrichment_batch_size,
-            languages=self.context.settings.languages,
-            max_articles_per_qid=self.context.settings.max_articles_per_qid,
-            log=logger.info,
-        )
-        self.services.ensure_recovery_audit_unblocked(audit)
-        region = audit.region(state.stem)
+        region = self._audit_region_plan(state.stem)
         if not region.requires_repair:
             return result
-        repair_result = self.services.repair_wikidata_region(
-            self.context.data_root,
-            region,
-            wikidata_client=runtime.wikidata,
-            wikipedia_client=runtime.wikipedia,
-            augmentation_client=self.context.augmentation_client,
-            settings=self.context.settings,
-            log=logger.info,
-            scheduler_snapshot=runtime.scheduler.snapshot,
-        )
+        repair_result = self._repair_region(region)
         if not repair_result.changed:
             return result
         self._mark_recovered(state.stem, repair_result.map_inputs_changed)
         return self.services.load_existing_augmentation(self.context.data_root, state.stem)
+
+    def _audit_region_plan(self, stem: str) -> Any:
+        """Run the configured integrity audit and return one region's plan."""
+        runtime = self.context.runtime
+        audit = self.services.audit_wikidata_integrity(
+            self.context.data_root,
+            [stem],
+            runtime.wikidata,
+            batch_size=self.context.settings.enrichment_batch_size,
+            languages=self.context.settings.languages,
+            max_articles_per_qid=self.context.settings.max_articles_per_qid,
+            log=self.services.logger.info,
+        )
+        self.services.ensure_recovery_audit_unblocked(audit)
+        return audit.region(stem)
+
+    def _repair_region(self, plan: Any) -> Any:
+        """Run a region repair with this sync's clients and settings."""
+        runtime = self.context.runtime
+        return self.services.repair_wikidata_region(
+            self.context.data_root,
+            plan,
+            wikidata_client=runtime.wikidata,
+            wikipedia_client=runtime.wikipedia,
+            augmentation_client=self.context.augmentation_client,
+            settings=self.context.settings,
+            log=self.services.logger.info,
+            scheduler_snapshot=runtime.scheduler.snapshot,
+        )
 
     def _mark_recovered(self, stem: str, map_inputs_changed: bool) -> None:
         self._recovered_stems.add(stem)
@@ -416,19 +424,7 @@ class SyncApplication:
         return self._recover_healthy(state, plan)
 
     def _recovery_plan(self, state: RegionSyncState) -> Any:
-        runtime = self.context.runtime
-        logger = self.services.logger
-        audit = self.services.audit_wikidata_integrity(
-            self.context.data_root,
-            [state.stem],
-            runtime.wikidata,
-            batch_size=self.context.settings.enrichment_batch_size,
-            languages=self.context.settings.languages,
-            max_articles_per_qid=self.context.settings.max_articles_per_qid,
-            log=logger.info,
-        )
-        self.services.ensure_recovery_audit_unblocked(audit)
-        return audit.region(state.stem)
+        return self._audit_region_plan(state.stem)
 
     def _recover_healthy(self, state: RegionSyncState, plan: Any) -> Any:
         if self._migrate_links_if_needed(state.stem):
@@ -442,18 +438,7 @@ class SyncApplication:
         return None
 
     def _recover_repair(self, state: RegionSyncState, plan: Any) -> Any:
-        runtime = self.context.runtime
-        logger = self.services.logger
-        repair_result = self.services.repair_wikidata_region(
-            self.context.data_root,
-            plan,
-            wikidata_client=runtime.wikidata,
-            wikipedia_client=runtime.wikipedia,
-            augmentation_client=self.context.augmentation_client,
-            settings=self.context.settings,
-            log=logger.info,
-            scheduler_snapshot=runtime.scheduler.snapshot,
-        )
+        repair_result = self._repair_region(plan)
         if not repair_result.changed:
             return self._recover_healthy(state, plan)
         self._mark_recovered(state.stem, repair_result.map_inputs_changed)

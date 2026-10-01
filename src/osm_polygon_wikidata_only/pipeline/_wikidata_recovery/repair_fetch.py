@@ -21,6 +21,9 @@ from osm_polygon_wikidata_only.enrichment.wikidata.models import (
     WikidataEntity,
 )
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import language_from_site
+from osm_polygon_wikidata_only.enrichment.wikipedia.entity_context import (
+    entity_context_for_language,
+)
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import WikipediaClient
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.models import RecoveryRepairError
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.progress import RecoveryProgress
@@ -122,13 +125,14 @@ def _fetch_recovery_article(
     settings: Settings,
 ) -> Any:
     """Call the Wikipedia client with the recovery entity context."""
+    context = entity_context_for_language(entity, language)
     return wikipedia_client.fetch_article(
         language,
         site,
         title,
-        wikidata_label=entity.labels.get(language) or entity.labels.get("en", ""),
-        wikidata_description=entity.descriptions.get(language) or entity.descriptions.get("en", ""),
-        wikidata_aliases=entity.aliases.get(language) or entity.aliases.get("en", []),
+        wikidata_label=context.label,
+        wikidata_description=context.description,
+        wikidata_aliases=context.aliases,
         fetch_full_text=settings.fetch_full_text,
     )
 

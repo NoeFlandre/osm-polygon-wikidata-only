@@ -24,7 +24,7 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 
-from ._geographic.basemap import draw_landmasses, load_land_features
+from ._geographic.basemap import draw_landmasses, init_axes, load_land_features
 from ._geographic.polygon_identities import load_unique_polygon_records
 
 LOGGER = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ WORLD_COUNTRIES_URL = (
 )
 WORLD_COUNTRIES_FILENAME = "ne_110m_admin_0_countries.geojson"
 
-_OCEAN_COLOR = "#cfe2f3"
 _LAND_COLOR = "#e8e0d0"
 _LAND_EDGE = "#b8aa90"
 _POINT_COLOR = "#e8743b"
@@ -280,13 +279,9 @@ def generate_coverage_map(
 
 
 def _configure_coverage_axes(ax: Any, land_geojson_path: Path | None) -> None:
-    ax.set_facecolor(_OCEAN_COLOR)
-    ax.set_xlim(-180, 180)
-    ax.set_ylim(-90, 90)
-    ax.set_xticks(range(-180, 181, 30))
-    ax.set_yticks(range(-90, 91, 30))
-    ax.grid(True, color="#ffffff", linewidth=0.3, alpha=0.4)
-    ax.tick_params(colors="#666666", labelsize=7)
+    # The legacy map applies equal aspect after its title, so defer that step
+    # here while sharing the common extent and grid styling.
+    init_axes(ax, equal_aspect=False)
     if land_geojson_path is not None and land_geojson_path.exists():
         _draw_landmasses(ax, land_geojson_path)
 
