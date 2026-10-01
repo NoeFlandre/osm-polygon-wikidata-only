@@ -76,7 +76,7 @@ from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 
 if TYPE_CHECKING:
-    from osm_polygon_wikidata_only.hf.publication import MinimalV1ReleaseSnapshot
+    from osm_polygon_wikidata_only.hf._publication.readme_snapshot import MinimalV1ReleaseSnapshot
     from osm_polygon_wikidata_only.v2.card_release import MinimalV2ReleaseSnapshot
 
 REMOTE_CARD_FILE = "README.md"
@@ -442,8 +442,10 @@ def release_v1_polygon_stats(
     """Release the V1 Wikidata-only card and statistics report."""
     _require_canonical_repo(repo_id, DEFAULT_REPO_ID)
     # Release-only helpers stay lazy so normal sync imports avoid card/map scanning.
-    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
+    from osm_polygon_wikidata_only.hf._publication.readme_snapshot import (  # noqa: PLC0415
         build_minimal_v1_release_snapshot,
+    )
+    from osm_polygon_wikidata_only.hf.publication import (  # noqa: PLC0415
         refresh_coverage_assets,
     )
 
