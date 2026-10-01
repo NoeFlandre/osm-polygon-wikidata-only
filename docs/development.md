@@ -307,8 +307,8 @@ the per-polygon hot paths and the workload benchmarks in
 | Link migration | `plan_link_migration` and `apply_link_migration`, 100,000 links |
 | CLI startup | `--version` in a fresh interpreter |
 
-The containment and language-partitioning cases also assert a `tracemalloc`
-peak (100 MiB and 150 MiB), so a memory regression fails even when elapsed time
+The containment and language-partitioning cases also assert a
+peak of the Arrow memory pool in a fresh process (50 MiB and 40 MiB; `tracemalloc` cannot see Arrow buffers), so a memory regression fails even when elapsed time
 barely moves.
 
 ```bash

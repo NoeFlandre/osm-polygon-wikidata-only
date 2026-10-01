@@ -206,6 +206,7 @@ mutate_only_covered_lines = true
 max_stack_depth = -1
 pytest_add_cli_args = ["--no-cov", "-q"]
 pytest_add_cli_args_test_selection = [
+    "tests/quality/test_benchmark_gates.py",
     "tests/v2/test_deduplication.py",
     "tests/v2/test_fingerprints.py",
     "tests/v2/test_wikipedia_tags.py",

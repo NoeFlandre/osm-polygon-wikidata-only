@@ -2,7 +2,7 @@
 
 Inputs are synthetic and seeded (see ``_workloads``). Run with ``just bench``;
 a plain ``pytest`` run does not collect this directory. Memory-sensitive cases
-also assert a ``tracemalloc`` peak so a memory regression fails even when the
+also assert an Arrow memory-pool peak so a memory regression fails even when the
 elapsed time barely moves.
 """
 
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tracemalloc
 from pathlib import Path
 
 import matplotlib
@@ -37,6 +36,19 @@ matplotlib.use("Agg")
 
 _MIB = 1024 * 1024
 _ROUNDS = 3
+
+
+def _arrow_peak_mib(operation: str) -> float:
+    """Run ``operation`` in a fresh interpreter and return Arrow's peak pool MiB.
+
+    ``tracemalloc`` only sees Python allocations, not Arrow's native buffers, so
+    the peak comes from the Arrow memory pool of an isolated process.
+    """
+    script = "import pyarrow as pa\n" + operation + "\nprint(pa.default_memory_pool().max_memory())"
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    return int(completed.stdout.strip().splitlines()[-1]) / _MIB
 
 
 def test_coverage_map_with_land(benchmark, tmp_path: Path) -> None:
@@ -80,15 +92,20 @@ def test_containment_manifest_stats_200k_polygons(
     assert stats["language_count"] == 1
 
 
-def test_containment_manifest_stats_peak_memory(containment_inputs: StagedRule) -> None:
-    tracemalloc.start()
-    try:
-        _canonical_manifest_stats(containment_inputs)
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
+def test_containment_manifest_stats_peak_memory() -> None:
+    peak = _arrow_peak_mib(
+        """
+import tempfile
+from pathlib import Path
+from benchmarks.test_workloads import _staged_containment_inputs
+from osm_polygon_wikidata_only.pipeline.containment_migration import _canonical_manifest_stats
+with tempfile.TemporaryDirectory() as raw:
+    staged = _staged_containment_inputs(Path(raw), 200_000)
+    _canonical_manifest_stats(staged)
+"""
+    )
 
-    assert peak / _MIB < 100
+    assert peak < 50
 
 
 def _partition_all(batches: list[pa.RecordBatch]) -> int:
@@ -116,15 +133,16 @@ def test_language_partitioning_1m_rows_50_languages(
     assert partitions == 50 * len(language_batches)
 
 
-def test_language_partitioning_peak_memory(language_batches: list[pa.RecordBatch]) -> None:
-    tracemalloc.start()
-    try:
-        _partition_all(language_batches)
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
+def test_language_partitioning_peak_memory() -> None:
+    peak = _arrow_peak_mib(
+        """
+from benchmarks import _workloads
+from benchmarks.test_workloads import _partition_all
+_partition_all(list(_workloads.language_batches(1_000_000, 50, 65_536)))
+"""
+    )
 
-    assert peak / _MIB < 150
+    assert peak < 40
 
 
 _LINKS = 100_000
