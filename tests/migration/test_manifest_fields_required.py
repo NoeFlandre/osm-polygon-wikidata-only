@@ -357,5 +357,36 @@ def test_malformed_processed_manifest_blocks_migration(tmp_path: Path) -> None:
     # Plan should still succeed (planning is read-only and a separate
     # file from the migration). The apply stage must refuse to
     # silently overwrite a malformed manifest.
-    with pytest.raises((ValueError, json.JSONDecodeError)):
+    with pytest.raises((ValueError, json.JSONDecodeError)) as error:
         link_migration.apply_link_migration(processed)
+    assert str(error.value).startswith("processed_pbfs.json: ")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "diagnostic"),
+    [
+        (
+            "augmentation/manifests/augmentation_manifest.json",
+            "augmentation_manifest.json",
+        ),
+        (
+            "manifests/pending_migration_publications.json",
+            "pending_migration_publications.json",
+        ),
+    ],
+)
+def test_malformed_migration_manifests_keep_their_file_diagnostic(
+    tmp_path: Path,
+    relative_path: str,
+    diagnostic: str,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _setup_processed(processed, stem)
+    malformed = processed / relative_path
+    malformed.parent.mkdir(parents=True, exist_ok=True)
+    malformed.write_text("{ invalid JSON")
+
+    with pytest.raises(ValueError) as error:
+        link_migration.apply_link_migration(processed)
+    assert str(error.value).startswith(f"{diagnostic}: ")
