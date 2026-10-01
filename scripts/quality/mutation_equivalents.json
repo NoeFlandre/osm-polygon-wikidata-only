@@ -24,30 +24,30 @@
     "reason": "Omitting logger from SyncApplicationServices uses its default LOGGER; this module obtains the same named logging.Logger singleton, so the constructed service object is unchanged.",
     "source_sha256": "0b23fc4cf4b85f7fd3e40000202d09c5f47104e4793b9403ef7504e2d438c3a8"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_12": {
-    "mutant_sha256": "35753dd003c7db7e100d51e7ff784fcec5dff2301025c0b2aabdedd8184acb06",
-    "reason": "For valid closed rings of at least four entries, max(1, len(ring)-1) and max(2, len(ring)-1) are identical. Shorter rings are rejected by ring validation.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_10": {
+    "mutant_sha256": "ed1846f9572e7c1b52eb5f96b3aecd45dd6e866cc09f3a3921cfed0ff890544b",
+    "reason": "For GeoJSON linear rings the closing coordinate is repeated and a valid ring has at least four entries, so the outer ring has at least three distinct vertices. max(1, count) and max(2, count) are then equal. Shorter rings are rejected by _ring_signed_area_and_centroid before the computed reference point can escape.",
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
-  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_22": {
-    "mutant_sha256": "209d2fe7d7bb37c11cc7a472789b9882197e2e0ff14773a12fd2534f5cbadfb9",
-    "reason": "For valid GeoJSON latitudes in [-90, 90], cosine is nonnegative. At the exact positive floor, both comparison branches return 1e-12, so changing >= to > cannot change the projection factor.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+  "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_26": {
+    "mutant_sha256": "a4ca89f3645818d2c1489c39101fc92499d74a0eabde17984010afc4b3c9ce1f",
+    "reason": "For valid GeoJSON latitudes in [-90, 90], cos(latitude) is nonnegative. At the exact positive 1e-12 floor, both >= and > branches return the same value, so the changed comparison cannot alter the projection factor.",
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_14": {
     "mutant_sha256": "e9bfdcc5c2a25e82716b351e0d09c1eca2d0e10bbef5221855b7d6a1b53572d7",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; ensure_ascii=True serializes identically.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_2": {
     "mutant_sha256": "d3a9c473a9ba2a18b011f8dd729135a9d3d8961a0e138f740ea5c0672911602b",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; ensure_ascii=None therefore serializes identically.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.geometry.x_centroid_geojson__mutmut_5": {
     "mutant_sha256": "fc11e5c80ada2535080c675ba92aa951dd2575726a2bbd62e33308a526798802",
     "reason": "The Point payload contains only numeric coordinates and fixed ASCII keys/type; the json default ensure_ascii=True serializes identically.",
-    "source_sha256": "c906b43c716da7e833c2676a2c9726bf92ba4c8b2314526dd8d5b47d2809ace5"
+    "source_sha256": "be26b6a91873a95bbfe5195950fa5271912f4b572d8e939c16dd5e1c29bc4056"
   },
   "osm_polygon_wikidata_only.domain.ids.x_content_hash__mutmut_4": {
     "mutant_sha256": "1c2e8b4532c957b2b8ed20a9ce08ecb4602505a20c117fc8d30cc9aee7494bd9",
@@ -118,6 +118,26 @@
     "mutant_sha256": "b29179766c89aaf88beb506baf155a1fba2b5ba911caa78b5ae8f642c50a760e",
     "reason": "_polygon_for_legacy_row resolves each polygon before this lookup, and _conversion_indexes builds polygon_qids for every polygon key from that same table. The fallback argument is unreachable for every resolvable row.",
     "source_sha256": "e3fe1098949680ad460473df7d8a421e550c5b54776454abce01d281228c08e5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__classify_existing_stem__mutmut_11": {
+    "mutant_sha256": "cd39863034fcffa9d656276d0e180521bce424d999f0319e602c28cc834a06c7",
+    "reason": "_link_classification returns a nonempty reason whenever classification is None: schema read failures return a typed error detail, and unsupported schemas return an explanatory ValueError message. The fallback literal is unreachable.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__classify_existing_stem__mutmut_12": {
+    "mutant_sha256": "8e4452b5975760754982febb40cc0f268336821276a0c7a666a740f47d846c31",
+    "reason": "_link_classification returns a nonempty reason whenever classification is None: schema read failures return a typed error detail, and unsupported schemas return an explanatory ValueError message. The fallback literal is unreachable.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__legacy_stem_plan__mutmut_32": {
+    "mutant_sha256": "582f5d967d1b32bfe6459db23d6728f560d655939f3a956c0fda49980ad97734",
+    "reason": "Validated canonical_rows have the fixed 11 canonical keys in schema order and only string/integer values; inferred Arrow types and column order therefore match the explicit schema. _table_digest hashes serialized record batches (not field metadata), and both implementations use the same row count and batches, including the empty-table case.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__legacy_stem_plan__mutmut_34": {
+    "mutant_sha256": "64476c65b19665c8efd877cefcbe6fd293bf0734986f6b211d0a3d0703c39ff6",
+    "reason": "Validated canonical_rows have the fixed 11 canonical keys in schema order and only string/integer values; inferred Arrow types and column order therefore match the explicit schema. _table_digest hashes serialized record batches (not field metadata), and both implementations use the same row count and batches, including the empty-table case.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_11": {
     "mutant_sha256": "bc78e17043f6d6e4ccf7a566b4f0a095f94f2700ee57cc41c43967f39aedb57d",
