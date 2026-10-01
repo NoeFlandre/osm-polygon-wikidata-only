@@ -18,7 +18,7 @@ def test_synthetic_batch_has_manifest_and_unused_columns() -> None:
     batch = benchmark._synthetic_batch(3, 6)
 
     assert batch.num_rows == 3
-    assert len(batch.column_names) == len(benchmark._POLYGON_MANIFEST_COLUMNS) + 26
+    assert len(batch.column_names) == len(benchmark.POLYGON_MANIFEST_COLUMNS) + 26
     assert batch.column("wikidata").to_pylist() == ["Q3", "Q4", "Q5"]
     assert batch.column("tag_keys").to_pylist() == [benchmark._TAG_KEYS] * 3
     assert batch.column("geometry").to_pylist()[0].startswith("POLYGON ((0 0, ")

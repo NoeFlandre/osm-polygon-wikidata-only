@@ -9,16 +9,19 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+import osm_polygon_wikidata_only.pipeline.containment_manifest_stats as manifest_stats
 import osm_polygon_wikidata_only.pipeline.containment_migration as containment_migration
+from osm_polygon_wikidata_only.pipeline.containment_manifest_stats import (
+    document_manifest_stats,
+    polygon_manifest_stats,
+)
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
     ChildAudit,
     PreparedRule,
     RuleAudit,
     StagedRule,
-    _document_manifest_stats,
     _has_required_files,
     _pending_rule,
-    _polygon_manifest_stats,
     _update_pipeline_manifests,
     load_retired_parent_children,
     prepare_safe_rules,
@@ -75,7 +78,7 @@ def test_polygon_manifest_stats_count_values_and_ignore_bad_tag_json() -> None:
         },
     ]
 
-    assert _polygon_manifest_stats(rows) == {
+    assert polygon_manifest_stats(rows) == {
         "polygon_count": 3,
         "unique_wikidata_count": 1,
         "rows_with_wikipedia": 2,
@@ -95,9 +98,9 @@ def test_top_tag_keys_parse_each_distinct_serialized_value_once(
         parsed_values.append(value)
         return original_loads(value)
 
-    monkeypatch.setattr(containment_migration.json, "loads", track_loads)
+    monkeypatch.setattr(manifest_stats.json, "loads", track_loads)
 
-    assert containment_migration._top_tag_keys_from_values(
+    assert manifest_stats.top_tag_keys_from_values(
         ['["name", "name"]'] * 4 + ['["amenity"]'] * 2 + ["not-json"] * 3
     ) == {"name": 8, "amenity": 2}
     assert parsed_values == ['["name", "name"]', '["amenity"]', "not-json"]
@@ -196,7 +199,7 @@ def test_document_manifest_stats_sort_languages_and_sum_characters() -> None:
         {"language": "fr", "article_length_chars": 8},
     ]
 
-    assert _document_manifest_stats(rows) == {
+    assert document_manifest_stats(rows) == {
         "article_count": 3,
         "language_count": 2,
         "languages": ["en", "fr"],
