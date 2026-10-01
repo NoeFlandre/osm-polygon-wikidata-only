@@ -86,23 +86,29 @@ def _prepare_runtime(
     return data_root, settings
 
 
+def _release_apply_requested(args: argparse.Namespace) -> bool:
+    commands = {"release-stats", "publish-language-splits"}
+    return getattr(args, "command", None) in commands and bool(getattr(args, "apply", False))
+
+
+def _push_target_repo_ids(args: argparse.Namespace, settings: Settings) -> list[str]:
+    """Return the repositories whose credentials a real push needs, if any."""
+    if args.dry_run:
+        return []
+    if _release_apply_requested(args):
+        return [_RELEASE_TARGETS[t] for t in _selected_release_targets(args.dataset_version)]
+    return [settings.repo_id] if args.push else []
+
+
 def _authenticate_for_push(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     settings: Settings,
 ) -> None:
     """Validate Hugging Face credentials when a real push was requested."""
-    release_apply = getattr(args, "command", None) in {
-        "release-stats",
-        "publish-language-splits",
-    } and getattr(args, "apply", False)
-    if not (args.push or release_apply) or args.dry_run:
-        return
-    if release_apply:
-        repo_ids = [_RELEASE_TARGETS[t] for t in _selected_release_targets(args.dataset_version)]
-    else:
-        repo_ids = [settings.repo_id]
-    authenticate_push_targets(settings, repo_ids, parser.error)
+    repo_ids = _push_target_repo_ids(args, settings)
+    if repo_ids:
+        authenticate_push_targets(settings, repo_ids, parser.error)
 
 
 def _run_v2_sync(

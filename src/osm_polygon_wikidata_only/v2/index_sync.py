@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+from collections import OrderedDict
 from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -111,8 +112,9 @@ class PersistentIndexSync:
     _writer_connection: sqlite3.Connection
     _stop: threading.Event
     _index_reader_executor: ThreadPoolExecutor | None
-    _row_cache: dict
-    _query_cache: dict
+    _db_path: Path
+    _row_cache: OrderedDict[str, DocumentRow]
+    _query_cache: OrderedDict[tuple[str, tuple[object, ...]], tuple[DocumentRow, ...]]
     _query_cache_lock: threading.Lock
     _secondary_indexes: set[str]
 

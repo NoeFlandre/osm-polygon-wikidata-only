@@ -162,6 +162,7 @@ source_paths = [
     "src/osm_polygon_wikidata_only/domain/wikidata_qids.py",
     "src/osm_polygon_wikidata_only/io/pbf_reader.py",
     "src/osm_polygon_wikidata_only/hf/_upload_state.py",
+    "src/osm_polygon_wikidata_only/hf/_upload_state_files.py",
     "src/osm_polygon_wikidata_only/hf/_upload_retry.py",
     "src/osm_polygon_wikidata_only/hf/language_split_release.py",
     "src/osm_polygon_wikidata_only/cli/run_sync.py",
@@ -195,6 +196,8 @@ source_paths = [
     "scripts/quality/package_smoke.py",
     "scripts/quality/qa_gauntlet.py",
     "scripts/quality/architecture.py",
+    "scripts/quality/bench_compare.py",
+    "scripts/quality/slow_tests.py",
 ]
 also_copy = ["src/osm_polygon_wikidata_only", "requirements", "assets"]
 mutate_only_covered_lines = true

@@ -58,7 +58,8 @@ coverage: quality-runtime
     COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-coverage" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/coverage-pytest" -q
 
 tests: quality-runtime
-    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile
+    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile --durations=20 --junitxml="{{ QUALITY_REPORT_DIR }}/junit.xml"
+    uv run python scripts/quality/slow_tests.py --junit-xml "{{ QUALITY_REPORT_DIR }}/junit.xml" --budget 3
 
 # Per-file line-coverage floor over the root coverage produced by `just tests`.
 # Exemptions are thin entry points that only run in a subprocess, where
@@ -67,17 +68,19 @@ coverage-floor: quality-runtime
     @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
     uv run python scripts/quality/coverage_floor.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --minimum 85 {{ COVERAGE_FLOOR_EXEMPTIONS }}
 
-# Time the hot pure functions (benchmarks/ is not part of the normal test run).
+# Time the hot pure functions and the workload benchmarks (benchmarks/ is not
+# part of the normal test run).
 bench:
     uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q
 
-# Save a named baseline, then fail if a later run is >50% slower on the mean.
-bench-save name="base":
-    uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q --benchmark-save={{ name }}
+# Write the pytest-benchmark JSON that CI uploads and compares.
+bench-json out="bench.json":
+    uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q --benchmark-json={{ out }}
 
-bench-compare name="base":
-    uv run python -m pytest benchmarks --no-cov -p no:cacheprovider -q \
-        --benchmark-compare --benchmark-compare-fail=mean:50%
+# Compare a run with the committed baseline (benchmarks/baseline.json, recorded
+# on the CI runner type). Fails on a >25% median regression only in enforce mode.
+bench-compare mode="warn" out="bench.json":
+    uv run python scripts/quality/bench_compare.py --baseline benchmarks/baseline.json --current {{ out }} --threshold 0.25 --mode {{ mode }}
 
 property-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property
