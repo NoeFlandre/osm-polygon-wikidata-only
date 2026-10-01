@@ -19,17 +19,15 @@ from osm_polygon_wikidata_only.hf._upload_state import (
     QUEUE_CONTRACT_VERSION,
     UploadStateStore,
 )
-from osm_polygon_wikidata_only.hf._upload_state import (
+from osm_polygon_wikidata_only.hf._upload_state_files import (
     independent_copy as _independent_copy,
 )
-from osm_polygon_wikidata_only.hf._upload_state import read_envelope as _state_read_envelope
-from osm_polygon_wikidata_only.hf._upload_state import (
+from osm_polygon_wikidata_only.hf._upload_state_files import read_envelope as _state_read_envelope
+from osm_polygon_wikidata_only.hf._upload_state_files import (
     remove_failed_upgrade as _remove_failed_upgrade_artifacts,
 )
-from osm_polygon_wikidata_only.hf._upload_state import (
-    sha256_file as _sha256_file,
-)
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
+from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
 
 LOGGER = logging.getLogger(__name__)
 

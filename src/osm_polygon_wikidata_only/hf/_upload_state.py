@@ -8,7 +8,6 @@ The queue itself only coordinates workers and upload callbacks.
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import threading
 from collections.abc import Callable
@@ -16,6 +15,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from osm_polygon_wikidata_only.hf._upload_state_files import (
+    QUEUE_CONTRACT_VERSION,
+    SNAPSHOTS_SUBDIR,
+    current_sequence,
+    independent_copy,
+    is_inside,
+    is_legacy_envelope,
+    next_sequence_from_state_dir,
+    read_legacy_or_current_envelope,
+    remove_failed_upgrade,
+    required_string,
+    snapshot_dir_for_sequence,
+    write_highwater,
+)
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
@@ -23,12 +36,6 @@ from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
 UploadOps = list[PublicationOp]
 CopyFile = Callable[[Path, Path], None]
 HashFile = Callable[[Path], str]
-
-QUEUE_CONTRACT_VERSION = "bg-upload-v1"
-
-_SEQUENCE_FILE = re.compile(r"^(\d+)\.json$")
-_HIGHWATER_FILENAME = ".highwater"
-_SNAPSHOTS_SUBDIR = "snapshots"
 
 
 @dataclass(frozen=True)
@@ -51,123 +58,6 @@ class ResumeResult:
     discovered_count: int
 
 
-def _read_highwater(state_dir: Path) -> int:
-    """Read the allocated sequence high-water mark."""
-    path = state_dir / _HIGHWATER_FILENAME
-    if not path.is_file():
-        return 0
-    try:
-        value = int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
-    return max(value, 0)
-
-
-def _write_highwater(state_dir: Path, value: int) -> None:
-    """Persist the allocated sequence high-water mark atomically."""
-    atomic_write_text(state_dir / _HIGHWATER_FILENAME, f"{int(value)}\n")
-
-
-def _next_sequence_from_state_dir(state_dir: Path) -> int:
-    """Return the next sequence after persisted state."""
-    if not state_dir.is_dir():
-        return 1
-    return max(_read_highwater(state_dir), _scanned_sequence(state_dir)) + 1
-
-
-def _scanned_sequence(state_dir: Path) -> int:
-    highest = 0
-    for path in state_dir.glob("*.json"):
-        highest = max(highest, _sequence_from_state_path(path))
-    return highest
-
-
-def _sequence_from_state_path(path: Path) -> int:
-    match = _SEQUENCE_FILE.match(path.name)
-    if match is not None:
-        return int(match.group(1))
-    envelope = _read_legacy_or_current_envelope(path)
-    sequence = envelope.get("sequence") if envelope is not None else None
-    if not isinstance(sequence, int) or isinstance(sequence, bool):
-        return 0
-    return max(sequence, 0)
-
-
-def _independent_copy(source: Path, target: Path) -> None:
-    """Copy a source file without sharing its inode."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-
-
-def _read_json_object(path: Path) -> dict[str, Any] | None:
-    """Read a JSON object, returning ``None`` for malformed input."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    return raw if isinstance(raw, dict) else None
-
-
-def _read_envelope(path: Path) -> dict[str, Any] | None:
-    """Read a current upload envelope."""
-    raw = _read_json_object(path)
-    if raw is None or raw.get("contract_version") != QUEUE_CONTRACT_VERSION:
-        return None
-    return raw
-
-
-def _read_legacy_or_current_envelope(path: Path) -> dict[str, Any] | None:
-    """Read either the current or legacy envelope shape."""
-    return _read_json_object(path)
-
-
-def _required_string(entry: dict[str, Any], key: str) -> str:
-    value = entry.get(key)
-    if not isinstance(value, str):
-        raise ValueError(f"Envelope operation field {key!r} must be a string")
-    return value
-
-
-def _current_sequence(payload: dict[str, Any], path: Path) -> int:
-    raw_sequence = payload.get("sequence")
-    if not isinstance(raw_sequence, int) or isinstance(raw_sequence, bool) or raw_sequence < 1:
-        raise ValueError(f"Current envelope {path} has an invalid sequence")
-    return raw_sequence
-
-
-def _is_legacy_envelope(payload: dict[str, Any]) -> bool:
-    if "contract_version" in payload:
-        return False
-    return isinstance(payload.get("message"), str) and isinstance(payload.get("ops"), list)
-
-
-def _snapshot_dir_for_sequence(state_dir: Path, sequence: int) -> Path:
-    return state_dir / _SNAPSHOTS_SUBDIR / f"{sequence:06d}"
-
-
-def _is_inside(child: Path, parent: Path) -> bool:
-    """Return whether a resolved path is inside or equal to its parent."""
-    try:
-        child_resolved = child.resolve(strict=False)
-        parent_resolved = parent.resolve(strict=False)
-    except (OSError, RuntimeError):
-        return False
-    if child_resolved == parent_resolved:
-        return True
-    try:
-        child_resolved.relative_to(parent_resolved)
-    except ValueError:
-        return False
-    return True
-
-
-def _remove_failed_upgrade(state_dir: Path, sequence: int, snapshot_dir: Path) -> None:
-    """Remove an upgraded duplicate that cannot be queued."""
-    (state_dir / f"{sequence:06d}.json").unlink(missing_ok=True)
-    if snapshot_dir.is_dir() and _is_inside(snapshot_dir, state_dir / _SNAPSHOTS_SUBDIR):
-        shutil.rmtree(snapshot_dir, ignore_errors=True)
-
-
 class UploadStateStore:
     """Own the durable state contract used by ``BackgroundUploadQueue``."""
 
@@ -175,7 +65,7 @@ class UploadStateStore:
         self,
         state_dir: Path,
         *,
-        copy_file: CopyFile = _independent_copy,
+        copy_file: CopyFile = independent_copy,
         hash_file: HashFile = _sha256_file,
     ) -> None:
         self.state_dir = state_dir
@@ -183,7 +73,7 @@ class UploadStateStore:
         self._copy_file = copy_file
         self._hash_file = hash_file
         self._next_sequence_lock = threading.Lock()
-        self._next_sequence = _next_sequence_from_state_dir(state_dir)
+        self._next_sequence = next_sequence_from_state_dir(state_dir)
 
     @property
     def next_sequence(self) -> int:
@@ -194,14 +84,14 @@ class UploadStateStore:
         with self._next_sequence_lock:
             sequence = self._next_sequence
             self._next_sequence += 1
-            _write_highwater(self.state_dir, sequence)
+            write_highwater(self.state_dir, sequence)
             return sequence
 
     def persist(self, ops: UploadOps, message: str) -> StoredUpload:
         """Snapshot and durably persist one upload submission."""
         sequence = self._allocate_sequence()
         state_path = self.state_dir / f"{sequence:06d}.json"
-        snapshot_dir = _snapshot_dir_for_sequence(self.state_dir, sequence)
+        snapshot_dir = snapshot_dir_for_sequence(self.state_dir, sequence)
         try:
             rewritten_ops, op_entries, snapshot_dir = self._snapshot_operations(ops, sequence)
             envelope = {
@@ -227,7 +117,7 @@ class UploadStateStore:
         state_path.unlink(missing_ok=True)
         if snapshot_dir is None:
             return
-        if _is_inside(snapshot_dir, self.state_dir / _SNAPSHOTS_SUBDIR):
+        if is_inside(snapshot_dir, self.state_dir / SNAPSHOTS_SUBDIR):
             shutil.rmtree(snapshot_dir, ignore_errors=True)
 
     def _snapshot_operations(
@@ -247,7 +137,7 @@ class UploadStateStore:
     def _submission_snapshot_dir(self, ops: UploadOps, sequence: int) -> Path | None:
         if not any(op.action == "add" for op in ops):
             return None
-        snapshot_dir = _snapshot_dir_for_sequence(self.state_dir, sequence)
+        snapshot_dir = snapshot_dir_for_sequence(self.state_dir, sequence)
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         return snapshot_dir
 
@@ -340,14 +230,14 @@ class UploadStateStore:
         path: Path,
         seen_sequences: set[int],
     ) -> tuple[str, dict[str, Any], int | None]:
-        payload = _read_legacy_or_current_envelope(path)
+        payload = read_legacy_or_current_envelope(path)
         if payload is None:
             raise ValueError(f"Malformed envelope: {path} -- refusing to resume")
-        if _is_legacy_envelope(payload):
+        if is_legacy_envelope(payload):
             return "legacy", payload, None
         if payload.get("contract_version") != QUEUE_CONTRACT_VERSION:
             raise ValueError(f"Unknown contract_version in {path}; refusing to resume")
-        sequence = _current_sequence(payload, path)
+        sequence = current_sequence(payload, path)
         if sequence in seen_sequences:
             raise ValueError(f"Duplicate sequence {sequence} in {path} -- refusing to upload")
         seen_sequences.add(sequence)
@@ -368,7 +258,7 @@ class UploadStateStore:
                 continue
             sequence, envelope, snapshot_dir = result
             if sequence in seen_sequences:
-                _remove_failed_upgrade(self.state_dir, sequence, snapshot_dir)
+                remove_failed_upgrade(self.state_dir, sequence, snapshot_dir)
                 raise ValueError(
                     f"Legacy upgrade produced duplicate sequence {sequence}; refusing to upload"
                 )
@@ -384,7 +274,7 @@ class UploadStateStore:
         upgraded: list[tuple[int, Path, dict[str, Any], Path]],
     ) -> list[tuple[int, Path, dict[str, Any], Path]]:
         jobs = [
-            (sequence, path, payload, _snapshot_dir_for_sequence(self.state_dir, sequence))
+            (sequence, path, payload, snapshot_dir_for_sequence(self.state_dir, sequence))
             for sequence, path, payload in current
         ]
         jobs.extend(upgraded)
@@ -397,8 +287,8 @@ class UploadStateStore:
         envelope: dict[str, Any],
         snapshot_dir: Path,
     ) -> tuple[StoredUpload | None, str | None]:
-        snapshots_root = self.state_dir / _SNAPSHOTS_SUBDIR
-        if not _is_inside(snapshot_dir, snapshots_root):
+        snapshots_root = self.state_dir / SNAPSHOTS_SUBDIR
+        if not is_inside(snapshot_dir, snapshots_root):
             return None, (
                 f"Computed snapshot dir {snapshot_dir} is outside state_dir/snapshots; "
                 "refusing to resume"
@@ -438,8 +328,8 @@ class UploadStateStore:
         state_path: Path,
         snapshot_dir: Path,
     ) -> tuple[PublicationOp, str | None]:
-        action = _required_string(entry, "action")
-        path_in_repo = _required_string(entry, "path_in_repo")
+        action = required_string(entry, "action")
+        path_in_repo = required_string(entry, "path_in_repo")
         local_path_str = entry.get("local_path")
         snapshot_path_str = entry.get("snapshot_path")
         local_path = Path(local_path_str) if local_path_str else None
@@ -464,7 +354,7 @@ class UploadStateStore:
     ) -> None:
         if snapshot_path is None:
             raise ValueError(f"Add op in {state_path} is missing snapshot_path")
-        if not _is_inside(snapshot_path, snapshot_dir):
+        if not is_inside(snapshot_path, snapshot_dir):
             raise ValueError(
                 f"Add op snapshot {snapshot_path} is outside {snapshot_dir}; refusing to upload"
             )
@@ -475,7 +365,7 @@ class UploadStateStore:
         payload: dict[str, Any],
     ) -> tuple[int, dict[str, Any], Path]:
         sequence = self._allocate_sequence()
-        snapshot_dir = _snapshot_dir_for_sequence(self.state_dir, sequence)
+        snapshot_dir = snapshot_dir_for_sequence(self.state_dir, sequence)
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         _new_ops, op_entries = self._upgrade_legacy_operations(payload, snapshot_dir)
         new_envelope = {
@@ -508,8 +398,8 @@ class UploadStateStore:
         op_index: int,
         snapshot_dir: Path,
     ) -> tuple[PublicationOp, dict[str, Any]]:
-        action = _required_string(entry, "action")
-        path_in_repo = _required_string(entry, "path_in_repo")
+        action = required_string(entry, "action")
+        path_in_repo = required_string(entry, "path_in_repo")
         local_path_str = entry.get("local_path")
         local_path = Path(local_path_str) if local_path_str else None
         op_entry: dict[str, Any] = {
@@ -575,8 +465,8 @@ class UploadStateStore:
         state_path.unlink(missing_ok=True)
         if snapshot_dir is None:
             return
-        snapshots_root = self.state_dir / _SNAPSHOTS_SUBDIR
-        if not _is_inside(snapshot_dir, snapshots_root):
+        snapshots_root = self.state_dir / SNAPSHOTS_SUBDIR
+        if not is_inside(snapshot_dir, snapshots_root):
             raise ValueError(
                 f"snapshot_dir {snapshot_dir} is outside {snapshots_root}; refusing to delete"
             )
@@ -602,14 +492,6 @@ def _snapshot_path(op: PublicationOp) -> Path | None:
     if op.action != "add":
         return None
     return op.snapshot_path or op.local_path
-
-
-# Public collaborator spellings for the queue facade; private names remain
-# available to preserve the established state-store seams.
-independent_copy = _independent_copy
-sha256_file = _sha256_file
-read_envelope = _read_envelope
-remove_failed_upgrade = _remove_failed_upgrade
 
 
 __all__ = [

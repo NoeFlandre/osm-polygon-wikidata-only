@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import osm_polygon_wikidata_only.hf._upload_state as state
+import osm_polygon_wikidata_only.hf._upload_state_files as state_files
 from osm_polygon_wikidata_only.hf._upload_state import UploadStateStore
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 
@@ -92,18 +93,18 @@ def test_highwater_accepts_zero_rejects_negative_and_reads_utf8(
         return original_read_text(path, encoding=encoding, errors=errors)
 
     monkeypatch.setattr(Path, "read_text", read_text)
-    assert state._read_highwater(tmp_path) == 0
+    assert state_files.read_highwater(tmp_path) == 0
     assert encodings == ["utf-8"]
 
     highwater.write_text("-1", encoding="utf-8")
-    assert state._read_highwater(tmp_path) == 0
+    assert state_files.read_highwater(tmp_path) == 0
 
 
 def test_highwater_defaults_for_missing_or_malformed_file(tmp_path: Path) -> None:
-    assert state._read_highwater(tmp_path) == 0
+    assert state_files.read_highwater(tmp_path) == 0
 
     (tmp_path / ".highwater").write_text("not-an-integer", encoding="utf-8")
-    assert state._read_highwater(tmp_path) == 0
+    assert state_files.read_highwater(tmp_path) == 0
 
 
 def test_scanned_sequences_only_include_json_and_support_envelope_sequences(
@@ -120,9 +121,9 @@ def test_scanned_sequences_only_include_json_and_support_envelope_sequences(
         encoding="utf-8",
     )
 
-    assert state._sequence_from_state_path(numbered) == 7
-    assert state._sequence_from_state_path(legacy_named) == 11
-    assert state._scanned_sequence(state_dir) == 11
+    assert state_files.sequence_from_state_path(numbered) == 7
+    assert state_files.sequence_from_state_path(legacy_named) == 11
+    assert state_files.scanned_sequence(state_dir) == 11
 
 
 @pytest.mark.parametrize(
@@ -135,7 +136,7 @@ def test_sequence_scan_uses_envelope_for_noncanonical_filenames(
     path = tmp_path / filename
     path.write_text(json.dumps({"sequence": envelope_sequence}), encoding="utf-8")
 
-    assert state._sequence_from_state_path(path) == envelope_sequence
+    assert state_files.sequence_from_state_path(path) == envelope_sequence
 
 
 @pytest.mark.parametrize("payload", [None, "not-json", "[]"])
@@ -146,7 +147,7 @@ def test_sequence_scan_ignores_unreadable_or_non_object_envelopes(
     if payload is not None:
         path.write_text(payload, encoding="utf-8")
 
-    assert state._sequence_from_state_path(path) == 0
+    assert state_files.sequence_from_state_path(path) == 0
 
 
 @pytest.mark.parametrize("sequence", [0, -1, True, "1"])
@@ -157,7 +158,7 @@ def test_sequence_from_non_numeric_envelope_returns_zero(tmp_path: Path, sequenc
         encoding="utf-8",
     )
 
-    assert state._sequence_from_state_path(path) == 0
+    assert state_files.sequence_from_state_path(path) == 0
 
 
 def test_sequence_from_envelope_accepts_sequence_one(tmp_path: Path) -> None:
@@ -167,7 +168,7 @@ def test_sequence_from_envelope_accepts_sequence_one(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert state._sequence_from_state_path(path) == 1
+    assert state_files.sequence_from_state_path(path) == 1
 
 
 def test_sha256_reuses_cached_io_hashing_digest(tmp_path: Path) -> None:
@@ -182,7 +183,7 @@ def test_independent_copy_creates_missing_parent_without_sharing_inode(tmp_path:
     target = tmp_path / "nested" / "deeper" / "target.bin"
     source.write_bytes(b"payload")
 
-    state._independent_copy(source, target)
+    state_files.independent_copy(source, target)
 
     assert target.read_bytes() == b"payload"
     assert target.stat().st_ino != source.stat().st_ino
@@ -205,25 +206,25 @@ def test_json_reader_requires_utf8_and_rejects_non_objects(
         return original_read_text(path, encoding=encoding, errors=errors)
 
     monkeypatch.setattr(Path, "read_text", read_text)
-    assert state._read_json_object(path) is None
+    assert state_files.read_json_object(path) is None
     assert encodings == ["utf-8"]
 
 
 @pytest.mark.parametrize("sequence", [None, "1", 0, -1, True])
 def test_current_sequence_rejects_invalid_values(tmp_path: Path, sequence: object) -> None:
     with pytest.raises(ValueError, match="invalid sequence"):
-        state._current_sequence({"sequence": sequence}, tmp_path / "pending.json")
+        state_files.current_sequence({"sequence": sequence}, tmp_path / "pending.json")
 
 
 def test_current_sequence_accepts_positive_integer(tmp_path: Path) -> None:
-    assert state._current_sequence({"sequence": 1}, tmp_path / "pending.json") == 1
+    assert state_files.current_sequence({"sequence": 1}, tmp_path / "pending.json") == 1
 
 
 def test_legacy_envelope_requires_message_and_ops_and_excludes_current_contract() -> None:
-    assert state._is_legacy_envelope({"message": "m", "ops": []})
-    assert not state._is_legacy_envelope({"message": "m"})
-    assert not state._is_legacy_envelope({"ops": []})
-    assert not state._is_legacy_envelope(
+    assert state_files.is_legacy_envelope({"message": "m", "ops": []})
+    assert not state_files.is_legacy_envelope({"message": "m"})
+    assert not state_files.is_legacy_envelope({"ops": []})
+    assert not state_files.is_legacy_envelope(
         {"contract_version": "bg-upload-v1", "message": "m", "ops": []}
     )
 
@@ -242,7 +243,7 @@ def test_path_containment_uses_non_strict_resolution(
         return original_resolve(path, strict=strict)
 
     monkeypatch.setattr(Path, "resolve", resolve)
-    assert state._is_inside(child, parent)
+    assert state_files.is_inside(child, parent)
     assert calls == [False, False]
 
 
@@ -251,8 +252,8 @@ def test_path_containment_handles_equal_outside_and_resolution_error(
 ) -> None:
     parent = tmp_path / "parent"
     outside = tmp_path / "outside"
-    assert state._is_inside(parent, parent)
-    assert not state._is_inside(outside, parent)
+    assert state_files.is_inside(parent, parent)
+    assert not state_files.is_inside(outside, parent)
 
     original_resolve = Path.resolve
 
@@ -262,7 +263,7 @@ def test_path_containment_handles_equal_outside_and_resolution_error(
         return original_resolve(path, strict=strict)
 
     monkeypatch.setattr(Path, "resolve", resolve)
-    assert not state._is_inside(outside, parent)
+    assert not state_files.is_inside(outside, parent)
 
 
 def test_remove_failed_upgrade_is_best_effort_and_scoped(
@@ -278,16 +279,16 @@ def test_remove_failed_upgrade_is_best_effort_and_scoped(
     def rmtree(path: Path, *, ignore_errors: bool) -> None:
         removed.append((path, ignore_errors))
 
-    monkeypatch.setattr(state.shutil, "rmtree", rmtree)
-    state._remove_failed_upgrade(state_dir, 1, snapshot_dir)
+    monkeypatch.setattr(state_files.shutil, "rmtree", rmtree)
+    state_files.remove_failed_upgrade(state_dir, 1, snapshot_dir)
     assert removed == [(snapshot_dir, True)]
 
     removed.clear()
-    state._remove_failed_upgrade(state_dir, 1, snapshot_root / "missing")
+    state_files.remove_failed_upgrade(state_dir, 1, snapshot_root / "missing")
     assert removed == []
 
     # A missing envelope is a normal recovery case.
-    state._remove_failed_upgrade(state_dir, 1, snapshot_dir)
+    state_files.remove_failed_upgrade(state_dir, 1, snapshot_dir)
 
 
 def test_cleanup_failed_submission_is_idempotent_and_scoped(
@@ -301,7 +302,7 @@ def test_cleanup_failed_submission_is_idempotent_and_scoped(
     def rmtree(path: Path, *, ignore_errors: bool) -> None:
         calls.append((path, ignore_errors))
 
-    monkeypatch.setattr(state.shutil, "rmtree", rmtree)
+    monkeypatch.setattr(state_files.shutil, "rmtree", rmtree)
     store.cleanup_failed_submission(store.state_dir / "missing.json", snapshot_dir)
     store.cleanup_failed_submission(store.state_dir / "missing.json", None)
 
@@ -666,7 +667,7 @@ def test_delete_is_idempotent_and_ignores_snapshot_cleanup_errors(
     def rmtree(path: Path, *, ignore_errors: bool) -> None:
         calls.append((path, ignore_errors))
 
-    monkeypatch.setattr(state.shutil, "rmtree", rmtree)
+    monkeypatch.setattr(state_files.shutil, "rmtree", rmtree)
     store.delete(state_path, snapshot_dir)
     store.delete(state_path, None)
 
