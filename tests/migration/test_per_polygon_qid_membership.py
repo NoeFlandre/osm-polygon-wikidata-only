@@ -215,7 +215,7 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_conflicting_duplicate_legacy_rows_block_migration(tmp_path: Path) -> None:
+def test_conflicting_duplicate_legacy_rows_block_migration_contract(tmp_path: Path) -> None:
     """Two legacy rows for the same (polygon_id, article_id) but with
     different wikidata values must BLOCK the migration -- they cannot
     silently collapse.
