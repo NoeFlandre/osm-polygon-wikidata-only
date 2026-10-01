@@ -6,23 +6,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from osm_polygon_wikidata_only.augmentation import orchestrator
+from osm_polygon_wikidata_only.augmentation import existing_results
 from osm_polygon_wikidata_only.augmentation.checkpoints import (
     AugmentationCheckpointStore,
     _documents_from_rows,
     _validated_section_batch,
+)
+from osm_polygon_wikidata_only.augmentation.existing_results import (
+    _is_valid_core_hash_entry,
+    _is_valid_core_hash_path,
+    _processed_link_manifest_is_current,
 )
 from osm_polygon_wikidata_only.augmentation.integrity import (
     RejectionRecord,
     WikivoyageIntegrityResult,
 )
 from osm_polygon_wikidata_only.augmentation.models import Section
-from osm_polygon_wikidata_only.augmentation.orchestrator import (
-    _integrity_rejections_payload,
-    _is_valid_core_hash_entry,
-    _is_valid_core_hash_path,
-    _processed_link_manifest_is_current,
-)
+from osm_polygon_wikidata_only.augmentation.orchestrator import _integrity_rejections_payload
 from osm_polygon_wikidata_only.augmentation.schema import document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 
@@ -153,7 +153,9 @@ def test_processed_link_manifest_requires_matching_schema_and_count(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(orchestrator.pq, "read_metadata", lambda _path: SimpleNamespace(num_rows=3))
+    monkeypatch.setattr(
+        existing_results.pq, "read_metadata", lambda _path: SimpleNamespace(num_rows=3)
+    )
 
     result = _processed_link_manifest_is_current(data_root, stem, tmp_path / "links.parquet")
 

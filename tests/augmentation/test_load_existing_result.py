@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from osm_polygon_wikidata_only.augmentation import orchestrator
+from osm_polygon_wikidata_only.augmentation import existing_results, orchestrator
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
     fact_schema,
@@ -50,7 +50,7 @@ def _write_valid_result(tmp_path: Path) -> DataRoot:
         json.dumps(
             {
                 STEM: {
-                    "contract_version": orchestrator.CONTRACT_VERSION,
+                    "contract_version": existing_results.CONTRACT_VERSION,
                     "counts": COUNTS,
                 }
             }
@@ -71,42 +71,42 @@ def test_load_existing_result_validates_and_returns_sidecars(tmp_path: Path) -> 
 def test_manifest_reader_rejects_missing_and_malformed_files(tmp_path: Path) -> None:
     missing = tmp_path / "missing.json"
     with pytest.raises(FileNotFoundError):
-        orchestrator._read_augmentation_manifest(missing)
+        existing_results.read_augmentation_manifest(missing)
     malformed = tmp_path / "malformed.json"
     malformed.write_text("not json", encoding="utf-8")
     with pytest.raises(ValueError, match="not valid JSON"):
-        orchestrator._read_augmentation_manifest(malformed)
+        existing_results.read_augmentation_manifest(malformed)
 
 
 def test_manifest_entry_and_count_validation_reject_bad_shapes() -> None:
     with pytest.raises(KeyError):
-        orchestrator._augmentation_manifest_entry({}, STEM)
+        existing_results.augmentation_manifest_entry({}, STEM)
     with pytest.raises(TypeError):
-        orchestrator._augmentation_manifest_entry({STEM: []}, STEM)
+        existing_results.augmentation_manifest_entry({STEM: []}, STEM)
     with pytest.raises(ValueError, match="contract version"):
-        orchestrator._validate_augmentation_entry(
+        existing_results.validate_augmentation_entry(
             {"contract_version": "wrong", "counts": COUNTS}, STEM
         )
     with pytest.raises(TypeError, match="counts"):
-        orchestrator._validate_augmentation_entry(
-            {"contract_version": orchestrator.CONTRACT_VERSION, "counts": []}, STEM
+        existing_results.validate_augmentation_entry(
+            {"contract_version": existing_results.CONTRACT_VERSION, "counts": []}, STEM
         )
     with pytest.raises(ValueError, match="missing required fields"):
-        orchestrator._validate_augmentation_entry(
-            {"contract_version": orchestrator.CONTRACT_VERSION, "counts": {}}, STEM
+        existing_results.validate_augmentation_entry(
+            {"contract_version": existing_results.CONTRACT_VERSION, "counts": {}}, STEM
         )
     with pytest.raises(TypeError, match="non-negative"):
-        orchestrator._validate_augmentation_entry(
+        existing_results.validate_augmentation_entry(
             {
-                "contract_version": orchestrator.CONTRACT_VERSION,
+                "contract_version": existing_results.CONTRACT_VERSION,
                 "counts": {**COUNTS, "wikidata_facts": -1},
             },
             STEM,
         )
     with pytest.raises(TypeError, match="non-negative"):
-        orchestrator._validate_augmentation_entry(
+        existing_results.validate_augmentation_entry(
             {
-                "contract_version": orchestrator.CONTRACT_VERSION,
+                "contract_version": existing_results.CONTRACT_VERSION,
                 "counts": {**COUNTS, "wikidata_facts": "0"},
             },
             STEM,
@@ -116,20 +116,20 @@ def test_manifest_entry_and_count_validation_reject_bad_shapes() -> None:
 def test_sidecar_file_validation_covers_missing_unreadable_and_mismatch(tmp_path: Path) -> None:
     valid = _write_valid_result(tmp_path)
     valid_path = orchestrator.sidecar_paths(valid, STEM)[0]
-    orchestrator._validate_sidecar_file(valid_path, wikipedia_document_schema())
+    existing_results.validate_sidecar_file(valid_path, wikipedia_document_schema())
 
     with pytest.raises(FileNotFoundError):
-        orchestrator._validate_sidecar_file(
+        existing_results.validate_sidecar_file(
             tmp_path / "missing.parquet", wikipedia_document_schema()
         )
     unreadable = tmp_path / "unreadable.parquet"
     unreadable.write_text("not parquet", encoding="utf-8")
     with pytest.raises(ValueError, match="unreadable"):
-        orchestrator._validate_sidecar_file(unreadable, wikipedia_document_schema())
+        existing_results.validate_sidecar_file(unreadable, wikipedia_document_schema())
     mismatch = tmp_path / "mismatch.parquet"
     pq.write_table(pa.table({"value": [1]}), mismatch)
     with pytest.raises(ValueError, match="schema mismatch"):
-        orchestrator._validate_sidecar_file(mismatch, wikipedia_document_schema())
+        existing_results.validate_sidecar_file(mismatch, wikipedia_document_schema())
 
 
 def test_reused_section_batch_logging_is_silent_when_none_reused(
