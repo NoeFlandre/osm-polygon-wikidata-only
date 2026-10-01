@@ -839,6 +839,18 @@ class TestPlanningBlockers:
             "Stem 'stem-a': document_id set mismatch (symmetric difference: ['b', 'c'])"
         )
 
+    def test_shared_value_validation_keeps_stem_in_identity_diagnostics(self) -> None:
+        legacy = pa.table({"document_id": ["legacy-id"], "title": ["Title"]})
+        canonical = pa.table({"document_id": ["canonical-id"], "title": ["Title"]})
+
+        with pytest.raises(MigrationError) as error:
+            migration_planning._check_shared_values(legacy, canonical, "stem-a")
+
+        assert str(error.value) == (
+            "Stem 'stem-a': document_id set mismatch "
+            "(symmetric difference: ['canonical-id', 'legacy-id'])"
+        )
+
     def test_revalidated_action_pairs_require_equal_stem_counts(self, tmp_path: Path) -> None:
         stem = StemPlan("stem-a", MigrationOperation.CREATE_MISSING, "", "hash", None, 1, "digest")
         planned = MigrationPlan(tmp_path, (stem,))

@@ -462,6 +462,59 @@ def test_legacy_stem_plan_keeps_the_canonical_schema_for_empty_rows(
     assert link_planning._table_digest(expected) == plan.canonical_digest
 
 
+def test_legacy_stem_plan_uses_the_canonical_schema_for_nonempty_rows(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    stem = "alpha"
+    article_id = "Q1:en:1:1"
+    document_id = "Q1:wikipedia:en:1:1"
+    polygons_path = tmp_path / "polygons.parquet"
+    links_path = tmp_path / "links.parquet"
+    docs_path = tmp_path / "documents.parquet"
+    _write_polygons(
+        polygons_path,
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    _write_legacy_links(
+        links_path,
+        [_legacy_link_row("p1", article_id, "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    _write_legacy_documents(
+        docs_path,
+        [_legacy_document_row(document_id, article_id, "Q1")],
+    )
+
+    plan = link_planning._legacy_stem_plan(
+        stem, polygons_path, links_path, docs_path, ("p", "l", "d")
+    )
+
+    legacy, polygons, documents = (
+        pa.parquet.read_table(path) for path in (links_path, polygons_path, docs_path)
+    )
+    rows = link_planning._build_canonical_rows(stem, legacy, polygons, documents)
+    expected = pa.Table.from_pylist(rows, schema=polygon_document_link_schema())
+    assert plan.row_count == 1
+    assert plan.canonical_digest == link_planning._table_digest(expected)
+
+
+def test_classify_existing_stem_keeps_its_unreadable_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(link_planning, "_link_classification", lambda _path: (None, None))
+
+    plan = link_planning._classify_existing_stem(
+        "alpha",
+        tmp_path / "polygons.parquet",
+        tmp_path / "links.parquet",
+        tmp_path / "documents.parquet",
+        ("p", "l", "d"),
+    )
+
+    assert plan.reason == "polygon_articles file unreadable"
+
+
 def test_missing_link_shard_reason_is_specific(tmp_path: Path) -> None:
     stem = "alpha-latest"
     _write_polygons(

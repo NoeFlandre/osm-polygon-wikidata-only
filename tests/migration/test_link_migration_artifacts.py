@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -12,6 +14,7 @@ from osm_polygon_wikidata_only.augmentation.rejection_ledger import (
     save_ledger,
 )
 from osm_polygon_wikidata_only.pipeline._link_migration import artifacts
+from osm_polygon_wikidata_only.pipeline._link_migration.models import StemApplyInputs
 
 
 def test_pending_publication_update_initializes_missing_stems_and_replaces_bad_marker() -> None:
@@ -26,6 +29,27 @@ def test_pending_publication_update_initializes_missing_stems_and_replaces_bad_m
             "fingerprint_hashes": {"alpha": "link-hash"},
         },
     }
+
+
+def test_updated_processed_entry_preserves_source_pbf_for_reconstructed_entry() -> None:
+    inputs = cast(
+        StemApplyInputs,
+        SimpleNamespace(
+            polygons_table=pa.Table.from_pylist([{"region": "north"}]),
+            stem_plan=SimpleNamespace(stem="north-latest"),
+        ),
+    )
+    entries: dict[str, dict[str, object]] = {}
+
+    updated = artifacts._updated_processed_entry(
+        entries,
+        inputs,
+        "north-latest.osm.pbf",
+        3,
+    )
+
+    assert updated is entries
+    assert entries["north-latest.osm.pbf"]["source_pbf"] == "north-latest.osm.pbf"
 
 
 def test_rejection_record_conversion_preserves_expected_qid_and_cascade_count() -> None:

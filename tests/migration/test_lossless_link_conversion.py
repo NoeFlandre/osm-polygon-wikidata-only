@@ -340,6 +340,17 @@ def test_missing_optional_identity_values_do_not_create_false_conflicts() -> Non
     conversion._validate_legacy_identity({}, {}, "polygon-1", "article-1")
 
 
+@pytest.mark.parametrize(
+    ("field", "document_value"),
+    [("page_id", 2), ("revision_id", 2), ("language", "en")],
+)
+def test_missing_legacy_identity_fields_remain_empty_for_conflict_checks(
+    field: str,
+    document_value: int | str,
+) -> None:
+    conversion._validate_legacy_identity({}, {field: document_value}, "polygon-1", "article-1")
+
+
 def test_invalid_legacy_relationship_does_not_stop_later_valid_rows() -> None:
     legacy = pa.Table.from_pylist(
         [

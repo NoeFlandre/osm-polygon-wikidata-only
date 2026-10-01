@@ -21,6 +21,7 @@ Two-phase testing:
 
 from __future__ import annotations
 
+import codecs
 import json
 import os
 from pathlib import Path
@@ -337,6 +338,40 @@ def test_recovery_with_missing_entries_defaults_to_empty_list(tmp_path: Path) ->
     transaction_module._recover_directory(journal_dir, "alpha")
 
     assert not journal.exists()
+
+
+def test_recovery_journal_reader_requests_utf8_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "contract_version": transaction_module.TRANSACTION_VERSION,
+                "stem": "alpha",
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+    encodings: list[str | None] = []
+
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        encodings.append(encoding)
+        return original_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert transaction_module._load_recovery_journal(journal, "alpha")["entries"] == []
+    assert len(encodings) == 1
+    assert encodings[0] is not None
+    assert codecs.lookup(encodings[0]).name == "utf-8"
 
 
 def test_ordered_replacements_idempotent_second_run_preserves_mtime_and_hash(
