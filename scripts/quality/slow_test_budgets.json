@@ -1,3 +1,7 @@
 {
-  "tests.v2.test_language_splits::test_v2_split_can_be_loaded_with_standard_datasets": 8.0
+  "tests.v2.test_language_splits::test_v2_split_can_be_loaded_with_standard_datasets": 10.0,
+  "tests.io.test_upload_queue::test_snapshot_sha256_mismatch_on_resume_fails_loudly": 10.0,
+  "tests.quality.test_test_construction::test_no_test_builds_an_object_with_dunder_new": 10.0,
+  "tests.property.test_identifier_properties::test_parse_wikipedia_tags_is_idempotent_on_normalised_output": 10.0,
+  "tests.migration.test_wikipedia_storage_audit::test_hash_seed_determinism": 10.0
 }

@@ -329,7 +329,9 @@ warn-only runs, set `BENCH_MODE` to `enforce` in `.github/workflows/ci.yml`.
 3 seconds; the 20 slowest tests are printed on every run. The budget is not
 measured under coverage, which inflates durations several-fold. A test that
 legitimately needs longer is listed with its own limit in
-`scripts/quality/slow_test_budgets.json`.
+`scripts/quality/slow_test_budgets.json`. CI runners are about three times
+slower than a laptop, so tests that take about a second locally are listed there
+with 10 seconds of headroom.
 
 The CI job prints `bench.json` to its job summary; copy it from there into
 `benchmarks/baseline.json` to record the baseline.
