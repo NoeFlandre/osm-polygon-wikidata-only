@@ -140,6 +140,8 @@ from osm_polygon_wikidata_only.hf._publication.models import (
     PublicationValidationError,
 )
 from osm_polygon_wikidata_only.hf._publication.readme_snapshot import (
+    MinimalV1ReleaseSnapshot,
+    build_minimal_v1_release_snapshot,
     write_dataset_card_snapshot,
 )
 from osm_polygon_wikidata_only.hf._uploader.plan import (
@@ -514,12 +516,14 @@ def assemble_containment_retirement_upload(
 
 __all__ = [
     "CorePublicationArtifacts",
+    "MinimalV1ReleaseSnapshot",
     "PublicationValidationError",
     "assemble_augmentation_upload",
     "assemble_containment_retirement_upload",
     "assemble_core_upload",
     "assemble_metadata_only_upload",
     "assemble_region_upload",
+    "build_minimal_v1_release_snapshot",
     "coverage_refresh_required",
     "load_existing_core_artifacts",
     "refresh_coverage_assets",
