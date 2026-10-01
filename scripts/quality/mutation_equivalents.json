@@ -69,6 +69,26 @@
     "reason": "For None the original and mutated conditions both return False; for every non-None value both evaluate bool(value).",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
   },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__load_json_object__mutmut_5": {
+    "mutant_sha256": "588a1df6f4a463432755975bfd55cdffac2ed7f9f018d49d46e59c82e0bfac45",
+    "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same bytes. The existing manifest test verifies the canonical codec name, not spelling.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__stage_rejection_ledger__mutmut_10": {
+    "mutant_sha256": "2e67cfb148ad09a69153108682bc6fbf11f23d7da1db9de4f678ae42ea2a45ea",
+    "reason": "load_ledger(path) returns [] when path is absent, so calling it unconditionally and conditionally both produce the same prior-record list before merge_records.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_12": {
+    "mutant_sha256": "d4b2e9fb9541eab4b025d537bd459faa18c0c99ac2200ac126c7d2736cdb246e",
+    "reason": "When metadata_refresh is absent, {} and None both lead the isinstance(marker, dict) check to false and initialize empty marker stems and hashes. A present dictionary follows the same path in both versions.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_14": {
+    "mutant_sha256": "d32c3a15e8aa0ad786bcceb810a11c64d43bab53866478c82f628c2cd45d5046",
+    "reason": "When metadata_refresh is absent, an omitted dict.get default and the explicit {} default both produce equivalent empty marker stems and hashes after the isinstance(marker, dict) check; present dictionaries are unchanged.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
   "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x__conversion_indexes__mutmut_19": {
     "mutant_sha256": "f9261b58040d3fc4a6a4441290df9b092d3fe1899e385d91ff2da880776e9d11",
     "reason": "If a malformed polygon row omits wikidata, both the original empty-string fallback and None stringify to invalid QID components; qids_from_osm_tag returns the same empty tuple.",

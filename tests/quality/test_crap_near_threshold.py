@@ -63,16 +63,16 @@ def test_stage_voyage_replacements_branches(tmp_path: Path) -> None:
     def context(plan: object) -> Any:
         return cast(Any, SimpleNamespace(inputs=inputs, integrity_plan=plan))
 
-    assert link_artifacts._stage_voyage_replacements(staged, context(None)) == []
+    assert link_artifacts._stage_voyage_replacements(tmp_path, staged, context(None)) == []
     same = SimpleNamespace(retained_documents=[{"id": 1}, {"id": 2}], retained_sections=[{"id": 1}])
-    assert link_artifacts._stage_voyage_replacements(staged, context(same)) == []
+    assert link_artifacts._stage_voyage_replacements(tmp_path, staged, context(same)) == []
     changed = SimpleNamespace(retained_documents=[{"id": 1}], retained_sections=[])
-    result = link_artifacts._stage_voyage_replacements(staged, context(changed))
+    result = link_artifacts._stage_voyage_replacements(tmp_path, staged, context(changed))
     assert [target for target, _ in result] == [documents, sections]
     assert pq.read_table(result[0][1]).num_rows == 1
     assert pq.read_table(result[1][1]).num_rows == 0
     sections.unlink()
-    result = link_artifacts._stage_voyage_replacements(staged, context(changed))
+    result = link_artifacts._stage_voyage_replacements(tmp_path, staged, context(changed))
     assert [target for target, _ in result] == [documents]
 
 

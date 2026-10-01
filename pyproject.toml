@@ -226,6 +226,7 @@ pytest_add_cli_args_test_selection = [
     "tests/migration/test_link_migration_planning.py",
     "tests/migration/test_link_migration_reconstruction.py",
     "tests/migration/test_link_migration_transaction.py",
+    "tests/migration/test_link_migration_artifacts.py",
     "tests/migration/test_link_migration_transaction_edges.py",
     "tests/migration/test_lossless_link_conversion.py",
     "tests/migration/test_manifest_atomicity.py",
