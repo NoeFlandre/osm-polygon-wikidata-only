@@ -498,21 +498,23 @@ def test_legacy_stem_plan_uses_the_canonical_schema_for_nonempty_rows(
     assert plan.canonical_digest == link_planning._table_digest(expected)
 
 
-def test_classify_existing_stem_keeps_its_unreadable_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(link_planning, "_link_classification", lambda _path: (None, None))
-
-    plan = link_planning._classify_existing_stem(
-        "alpha",
-        tmp_path / "polygons.parquet",
-        tmp_path / "links.parquet",
-        tmp_path / "documents.parquet",
-        ("p", "l", "d"),
+def test_public_plan_reports_unreadable_link_schema(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(
+        processed / "polygons" / "alpha.parquet",
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
     )
+    links_path = processed / "polygon_articles" / "alpha.parquet"
+    links_path.parent.mkdir(parents=True, exist_ok=True)
+    links_path.write_bytes(b"invalid parquet")
 
-    assert plan.reason == "polygon_articles file unreadable"
+    plan = link_migration.plan_link_migration(processed, stems={"alpha"})
+
+    assert len(plan.stems) == 1
+    stem_plan = plan.stems[0]
+    assert stem_plan.classification.value == "BLOCKED"
+    assert stem_plan.reason is not None
+    assert stem_plan.reason.startswith("polygon_articles file unreadable: ArrowInvalid:")
 
 
 def test_missing_link_shard_reason_is_specific(tmp_path: Path) -> None:
