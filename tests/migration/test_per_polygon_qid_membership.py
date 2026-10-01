@@ -170,7 +170,7 @@ def test_qid_membership_is_per_polygon_not_region_wide(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_conflicting_duplicate_legacy_rows_block_migration(tmp_path: Path) -> None:
+def test_conflicting_duplicate_legacy_rows_block_migration_contract(tmp_path: Path) -> None:
     """Two legacy rows for the same (polygon_id, article_id) but with
     different wikidata values must BLOCK the migration -- they cannot
     silently collapse.
@@ -259,6 +259,8 @@ def test_conflicting_duplicate_legacy_rows_block_migration(tmp_path: Path) -> No
         or "duplicate" in blocked[0].reason.lower()
         or "ambiguous" in blocked[0].reason.lower()
     ), f"Block reason must mention conflict/duplicate/ambiguous; got {blocked[0].reason}"
+    assert "polygon_id='p1'" in blocked[0].reason
+    assert "article_id='Q1:en:1:1'" in blocked[0].reason
 
 
 # ---------------------------------------------------------------------------
