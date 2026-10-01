@@ -13,9 +13,7 @@
       "_load_augmentation_result": 1,
       "_log_process_results": 14,
       "_publish_augmentation": 1,
-      "_require_push_token": 1,
-      "_upload_metadata_refresh": 12,
-      "_verify_push_access": 1
+      "_upload_metadata_refresh": 12
     },
     "enrichment/test_enrichment.py": {
       "_http_get": 3

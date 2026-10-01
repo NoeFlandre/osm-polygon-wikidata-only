@@ -28,6 +28,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia
 from osm_polygon_wikidata_only.cli import commands, sync_publication
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
+from osm_polygon_wikidata_only.hf import push_authentication
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from tests.helpers import sha256_file
@@ -149,9 +150,11 @@ def _setup_mock_region(data_root: DataRoot, stem: str, *, augmented: bool = True
 
 @pytest.fixture
 def mock_hf_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(commands, "resolve_hf_token", lambda value: "fake-token")
-    monkeypatch.setattr(commands, "verify_hf_token", lambda value: "noeflandre")
-    monkeypatch.setattr(commands, "verify_repo_authorization", lambda token, repo_id: "noeflandre")
+    monkeypatch.setattr(push_authentication, "resolve_hf_token", lambda value: "fake-token")
+    monkeypatch.setattr(push_authentication, "verify_hf_token", lambda value: "noeflandre")
+    monkeypatch.setattr(
+        push_authentication, "verify_repo_authorization", lambda token, repo_id: "noeflandre"
+    )
 
 
 def _setup_test_hub(monkeypatch: pytest.MonkeyPatch, stub: StubHfHub) -> None:
