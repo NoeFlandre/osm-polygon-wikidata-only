@@ -84,6 +84,15 @@ def test_area_ignores_orientation_and_start_vertex(ring: Ring, shift: int) -> No
     )
 
 
+@example(
+    ring=[
+        [105.001, 62.0],
+        [104.99906030737921, 62.00034202014333],
+        [105.00076604444313, 61.999357212390315],
+        [105.001, 62.0],
+    ],
+    offset=1.0,
+)
 @given(ring=_convex_ring(), offset=st.floats(min_value=-5.0, max_value=5.0))
 def test_area_is_invariant_under_longitude_translation(ring: Ring, offset: float) -> None:
     moved = [[lon + offset, lat] for lon, lat in ring]

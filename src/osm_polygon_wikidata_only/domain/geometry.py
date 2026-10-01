@@ -59,7 +59,10 @@ def _rings(geom: dict[str, Any]) -> list[list[list[float]]]:
 
 
 def _ring_signed_area_and_centroid(
-    ring: list[list[float]], cos_lat0: float
+    ring: list[list[float]],
+    cos_lat0: float,
+    origin_lon: float = 0.0,
+    origin_lat: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """Compute signed area and projected centroid accumulators for one ring.
 
@@ -72,9 +75,9 @@ def _ring_signed_area_and_centroid(
       rings are CCW, holes are CW per RFC 7946).
     * ``n`` = number of distinct vertices.
 
-    Coordinates are *absolute* in projected meters (origin at the prime
-    meridian / equator), so the caller applies the reference lon/lat
-    offset once at the end.
+    Coordinates are projected relative to the same reference point for all
+    rings in a polygon. This avoids subtracting products near 1e14 for small
+    polygons and lets outer and hole centroid moments combine directly.
     """
     if len(ring) < 4:
         # A closed ring needs at least 4 entries: 3 distinct vertices + repeat.
@@ -83,7 +86,6 @@ def _ring_signed_area_and_centroid(
     cross_sum = 0.0
     sx = 0.0
     sy = 0.0
-
     # GeoJSON rings are closed: first == last. Iterate i in [0, n) and
     # pair each vertex with the next one (i+1 modulo n).
     n = len(ring) - 1
@@ -93,10 +95,10 @@ def _ring_signed_area_and_centroid(
         lon_i, lat_i = p[0], p[1]
         lon_j, lat_j = q[0], q[1]
 
-        xi = EARTH_RADIUS_M * math.radians(lon_i) * cos_lat0
-        yi = EARTH_RADIUS_M * math.radians(lat_i)
-        xj = EARTH_RADIUS_M * math.radians(lon_j) * cos_lat0
-        yj = EARTH_RADIUS_M * math.radians(lat_j)
+        xi = EARTH_RADIUS_M * math.radians(lon_i - origin_lon) * cos_lat0
+        yi = EARTH_RADIUS_M * math.radians(lat_i - origin_lat)
+        xj = EARTH_RADIUS_M * math.radians(lon_j - origin_lon) * cos_lat0
+        yj = EARTH_RADIUS_M * math.radians(lat_j - origin_lat)
 
         cross = xi * yj - xj * yi
         cross_sum += cross
@@ -117,29 +119,51 @@ def _area_and_centroid_for_geom(
     if not rings:
         raise GeometryError("Geometry has no rings.")
 
-    ref_lat, _lat0_rad, cos_lat0 = _projection_for_rings(rings)
-    total_cross, total_sx, total_sy = _ring_moments(rings, cos_lat0)
+    ref_lon, ref_lat, cos_lat0 = _projection_for_rings(rings)
+    total_cross, total_sx, total_sy = _ring_moments(
+        rings,
+        cos_lat0,
+        origin_lon=ref_lon,
+        origin_lat=ref_lat,
+    )
 
     # ``total_cross`` is 2 * signed_area_in_m2.
     signed_area_m2 = 0.5 * total_cross
     if signed_area_m2 == 0.0:
         # Empty or fully degenerated shape: fall back to the reference
         # point + 0 area so the caller still gets a reasonable centroid.
-        ref_lon = sum(v[0] for v in rings[0][:-1]) / max(1, len(rings[0]) - 1)
         return 0.0, ref_lon, ref_lat
 
-    return _centroid_from_moments(signed_area_m2, total_sx, total_sy, cos_lat0)
+    return _centroid_from_moments(
+        signed_area_m2,
+        total_sx,
+        total_sy,
+        cos_lat0,
+        origin_lon=ref_lon,
+        origin_lat=ref_lat,
+    )
 
 
 def _projection_for_rings(rings: list[list[list[float]]]) -> tuple[float, float, float]:
-    ref_lat = sum(v[1] for v in rings[0][:-1]) / max(1, len(rings[0]) - 1)
+    outer_vertices = rings[0][:-1]
+    vertex_count = max(1, len(outer_vertices))
+    ref_lon = math.fsum(v[0] for v in outer_vertices) / vertex_count
+    ref_lat = math.fsum(v[1] for v in outer_vertices) / vertex_count
     lat0_rad = math.radians(ref_lat)
     cos_lat0 = math.cos(lat0_rad)
-    return ref_lat, lat0_rad, cos_lat0 if abs(cos_lat0) >= 1e-12 else 1e-12
+    return ref_lon, ref_lat, cos_lat0 if abs(cos_lat0) >= 1e-12 else 1e-12
 
 
-def _ring_moments(rings: list[list[list[float]]], cos_lat0: float) -> tuple[float, float, float]:
-    moments = [_ring_signed_area_and_centroid(ring, cos_lat0) for ring in rings]
+def _ring_moments(
+    rings: list[list[list[float]]],
+    cos_lat0: float,
+    *,
+    origin_lon: float = 0.0,
+    origin_lat: float = 0.0,
+) -> tuple[float, float, float]:
+    moments = [
+        _ring_signed_area_and_centroid(ring, cos_lat0, origin_lon, origin_lat) for ring in rings
+    ]
     return (
         sum(moment[0] for moment in moments),
         sum(moment[1] for moment in moments),
@@ -152,13 +176,16 @@ def _centroid_from_moments(
     total_sx: float,
     total_sy: float,
     cos_lat0: float,
+    *,
+    origin_lon: float = 0.0,
+    origin_lat: float = 0.0,
 ) -> tuple[float, float, float]:
     cx_proj = total_sx / (6.0 * signed_area_m2)
     cy_proj = total_sy / (6.0 * signed_area_m2)
     area_m2 = abs(signed_area_m2)
     lon_rad = cx_proj / (EARTH_RADIUS_M * cos_lat0)
     lat_rad = cy_proj / EARTH_RADIUS_M
-    return area_m2, math.degrees(lon_rad), math.degrees(lat_rad)
+    return area_m2, origin_lon + math.degrees(lon_rad), origin_lat + math.degrees(lat_rad)
 
 
 def compute_polygon_geometry(geom: dict[str, Any]) -> PolygonGeometry:
