@@ -42,9 +42,12 @@ preprocessing-package-smoke: quality-runtime
 sync: quality-runtime
     uv sync --frozen
 
+# The un-instrumented full run also enforces the per-test time budget: coverage
+# tracing inflates durations several-fold, so the budget is measured here.
 baseline: quality-runtime
     uv sync --frozen
-    uv run python -m pytest --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/baseline-pytest" -q -n auto --dist loadfile
+    uv run python -m pytest --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/baseline-pytest" -q -n auto --dist loadfile --durations=20 --junitxml="{{ QUALITY_REPORT_DIR }}/junit.xml"
+    uv run python scripts/quality/slow_tests.py --junit-xml "{{ QUALITY_REPORT_DIR }}/junit.xml" --budget 3
     @git status --short --branch
 
 test: quality-runtime
@@ -58,8 +61,7 @@ coverage: quality-runtime
     COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-coverage" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/coverage-pytest" -q
 
 tests: quality-runtime
-    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile --durations=20 --junitxml="{{ QUALITY_REPORT_DIR }}/junit.xml"
-    uv run python scripts/quality/slow_tests.py --junit-xml "{{ QUALITY_REPORT_DIR }}/junit.xml" --budget 3
+    COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile
 
 # Per-file line-coverage floor over the root coverage produced by `just tests`.
 # Exemptions are thin entry points that only run in a subprocess, where

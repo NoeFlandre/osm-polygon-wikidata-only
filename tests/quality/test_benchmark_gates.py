@@ -106,3 +106,20 @@ def test_compare_lists_new_benchmarks_and_reports_a_clean_run(
     output = capsys.readouterr().out
     assert "NEW added" in output
     assert "No median regression above 25%" in output
+
+
+def test_explicit_per_test_budgets_raise_only_the_named_test(tmp_path: Path) -> None:
+    durations = [(5.0, "tests.mod::named"), (5.0, "tests.mod::other")]
+
+    found = slow_tests.over_budget(durations, 3.0, {"tests.mod::named": 8.0})
+
+    assert found == [(5.0, "tests.mod::other")]
+
+
+def test_main_reads_overrides_from_the_given_file(tmp_path: Path) -> None:
+    report = _junit(tmp_path / "junit.xml", {"named": 5.0})
+    overrides = tmp_path / "budgets.json"
+    overrides.write_text(json.dumps({"tests.mod::named": 8.0}), encoding="utf-8")
+
+    assert slow_tests.main(["--junit-xml", str(report), "--overrides", str(overrides)]) == 0
+    assert slow_tests.main(["--junit-xml", str(report), "--overrides", str(tmp_path / "none")]) == 1

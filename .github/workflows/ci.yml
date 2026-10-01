@@ -112,6 +112,10 @@ jobs:
         run: just sync
       - name: Run the benchmark suite
         run: just bench-json bench.json
+      - name: Publish the results to the job summary
+        if: always()
+        run: |
+          { echo '```json'; cat bench.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Compare with the committed baseline
         run: just bench-compare "$BENCH_MODE" bench.json
 

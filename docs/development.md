@@ -324,9 +324,15 @@ missing baseline is reported without failing. The baseline must be recorded on
 the CI runner type, not on a developer machine. After one week of stable
 warn-only runs, set `BENCH_MODE` to `enforce` in `.github/workflows/ci.yml`.
 
-`just tests` also writes a JUnit report and `scripts/quality/slow_tests.py`
-fails the run when any single test takes longer than 3 seconds; the 20 slowest
-tests are printed on every run.
+`just baseline` (the un-instrumented full run) also writes a JUnit report and
+`scripts/quality/slow_tests.py` fails it when any single test takes longer than
+3 seconds; the 20 slowest tests are printed on every run. The budget is not
+measured under coverage, which inflates durations several-fold. A test that
+legitimately needs longer is listed with its own limit in
+`scripts/quality/slow_test_budgets.json`.
+
+The CI job prints `bench.json` to its job summary; copy it from there into
+`benchmarks/baseline.json` to record the baseline.
 
 ## Test strength checks
 
