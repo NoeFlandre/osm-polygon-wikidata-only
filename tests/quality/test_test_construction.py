@@ -100,7 +100,7 @@ def _is_fixture_owned_attribute(node: ast.Attribute, parents: dict[ast.AST, ast.
 
 
 def test_private_test_seams_stay_within_documented_allowlist() -> None:
-    """Private helper patches are grandfathered by file/name/count; new seams use public APIs."""
+    """The private-patch allowlist matches current use; new coverage uses public seams."""
     policy: dict[str, Any] = json.loads(SEAM_ALLOWLIST.read_text(encoding="utf-8"))
     allowed: dict[str, dict[str, int]] = policy["targets"]
     actual = _patch_counts()
@@ -113,6 +113,9 @@ def test_private_test_seams_stay_within_documented_allowlist() -> None:
 
     assert policy["policy"]
     assert offenders == []
+    assert allowed == {
+        path: dict(sorted(counts.items())) for path, counts in sorted(actual.items())
+    }, "private patch allowlist must contain exactly the current seams and call counts"
 
 
 def test_tests_do_not_write_private_attributes_on_other_objects() -> None:

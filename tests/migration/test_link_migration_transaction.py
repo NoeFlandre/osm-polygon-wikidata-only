@@ -21,13 +21,17 @@ Two-phase testing:
 
 from __future__ import annotations
 
+import codecs
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import application
+from osm_polygon_wikidata_only.pipeline._link_migration import transaction as transaction_module
 from tests.helpers import sha256_file as _sha256
 
 
@@ -43,6 +47,19 @@ def _make_text_pair(tmp_path: Path, name: str, old: str, new: str) -> tuple[Path
     target.write_text(old)
     staged.write_text(new)
     return target, staged
+
+
+def _capture_journal_writes(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    original_write = transaction_module.atomic_write_journal_json
+    journal_payloads: list[dict[str, Any]] = []
+
+    def capture(path: Path, payload: dict[str, Any]) -> None:
+        if path.name == "journal.json":
+            journal_payloads.append(json.loads(json.dumps(payload)))
+        original_write(path, payload)
+
+    monkeypatch.setattr(transaction_module, "atomic_write_journal_json", capture)
+    return journal_payloads
 
 
 # ---------------------------------------------------------------------------
@@ -75,27 +92,48 @@ def test_helper_is_internal_or_kept_private() -> None:
 
 def test_ordered_replacements_applies_json_manifests_last(tmp_path: Path) -> None:
     """Manifests must be the LAST replacements; data files first."""
-    data_target, data_staged = _make_text_pair(tmp_path, "data.parquet", "OLD", "NEW")
+    data_target, data_staged = _make_text_pair(tmp_path, "z_data.parquet", "OLD", "NEW")
     manifest_target, manifest_staged = _make_text_pair(
-        tmp_path, "manifest.json", "{}", '{"new": 1}'
+        tmp_path, "a_manifest.json", "{}", '{"new": 1}'
     )
+    seen_targets: list[Path] = []
 
     # Pass the manifest FIRST in input order; the helper must still write
     # data first (so a data-write failure leaves manifest untouched).
     link_migration.apply_link_migration(
         tmp_path,
         replacements=[(manifest_target, manifest_staged), (data_target, data_staged)],
+        _crash_hook=lambda _index, target: seen_targets.append(target),
     )
+    assert seen_targets == [data_target, manifest_target]
     assert data_target.read_text() == "NEW"
     assert manifest_target.read_text() == '{"new": 1}'
+
+
+def test_replacement_order_uses_target_paths_not_staged_paths(tmp_path: Path) -> None:
+    target_a, staged_z = _make_text_pair(tmp_path, "target-a.parquet", "old-a", "new-a")
+    target_b, staged_a = _make_text_pair(tmp_path, "target-b.parquet", "old-b", "new-b")
+    staged_z = staged_z.with_name("z-staged.parquet")
+    staged_a = staged_a.with_name("a-staged.parquet")
+    staged_z.write_text("new-a")
+    staged_a.write_text("new-b")
+    seen: list[Path] = []
+
+    transaction_module.commit_ordered_replacements(
+        tmp_path / "txn",
+        "alpha",
+        [(target_b, staged_a), (target_a, staged_z)],
+        _crash_hook=lambda _index, target: seen.append(target),
+    )
+
+    assert seen == [target_a, target_b]
 
 
 def test_apply_replacements_helper_preserves_transaction_boundary(tmp_path: Path) -> None:
     """The private replacement adapter keeps the public transaction seam small."""
     target, staged = _make_text_pair(tmp_path, "data.parquet", "OLD", "NEW")
 
-    assert hasattr(link_migration, "_apply_replacements")
-    link_migration._apply_replacements(tmp_path, [(target, staged)])
+    application._apply_replacements(tmp_path, [(target, staged)])
 
     assert target.read_text() == "NEW"
 
@@ -107,6 +145,7 @@ def test_apply_replacements_helper_preserves_transaction_boundary(tmp_path: Path
 
 def test_ordered_replacements_rolls_forward_after_interruption(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A crash after replacement N must roll forward idempotently on resume.
 
@@ -121,6 +160,18 @@ def test_ordered_replacements_rolls_forward_after_interruption(
     """
     targets = [
         _make_text_pair(tmp_path, f"target_{i}.parquet", f"old_{i}", f"new_{i}") for i in range(3)
+    ]
+    journal_payloads = _capture_journal_writes(monkeypatch)
+    expected_entries = [
+        {
+            "target": str(target),
+            "staged": str(staged),
+            "backup": str(tmp_path / ".link_migration_journal" / f"{target.name}.backup"),
+            "existed": True,
+            "original_hash": _sha256(target),
+            "staged_hash": _sha256(staged),
+        }
+        for target, staged in targets
     ]
 
     seen_indices: list[int] = []
@@ -139,6 +190,19 @@ def test_ordered_replacements_rolls_forward_after_interruption(
             replacements=[(t, s) for t, s in targets],
             _crash_hook=crash_hook,
         )
+
+    prepared, interrupted = journal_payloads
+    assert prepared == {
+        "contract_version": transaction_module.TRANSACTION_VERSION,
+        "stem": "__replacements__",
+        "phase": "prepared",
+        "entries": expected_entries,
+    }
+    assert interrupted == {
+        **prepared,
+        "phase": "interrupted",
+        "interrupted_at_index": crash_at,
+    }
 
     # The hook was called for indices 0..2 (the crash happens at index 2).
     assert seen_indices[:3] == [0, 1, 2]
@@ -174,11 +238,15 @@ def test_ordered_replacements_rolls_forward_after_interruption(
     assert journal_files == [], f"Journal must be cleaned up after recovery, got {journal_files}"
 
 
-def test_ordered_replacements_rollback_on_validation_failure(tmp_path: Path) -> None:
+def test_ordered_replacements_rollback_on_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A validation failure must restore all targets to their original content."""
     targets = [
         _make_text_pair(tmp_path, f"target_{i}.txt", f"old_{i}", f"new_{i}") for i in range(3)
     ]
+    journal_payloads = _capture_journal_writes(monkeypatch)
 
     # Inject a validation failure before any replacements.
     def fail_before_any(_index: int, _target: Path) -> None:
@@ -190,6 +258,8 @@ def test_ordered_replacements_rollback_on_validation_failure(tmp_path: Path) -> 
             replacements=[(t, s) for t, s in targets],
             _crash_hook=fail_before_any,
         )
+    assert [payload["phase"] for payload in journal_payloads] == ["prepared", "rolled_back"]
+    assert "interrupted_at_index" not in journal_payloads[1]
     # No target was replaced.
     for i, (target, _) in enumerate(targets):
         assert target.read_text() == f"old_{i}", (
@@ -197,14 +267,111 @@ def test_ordered_replacements_rollback_on_validation_failure(tmp_path: Path) -> 
         )
 
 
+def test_journal_json_serialization_is_stable_and_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "journal.json"
+    payload = {"z": "München", "a": {"phase": "prepared"}}
+
+    transaction_module.atomic_write_journal_json(path, payload)
+
+    assert path.read_bytes() == (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+
+
+def test_file_content_hash_uses_an_empty_sentinel_for_missing_files(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.txt"
+    existing = tmp_path / "existing.txt"
+    existing.write_bytes(b"content")
+
+    assert transaction_module.file_content_hash(missing) == ""
+    assert transaction_module.file_content_hash(existing) == _sha256(existing)
+
+
 def test_ordered_replacements_rejects_duplicate_targets(tmp_path: Path) -> None:
     """The helper must reject duplicate targets in the input list."""
     target, staged = _make_text_pair(tmp_path, "target.txt", "old", "new")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="contains duplicate targets") as error:
         link_migration.apply_link_migration(
             tmp_path,
             replacements=[(target, staged), (target, staged)],
         )
+    assert str(error.value) == "Link migration transaction contains duplicate targets"
+
+
+def test_first_replacement_failure_rolls_back_and_marks_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, staged = _make_text_pair(tmp_path, "target.txt", "old", "new")
+    journal_payloads = _capture_journal_writes(monkeypatch)
+
+    def fail_after_first_write(_index: int, _target: Path) -> None:
+        raise RuntimeError("first replacement interrupted")
+
+    with pytest.raises(RuntimeError, match="first replacement interrupted"):
+        link_migration.apply_link_migration(
+            tmp_path,
+            replacements=[(target, staged)],
+            _crash_hook=fail_after_first_write,
+        )
+
+    assert target.read_text() == "old"
+    assert [payload["phase"] for payload in journal_payloads] == ["prepared", "rolled_back"]
+    assert not (tmp_path / ".link_migration_journal" / "journal.json").exists()
+
+
+def test_recovery_with_missing_entries_defaults_to_empty_list(tmp_path: Path) -> None:
+    journal_dir = tmp_path / "transaction"
+    journal_dir.mkdir()
+    journal = journal_dir / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "contract_version": transaction_module.TRANSACTION_VERSION,
+                "stem": "alpha",
+                "phase": "prepared",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transaction_module._recover_directory(journal_dir, "alpha")
+
+    assert not journal.exists()
+
+
+def test_recovery_journal_reader_requests_utf8_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "contract_version": transaction_module.TRANSACTION_VERSION,
+                "stem": "alpha",
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+    encodings: list[str | None] = []
+
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        encodings.append(encoding)
+        return original_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert transaction_module._load_recovery_journal(journal, "alpha")["entries"] == []
+    assert len(encodings) == 1
+    assert encodings[0] is not None
+    assert codecs.lookup(encodings[0]).name == "utf-8"
 
 
 def test_ordered_replacements_idempotent_second_run_preserves_mtime_and_hash(
@@ -238,7 +405,7 @@ def test_ordered_replacements_rolls_back_when_replace_verification_fails(
         if index == 0:
             target_path.write_text("CORRUPTED")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="post-hook hash mismatch"):
         link_migration.apply_link_migration(
             tmp_path,
             replacements=[(target, staged)],
@@ -255,12 +422,91 @@ def test_ordered_replacements_rejects_missing_staged_file(tmp_path: Path) -> Non
     target = tmp_path / "target.txt"
     target.write_text("old")
     missing_staged = tmp_path / "missing.txt"
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="Staged link migration file is missing"):
         link_migration.apply_link_migration(
             tmp_path,
             replacements=[(target, missing_staged)],
         )
     assert target.read_text() == "old"
+
+
+def test_new_targets_have_no_backup_in_the_prepared_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "new-target.txt"
+    staged = tmp_path / "new-target.staged"
+    staged.write_text("new", encoding="utf-8")
+    journal_payloads = _capture_journal_writes(monkeypatch)
+
+    link_migration.apply_link_migration(tmp_path, replacements=[(target, staged)])
+
+    prepared = journal_payloads[0]
+    assert prepared["phase"] == "prepared"
+    assert prepared["entries"] == [
+        {
+            "target": str(target),
+            "staged": str(staged),
+            "backup": "",
+            "existed": False,
+            "original_hash": "",
+            "staged_hash": _sha256(target),
+        }
+    ]
+    assert journal_payloads[-1]["phase"] == "committed"
+
+
+def test_recovery_journal_rejects_wrong_version_and_stem(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text(json.dumps({"contract_version": "wrong", "stem": "expected"}))
+
+    with pytest.raises(RuntimeError, match="Invalid link migration journal"):
+        transaction_module._load_recovery_journal(journal, "expected")
+
+    journal.write_text(
+        json.dumps(
+            {
+                "contract_version": transaction_module.TRANSACTION_VERSION,
+                "stem": "actual",
+            }
+        )
+    )
+    with pytest.raises(
+        RuntimeError,
+        match=r"Link migration journal stem mismatch: 'actual' vs 'expected'",
+    ):
+        transaction_module._load_recovery_journal(journal, "expected")
+
+
+def test_cleanup_keeps_nonempty_nested_directories_without_raising(tmp_path: Path) -> None:
+    transaction_dir = tmp_path / "transaction"
+    nested = transaction_dir / "nested"
+    nested.mkdir(parents=True)
+
+    transaction_module._cleanup(transaction_dir)
+
+    assert nested.is_dir()
+    assert transaction_dir.is_dir()
+
+
+def test_recovery_creates_missing_target_parent_directories(tmp_path: Path) -> None:
+    target = tmp_path / "new" / "nested" / "target.txt"
+    staged = tmp_path / "staged.txt"
+    staged.write_text("new", encoding="utf-8")
+
+    transaction_module._recover_entry(
+        {
+            "target": str(target),
+            "staged": str(staged),
+            "staged_hash": _sha256(staged),
+            "backup": "",
+            "existed": False,
+        }
+    )
+
+    assert target.read_text(encoding="utf-8") == "new"
 
 
 # ---------------------------------------------------------------------------

@@ -28,20 +28,7 @@ import pyarrow.parquet as pq
 from osm_polygon_wikidata_only.augmentation import rejection_ledger as rl
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.pipeline import link_migration as lm
-
-
-def _seed_polygons(path: Path, polygon_id: str, qids: list[str]) -> None:
-    pq.write_table(  # type: ignore[no-untyped-call]
-        pa.table(
-            {
-                "polygon_id": [polygon_id],
-                "wikidata": [";".join(qids)],
-                "source_pbf": ["test.osm.pbf"],
-                "region": ["r"],
-            }
-        ),
-        path,
-    )
+from tests.migration._builders import write_polygon_qid_membership
 
 
 def _seed_legacy_links(path: Path, polygon_id: str, wikidata: str, page_id: int = 1) -> None:
@@ -163,7 +150,7 @@ def test_invalid_wikipedia_relationships_are_rejected(tmp_path: Path) -> None:
         "augmentation/manifests",
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
-    _seed_polygons(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1", "Q2"])
+    write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1", "Q2"])
     _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q99", page_id=1)
     _seed_wiki_docs(processed, stem, "Q99", 1)
     _seed_minimal_sidecars(processed, stem)
@@ -197,7 +184,7 @@ def test_valid_wikipedia_relationships_are_not_rejected(tmp_path: Path) -> None:
         "augmentation/manifests",
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
-    _seed_polygons(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
+    write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
     _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")
     _seed_wiki_docs(processed, stem, "Q1", 100)
     _seed_minimal_sidecars(processed, stem)
@@ -230,7 +217,7 @@ def test_invalid_wikivoyage_relationships_are_rejected(tmp_path: Path) -> None:
         "augmentation/manifests",
     ):
         (processed / sub).mkdir(parents=True, exist_ok=True)
-    _seed_polygons(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
+    write_polygon_qid_membership(processed / "polygons" / f"{stem}.parquet", "p1", ["Q1"])
     # No wikipedia document needed for the wikivoyage defect class.
     # Skip writing wikipedia documents.
     _seed_legacy_links(processed / "polygon_articles" / f"{stem}.parquet", "p1", "Q1")

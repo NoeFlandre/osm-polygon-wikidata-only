@@ -52,7 +52,6 @@ from osm_polygon_wikidata_only.enrichment.wikidata_client import (
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     FetchResult,
     InMemoryWikipediaClient,
-    WikipediaArticle,
 )
 from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
 from osm_polygon_wikidata_only.pipeline.completeness import IncompleteEnrichmentError
@@ -62,6 +61,7 @@ from osm_polygon_wikidata_only.pipeline.processor import (
     extract_pbf,
     process_pbf,
 )
+from tests.enrichment._builders import wikipedia_article as _make_article
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -102,30 +102,6 @@ def _install_pbf_reader(
         return _StubReader(pbf_path, candidates)
 
     monkeypatch.setattr(pbf_reader_mod, "PBFReader", _factory)
-
-
-def _make_article(language: str, body: str) -> WikipediaArticle:
-    return WikipediaArticle(
-        language=language,
-        site=f"{language}wiki",
-        title="X",
-        page_id=10,
-        revision_id=100,
-        revision_timestamp="2026-01-01T00:00:00Z",
-        url=f"https://{language}.wikipedia.org/wiki/X",
-        lead_text=body,
-        extract=body,
-        full_text=body,
-        full_text_format="plain_text",
-        thumbnail_url="",
-        thumbnail_width=None,
-        thumbnail_height=None,
-        categories=[],
-        license="CC BY-SA 4.0",
-        attribution="Wikipedia",
-        source_api="mediawiki_action_api",
-        retrieved_at="2026-01-01T00:00:00Z",
-    )
 
 
 def _pbf_path(tmp_path: Path, name: str = "tiny-latest.osm.pbf") -> Path:

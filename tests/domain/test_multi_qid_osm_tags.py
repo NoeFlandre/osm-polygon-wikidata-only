@@ -16,7 +16,6 @@ import inspect
 import re
 
 from osm_polygon_wikidata_only.domain import polygon_document_links
-from osm_polygon_wikidata_only.pipeline import link_migration
 
 # ---------------------------------------------------------------------------
 # 1. No new QID regex inside the domain layer
@@ -119,9 +118,11 @@ def test_builder_rejects_document_qid_not_in_polygon_set() -> None:
 
 
 def test_migration_uses_canonical_qid_parser() -> None:
-    src = inspect.getsource(link_migration)
+    from osm_polygon_wikidata_only.pipeline._link_migration import planning
+
+    src = inspect.getsource(planning)
     assert "qids_from_osm_tag" in src, (
-        "link_migration must use the canonical qids_from_osm_tag parser"
+        "link migration planning must use the canonical qids_from_osm_tag parser"
     )
 
 

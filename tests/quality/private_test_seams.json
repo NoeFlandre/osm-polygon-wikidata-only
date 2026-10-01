@@ -1,5 +1,5 @@
 {
-  "policy": "Existing tests may patch only these private seams, at or below their recorded call counts. New coverage should use public APIs or injected dependencies.",
+  "policy": "Existing tests may patch only the exact private seams and call counts listed here. New coverage should use public APIs or injected dependencies.",
   "targets": {
     "augmentation/test_augmentation_checkpoints.py": {
       "_matches": 1,
@@ -101,9 +101,6 @@
       "_run_benchmark": 1,
       "_run_worker": 1
     },
-    "migration/test_single_transaction.py": {
-      "_commit_ordered_replacements": 3
-    },
     "migration/test_wikipedia_document_backfill.py": {
       "_file_content_hash": 5,
       "_read_article_table": 3
@@ -134,8 +131,6 @@
       "_load_section_payload": 1
     },
     "v2/test_language_splits.py": {
-      "_SHARD_FLUSH_BYTES": 1,
-      "_TOTAL_FLUSH_BYTES": 1,
       "_install_staged_files": 1,
       "_manifest_payload": 1,
       "_output_directories_for_paths": 2,
@@ -157,8 +152,6 @@
       "_writer_for_language": 2
     },
     "v2/test_language_splits_resume_buffers.py": {
-      "_SHARD_FLUSH_BYTES": 4,
-      "_TOTAL_FLUSH_BYTES": 4,
       "_write_table": 3
     },
     "v2/test_reconcile_helpers.py": {

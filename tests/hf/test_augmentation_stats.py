@@ -195,6 +195,50 @@ def _setup_processed_dir_with_zero_row_parquets(base: Path) -> Path:
     return processed
 
 
+def _seed_one_augmented_region(processed: Path) -> Path:
+    """Write the shared Monaco fixture used by stats-cache contract tests."""
+    _write_parquet(
+        processed / "polygons" / "monaco-latest.parquet",
+        ["wikidata"],
+        [{"wikidata": "Q1"}],
+    )
+    docs_path = _write_documents(
+        processed / "wikipedia" / "documents" / "monaco-latest.parquet",
+        [
+            {
+                "document_id": "d1",
+                "wikidata": "Q1",
+                "project": "wikipedia",
+                "language": "en",
+                "full_text": "x",
+                "article_length_chars": 1,
+                "article_length_words": 1,
+                "article_length_tokens_estimate": 1,
+            }
+        ],
+    )
+    _write_sections(
+        processed / "wikipedia" / "sections" / "monaco-latest.parquet",
+        [
+            {
+                "section_id": "s1",
+                "document_id": "d1",
+                "wikidata": "Q1",
+                "project": "wikipedia",
+                "language": "en",
+                "text": "x",
+                "text_length_chars": 1,
+                "text_length_words": 1,
+                "text_length_tokens_estimate": 1,
+            }
+        ],
+    )
+    _write_documents(processed / "wikivoyage" / "documents" / "monaco-latest.parquet", [])
+    _write_sections(processed / "wikivoyage" / "sections" / "monaco-latest.parquet", [])
+    _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
+    return docs_path
+
+
 def _setup_missing_processed(tmp_path: Path) -> Path:
     import shutil
 
@@ -1009,51 +1053,7 @@ def test_second_refresh_reuses_cache_zero_parquet_reads(
     from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
 
     processed = _setup_processed_dir(tmp_path)
-    _write_parquet(
-        processed / "polygons" / "monaco-latest.parquet",
-        ["wikidata"],
-        [{"wikidata": "Q1"}],
-    )
-    _write_documents(
-        processed / "wikipedia" / "documents" / "monaco-latest.parquet",
-        [
-            {
-                "document_id": "d1",
-                "wikidata": "Q1",
-                "project": "wikipedia",
-                "language": "en",
-                "full_text": "x",
-                "article_length_chars": 1,
-                "article_length_words": 1,
-                "article_length_tokens_estimate": 1,
-            }
-        ],
-    )
-    _write_sections(
-        processed / "wikipedia" / "sections" / "monaco-latest.parquet",
-        [
-            {
-                "section_id": "s1",
-                "document_id": "d1",
-                "wikidata": "Q1",
-                "project": "wikipedia",
-                "language": "en",
-                "text": "x",
-                "text_length_chars": 1,
-                "text_length_words": 1,
-                "text_length_tokens_estimate": 1,
-            }
-        ],
-    )
-    _write_documents(
-        processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
-        [],
-    )
-    _write_sections(
-        processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
-        [],
-    )
-    _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
+    _seed_one_augmented_region(processed)
 
     cache_dir = tmp_path / "cache"
 
@@ -1091,51 +1091,7 @@ def test_one_changed_file_rescans_only_that_file(
     from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as augmod
 
     processed = _setup_processed_dir(tmp_path)
-    _write_parquet(
-        processed / "polygons" / "monaco-latest.parquet",
-        ["wikidata"],
-        [{"wikidata": "Q1"}],
-    )
-    docs_path = _write_documents(
-        processed / "wikipedia" / "documents" / "monaco-latest.parquet",
-        [
-            {
-                "document_id": "d1",
-                "wikidata": "Q1",
-                "project": "wikipedia",
-                "language": "en",
-                "full_text": "x",
-                "article_length_chars": 1,
-                "article_length_words": 1,
-                "article_length_tokens_estimate": 1,
-            }
-        ],
-    )
-    _write_sections(
-        processed / "wikipedia" / "sections" / "monaco-latest.parquet",
-        [
-            {
-                "section_id": "s1",
-                "document_id": "d1",
-                "wikidata": "Q1",
-                "project": "wikipedia",
-                "language": "en",
-                "text": "x",
-                "text_length_chars": 1,
-                "text_length_words": 1,
-                "text_length_tokens_estimate": 1,
-            }
-        ],
-    )
-    _write_documents(
-        processed / "wikivoyage" / "documents" / "monaco-latest.parquet",
-        [],
-    )
-    _write_sections(
-        processed / "wikivoyage" / "sections" / "monaco-latest.parquet",
-        [],
-    )
-    _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
+    docs_path = _seed_one_augmented_region(processed)
 
     cache_dir = tmp_path / "cache"
     # Cold then warm refresh.
@@ -1193,46 +1149,7 @@ def test_deleted_files_removed_from_aggregates(tmp_path: Path) -> None:
     aggregates; the cache key for the missing file is dropped.
     """
     processed = _setup_processed_dir(tmp_path)
-    _write_parquet(
-        processed / "polygons" / "monaco-latest.parquet",
-        ["wikidata"],
-        [{"wikidata": "Q1"}],
-    )
-    _write_documents(
-        processed / "wikipedia" / "documents" / "monaco-latest.parquet",
-        [
-            {
-                "document_id": "d1",
-                "wikidata": "Q1",
-                "project": "wikipedia",
-                "language": "en",
-                "full_text": "x",
-                "article_length_chars": 1,
-                "article_length_words": 1,
-                "article_length_tokens_estimate": 1,
-            }
-        ],
-    )
-    _write_sections(
-        processed / "wikipedia" / "sections" / "monaco-latest.parquet",
-        [
-            {
-                "section_id": "s1",
-                "document_id": "d1",
-                "wikidata": "Q1",
-                "project": "wikipedia",
-                "language": "en",
-                "text": "x",
-                "text_length_chars": 1,
-                "text_length_words": 1,
-                "text_length_tokens_estimate": 1,
-            }
-        ],
-    )
-    _write_documents(processed / "wikivoyage" / "documents" / "monaco-latest.parquet", [])
-    _write_sections(processed / "wikivoyage" / "sections" / "monaco-latest.parquet", [])
-    _write_facts(processed / "wikidata" / "facts" / "monaco-latest.parquet", [])
-    docs_path = processed / "wikipedia" / "documents" / "monaco-latest.parquet"
+    docs_path = _seed_one_augmented_region(processed)
     cache_dir = tmp_path / "cache"
 
     first = compute_augmentation_stats(processed, cache_index_dir=cache_dir)

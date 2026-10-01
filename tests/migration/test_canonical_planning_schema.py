@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_article_schema,
 )
 from osm_polygon_wikidata_only.pipeline import link_migration as lm
+from osm_polygon_wikidata_only.pipeline._link_migration import planning
 
 
 def _setup_minimal_processed(processed: Path, stem: str) -> None:
@@ -148,7 +149,7 @@ def test_classify_stem_planning_uses_canonical_schema(tmp_path: Path) -> None:
     stem = "alpha-latest"
     _setup_minimal_processed(processed, stem)
 
-    sp = lm._classify_stem(stem, processed)
+    sp = planning.classify_stem(stem, processed)
     assert sp.classification == lm.StemClassification.MIGRATABLE, (
         f"Stem should be MIGRATABLE; got {sp}"
     )
@@ -200,7 +201,7 @@ def test_classify_stem_canonical_branch_strict_schema_check(tmp_path: Path) -> N
         lookalike, processed / "polygon_articles" / f"{stem}.parquet"
     )
 
-    sp = lm._classify_stem(stem, processed)
+    sp = planning.classify_stem(stem, processed)
     assert sp.classification == lm.StemClassification.BLOCKED, (
         f"Lookalike schema must be BLOCKED; got {sp}"
     )

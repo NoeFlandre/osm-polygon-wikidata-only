@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,11 +14,14 @@ from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     document_schema,
 )
+from osm_polygon_wikidata_only.domain.polygon_document_links import polygon_document_link_schema
 from osm_polygon_wikidata_only.domain.schema import (
     POLYGON_ARTICLE_COLUMNS,
     polygon_schema,
 )
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import application as link_application
+from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
 
 EXPECTED_CANONICAL_COLUMNS: tuple[str, ...] = (
     "polygon_id",
@@ -69,10 +74,17 @@ def test_classify_stem_schema_recognizes_canonical() -> None:
 
 
 def test_classify_stem_schema_rejects_mixed_or_unknown() -> None:
-    with pytest.raises(ValueError):
-        link_migration.classify_stem_schema((*list(POLYGON_ARTICLE_COLUMNS), "junk"))
-    with pytest.raises(ValueError):
+    mixed_columns = (*list(POLYGON_ARTICLE_COLUMNS), "junk")
+    with pytest.raises(ValueError) as mixed_error:
+        link_migration.classify_stem_schema(mixed_columns)
+    assert str(mixed_error.value) == (
+        "Schema is neither legacy nor canonical: "
+        f"{list(mixed_columns)[:6]}... (got {len(mixed_columns)} columns)"
+    )
+
+    with pytest.raises(ValueError) as empty_error:
         link_migration.classify_stem_schema([])
+    assert str(empty_error.value) == "Schema is neither legacy nor canonical: []... (got 0 columns)"
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +209,29 @@ def _processed_layout(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def _seed_stem_links_without_changing_article_identity(
+    tmp_path: Path, stem: str, shared_article_id: str
+) -> None:
+    """Write one stem's polygon and link rows for cross-stem identity cases."""
+    layout = _processed_layout(tmp_path)
+    _write_polygons(
+        layout["polygons"] / f"{stem}.parquet",
+        [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
+    )
+    _write_legacy_links(
+        layout["polygon_articles"] / f"{stem}.parquet",
+        [
+            _legacy_link_row(
+                f"{stem}:relation:1",
+                shared_article_id,
+                "Q1",
+                source_pbf=f"{stem}.osm.pbf",
+                region=stem,
+            )
+        ],
+    )
+
+
 def _seed_full_legacy_stem(
     tmp_path: Path, stem: str, qid: str, *, article_id: str, document_id: str
 ) -> None:
@@ -272,6 +307,467 @@ def _corrupt_first_data_page(path: Path) -> None:
         stream.write(bytes([first_byte[0] ^ 0xFF]))
 
 
+def test_read_legacy_rejection_tables_requests_only_relationship_columns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pa = _pyarrow()
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        tmp_path, stem, "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
+    )
+    stem_plan = link_migration.plan_link_migration(tmp_path, stems={stem}).stems[0]
+    original_read = link_planning.pq.read_table
+    calls: list[tuple[Path, list[str] | None]] = []
+
+    def read_table(path: Path, *args: Any, **kwargs: Any) -> pa.Table:
+        columns = kwargs.get("columns")
+        calls.append((path, columns if isinstance(columns, list) else None))
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(link_planning.pq, "read_table", read_table)
+
+    assert link_planning._read_legacy_rejection_tables(tmp_path, stem_plan) is not None
+    assert calls == [
+        (tmp_path / "polygons" / f"{stem}.parquet", ["polygon_id", "wikidata"]),
+        (
+            tmp_path / "polygon_articles" / f"{stem}.parquet",
+            ["polygon_id", "wikidata", "article_id"],
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Mutation contracts for migration planning helpers
+# ---------------------------------------------------------------------------
+
+
+def test_read_legacy_rejection_tables_returns_none_when_either_file_is_missing(
+    tmp_path: Path,
+) -> None:
+    stem = "alpha"
+    _write_polygons(
+        tmp_path / "polygons" / f"{stem}.parquet",
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    assert not (tmp_path / "polygon_articles" / f"{stem}.parquet").exists()
+
+    stem_plan = link_planning.StemPlan(
+        stem=stem,
+        classification=link_planning.StemClassification.MIGRATABLE,
+        reason="",
+        polygons_fingerprint="p",
+        links_fingerprint="l",
+        documents_fingerprint="d",
+        row_count=0,
+        canonical_digest=None,
+    )
+    assert link_planning._read_legacy_rejection_tables(tmp_path, stem_plan) is None
+
+
+def test_legacy_rejection_for_unknown_polygon_keeps_empty_qid_fallback() -> None:
+    pa = _pyarrow()
+    links = pa.Table.from_pylist(
+        [{"polygon_id": "missing", "article_id": "Q1:en:1:1", "wikidata": "Q1"}]
+    )
+
+    rejections = link_planning._legacy_rejection_records("alpha", links, {})
+
+    assert rejections == [
+        {
+            "shard": "alpha",
+            "source_table": "polygon_articles",
+            "identifier": "Q1:en:1:1",
+            "wikidata": "Q1",
+            "expected": None,
+            "reason": "wikidata_not_in_polygon_qids",
+            "cascaded_sections": 0,
+        }
+    ]
+
+
+def test_polygon_qids_and_legacy_rejections_keep_per_polygon_membership_contract() -> None:
+    pa = _pyarrow()
+    polygons = pa.Table.from_pylist(
+        [
+            {"polygon_id": "p1", "wikidata": "Q1"},
+            {"polygon_id": "p1", "wikidata": "Q2"},
+            {"polygon_id": "p2", "wikidata": "Q3"},
+        ]
+    )
+    polygon_qids = link_planning._polygon_qids_by_id(polygons)
+
+    assert polygon_qids == {"p1": {"Q1", "Q2"}, "p2": {"Q3"}}
+
+    links = pa.Table.from_pylist(
+        [
+            {"polygon_id": "p1", "article_id": "valid", "wikidata": "Q1"},
+            {"polygon_id": "p1", "article_id": "invalid", "wikidata": "Q4"},
+            {"polygon_id": "p1", "article_id": "empty", "wikidata": ""},
+        ]
+    )
+    assert link_planning._legacy_rejection_records("alpha", links, polygon_qids) == [
+        {
+            "shard": "alpha",
+            "source_table": "polygon_articles",
+            "identifier": "invalid",
+            "wikidata": "Q4",
+            "expected": None,
+            "reason": "wikidata_not_in_polygon_qids",
+            "cascaded_sections": 0,
+        }
+    ]
+
+
+def test_planned_rejections_are_sorted_per_stem_and_across_stems_contract(tmp_path: Path) -> None:
+    pa = _pyarrow()
+    plans = []
+    for stem in ("zeta", "alpha"):
+        polygons_path = tmp_path / "polygons" / f"{stem}.parquet"
+        links_path = tmp_path / "polygon_articles" / f"{stem}.parquet"
+        polygons_path.parent.mkdir(parents=True, exist_ok=True)
+        links_path.parent.mkdir(parents=True, exist_ok=True)
+        pa.parquet.write_table(
+            pa.Table.from_pylist([{"polygon_id": "p1", "wikidata": "Q1"}]),
+            polygons_path,
+        )
+        pa.parquet.write_table(
+            pa.Table.from_pylist(
+                [
+                    {"polygon_id": "p1", "article_id": f"{stem}-z", "wikidata": "Q2"},
+                    {"polygon_id": "p1", "article_id": f"{stem}-a", "wikidata": "Q3"},
+                ]
+            ),
+            links_path,
+        )
+        plans.append(
+            link_planning.StemPlan(
+                stem=stem,
+                classification=link_planning.StemClassification.MIGRATABLE,
+                reason="legacy",
+                polygons_fingerprint="p",
+                links_fingerprint="l",
+                documents_fingerprint="d",
+                row_count=2,
+                canonical_digest=None,
+            )
+        )
+
+    for stem_plan in plans:
+        per_stem = link_planning.plan_link_migration_normalization_rejections_for_stem(
+            tmp_path, stem_plan
+        )
+        assert [record["identifier"] for record in per_stem] == [
+            f"{stem_plan.stem}-a",
+            f"{stem_plan.stem}-z",
+        ]
+
+    plan = link_planning.MigrationPlan(processed_dir=tmp_path, stems=tuple(reversed(plans)))
+    combined = link_planning.plan_link_migration_normalization_rejections(plan)
+    assert [(record["shard"], record["identifier"]) for record in combined] == [
+        ("alpha", "alpha-a"),
+        ("alpha", "alpha-z"),
+        ("zeta", "zeta-a"),
+        ("zeta", "zeta-z"),
+    ]
+
+
+def test_canonical_stem_plan_keeps_fingerprints_and_reports_schema_reason(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    links_path = tmp_path / "links.parquet"
+    canonical = pa.Table.from_pylist([], schema=polygon_document_link_schema())
+    pa.parquet.write_table(canonical, links_path)
+    fingerprints = ("polygon-hash", "link-hash", "document-hash")
+
+    plan = link_planning._canonical_stem_plan("alpha", links_path, fingerprints)
+
+    assert plan.polygons_fingerprint == "polygon-hash"
+    assert plan.links_fingerprint == "link-hash"
+    assert plan.documents_fingerprint == "document-hash"
+    assert plan.canonical_digest == hashlib.sha256(links_path.read_bytes()).hexdigest()
+
+    wrong_schema = pa.table({name: [] for name in EXPECTED_CANONICAL_COLUMNS})
+    pa.parquet.write_table(wrong_schema, links_path)
+    blocked = link_planning._canonical_stem_plan("alpha", links_path, fingerprints)
+    assert (
+        blocked.reason
+        == "link table columns match canonical but schema differs (types or metadata)"
+    )
+
+
+def test_classification_warnings_keep_path_and_error_context(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "links.parquet"
+    path.write_bytes(b"invalid parquet")
+    caplog.set_level(logging.WARNING)
+    classification, reason = link_planning._link_classification(path)
+    assert classification is None
+    assert reason is not None and reason.startswith(
+        "polygon_articles file unreadable: ArrowInvalid:"
+    )
+    assert (
+        caplog.records[-1]
+        .getMessage()
+        .startswith(f"Could not read polygon_articles schema at {path}: ArrowInvalid:")
+    )
+
+    with pytest.raises(link_planning._UnreadableStemInputError):
+        link_planning._read_stem_table(path, "polygon_articles")
+    assert (
+        caplog.records[-1]
+        .getMessage()
+        .startswith(f"Could not read polygon_articles data at {path}: ArrowInvalid:")
+    )
+
+
+def test_legacy_stem_plan_keeps_the_canonical_schema_for_empty_rows(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    stem = "alpha"
+    polygons_path = tmp_path / "polygons.parquet"
+    links_path = tmp_path / "links.parquet"
+    docs_path = tmp_path / "documents.parquet"
+    _write_polygons(
+        polygons_path,
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    _write_legacy_links(links_path, [])
+    _write_legacy_documents(docs_path, [])
+
+    plan = link_planning._legacy_stem_plan(
+        stem, polygons_path, links_path, docs_path, ("p", "l", "d")
+    )
+
+    assert plan.row_count == 0
+    expected = pa.Table.from_pylist([], schema=polygon_document_link_schema())
+    assert link_planning._table_digest(expected) == plan.canonical_digest
+
+
+def test_legacy_stem_plan_uses_the_canonical_schema_for_nonempty_rows(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    stem = "alpha"
+    article_id = "Q1:en:1:1"
+    document_id = "Q1:wikipedia:en:1:1"
+    polygons_path = tmp_path / "polygons.parquet"
+    links_path = tmp_path / "links.parquet"
+    docs_path = tmp_path / "documents.parquet"
+    _write_polygons(
+        polygons_path,
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    _write_legacy_links(
+        links_path,
+        [_legacy_link_row("p1", article_id, "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    _write_legacy_documents(
+        docs_path,
+        [_legacy_document_row(document_id, article_id, "Q1")],
+    )
+
+    plan = link_planning._legacy_stem_plan(
+        stem, polygons_path, links_path, docs_path, ("p", "l", "d")
+    )
+
+    legacy, polygons, documents = (
+        pa.parquet.read_table(path) for path in (links_path, polygons_path, docs_path)
+    )
+    rows = link_planning._build_canonical_rows(stem, legacy, polygons, documents)
+    expected = pa.Table.from_pylist(rows, schema=polygon_document_link_schema())
+    assert plan.row_count == 1
+    assert plan.canonical_digest == link_planning._table_digest(expected)
+
+
+def test_public_plan_reports_unreadable_link_schema(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(
+        processed / "polygons" / "alpha.parquet",
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+    links_path = processed / "polygon_articles" / "alpha.parquet"
+    links_path.parent.mkdir(parents=True, exist_ok=True)
+    links_path.write_bytes(b"invalid parquet")
+
+    plan = link_migration.plan_link_migration(processed, stems={"alpha"})
+
+    assert len(plan.stems) == 1
+    stem_plan = plan.stems[0]
+    assert stem_plan.classification.value == "BLOCKED"
+    assert stem_plan.reason is not None
+    assert stem_plan.reason.startswith("polygon_articles file unreadable: ArrowInvalid:")
+
+
+def test_missing_link_shard_reason_is_specific(tmp_path: Path) -> None:
+    stem = "alpha-latest"
+    _write_polygons(
+        tmp_path / "polygons" / f"{stem}.parquet",
+        [_polygon_row("p1", "Q1", source_pbf="alpha.osm.pbf", region="alpha")],
+    )
+
+    plan = link_planning.classify_stem(stem, tmp_path)
+
+    assert plan.reason == "polygon_articles file missing"
+
+
+def test_apply_inputs_keep_every_source_path_and_stem_diagnostic(tmp_path: Path) -> None:
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        tmp_path,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    docs_path = tmp_path / "wikipedia" / "documents" / f"{stem}.parquet"
+    _write_legacy_documents(docs_path, [])
+    plan = link_planning.classify_stem(stem, tmp_path)
+
+    inputs = link_application._load_stem_apply_inputs(tmp_path, plan)
+
+    assert inputs.links_path == tmp_path / "polygon_articles" / f"{stem}.parquet"
+    assert inputs.polygons_path == tmp_path / "polygons" / f"{stem}.parquet"
+    assert inputs.docs_path == docs_path
+    assert inputs.voyage_documents_path == (
+        tmp_path / "wikivoyage" / "documents" / f"{stem}.parquet"
+    )
+    assert inputs.voyage_sections_path == tmp_path / "wikivoyage" / "sections" / f"{stem}.parquet"
+    with pytest.raises(ValueError) as error:
+        link_application._build_stem_context(inputs)
+    assert f"wikipedia/documents/{stem}.parquet" in str(error.value)
+
+
+def test_stem_context_includes_retained_wikivoyage_documents_contract(tmp_path: Path) -> None:
+    pa = _pyarrow()
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        processed,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    voyage_documents_path = processed / "wikivoyage" / "documents" / f"{stem}.parquet"
+    voyage_documents_path.parent.mkdir(parents=True, exist_ok=True)
+    pa.parquet.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "document_id": "Q1:wikivoyage:en:2:1",
+                    "wikidata": "Q1",
+                    "project": "wikivoyage",
+                    "language": "en",
+                    "page_id": 2,
+                    "revision_id": 1,
+                }
+            ],
+            schema=document_schema(),
+        ),
+        voyage_documents_path,
+    )
+    stem_plan = link_planning.classify_stem(stem, processed)
+    inputs = link_application._load_stem_apply_inputs(processed, stem_plan)
+
+    context = link_application._build_stem_context(inputs)
+
+    assert context.integrity_plan is not None
+    assert [
+        (row["project"], row["document_id"]) for row in context.canonical_table.to_pylist()
+    ] == [
+        ("wikipedia", "Q1:wikipedia:en:1:1"),
+        ("wikivoyage", "Q1:wikivoyage:en:2:1"),
+    ]
+
+
+def test_apply_link_migration_records_stem_identity_in_interrupted_journal(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        processed,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+
+    def interrupt_after_second_replacement(index: int, _target: Path) -> None:
+        if index == 1:
+            raise RuntimeError("simulated interrupted migration")
+
+    with pytest.raises(RuntimeError, match="simulated interrupted migration"):
+        link_migration.apply_link_migration(
+            processed,
+            stems={stem},
+            _crash_hook=interrupt_after_second_replacement,
+        )
+
+    journal = json.loads(
+        (processed / ".link_migration_journal" / stem / "journal.json").read_text(encoding="utf-8")
+    )
+    assert journal["stem"] == stem
+    assert journal["phase"] == "interrupted"
+    assert journal["interrupted_at_index"] == 1
+
+
+def test_apply_link_migration_cleans_its_staging_tree(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        processed,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+
+    link_migration.apply_link_migration(processed, stems={stem})
+
+    assert not (processed / ".link_migration_staging" / stem).exists()
+
+
+def test_link_migration_stages_replacements_under_a_hidden_per_stem_directory(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        processed,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    plan = link_migration.plan_link_migration(processed, stems={stem})
+
+    def interrupt_after_second_replacement(index: int, target: Path) -> None:
+        if index == 1:
+            raise RuntimeError(f"simulated interruption at {target}")
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        link_migration.apply_link_migration(
+            processed,
+            plan=plan,
+            _crash_hook=interrupt_after_second_replacement,
+        )
+
+    staging_dir = processed / ".link_migration_staging" / stem
+    journal_path = processed / ".link_migration_journal" / stem / "journal.json"
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    staged_paths = [Path(entry["staged"]) for entry in journal["entries"]]
+
+    assert staging_dir.is_dir()
+    assert staged_paths
+    assert all(staging_dir.resolve() in path.parents for path in staged_paths)
+
+
 # ---------------------------------------------------------------------------
 # plan_link_migration happy paths
 # ---------------------------------------------------------------------------
@@ -292,16 +788,163 @@ def test_plan_link_migration_rejects_path_traversal(tmp_path: Path) -> None:
         link_migration.plan_link_migration(tmp_path, stems={"../escape"})
 
 
-def test_plan_link_migration_classifies_legacy_stem_as_migratable(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stem", ["", ".", "..", "..\\escape"])
+def test_plan_link_migration_rejects_empty_and_dot_stems(tmp_path: Path, stem: str) -> None:
+    with pytest.raises(ValueError, match="Invalid stem name"):
+        link_migration.plan_link_migration(tmp_path, stems={stem})
+
+
+def test_blocked_stem_reports_missing_polygon_and_keeps_input_fingerprints(
+    tmp_path: Path,
+) -> None:
+    stem = "orphan-latest"
     _seed_full_legacy_stem(
-        tmp_path, "monaco-latest", "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
+        tmp_path,
+        stem,
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    polygons_path = tmp_path / "polygons" / f"{stem}.parquet"
+    links_path = tmp_path / "polygon_articles" / f"{stem}.parquet"
+    documents_path = tmp_path / "wikipedia" / "documents" / f"{stem}.parquet"
+    polygons_path.unlink()
+
+    plan = link_migration.plan_link_migration(tmp_path, stems={stem})
+    stem_plan = plan.stems[0]
+
+    assert stem_plan.classification == link_migration.StemClassification.BLOCKED
+    assert stem_plan.reason == "polygons file missing"
+    assert stem_plan.polygons_fingerprint == ""
+    assert stem_plan.links_fingerprint == hashlib.sha256(links_path.read_bytes()).hexdigest()
+    assert (
+        stem_plan.documents_fingerprint == hashlib.sha256(documents_path.read_bytes()).hexdigest()
+    )
+    assert stem_plan.row_count == 0
+    assert stem_plan.canonical_digest is None
+
+
+def test_plan_link_migration_discovers_stems_from_every_supported_table(
+    tmp_path: Path,
+) -> None:
+    pa = _pyarrow()
+    source_paths = (
+        tmp_path / "polygons" / "polygon-only.parquet",
+        tmp_path / "polygon_articles" / "links-only.parquet",
+        tmp_path / "wikipedia" / "documents" / "documents-only.parquet",
+    )
+    for path in source_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pa.parquet.write_table(pa.table({"placeholder": []}), path)
+
+    plan = link_migration.plan_link_migration(tmp_path)
+
+    assert [stem_plan.stem for stem_plan in plan.stems] == [
+        "documents-only",
+        "links-only",
+        "polygon-only",
+    ]
+    assert all(
+        stem_plan.classification == link_migration.StemClassification.BLOCKED
+        for stem_plan in plan.stems
+    )
+
+
+def test_plan_link_migration_classifies_legacy_stem_as_migratable(tmp_path: Path) -> None:
+    stem = "monaco-latest"
+    _seed_full_legacy_stem(
+        tmp_path, stem, "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
     )
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
-    stem_plans = {s.stem: s for s in plan.stems}
-    assert stem_plans["monaco-latest"].classification == "migratable", (
-        f"Legacy stem with matching document must be migratable, got "
-        f"{stem_plans['monaco-latest'].classification!r}"
+    stem_plan = plan.stems[0]
+    assert stem_plan.classification == link_migration.StemClassification.MIGRATABLE
+    assert stem_plan.reason == ""
+    assert (
+        stem_plan.polygons_fingerprint
+        == hashlib.sha256((tmp_path / "polygons" / f"{stem}.parquet").read_bytes()).hexdigest()
     )
+    assert (
+        stem_plan.links_fingerprint
+        == hashlib.sha256(
+            (tmp_path / "polygon_articles" / f"{stem}.parquet").read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        stem_plan.documents_fingerprint
+        == hashlib.sha256(
+            (tmp_path / "wikipedia" / "documents" / f"{stem}.parquet").read_bytes()
+        ).hexdigest()
+    )
+    assert stem_plan.row_count == 1
+    assert stem_plan.canonical_digest is not None
+    assert len(stem_plan.canonical_digest) == 64
+
+
+def test_legacy_conversion_block_reason_names_the_source_shard(
+    tmp_path: Path,
+) -> None:
+    stem = "monaco-latest"
+    _seed_full_legacy_stem(
+        tmp_path, stem, "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
+    )
+    links_path = tmp_path / "polygon_articles" / f"{stem}.parquet"
+    links = _pyarrow().parquet.read_table(links_path).to_pylist()
+    links[0]["polygon_id"] = "missing-polygon"
+    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
+
+    _pyarrow().parquet.write_table(
+        _pyarrow().Table.from_pylist(links, schema=polygon_article_schema()), links_path
+    )
+
+    plan = link_migration.plan_link_migration(tmp_path, stems={stem})
+
+    assert plan.stems[0].classification == link_migration.StemClassification.BLOCKED
+    assert "missing-polygon" in plan.stems[0].reason
+    assert f"polygons/{stem}.parquet" in plan.stems[0].reason
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "label"),
+    [
+        ("polygon_articles", "polygon_articles"),
+        ("polygons", "polygons"),
+        ("wikipedia/documents", "wikipedia documents"),
+    ],
+)
+def test_unreadable_legacy_source_tables_keep_their_labels(
+    tmp_path: Path,
+    relative_path: str,
+    label: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stem = "monaco-latest"
+    _seed_full_legacy_stem(
+        tmp_path, stem, "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
+    )
+    source_path = tmp_path / relative_path / f"{stem}.parquet"
+    _corrupt_first_data_page(source_path)
+
+    with caplog.at_level("WARNING"):
+        plan = link_migration.plan_link_migration(tmp_path, stems={stem})
+
+    assert plan.stems[0].classification == link_migration.StemClassification.BLOCKED
+    assert plan.stems[0].reason.startswith(f"{label} file unreadable:")
+    assert f"Could not read {label} data at {source_path}:" in caplog.text
+
+
+def test_legacy_schema_without_a_documents_file_has_a_specific_block_reason(
+    tmp_path: Path,
+) -> None:
+    stem = "monaco-latest"
+    _seed_full_legacy_stem(
+        tmp_path, stem, "Q1", article_id="Q1:en:1:1", document_id="Q1:wikipedia:en:1:1"
+    )
+    (tmp_path / "wikipedia" / "documents" / f"{stem}.parquet").unlink()
+
+    plan = link_migration.plan_link_migration(tmp_path, stems={stem})
+
+    assert plan.stems[0].classification == link_migration.StemClassification.BLOCKED
+    assert plan.stems[0].reason == "legacy schema requires wikipedia/documents/<stem>.parquet"
 
 
 def test_apply_link_migration_refuses_a_plan_with_blocked_stems(tmp_path: Path) -> None:
@@ -341,7 +984,7 @@ def test_plan_link_migration_reads_canonical_link_table_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     links_path = _seed_canonical_stem(tmp_path)
-    original_read_table = link_migration.pq.read_table
+    original_read_table = link_planning.pq.read_table
     link_table_reads = 0
 
     def count_link_table_reads(path, *args, **kwargs):
@@ -350,15 +993,22 @@ def test_plan_link_migration_reads_canonical_link_table_once(
             link_table_reads += 1
         return original_read_table(path, *args, **kwargs)
 
-    monkeypatch.setattr(link_migration.pq, "read_table", count_link_table_reads)
+    monkeypatch.setattr(link_planning.pq, "read_table", count_link_table_reads)
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
 
     assert plan.stems[0].classification == "canonical"
+    assert plan.stems[0].reason == ""
+    assert plan.stems[0].row_count == 1
+    assert plan.stems[0].canonical_digest == hashlib.sha256(links_path.read_bytes()).hexdigest()
     assert link_table_reads == 1
 
 
 @pytest.mark.parametrize("schema", ["canonical", "legacy"])
-def test_unreadable_data_pages_block_only_their_stem(tmp_path: Path, schema: str) -> None:
+def test_unreadable_data_pages_block_only_their_stem(
+    tmp_path: Path,
+    schema: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     pa = _pyarrow()
     if schema == "canonical":
         broken_links = _seed_canonical_stem(tmp_path, "broken")
@@ -378,12 +1028,18 @@ def test_unreadable_data_pages_block_only_their_stem(tmp_path: Path, schema: str
     with pytest.raises((OSError, pa.ArrowInvalid)):
         pa.parquet.read_table(broken_links)
 
-    plan = link_migration.plan_link_migration(tmp_path, stems={"broken", "healthy"})
+    with caplog.at_level("WARNING"):
+        plan = link_migration.plan_link_migration(tmp_path, stems={"broken", "healthy"})
     by_stem = {stem.stem: stem for stem in plan.stems}
 
     assert by_stem["broken"].classification == "BLOCKED"
-    assert "file unreadable" in by_stem["broken"].reason
+    assert "polygon_articles file unreadable" in by_stem["broken"].reason
     assert by_stem["healthy"].classification == "canonical"
+    assert "Could not read polygon_articles data at" in caplog.text
+    assert str(broken_links) in caplog.text
+    assert any(
+        error_type in by_stem["broken"].reason for error_type in ("OSError:", "ArrowInvalid:")
+    )
 
 
 def test_plan_link_migration_includes_corrupt_parquet_error(
@@ -403,22 +1059,24 @@ def test_plan_link_migration_includes_corrupt_parquet_error(
 
     blocked = plan.stems[0]
     assert blocked.classification == "BLOCKED"
+    assert "polygon_articles file unreadable" in blocked.reason
     assert "ArrowInvalid:" in blocked.reason
     assert "ArrowInvalid" in caplog.text
+    assert "Could not read polygon_articles schema" in caplog.text
 
 
 def test_plan_link_migration_propagates_unexpected_schema_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     links_path = _seed_canonical_stem(tmp_path)
-    original_read_schema = link_migration.pq.read_schema
+    original_read_schema = link_planning.pq.read_schema
 
     def fail_unexpectedly(path, *args, **kwargs):
         if Path(path) == links_path:
             raise RuntimeError("unexpected schema reader failure")
         return original_read_schema(path, *args, **kwargs)
 
-    monkeypatch.setattr(link_migration.pq, "read_schema", fail_unexpectedly)
+    monkeypatch.setattr(link_planning.pq, "read_schema", fail_unexpectedly)
 
     with pytest.raises(RuntimeError, match="unexpected schema reader failure"):
         link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
@@ -438,37 +1096,11 @@ def test_plan_link_migration_within_stem_isolation_alpha_migratable_beta_blocked
     alpha matches) -> beta must be BLOCKED, and beta must NOT resolve
     from alpha's documents.
     """
-    pa = _pyarrow()
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-
     layout = _processed_layout(tmp_path)
-    layout["polygon_articles"].mkdir(parents=True, exist_ok=True)
     # Both stems carry the same article_id but different polygon ids.
     shared_article_id = "Q1:en:1:1"
     for stem in ("alpha", "beta"):
-        _write_polygons(
-            layout["polygons"] / f"{stem}.parquet",
-            [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
-        )
-        normalized = [
-            {
-                "polygon_id": f"{stem}:relation:1",
-                "article_id": shared_article_id,
-                "wikidata": "Q1",
-                "language": "en",
-                "source_pbf": f"{stem}.osm.pbf",
-                "region": stem,
-                "osm_type": "relation",
-                "osm_id": 1,
-                "page_id": 1,
-                "revision_id": 1,
-                "is_best_language": True,
-            }
-        ]
-        pa.parquet.write_table(
-            pa.Table.from_pylist(normalized, schema=polygon_article_schema()),
-            layout["polygon_articles"] / f"{stem}.parquet",
-        )
+        _seed_stem_links_without_changing_article_identity(tmp_path, stem, shared_article_id)
     # Only alpha has a matching legacy document. Beta has no doc file.
     _write_legacy_documents(
         layout["wiki_docs"] / "alpha.parquet",
@@ -492,37 +1124,11 @@ def test_plan_link_migration_keys_resolution_within_stem_unique_document_id(
 ) -> None:
     """The same article_id appearing in two stems must map to the SAME
     document_id revision (the document_id is the canonical identity)."""
-    pa = _pyarrow()
-    from osm_polygon_wikidata_only.domain.schema import polygon_article_schema
-
     layout = _processed_layout(tmp_path)
-    layout["polygon_articles"].mkdir(parents=True, exist_ok=True)
     shared_article_id = "Q1:en:1:1"
     document_id = "Q1:wikipedia:en:1:1"
     for stem in ("alpha", "beta"):
-        _write_polygons(
-            layout["polygons"] / f"{stem}.parquet",
-            [_polygon_row(f"{stem}:relation:1", "Q1", source_pbf=f"{stem}.osm.pbf", region=stem)],
-        )
-        normalized = [
-            {
-                "polygon_id": f"{stem}:relation:1",
-                "article_id": shared_article_id,
-                "wikidata": "Q1",
-                "language": "en",
-                "source_pbf": f"{stem}.osm.pbf",
-                "region": stem,
-                "osm_type": "relation",
-                "osm_id": 1,
-                "page_id": 1,
-                "revision_id": 1,
-                "is_best_language": True,
-            }
-        ]
-        pa.parquet.write_table(
-            pa.Table.from_pylist(normalized, schema=polygon_article_schema()),
-            layout["polygon_articles"] / f"{stem}.parquet",
-        )
+        _seed_stem_links_without_changing_article_identity(tmp_path, stem, shared_article_id)
         # Both stems have documents with the SAME document_id (and same revision).
         _write_legacy_documents(
             layout["wiki_docs"] / f"{stem}.parquet",
@@ -551,7 +1157,10 @@ def test_apply_link_migration_aborts_when_polygons_change_after_planning(
     # Tamper with the polygons file after planning.
     polygons_path = tmp_path / "polygons" / "monaco-latest.parquet"
     polygons_path.write_bytes(polygons_path.read_bytes() + b"corrupt")
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Link migration stem 'monaco-latest': source file changed after planning",
+    ):
         link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
@@ -565,7 +1174,10 @@ def test_apply_link_migration_aborts_when_legacy_links_change_after_planning(
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     links_path = tmp_path / "polygon_articles" / "monaco-latest.parquet"
     links_path.write_bytes(links_path.read_bytes() + b"corrupt")
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Link migration stem 'monaco-latest': source file changed after planning",
+    ):
         link_migration.apply_link_migration(tmp_path, plan=plan)
 
 
@@ -579,8 +1191,94 @@ def test_apply_link_migration_aborts_when_legacy_documents_change_after_planning
     plan = link_migration.plan_link_migration(tmp_path, stems={"monaco-latest"})
     docs_path = tmp_path / "wikipedia" / "documents" / "monaco-latest.parquet"
     docs_path.write_bytes(docs_path.read_bytes() + b"corrupt")
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Link migration stem 'monaco-latest': source file changed after planning",
+    ):
         link_migration.apply_link_migration(tmp_path, plan=plan)
+
+
+def test_apply_link_migration_records_rejections_for_their_stem(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    migration_stem = "alpha-latest"
+    _seed_full_legacy_stem(
+        processed,
+        migration_stem,
+        "Q2",
+        article_id="Q2:en:1:1",
+        document_id="Q2:wikipedia:en:1:1",
+    )
+    _write_polygons(
+        processed / "polygons" / f"{migration_stem}.parquet",
+        [
+            _polygon_row(
+                f"{migration_stem}:relation:1",
+                "Q1",
+                source_pbf=f"{migration_stem}.osm.pbf",
+                region=migration_stem,
+            )
+        ],
+    )
+
+    plan = link_migration.plan_link_migration(processed, stems={migration_stem})
+    assert plan.stems[0].classification == "migratable"
+    link_migration.apply_link_migration(processed, plan=plan)
+
+    ledger = json.loads(
+        (processed / "integrity" / "rejection_ledger.json").read_text(encoding="utf-8")
+    )
+    assert ledger["records"] == [
+        {
+            "shard": migration_stem,
+            "source_table": "polygon_articles",
+            "identifier": "Q2:en:1:1",
+            "wikidata": "Q2",
+            "expected": None,
+            "reason": "wikidata_not_in_polygon_qids",
+            "cascaded_sections": 0,
+        }
+    ]
+
+
+def test_apply_migratable_stems_continues_after_a_canonical_stem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processed = tmp_path / "processed"
+    _seed_canonical_stem(processed, "alpha-canonical")
+    _seed_full_legacy_stem(
+        processed,
+        "beta-legacy",
+        "Q1",
+        article_id="Q1:en:1:1",
+        document_id="Q1:wikipedia:en:1:1",
+    )
+    plan = link_migration.plan_link_migration(processed)
+    legacy_plan = next(stem for stem in plan.stems if stem.stem == "beta-legacy")
+    inputs = link_application._load_stem_apply_inputs(processed, legacy_plan)
+    assert inputs.voyage_sections_path == (
+        processed / "wikivoyage" / "sections" / "beta-legacy.parquet"
+    )
+
+    def fail_cleanup(_path: Path) -> None:
+        raise OSError("staging directory is still in use")
+
+    staging_dir = processed / ".link_migration_staging" / "beta-legacy"
+    monkeypatch.setattr(link_application.shutil, "rmtree", fail_cleanup)
+
+    link_application._apply_migratable_stems(processed, plan, {})
+
+    canonical_path = processed / "polygon_articles" / "alpha-canonical.parquet"
+    migrated_path = processed / "polygon_articles" / "beta-legacy.parquet"
+    assert (
+        link_migration.classify_stem_schema(_pyarrow().parquet.read_schema(canonical_path).names)
+        == "canonical"
+    )
+    assert (
+        link_migration.classify_stem_schema(_pyarrow().parquet.read_schema(migrated_path).names)
+        == "canonical"
+    )
+    assert staging_dir.is_dir()
 
 
 def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> None:

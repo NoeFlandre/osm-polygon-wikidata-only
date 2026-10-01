@@ -264,43 +264,7 @@ def test_language_card_declares_viewer_language_configs_and_splits(
     )
 
 
-def test_v2_viewer_config_names_sanitize_language_code_dashes() -> None:
-    existing = (
-        "---\n"
-        "configs:\n"
-        "  - config_name: polygons\n"
-        "    data_files:\n"
-        "      - split: polygons\n"
-        "        path: polygons/*.parquet\n"
-        "---\n"
-        "# Existing card\n"
-    )
-
-    merged = _merge_language_card(
-        existing,
-        version=LanguageSplitVersion.V2,
-        configurations=("wikipedia_documents_by_language",),
-        languages=("be-tarask", "unknown"),
-        configuration_languages=(("wikipedia_documents_by_language", ("be-tarask", "unknown")),),
-    )
-    payload = yaml.safe_load(merged.split("---", 2)[1])
-    configs = {config["config_name"]: config for config in payload["configs"]}
-
-    assert configs["wikipedia_documents_by_language__lang_be_tarask"]["data_files"] == [
-        {
-            "split": "train",
-            "path": "language_splits/wikipedia_documents_by_language/lang-be-tarask/part-*.parquet",
-        }
-    ]
-    assert configs["wikipedia_documents_by_language__lang_unknown"]["data_files"] == [
-        {
-            "split": "train",
-            "path": "language_splits/wikipedia_documents_by_language/lang-unknown/part-*.parquet",
-        }
-    ]
-
-
-def test_v2_viewer_uses_one_config_per_language_to_avoid_split_limit() -> None:
+def test_v2_viewer_configs_sanitize_dashes_and_avoid_split_limit() -> None:
     existing = (
         "---\n"
         "configs:\n"

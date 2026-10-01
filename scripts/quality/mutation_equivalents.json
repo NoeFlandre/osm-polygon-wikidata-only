@@ -68,5 +68,100 @@
     "mutant_sha256": "a465939efebff8ed4e54799780bc00a97d50f81373fb2949e4d6098303c5e11e",
     "reason": "For None the original and mutated conditions both return False; for every non-None value both evaluate bool(value).",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__load_json_object__mutmut_5": {
+    "mutant_sha256": "588a1df6f4a463432755975bfd55cdffac2ed7f9f018d49d46e59c82e0bfac45",
+    "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same bytes. The existing manifest test verifies the canonical codec name, not spelling.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__stage_rejection_ledger__mutmut_10": {
+    "mutant_sha256": "2e67cfb148ad09a69153108682bc6fbf11f23d7da1db9de4f678ae42ea2a45ea",
+    "reason": "load_ledger(path) returns [] when path is absent, so calling it unconditionally and conditionally both produce the same prior-record list before merge_records.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_12": {
+    "mutant_sha256": "d4b2e9fb9541eab4b025d537bd459faa18c0c99ac2200ac126c7d2736cdb246e",
+    "reason": "When metadata_refresh is absent, {} and None both lead the isinstance(marker, dict) check to false and initialize empty marker stems and hashes. A present dictionary follows the same path in both versions.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_14": {
+    "mutant_sha256": "d32c3a15e8aa0ad786bcceb810a11c64d43bab53866478c82f628c2cd45d5046",
+    "reason": "When metadata_refresh is absent, an omitted dict.get default and the explicit {} default both produce equivalent empty marker stems and hashes after the isinstance(marker, dict) check; present dictionaries are unchanged.",
+    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x__conversion_indexes__mutmut_19": {
+    "mutant_sha256": "f9261b58040d3fc4a6a4441290df9b092d3fe1899e385d91ff2da880776e9d11",
+    "reason": "If a malformed polygon row omits wikidata, both the original empty-string fallback and None stringify to invalid QID components; qids_from_osm_tag returns the same empty tuple.",
+    "source_sha256": "e3fe1098949680ad460473df7d8a421e550c5b54776454abce01d281228c08e5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x__conversion_indexes__mutmut_21": {
+    "mutant_sha256": "1ad9f1f6b05aaca4e01a4db31c230174340ed790ae55e3bdacef1ee8a29632ee",
+    "reason": "If a malformed polygon row omits wikidata, the original empty-string fallback and the omitted default both yield no valid QID components; qids_from_osm_tag returns the same empty tuple.",
+    "source_sha256": "e3fe1098949680ad460473df7d8a421e550c5b54776454abce01d281228c08e5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x__conversion_indexes__mutmut_24": {
+    "mutant_sha256": "57b6cb678c0cd26e5f555a4658ebdd763417bac55cf4829992fbb1cb06a7620a",
+    "reason": "If a malformed polygon row omits wikidata, \"XXXX\" is an invalid QID component just like the original empty-string fallback; qids_from_osm_tag returns the same empty tuple.",
+    "source_sha256": "e3fe1098949680ad460473df7d8a421e550c5b54776454abce01d281228c08e5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x_build_canonical_rows__mutmut_43": {
+    "mutant_sha256": "c4afc9bf2ebbb8b21d7e86d944619bb230c8f13d67678ef79ce47152f3da2527",
+    "reason": "_polygon_for_legacy_row resolves each polygon before this lookup, and _conversion_indexes builds polygon_qids for every polygon key from that same table. The fallback argument is unreachable for every resolvable row.",
+    "source_sha256": "e3fe1098949680ad460473df7d8a421e550c5b54776454abce01d281228c08e5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x_build_canonical_rows__mutmut_45": {
+    "mutant_sha256": "b29179766c89aaf88beb506baf155a1fba2b5ba911caa78b5ae8f642c50a760e",
+    "reason": "_polygon_for_legacy_row resolves each polygon before this lookup, and _conversion_indexes builds polygon_qids for every polygon key from that same table. The fallback argument is unreachable for every resolvable row.",
+    "source_sha256": "e3fe1098949680ad460473df7d8a421e550c5b54776454abce01d281228c08e5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__classify_existing_stem__mutmut_11": {
+    "mutant_sha256": "cd39863034fcffa9d656276d0e180521bce424d999f0319e602c28cc834a06c7",
+    "reason": "_link_classification returns a nonempty reason whenever classification is None: schema read failures return a typed error detail, and unsupported schemas return an explanatory ValueError message. The fallback literal is unreachable.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__classify_existing_stem__mutmut_12": {
+    "mutant_sha256": "8e4452b5975760754982febb40cc0f268336821276a0c7a666a740f47d846c31",
+    "reason": "_link_classification returns a nonempty reason whenever classification is None: schema read failures return a typed error detail, and unsupported schemas return an explanatory ValueError message. The fallback literal is unreachable.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__legacy_stem_plan__mutmut_32": {
+    "mutant_sha256": "582f5d967d1b32bfe6459db23d6728f560d655939f3a956c0fda49980ad97734",
+    "reason": "Validated canonical_rows have the fixed 11 canonical keys in schema order and only string/integer values; inferred Arrow types and column order therefore match the explicit schema. _table_digest hashes serialized record batches (not field metadata), and both implementations use the same row count and batches, including the empty-table case.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__legacy_stem_plan__mutmut_34": {
+    "mutant_sha256": "64476c65b19665c8efd877cefcbe6fd293bf0734986f6b211d0a3d0703c39ff6",
+    "reason": "Validated canonical_rows have the fixed 11 canonical keys in schema order and only string/integer values; inferred Arrow types and column order therefore match the explicit schema. _table_digest hashes serialized record batches (not field metadata), and both implementations use the same row count and batches, including the empty-table case.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_11": {
+    "mutant_sha256": "bc78e17043f6d6e4ccf7a566b4f0a095f94f2700ee57cc41c43967f39aedb57d",
+    "reason": "If a malformed polygon row omits wikidata, \"XXXX\" is an invalid QID component just like the original empty-string fallback; qids_from_osm_tag returns the same empty tuple.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_6": {
+    "mutant_sha256": "f23549796581a40f701d9dd39f19ee89b711af95fe0b1fb031d22f8edde1e66b",
+    "reason": "If a malformed polygon row omits wikidata, both the original empty-string fallback and None stringify to invalid QID components; qids_from_osm_tag returns the same empty tuple.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_8": {
+    "mutant_sha256": "e4a697ffc292f6f8239145af06f6080247d447c9d18edbeea040268f0b67ca59",
+    "reason": "If a malformed polygon row omits wikidata, the original empty-string fallback and the omitted default both yield no valid QID components; qids_from_osm_tag returns the same empty tuple.",
+    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_46": {
+    "mutant_sha256": "b56027bf1af494eeaa0d164f2ead26765e90799e5815c973adc7f243d9aeffdb",
+    "reason": "_apply_entries overwrites index_ref[0] with enumerate's first index before any entry operation can fail. With no entries, commit_ordered_replacements returns before calling _commit_new_transaction. The initial value is never observed.",
+    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__load_recovery_journal__mutmut_5": {
+    "mutant_sha256": "2584b23ecf946cc9c428430f7d4fdf26d5f88c3faf2b39bee19f90d5575f92f9",
+    "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same journal bytes. The recovery-reader test checks codec identity rather than its spelling.",
+    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_11": {
+    "mutant_sha256": "c3b8d778f6f667b2413085959678674c1acc68ebd66d05d67f11b2a00d6725d5",
+    "reason": "The sort priority is 0 for data files and either 1 or 2 for JSON files. Changing 1 to 2 preserves JSON-after-data ordering and the path tie-breaker.",
+    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
   }
 }
