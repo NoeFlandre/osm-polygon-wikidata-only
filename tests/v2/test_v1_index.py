@@ -100,17 +100,17 @@ def test_persistent_index_deletes_stale_paths_and_invalidates_row_cache(tmp_path
 
 
 def test_cached_row_count_rejects_missing_invalid_and_negative_values() -> None:
-    from osm_polygon_wikidata_only.v2.v1_index import _read_cached_row_count
+    from osm_polygon_wikidata_only.v2.index_sync import read_cached_row_count
 
     connection = sqlite3.connect(":memory:")
     connection.execute("CREATE TABLE index_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    assert _read_cached_row_count(connection) is None
+    assert read_cached_row_count(connection) is None
     connection.execute("INSERT INTO index_metadata VALUES ('row_count', 'not-an-int')")
-    assert _read_cached_row_count(connection) is None
+    assert read_cached_row_count(connection) is None
     connection.execute("UPDATE index_metadata SET value='-1' WHERE key='row_count'")
-    assert _read_cached_row_count(connection) is None
+    assert read_cached_row_count(connection) is None
     connection.execute("UPDATE index_metadata SET value='0' WHERE key='row_count'")
-    assert _read_cached_row_count(connection) == 0
+    assert read_cached_row_count(connection) == 0
     connection.close()
 
 
@@ -186,9 +186,10 @@ def test_validated_parquet_file_closes_handle_when_schema_is_invalid(
     path.parent.mkdir(parents=True)
     pq.write_table(pa.table({"title": ["bad"]}), path)
 
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
-    original = v1_index.pq.ParquetFile
+    original = index_sync.pq.ParquetFile
     opened: list[object] = []
     closed: list[object] = []
 
@@ -216,7 +217,7 @@ def test_validated_parquet_file_closes_handle_when_schema_is_invalid(
                 self._inner.close()
                 closed.append(self)
 
-    monkeypatch.setattr(v1_index.pq, "ParquetFile", _TrackedParquetFile)
+    monkeypatch.setattr(index_sync.pq, "ParquetFile", _TrackedParquetFile)
 
     with pytest.raises(ValueError, match="schema"):
         v1_index._validated_parquet_file(path, legacy_articles=False)
@@ -301,9 +302,9 @@ def test_persistent_index_reuses_completed_shards_without_rescanning(
     def fail_if_scanned(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
         raise AssertionError("an unchanged V1 shard was rescanned")
 
-    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
 
-    monkeypatch.setattr(v1_index, "_scan_index_rows", fail_if_scanned)
+    monkeypatch.setattr(index_sync, "_scan_index_rows", fail_if_scanned)
     second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert second.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
 
@@ -349,12 +350,12 @@ def test_persistent_index_reuses_cached_row_count_without_full_distinct_scan(
     cache_dir = tmp_path / "v2-cache" / "v1-index"
     build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
 
-    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
 
     def fail_if_counted(*_args: object, **_kwargs: object) -> int:
         raise AssertionError("an unchanged index must reuse its cached row count")
 
-    monkeypatch.setattr(v1_index, "_count_distinct_documents", fail_if_counted)
+    monkeypatch.setattr(index_sync, "count_distinct_documents", fail_if_counted)
     second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert second.row_count == 1
 
@@ -385,17 +386,18 @@ def test_persistent_index_recounts_after_a_shard_changes(
         path,
     )
 
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
     counted = 0
-    original = v1_index._count_distinct_documents
+    original = v1_index.count_distinct_documents
 
     def count_and_record(connection: sqlite3.Connection) -> int:
         nonlocal counted
         counted += 1
         return original(connection)
 
-    monkeypatch.setattr(v1_index, "_count_distinct_documents", count_and_record)
+    monkeypatch.setattr(index_sync, "count_distinct_documents", count_and_record)
     second = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert counted == 1
     assert second.row_count == 2
@@ -448,12 +450,12 @@ def test_persistent_index_migrates_existing_secondary_indexes_to_lazy_mode(
     finally:
         connection.close()
 
-    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
 
     def fail_scan(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
         raise AssertionError("unchanged shard was rescanned during cache migration")
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", fail_scan)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", fail_scan)
     reopened = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     try:
         connection = sqlite3.connect(cache_dir / "v1_reuse_index.sqlite3")
@@ -523,9 +525,9 @@ def test_persistent_lookup_closes_parquet_handles_after_materialization(
     _write_documents(tmp_path, [_document()])
     index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
 
-    import osm_polygon_wikidata_only.v2.v1_index as v1_index
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
 
-    original = v1_index.pq.ParquetFile
+    original = index_sync.pq.ParquetFile
     opened: list[object] = []
     closed: list[object] = []
 
@@ -548,7 +550,7 @@ def test_persistent_lookup_closes_parquet_handles_after_materialization(
         def read_row_group(self, row_group: int):
             return self._inner.read_row_group(row_group)
 
-    monkeypatch.setattr(v1_index.pq, "ParquetFile", TrackedParquetFile)
+    monkeypatch.setattr(index_sync.pq, "ParquetFile", TrackedParquetFile)
     assert index.by_title("en", "Douglas Adams")
     assert opened
     assert closed == opened
@@ -667,6 +669,7 @@ def test_persistent_index_reads_next_row_group_during_current_commit(
         path,
         row_group_size=1,
     )
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
     second_scanned = threading.Event()
@@ -688,7 +691,7 @@ def test_persistent_index_reads_next_row_group_during_current_commit(
             parquet_file=parquet_file,
         )
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", scan)
     original_commit = v1_index._PersistentV1Index._commit_indexed_row_group
 
     def commit(
@@ -733,6 +736,7 @@ def test_persistent_index_reuses_one_reader_executor_for_multiple_shards(
         second,
     )
 
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
     original_executor = v1_index.ThreadPoolExecutor
@@ -743,7 +747,7 @@ def test_persistent_index_reuses_one_reader_executor_for_multiple_shards(
         created.append(executor)
         return executor
 
-    monkeypatch.setattr(v1_index, "ThreadPoolExecutor", record_executor)
+    monkeypatch.setattr(index_sync, "ThreadPoolExecutor", record_executor)
     index = build_v1_reuse_index(tmp_path, cache_dir=tmp_path / "cache")
     try:
         assert index.row_count == 2
@@ -798,6 +802,7 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
         second_path,
     )
 
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
     original = v1_index._scan_index_row_group
@@ -820,12 +825,12 @@ def test_persistent_index_resumes_after_an_interrupted_shard(
             parquet_file=parquet_file,
         )
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", fail_on_second)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", fail_on_second)
     with pytest.raises(OSError, match="interrupted index build"):
         build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert scanned == [second_path.name]
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", original)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", original)
     index = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert index.by_title("fr", "Douglas Adams FR")[0]["document_id"] == "Q43:wikipedia:fr:2:3"
 
@@ -852,6 +857,7 @@ def test_background_index_exposes_committed_rows_before_final_shard(
 
     second_started = threading.Event()
     release_second = threading.Event()
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
     original = v1_index._scan_index_row_group
@@ -873,7 +879,7 @@ def test_background_index_exposes_committed_rows_before_final_shard(
             parquet_file=parquet_file,
         )
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", scan)
     index = start_v1_reuse_index(tmp_path, cache_dir=tmp_path / "v2-cache" / "v1-index")
     assert second_started.wait(timeout=2)
     assert index.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
@@ -979,6 +985,7 @@ def test_persistent_index_resumes_inside_an_interrupted_shard(
     )
     cache_dir = tmp_path / "v2-cache" / "v1-index"
 
+    import osm_polygon_wikidata_only.v2.index_sync as index_sync
     import osm_polygon_wikidata_only.v2.v1_index as v1_index
 
     original = v1_index._scan_index_row_group
@@ -1001,7 +1008,7 @@ def test_persistent_index_resumes_inside_an_interrupted_shard(
             parquet_file=parquet_file,
         )
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", scan)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", scan)
     with pytest.raises(OSError, match="interrupted row group"):
         build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert calls == [0, 1]
@@ -1014,7 +1021,7 @@ def test_persistent_index_resumes_inside_an_interrupted_shard(
     assert progress == (1,)
     connection.close()
 
-    monkeypatch.setattr(v1_index, "_scan_index_row_group", original)
+    monkeypatch.setattr(index_sync, "_scan_index_row_group", original)
     resumed = build_v1_reuse_index(tmp_path, cache_dir=cache_dir)
     assert resumed.by_title("en", "Douglas Adams")[0]["document_id"] == "Q42:wikipedia:en:1:2"
     assert resumed.by_title("en", "Second page")[0]["document_id"] == "Q43:wikipedia:en:2:3"
