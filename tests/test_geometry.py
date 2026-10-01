@@ -13,7 +13,9 @@ import pytest
 
 from osm_polygon_wikidata_only.domain.geometry import (
     GeometryError,
+    _centroid_from_moments,
     _projection_for_rings,
+    _ring_moments,
     _ring_signed_area_and_centroid,
     area_km2,
     centroid_geojson,
@@ -73,6 +75,20 @@ def test_ring_moments_preserve_geojson_orientation_sign() -> None:
 
     assert counterclockwise[0] > 0
     assert clockwise[0] < 0
+
+
+def test_geometry_helpers_keep_the_zero_origin_default() -> None:
+    ring = _square(10.0, 20.0)
+
+    assert _ring_signed_area_and_centroid(ring, 1.0) == _ring_signed_area_and_centroid(
+        ring, 1.0, origin_lon=0.0, origin_lat=0.0
+    )
+    assert _ring_moments([ring], 1.0) == _ring_moments(
+        [ring], 1.0, origin_lon=0.0, origin_lat=0.0
+    )
+    assert _centroid_from_moments(1.0, 6.0, 12.0, 1.0) == _centroid_from_moments(
+        1.0, 6.0, 12.0, 1.0, origin_lon=0.0, origin_lat=0.0
+    )
 
 
 def test_reversed_ring_has_same_geometry() -> None:
