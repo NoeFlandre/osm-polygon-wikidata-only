@@ -12,7 +12,7 @@ Each job uses `SaT-3l-sm` at revision `137da05` through `wtpsplit[onnx-gpu]==2.2
 - The selected stems and the row counts.
 - The artifact hashes.
 
-The V2 language boundary does not change. The command sends to SaT only the exact codes in the [sentence-splitting language list](sentence-splitting.md). An unsupported language stays as one row that is not split. The row has `segmentation_status=unsupported_language`. The command never sends it to SaT. The sentence manifest records the unsupported codes that the command observed. A published result thus shows this boundary.
+The V2 language boundary does not change. The command sends to SaT only the exact codes in the [sentence-splitting language list](sentence-splitting.md). An unsupported language stays as one unsplit row. The row has `segmentation_status=unsupported_language`. The command never sends it to SaT. The sentence manifest records the unsupported codes that the command observed. A published result thus shows this boundary.
 
 ## Local controller and GPU job
 
