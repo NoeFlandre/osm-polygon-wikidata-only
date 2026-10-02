@@ -1,6 +1,6 @@
 # Grid5000 sentence splitting
 
-This guide describes the production path that you can resume. It creates the remaining V2 sentence sidecars. The external data root stays authoritative. The source checkout goes only into a short-lived Grid5000 job directory. The controller runs locally. The model loading and the inference run only inside a reserved GPU job.
+This guide describes the production path that is resumable. It creates the remaining V2 sentence sidecars. The external data root stays authoritative. The source checkout goes only into a short-lived Grid5000 job directory. The controller runs locally. The model loading and the inference run only inside a reserved GPU job.
 
 ## Fixed execution contract
 
@@ -73,7 +73,7 @@ The controller gets the local lock before it reads or writes the ledger. It runs
 
 The monitoring polls only the recorded OAR job ID. Use a different GPU model, queue, or site only after a site qualification probe. The frontend does only these operations: policy, OAR, SSH/rsync, monitoring, and scoped file management. These operations happen inside the reservation: `uv sync`, `nvidia-smi`, model loading, and sentence inference.
 
-For each successful GPU job, the controller does these steps:
+For every successful GPU job, the controller does these steps:
 
 1. It downloads the receipt, the sentence Parquets, the merged sentence manifest, and the checkpoint state. It does this before it removes anything remotely.
 2. It validates these items locally: the receipt identity, the schemas, the SHA-256 hashes, the manifest invariants, and the checkpoint identity.
