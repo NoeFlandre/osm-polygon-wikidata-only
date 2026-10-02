@@ -1,8 +1,6 @@
 # Architecture
 
-The project is a batch pipeline with explicit boundaries between source data,
-enrichment services, local tables, and publication. The boundaries make the
-dataset reproducible and let each phase be tested with small fixtures.
+The project is a batch pipeline. It has explicit boundaries between the source data, the enrichment services, the local tables, and the publication. The boundaries make the dataset reproducible. They let you test each phase with small fixtures.
 
 ## Data flow
 
@@ -18,269 +16,155 @@ flowchart LR
     Tables --> Hub[Hugging Face publication]
 ```
 
-For V1, the filter keeps closed ways and multipolygon relations with a
-non-empty `wikidata=*` tag. Geometry is converted to deterministic centroid,
-area, bounding-box, and primary-tag fields. QIDs are deduplicated before
-Wikidata requests; selected sitelinks are then fetched once per language and
-revision. Rows are written in deterministic order and are not published until
-the expected enrichment has completed.
+For V1, the filter keeps the closed ways and the multipolygon relations that have a `wikidata=*` tag that is not empty. The pipeline converts the geometry to deterministic fields: centroid, area, bounding box, and primary tag. It removes duplicate QIDs before it makes the Wikidata requests. Then it fetches the selected sitelinks once for each language and revision. It writes the rows in deterministic order. It does not publish the rows until the expected enrichment is complete.
 
 ## Package responsibilities
 
 | Package | Responsibility |
 | --- | --- |
-| `config` | Immutable settings and validation of the external data root. |
-| `domain` | IDs, geometry, filtering, row models, and Parquet schemas. |
-| `io` | Streaming PBF input, atomic files, manifests, and Parquet persistence. |
-| `enrichment` | Wikidata, Wikipedia, and Wikivoyage clients, parsing, and pacing. |
-| `pipeline` | Extraction, enrichment, row construction, manifests, and orchestration. |
-| `augmentation` | Optional text sections, Wikivoyage documents, and Wikidata facts. |
-| `v2` | The isolated direct-Wikipedia-tag contract, sentence sidecars, and publication path. |
-| `hf` | Dataset cards, statistics, maps, Trackio snapshots, and Hub uploads. |
-| `cli` | Argument parsing and dependency wiring for the supported commands. |
+| `config` | The immutable settings and the validation of the external data root. |
+| `domain` | The IDs, geometry, filtering, row models, and Parquet schemas. |
+| `io` | The streaming PBF input, atomic files, manifests, and Parquet persistence. |
+| `enrichment` | The Wikidata, Wikipedia, and Wikivoyage clients, the parsing, and the pacing. |
+| `pipeline` | The extraction, enrichment, row construction, manifests, and orchestration. |
+| `augmentation` | The optional text sections, Wikivoyage documents, and Wikidata facts. |
+| `v2` | The isolated contract for the direct Wikipedia tag, the sentence sidecars, and the publication path. |
+| `hf` | The dataset cards, statistics, maps, Trackio snapshots, and Hub uploads. |
+| `cli` | The argument parsing and the dependency wiring for the supported commands. |
 
-The public Python facades are listed in the [API reference](api.md). Focused
-implementation modules are deliberately not part of that compatibility
-surface.
+The [API reference](api.md) lists the public Python facades. The focused implementation modules are not part of the compatibility surface. This is intentional.
 
 ## V1 and V2 contracts
 
-V1 is the default workflow and publishes to
-`NoeFlandre/osm-polygon-wikidata-only`. Its polygon table is Wikidata-first;
-the relationship table joins polygons to versioned Wikipedia and Wikivoyage
-documents.
+V1 is the default workflow. It publishes to `NoeFlandre/osm-polygon-wikidata-only`. Its polygon table starts from Wikidata. The relationship table joins the polygons to the versioned Wikipedia and Wikivoyage documents.
 
-V2 is selected only with `sync-dir --dataset-version v2` and publishes to
-`NoeFlandre/osm-polygon-wikidata-and-wikipedia`. It scans the same source PBFs
-for valid multilingual `wikipedia=*` tags, reuses matching V1 documents when
-possible, and fetches only direct pages that are not already represented. A
-direct page can have a null Wikidata QID. V2 uses its own polygon and link
-schemas and does not rewrite V1 tables.
+Only `sync-dir --dataset-version v2` selects V2. V2 publishes to `NoeFlandre/osm-polygon-wikidata-and-wikipedia`. It scans the same source PBFs for the valid multilingual `wikipedia=*` tags. It reuses the matching V1 documents when it can. It fetches only the direct pages that the tables do not have. A direct page can have a null Wikidata QID. V2 uses its own polygon schema and link schema. It does not rewrite the V1 tables.
 
-Both contracts preserve source provenance. A link identifies its project and
-document revision, while document rows keep license and attribution fields.
-This keeps the many-to-many relationship unambiguous when one place has
-several language versions or both Wikimedia projects.
+Both contracts keep the source provenance. A link identifies its project and its document revision. The document rows keep the license fields and the attribution fields. This keeps the many-to-many relationship unambiguous when one place has several language versions or both Wikimedia projects.
 
 ## Local tables and manifests
 
-Every completed region has a stable stem and contributes the following logical
-tables:
+Each completed region has a stable stem. It contributes these logical tables:
 
-- `polygons/<stem>.parquet` — one row per selected polygon;
-- `wikipedia/documents/<stem>.parquet` — one row per unique Wikipedia
-  document revision;
-- `polygon_articles/<stem>.parquet` — polygon-to-document links for both
-  projects;
-- optional section, Wikivoyage, and Wikidata-fact tables produced by
-  augmentation; and
-- optional `wikipedia/sentences/<stem>.parquet` and
-  `wikivoyage/sentences/<stem>.parquet` sidecars produced by the explicit
-  [sentence-splitting stage](sentence-splitting.md); and
-- `manifests/processed_pbfs.json` — source names, row counts, and aggregate
-  coverage statistics.
+- `polygons/<stem>.parquet`: one row for each selected polygon.
+- `wikipedia/documents/<stem>.parquet`: one row for each unique Wikipedia document revision.
+- `polygon_articles/<stem>.parquet`: the links from polygons to documents for both projects.
+- The optional section tables, Wikivoyage tables, and Wikidata-fact tables. Augmentation produces them.
+- The optional sidecars `wikipedia/sentences/<stem>.parquet` and `wikivoyage/sentences/<stem>.parquet`. The explicit [sentence-splitting stage](sentence-splitting.md) produces them.
+- `manifests/processed_pbfs.json`: the source names, the row counts, and the aggregate coverage statistics.
 
-The exact column descriptions are generated into each Hugging Face dataset
-card. Parquet schemas and manifest names are compatibility contracts; a
-schema change requires an explicit dataset-version decision.
+Each Hugging Face dataset card has the generated column descriptions. The Parquet schemas and the manifest names are compatibility contracts. A schema change needs an explicit decision about the dataset version.
 
 ## Reporting identities and row semantics
 
-Regional extracts can overlap, so the same OSM object may appear in more than
-one polygon file. Row-based counts retain those copies for regional provenance,
-storage, links, and document inventories. Map points, text-covered counts,
-language polygon counts, funnels, and card captions instead use one
-deterministic representative per global `(osm_type, osm_id)` identity. A text
-identity qualifies only when its linked document extraction succeeded
-(`fetch_status=ok`) and its trimmed `full_text` is non-empty. The optional
-language-split tables remain additive row-level views and do not change these
-reporting semantics.
+Regional extracts can overlap. The same OSM object can thus be in more than one polygon file. The row-based counts keep these copies. They show the regional provenance, the storage, the links, and the document inventories. These items use one deterministic representative for each global `(osm_type, osm_id)` identity: map points, text-covered counts, language polygon counts, funnels, and card captions.
 
-Polygon surface and geometry statistics deliberately remain row-based. The
-release scanner reads every manifest-listed `polygons/<stem>.parquet` row in
-sorted order, preserves the per-`source_pbf` breakdown, and emits rounded,
-byte-stable `stats.json` and card output from that complete published table.
+A text identity qualifies only if two conditions are true. First, the extraction of its linked document succeeded (`fetch_status=ok`). Second, its `full_text` is not empty after trimming. The optional language-split tables stay additive row-level views. They do not change these reporting semantics.
+
+The statistics for the polygon surface and geometry stay row-based. This is intentional. The release scanner reads each row of each `polygons/<stem>.parquet` file that the manifest lists. It reads them in sorted order. It keeps the breakdown for each `source_pbf`. It writes rounded `stats.json` and card output with stable bytes. It makes them from this complete published table.
 
 ## Resumability and publication
 
-The command-line workflows are designed to be safe to stop and restart. They
-write intermediate state only inside the operator-selected data root, validate
-inputs before reusing it, and keep incomplete regions out of the published
-tables. A second run with `--skip-existing` skips completed local processing;
-remote reconciliation, augmentation, and publication-repair actions may still
-run. Unfinished work is retried from the last valid boundary.
+The command-line workflows are safe to stop and restart. They write the intermediate state only inside the data root that the operator selects. They validate the inputs before they reuse the state. They keep the incomplete regions out of the published tables. A second run with `--skip-existing` skips the completed local processing. The remote reconciliation, the augmentation, and the publication-repair actions can still run. The workflow retries the unfinished work from the last valid boundary.
 
-Publication is fail-closed. A region is finalized locally only after its
-Parquet files and manifest entry pass schema and join checks. With `--push`,
-the region files and metadata are sent in an atomic Hugging Face commit. A
-failed upload leaves local results available for a later retry and never turns
-an incomplete region into a published one.
+The publication fails closed. The pipeline finalizes a region locally only after its Parquet files and its manifest entry pass the schema checks and the join checks. With `--push`, the pipeline sends the region files and the metadata in one atomic Hugging Face commit. If an upload fails, the local results stay available for a later retry. The pipeline never changes an incomplete region to a published region.
 
-Sentence splitting is a separate V2 stage. It reads finalized section tables,
-routes only the exact SaT-3l-sm language set, and preserves every unsupported
-language as one unsplit sentence row. Each source batch has an atomic restart
-boundary identified by the source hash, batch size, model identifier, and model
-revision. Sentence outputs and `manifests/sentence_splitting.json` are written
-only after all source batches complete; the [sentence-splitting guide](sentence-splitting.md)
-defines the schema and routing policy.
+Sentence splitting is a separate V2 stage. It reads the finalized section tables. It routes only the exact language set of SaT-3l-sm. It keeps each unsupported language as one sentence row that is not split. Each source batch has an atomic restart boundary. The source hash, the batch size, the model identifier, and the model revision identify it. The stage writes the sentence outputs and `manifests/sentence_splitting.json` only after all the source batches are complete. The [sentence-splitting guide](sentence-splitting.md) defines the schema and the routing policy.
 
 ## Wikimedia requests
 
-Wikimedia clients share one scheduler. It applies a client-side request ceiling,
-per-host pacing, bounded concurrency, retries with backoff, and `429` cooldowns.
-Anonymous and Bot Password sessions use different conservative ceilings; the
-ceiling is a client preference, not a promise from Wikimedia. Repeated QIDs and
-article titles are fetched once per run and reused for every matching polygon.
+The Wikimedia clients share one scheduler. The scheduler applies these controls:
 
-Long enrichment stages emit a two-minute heartbeat with completed QIDs,
-Wikipedia sites, and articles attempted. The heartbeat is a liveness signal,
-not an ETA, and it does not change request ordering or request pacing. The tracked
-tests use in-memory clients, so they do not contact Wikimedia.
+- A client-side request ceiling.
+- A pacing for each host.
+- A bounded concurrency.
+- Retries with backoff.
+- Cooldowns for `429` responses.
+
+Anonymous sessions and Bot Password sessions use different conservative ceilings. The ceiling is a preference of the client. It is not a promise from Wikimedia. The pipeline fetches repeated QIDs and article titles once in a run. It reuses them for each matching polygon.
+
+The long enrichment stages emit a heartbeat every two minutes. The heartbeat shows the completed QIDs, the Wikipedia sites, and the articles attempted. It is a signal that the stage is alive. It is not an estimate of the time left. It does not change the request order or the request pacing. The tracked tests use in-memory clients. They do not contact Wikimedia.
 
 ## Geographic coverage and derived assets
 
-Augmentation adds section-level Wikipedia and Wikivoyage text and structured
-Wikidata facts after a region's core tables are complete. Existing document
-revisions are reused; new sections are fetched only when required. The same
-join checks apply before a region is finalized.
+Augmentation adds the Wikipedia and Wikivoyage text by section and the structured Wikidata facts. It does this after the core tables of a region are complete. It reuses the existing document revisions. It fetches new sections only when necessary. The same join checks apply before the pipeline finalizes a region.
 
-Successful publication can regenerate three public geographic assets:
-`assets/geographic_text_presence.png` for text presence,
-`assets/coverage_map.png` for all-polygon coverage, and
-`assets/geographic_text_density.png` for combined Wikipedia/Wikivoyage text
-density. The maps use deterministic H3 aggregation and count a polygon once
-even when multiple documents qualify. Text-density colours use a logarithmic
-scale so sparse and dense cells remain visible. The generated dataset card
-recomputes core and
-augmentation statistics from finalized tables before publication. The static
-`final-dataset-snapshot` Trackio run records headline dataset metrics and
-exactly three plots; it is a snapshot, not a processing timeline.
+A successful publication can regenerate three public geographic assets:
+
+- `assets/geographic_text_presence.png` shows the text presence.
+- `assets/coverage_map.png` shows the coverage of all polygons.
+- `assets/geographic_text_density.png` shows the density of the combined Wikipedia and Wikivoyage text.
+
+The maps use a deterministic H3 aggregation. They count a polygon once, even when more than one document qualifies. The text-density colours use a logarithmic scale. Sparse cells and dense cells thus stay visible.
+
+Before publication, the generated dataset card recomputes the core statistics and the augmentation statistics from the finalized tables. The static Trackio run `final-dataset-snapshot` records the headline dataset metrics and exactly three plots. It is a snapshot. It is not a timeline of the processing.
 
 ## Polygon surface and geometry statistics
 
-Publication also recomputes the polygon table's own surface and geometry
-statistics and publishes them as `stats.json` next to the dataset card, which
-carries a concise summary of the same snapshot. The snapshot is computed from
-the published polygon table only: every valid row of every
-`polygons/<stem>.parquet` file, with no sampling, no truncation, no external
-lookup, and no recomputation from the raw PBFs. `manifests/processed_pbfs.json`
-defines which files the dataset publishes; a listed file that is missing, a row
-count that drifted from the manifest, or a Parquet file that is not the polygon
-table stops publication instead of producing a misleading report. Non-finite
-`area_m2` values, non-canonical polygon column types, and a manifest entry whose
-key, declared `source_pbf`, and polygon path disagree are rejected as well.
-Only the
-`source_pbf`, `area_m2`, `bbox`, and `geometry` columns are read, and geometry
-is decoded one record batch at a time so memory stays bounded. Files are
-scanned in sorted order and every published float is rounded to six decimals,
-so unchanged input produces a byte-identical `stats.json` and card block.
+The publication also recomputes the statistics for the surface and geometry of the polygon table. It publishes them as `stats.json` next to the dataset card. The card has a concise summary of the same snapshot.
 
-Unified sync commits regional data first and refreshes `stats.json`, maps, and
-the README once after the regional upload queue drains. A processed-directory
-run does the same: each PBF publishes its own region, and the repository-wide
-assets are produced once at the end. Both preserve the same complete-dataset
-statistics while avoiding a full rescan after every region. A single-PBF run
-still publishes those assets inline.
+The snapshot uses only the published polygon table. It reads each valid row of each `polygons/<stem>.parquet` file. It does not sample. It does not truncate. It does not use an external lookup. It does not recompute from the raw PBFs. The file `manifests/processed_pbfs.json` defines the files that the dataset publishes.
 
-Both the deferred refresh and a reconciliation repair publish through one
-post-drain step: nothing repository-wide rides the regional upload queue, which
-keeps going after a job exhausts its retries, so those assets never describe a
-region whose upload failed.
+These conditions stop the publication. A misleading report is thus not possible:
 
-Deferring is fail-closed. The regions owed a refresh are recorded durably
-before their upload is submitted, and the refresh runs only after the regional
-queue drains without failures, for a run that finished processing, and only
-when every recorded region was published by that run. Anything else -- a failed
-or aborted run, or a rerun that skipped a region an earlier run never managed
-to upload -- leaves the record in place and publishes nothing repository-wide.
-Unified sync repairs from that record, because it reconciles against the remote
-and republishes missing regional artifacts before refreshing. That reconciliation
-is presence-based: it republishes a region whose remote files are absent, not one
-whose remote files are merely older than the local ones, so a region rewritten
-locally but never uploaded is repaired only when its remote objects are missing.
+- A listed file is missing.
+- A row count is different from the manifest.
+- A Parquet file is not the polygon table.
+- An `area_m2` value is not finite.
+- A polygon column has a type that is not canonical.
+- A manifest entry disagrees about its key, its declared `source_pbf`, and its polygon path.
 
-`stats.json` carries a `contract_version`, a `source` block
-(`table`, `column_scope`, `file_count`, `polygon_count`) and four result
-blocks. The exact fields are:
+The scanner reads only the columns `source_pbf`, `area_m2`, `bbox`, and `geometry`. It decodes the geometry one record batch at a time. The memory use is thus bounded. The scanner reads the files in sorted order. The pipeline rounds each published float to six decimals. Unchanged input thus produces a `stats.json` and a card block with identical bytes.
 
-- `area_m2` — `total`, `minimum`, `maximum`, `mean`, `median` and the `p1`,
-  `p5`, `p25`, `p75`, `p95`, `p99` percentiles of the table's recorded
-  `area_m2` values, plus `non_positive_count` (degenerate rows with
-  `area_m2 <= 0`), `below_one_m2_count` (positive rows under one square metre)
-  and `null_count` (rows with no recorded area). Percentiles interpolate
-  linearly between the two closest ranks.
-- `area_histogram` — a fixed list of half-open log-scale buckets, each with a
-  `label`, `lower_m2`, `upper_m2` and `count`. The leading bucket collects
-  degenerate areas and the final bucket is unbounded, so the list is identical
-  in every report.
-- `geometry` — `polygon_count` and `multipolygon_count` by GeoJSON type,
-  `unreadable_count` for rows whose geometry is missing or is not a
-  Polygon/MultiPolygon, `with_holes_count`, `total_rings`, `total_holes`,
-  `total_vertices`, and the `vertices`, `rings` and `components`
-  distributions. A vertex is one coordinate pair, counting each ring's
-  repeated closing coordinate once; `components` is the number of
-  `MultiPolygon` members, which is `1` for every `Polygon` row.
-- `extent` — the `dataset_bbox` envelope, the `width_deg`, `height_deg`,
-  `width_m` and `height_m` distributions of per-row bounding boxes,
-  `wider_than_180_deg_count` (the antimeridian signature),
-  `pole_touching_count`, and `unreadable_count`. Metre spans use the same
-  equirectangular rule as `area_m2`, evaluated at each box's mean latitude.
-- `per_source_pbf` — one entry per source, sorted by `source_pbf`, with
-  `polygon_count`, `total_area_m2`, `median_area_m2` and `maximum_area_m2`.
+Unified sync commits the regional data first. It refreshes `stats.json`, the maps, and the README once, after the regional upload queue is empty. A processed-directory run does the same. Each PBF publishes its own region. The pipeline produces the assets for the whole repository once at the end. Both workflows keep the same statistics for the complete dataset. They do not rescan after each region. A single-PBF run still publishes these assets inline.
 
-Each distribution block reports `minimum`, `maximum`, `mean`, `median`, `p95`
-and `p99`.
+The deferred refresh and the reconciliation repair publish through one post-drain step. Nothing for the whole repository goes through the regional upload queue. The queue continues after a job uses all its retries. These assets thus never describe a region whose upload failed.
+
+The deferral fails closed. These rules apply:
+
+- The pipeline records the regions that need a refresh in a durable record. It does this before it submits their upload.
+- The refresh runs only when all of these conditions are true: the regional queue is empty with no failures, the run finished its processing, and the run published each recorded region.
+- In all other cases, the record stays in place and the pipeline publishes nothing for the whole repository. These cases include a failed run, an aborted run, and a rerun that skipped a region that an earlier run did not upload.
+
+Unified sync repairs from that record. It reconciles against the remote and republishes the missing regional artifacts before it refreshes. This reconciliation is based on presence. It republishes a region whose remote files are absent. It does not republish a region whose remote files are only older than the local files. A region that is rewritten locally and not uploaded is thus repaired only when its remote objects are missing.
+
+`stats.json` has a `contract_version`, a `source` block (`table`, `column_scope`, `file_count`, `polygon_count`), and four result blocks. These are the exact fields:
+
+- `area_m2`: `total`, `minimum`, `maximum`, `mean`, `median`, and the percentiles `p1`, `p5`, `p25`, `p75`, `p95`, `p99` of the `area_m2` values that the table records. It also has these counts:
+    - `non_positive_count`: the degenerate rows with `area_m2 <= 0`.
+    - `below_one_m2_count`: the positive rows under one square metre.
+    - `null_count`: the rows with no recorded area.
+
+    The percentiles interpolate linearly between the two closest ranks.
+- `area_histogram`: a fixed list of half-open log-scale buckets. Each bucket has a `label`, `lower_m2`, `upper_m2`, and `count`. The first bucket collects the degenerate areas. The last bucket is unbounded. The list is thus identical in each report.
+- `geometry`: `polygon_count` and `multipolygon_count` by GeoJSON type, `unreadable_count`, `with_holes_count`, `total_rings`, `total_holes`, `total_vertices`, and the distributions `vertices`, `rings`, and `components`. `unreadable_count` counts the rows whose geometry is missing or is not a Polygon or MultiPolygon. A vertex is one coordinate pair. The count includes the repeated closing coordinate of each ring once. `components` is the number of `MultiPolygon` members. It is `1` for each `Polygon` row.
+- `extent`: the `dataset_bbox` envelope, and the distributions `width_deg`, `height_deg`, `width_m`, and `height_m` of the bounding boxes of the rows. It also has `wider_than_180_deg_count` (the antimeridian signature), `pole_touching_count`, and `unreadable_count`. The metre spans use the same equirectangular rule as `area_m2`. They are evaluated at the mean latitude of each box.
+- `per_source_pbf`: one entry for each source, sorted by `source_pbf`. Each entry has `polygon_count`, `total_area_m2`, `median_area_m2`, and `maximum_area_m2`.
+
+Each distribution block reports `minimum`, `maximum`, `mean`, `median`, `p95`, and `p99`.
 
 ## Quality boundaries and deterministic replay
 
 The quality cycle follows the same ownership boundaries as the runtime:
 
-- `domain` modules contain local data rules and may depend only on the local
-  domain layer;
-- `pipeline` modules orchestrate local state and must not import CLI modules;
-  CLI parsing and dependency wiring stay at the edge; and
-- local integration tests exercise real Parquet, JSON, and manifest formats,
-  while external clients are deterministic stubs.
+- The `domain` modules contain local data rules. They can depend only on the local domain layer.
+- The `pipeline` modules orchestrate the local state. They must not import CLI modules. The argument parsing and the dependency wiring stay at the edge.
+- The local integration tests use the real Parquet, JSON, and manifest formats. The external clients are deterministic stubs.
 
-The AST checker inspects project-local imports and fails on cycles, domain-purity
-violations, or pipeline-to-CLI edges. It intentionally ignores third-party
-imports, so it is an architectural constraint rather than proof that runtime
-code has no side effects. Hypothesis properties cover sentence invariants;
-pytest-bdd acceptance tests replay an interrupted local run and compare it with
-a clean run, including rows, offsets, language routing, and manifest results.
-The rationale and boundary cleanup rule are recorded in [ADR 0001: Quality
-boundaries](adr/0001-quality-boundaries.md).
+The AST checker inspects the project-local imports. It fails on cycles, domain-purity violations, and edges from the pipeline to the CLI. It ignores third-party imports on purpose. It is thus an architectural constraint. It does not prove that the runtime code has no side effects.
 
-The CRAP gate evaluates full source files in its configured inventory and uses
-Radon's `--show-closures` mode so nested functions are included. Mutation
-testing remains scoped to deterministic helpers and quality tools; live network,
-GPU, publication, and large-data behavior stays in focused integration or
-operational checks. These boundaries describe the quality design; static checks
-do not prove runtime side-effect safety.
+Hypothesis properties cover the sentence invariants. The pytest-bdd acceptance tests replay an interrupted local run. They compare it with a clean run. The comparison includes the rows, the offsets, the language routing, and the manifest results. [ADR 0001: Quality boundaries](adr/0001-quality-boundaries.md) records the rationale and the boundary cleanup rule.
+
+The CRAP gate evaluates the full source files of its configured inventory. It uses the Radon mode `--show-closures`. It thus includes the nested functions. Mutation testing stays limited to deterministic helpers and quality tools. Focused integration checks or operational checks cover the live network, GPU, publication, and large-data behavior. These boundaries describe the quality design. Static checks do not prove that the runtime side effects are safe.
 
 ## Container boundary
 
-The Docker build has separate `development` and `runtime` targets. The runtime
-image contains the installed application and locked dependencies, runs as a
-non-root user, and carries OCI source, version, and license labels. Its
-health check invokes the local CLI version command. Both `docker run` and the
-Compose service default to `--help`.
+The Docker build has separate `development` and `runtime` targets. The runtime image has the installed application and the locked dependencies. It runs as a non-root user. It has OCI labels for the source, the version, and the license. Its health check runs the version command of the local CLI. Both `docker run` and the Compose service use `--help` as the default.
 
-The root `compose.yaml` builds the `runtime` target, optionally loads a local
-`.env`, maps the host UID/GID, and bind-mounts an external data root at `/data`.
-The runtime receives only the container path `/data` as
-`OSM_POLYGON_DATA_ROOT`; the host path remains a Compose setting. The Compose
-service does not add publication flags. Hugging Face credentials are supplied
-at runtime and never enter the image layers. CI smoke-tests the default command
-with container networking disabled. For processing, the command is
-`sync-dir /data/raw --data-root /data`; the Compose bind mount keeps source PBFs
-read-only while storing output and resumable state under `/data`.
+The root file `compose.yaml` builds the `runtime` target. It loads a local `.env` file if one exists. It maps the host UID/GID. It bind-mounts an external data root at `/data`. The runtime receives only the container path `/data` as `OSM_POLYGON_DATA_ROOT`. The host path stays a Compose setting. The Compose service does not add publication flags. The runtime supplies the Hugging Face credentials. They never enter the image layers.
+
+CI smoke-tests the default command with the container network off. For processing, the command is `sync-dir /data/raw --data-root /data`. The Compose bind mount keeps the source PBFs read-only. It stores the output and the restart state under `/data`.
 
 ## Compatibility and verification
 
-The CLI options, supported Python facades, Parquet schemas, manifest paths,
-deterministic ordering, and public dataset URLs are the compatibility surface.
-Run the [development quality gate](development.md) before changing any of
-these boundaries. The strict MkDocs build and the Pages workflow are also
-checked in CI, so a broken link or missing navigation target fails before
-publication.
+The compatibility surface has these items: the CLI options, the supported Python facades, the Parquet schemas, the manifest paths, the deterministic ordering, and the public dataset URLs. Before you change one of these boundaries, run the [development quality gate](development.md). CI also checks the strict MkDocs build and the Pages workflow. A broken link or a missing navigation target thus fails before publication.
