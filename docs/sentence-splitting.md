@@ -12,7 +12,7 @@ The command sends only these 85 language codes to SaT:
 af am ar az be bg bn ca ceb cs cy da de el en eo es et eu fa fi fr fy ga gd gl gu ha he hi hu hy id ig is it ja jv ka kk km kn ko ku ky la lt lv mg mk ml mn mr ms mt my ne nl no pa pl ps pt ro ru si sk sl sq sr sv ta te tg th tr uk ur uz vi xh yi yo zh zu
 ```
 
-The language match is exact. For example, `en` and `zh` are supported. `xx` and `zh-hans` are not supported. The command sends only these exact language codes to SaT. Each other language code stays in the output as one row that is not split. The command never sends it to SaT. The command marks it with `segmentation_status=unsupported_language`. The file `manifests/sentence_splitting.json` records the complete list of the unsupported languages that the command observed. It also records the model provenance.
+The language match is exact. For example, `en` and `zh` are supported. `xx` and `zh-hans` are not supported. Only these exact language codes are sent to SaT. Each other language code stays in the output as one unsplit row. The command never sends it to SaT. The command marks it with `segmentation_status=unsupported_language`. The file `manifests/sentence_splitting.json` records the complete list of the unsupported languages that the command observed. It also records the model provenance.
 
 This policy is intentional. The V2 snapshot has language codes that the SaT model does not support. The command keeps the unsupported text. It does not drop the text. It does not send the text through another model. A supported section that is empty produces no sentence rows. A supported section that is not empty produces lossless rows.
 
