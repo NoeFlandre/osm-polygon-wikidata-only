@@ -44,12 +44,13 @@ exclude_docs: |
 
 nav:
   - Home: index.md
+  - Glossary: glossary.md
   - API reference: api.md
   - CLI reference: cli-reference.md
   - Architecture: architecture.md
-  - Quality boundary ADR: adr/0001-quality-boundaries.md
-  - Language-split contract ADR: adr/0002-language-split-contract.md
-  - Atomic publication ADR: adr/0003-atomic-publication-boundary.md
+  - ADR 0001, quality boundaries: adr/0001-quality-boundaries.md
+  - ADR 0002, language-split contract: adr/0002-language-split-contract.md
+  - ADR 0003, atomic publication: adr/0003-atomic-publication-boundary.md
   - Language-split release: language-splits.md
   - Dataset snapshot: dataset-snapshot.md
   - Development: development.md

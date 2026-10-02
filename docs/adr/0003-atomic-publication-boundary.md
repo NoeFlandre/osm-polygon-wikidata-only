@@ -5,30 +5,19 @@
 
 ## Context
 
-Regional extraction and enrichment can be interrupted, while the published
-dataset is consumed as a complete set of tables and manifests. Exposing a
-partially written region, or reporting success before a remote upload is
-verified, would make resumability unsafe and public counts unreliable.
+An interruption can stop the regional extraction and enrichment. Users consume the published dataset as a complete set of tables and manifests. Two events make the resume unsafe and the public counts not reliable:
+
+- A region is visible when it is only partially written.
+- The pipeline reports success before it verifies the remote upload.
 
 ## Decision
 
-- Keep raw inputs, resumable state, and generated artifacts in the operator's
-  data root, outside the source checkout.
-- Finalize a region only after its Parquet files pass schema and join checks;
-  install the completed files atomically and write the manifest entry last.
-- Publish related release files in one atomic Hugging Face commit; do not split
-  a release's manifest and data across commits.
-- Follow each publication workflow's explicit success contract. Workflows with
-  revision-bound inventory checks verify the expected remote files and metadata
-  at the uploaded revision before marking the release complete.
-- On failure, retain complete local artifacts and enough state to retry. An
-  incomplete candidate must never be represented as a published region.
+- Keep the raw inputs, the restart state, and the generated artifacts in the data root of the operator. The data root is outside the source checkout.
+- Finalize a region only after its Parquet files pass the schema checks and join checks. Install the completed files atomically. Write the manifest entry last.
+- Publish the related release files in one atomic Hugging Face commit. Do not put the manifest and the data of a release in different commits.
+- Follow the explicit success contract of each publication workflow. A workflow with revision-bound inventory checks verifies the expected remote files and metadata at the uploaded revision. Only then does it mark the release as complete.
+- If a failure occurs, keep the complete local artifacts and enough state to retry. Never represent an incomplete candidate as a published region.
 
 ## Consequences
 
-Local outputs are the recovery boundary: operators can resume without
-re-extracting completed regions, and a failed upload does not discard valid
-local work. Each workflow must distinguish a local candidate, a committed Hub
-revision, and any stronger remote-verification condition it promises. The
-operational details are documented in the [architecture guide](../architecture.md)
-and [language-split release guide](../language-splits.md).
+The local outputs are the recovery boundary. The operator can resume without a new extraction of the completed regions. A failed upload does not delete valid local work. Each workflow must distinguish these states: a local candidate, a committed Hub revision, and any stronger remote verification that the workflow promises. The [architecture guide](../architecture.md) and the [language-split release guide](../language-splits.md) give the operational details.
