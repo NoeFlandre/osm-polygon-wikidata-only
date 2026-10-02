@@ -1,33 +1,28 @@
 # Command-line reference
 
-The main command provides the following subcommands. Every command has a
-`--help` page with its options and defaults. Run commands from the repository
-root with `uv run`:
+The main command has the subcommands in the table. Each subcommand has a `--help` page. The page shows the options and the default values. Run the commands from the repository root with `uv run`.
 
 | Command | Purpose |
 | --- | --- |
 | `uv run osm-polygon-wikidata-only process-pbf` | Process one `.osm.pbf` file. |
-| `uv run osm-polygon-wikidata-only process-dir` | Process every PBF in a directory. |
-| `uv run osm-polygon-wikidata-only sync-dir` | Converge core and augmentation for every PBF, using V1 by default or an explicit dataset version. |
-| `uv run osm-polygon-wikidata-only augment-region` | Augment one completed region without reading its PBF again. |
-| `uv run osm-polygon-wikidata-only augment-dir` | Augment every completed core region. |
-| `uv run osm-polygon-wikidata-only split-v2-sentences` | Materialize resumable V2 sentence sidecars. |
-| `uv run osm-polygon-wikidata-only language-splits` | Generate deterministic V1/V2 language partitions locally. |
-| `uv run osm-polygon-wikidata-only publish-language-splits` | Generate and publish exact-target V1/V2 language partitions; use `--apply` to publish. |
-| `uv run osm-polygon-wikidata-only release-stats` | Publish a dataset card and polygon statistics report; use `--apply` to publish. |
-| `uv run osm-polygon-wikidata-only enforce-integrity` | Remove join-integrity violations from processed tables and write an audit. |
-| `uv run osm-polygon-wikidata-only audit-remote` | Read-only audit of local files against the configured Hugging Face dataset. |
+| `uv run osm-polygon-wikidata-only process-dir` | Process each PBF in a directory. |
+| `uv run osm-polygon-wikidata-only sync-dir` | Complete the core step and the augmentation for each PBF. It uses V1 by default. You can select a dataset version. |
+| `uv run osm-polygon-wikidata-only augment-region` | Augment one completed region. It does not read the PBF again. |
+| `uv run osm-polygon-wikidata-only augment-dir` | Augment each completed core region. |
+| `uv run osm-polygon-wikidata-only split-v2-sentences` | Create the V2 sentence sidecars. You can resume the command. |
+| `uv run osm-polygon-wikidata-only language-splits` | Generate the deterministic V1 and V2 language splits locally. |
+| `uv run osm-polygon-wikidata-only publish-language-splits` | Generate the V1 and V2 language splits for the exact target and publish them. Use `--apply` to publish. |
+| `uv run osm-polygon-wikidata-only release-stats` | Publish a dataset card and a polygon statistics report. Use `--apply` to publish. |
+| `uv run osm-polygon-wikidata-only enforce-integrity` | Remove the join-integrity violations from the processed tables and write an audit. |
+| `uv run osm-polygon-wikidata-only audit-remote` | Compare the local files with the configured Hugging Face dataset. The command only reads. |
 | `uv run osm-polygon-wikidata-only trackio-snapshot` | Publish the frozen dataset metrics snapshot to Trackio. |
-| `uv run osm-polygon-wikidata-only grid5000` | Run the Grid5000 sentence-splitting controller or a reserved-node job. |
-| `uv run osm-polygon-wikidata-only audit-containment` | Produce a read-only audit of whole-file containment retirements. |
+| `uv run osm-polygon-wikidata-only grid5000` | Run the Grid5000 sentence-splitting controller or a job on a reserved node. |
+| `uv run osm-polygon-wikidata-only audit-containment` | Create an audit of the whole-file containment retirements. The command only reads. |
 
-For example, inspect a command before running it:
+To see the options of a command before you run it, use `--help`. For example:
 
 ```bash
 uv run osm-polygon-wikidata-only sync-dir --help
 ```
 
-Commands that publish to Hugging Face or Trackio are opt-in; inspect their
-help and target repository before using their apply/publish options. Keep
-credentials in environment variables or an untracked `.env` file, never in
-source code or a container image.
+A command that publishes to Hugging Face or Trackio is opt-in. Before you use its apply or publish option, read its help and check the target repository. Keep the credentials in environment variables or in an untracked `.env` file. Never put them in source code or in a container image.

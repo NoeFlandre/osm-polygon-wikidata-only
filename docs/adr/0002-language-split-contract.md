@@ -5,61 +5,45 @@
 
 ## Decision
 
-Language partitions are keyed only by the `language` column on a textual or
-document row. The polygon tables are not partitioned by `best_language`: that
-field is a polygon-level preference, not the language of a particular text
-row. A polygon can therefore be represented by several link and document rows,
-one in each relevant language partition.
+The `language` column of a text row or a document row is the only key of the language partitions. The polygon tables are not partitioned by `best_language`. That field is the preference of a polygon. It is not the language of a specific text row. A polygon can have several link rows and document rows, one in each applicable language partition.
 
-The shared language policy is applied independently to the two dataset
-contracts:
+The shared language policy applies independently to the two dataset contracts:
 
-- V1 (`NoeFlandre/osm-polygon-wikidata-only`) inventories canonical
-  `polygon_articles`, Wikipedia documents and sections, and Wikivoyage
-  documents and sections.
-- V2 (`NoeFlandre/osm-polygon-wikidata-and-wikipedia`) inventories canonical
-  `polygon_document_links`, Wikipedia documents, and Wikipedia sections. V2
-  uses its own schemas and manifest under `processed_v2/`; it is never mixed
-  with V1 artifacts.
+- V1 (`NoeFlandre/osm-polygon-wikidata-only`) has an inventory of these tables: the canonical `polygon_articles`, the Wikipedia documents and sections, and the Wikivoyage documents and sections.
+- V2 (`NoeFlandre/osm-polygon-wikidata-and-wikipedia`) has an inventory of these tables: the canonical `polygon_document_links`, the Wikipedia documents, and the Wikipedia sections. V2 has its own schemas and manifest under `processed_v2/`. Never mix V2 with the V1 artifacts.
 
-The normalizer follows the repository's existing language rule: trim, lower
-case, replace `_` with `-`, and accept only
-`[a-z]{2,3}(?:-[a-z0-9]{2,8})*`. The existing usable legacy alias
-`be_x_old` becomes `be-tarask`. Null, whitespace-only, non-string, malformed,
-and legacy-unusable values (including the observed V1 project labels
-`simple` and `abstract`) are retained in an explicit `lang-unknown` bucket;
-they are never dropped or converted to a guessed language.
+The normalizer follows the existing language rule of the repository:
 
-Each language-bearing table gets additive Hugging Face language selections.
-V1 keeps one `<table>_by_language` configuration with splits named
-`lang-<canonical-language>`, including `lang-unknown`. V2 uses one Viewer
-configuration per table/language pair, named
-`<table>_by_language__lang_<canonical-language>` with dashes replaced by
-underscores, and exposes that configuration through one `train` split. V2
-storage directories retain the canonical `lang-<language>` form. This puts the
-language dimension in Viewer configurations rather than creating hundreds of
-splits in one config, while keeping split names unambiguous and avoiding
-reserved generic names such as `train`, `test`, and `validation`. The V1
-default configurations and paths remain unchanged. The V2 configurations are
-separate because its repository, root, schemas, and link table are separate.
+1. Trim the value.
+2. Convert it to lower case.
+3. Replace `_` with `-`.
+4. Accept only values that match `[a-z]{2,3}(?:-[a-z0-9]{2,8})*`.
 
-The inventory is computed from schema-validated Parquet artifacts and the
-corresponding contract manifest. It records the dataset contract, source
-manifest digest, artifact fingerprint, source files, row counts, and counts
-for canonical, legacy-alias, missing, blank, malformed, and
-legacy-unusable values per table and partition. Languages are discovered from
-the rows at inventory time; no language list is checked in.
+The usable legacy alias `be_x_old` becomes `be-tarask`. The explicit `lang-unknown` bucket keeps these values: null, only whitespace, not a string, malformed, and legacy and not usable. The V1 project labels `simple` and `abstract` are in this group. The pipeline never drops these values. It never changes them to a guessed language.
 
-Rows retain their existing schema, source fields, and identity. V1 and V2
-document identity is `document_id`, section identity is `section_id`, and link
-identity is `(polygon_id, project, document_id)`. Inventory and later
-partitioning preserve physical rows in deterministic sorted source-file order
-and do not deduplicate by `(osm_type, osm_id)`.
+Each table that has a language gets additive Hugging Face language selections:
+
+- V1 keeps one `<table>_by_language` configuration. Its splits have the name `lang-<canonical-language>`. This includes `lang-unknown`.
+- V2 uses one Viewer configuration for each pair of table and language. The name is `<table>_by_language__lang_<canonical-language>`, with underscores in place of dashes. The configuration has one `train` split. The V2 storage directories keep the canonical form `lang-<language>`.
+
+This design puts the language dimension in the Viewer configurations. It does not make hundreds of splits in one configuration. The split names stay unambiguous. They do not use the reserved generic names `train`, `test`, and `validation`. The V1 default configurations and paths do not change. The V2 configurations are separate because V2 has its own repository, root, schemas, and link table.
+
+The pipeline computes the inventory from the Parquet artifacts that pass schema validation and from the manifest of the contract. The inventory records these items:
+
+- The dataset contract.
+- The digest of the source manifest.
+- The fingerprint of the artifacts.
+- The source files.
+- The row counts.
+- The counts of canonical, legacy-alias, missing, blank, malformed, and legacy-unusable values for each table and partition.
+
+The pipeline finds the languages in the rows when it computes the inventory. The repository does not contain a list of languages.
+
+The rows keep their schema, source fields, and identity. In V1 and V2, the document identity is `document_id` and the section identity is `section_id`. The link identity is `(polygon_id, project, document_id)`. The inventory and the later partitioning keep the physical rows in the deterministic sorted order of the source files. They do not remove duplicates by `(osm_type, osm_id)`.
 
 ## User loading examples
 
-The default V1 dataset remains loadable as before. A language-only table uses
-the additive configuration and split:
+The default V1 dataset loads as before. A table that has only a language uses the additive configuration and split:
 
 ```python
 from datasets import load_dataset
@@ -71,8 +55,7 @@ french_documents = load_dataset(
 )
 ```
 
-The corresponding V2 call is explicit about the separate repository and
-contract:
+The V2 call names the separate repository and contract:
 
 ```python
 french_v2_links = load_dataset(
@@ -82,7 +65,7 @@ french_v2_links = load_dataset(
 )
 ```
 
-The equivalent Hub CLI selection is scoped to one configuration and split:
+The Hub CLI selects one configuration and one split:
 
 ```bash
 hf download NoeFlandre/osm-polygon-wikidata-only \
@@ -90,13 +73,8 @@ hf download NoeFlandre/osm-polygon-wikidata-only \
   --include 'wikipedia_documents_by_language/lang-fr/**'
 ```
 
-This ADR defines the contract and inventory only. Partition generation,
-property/integration coverage for that generator, and Hub publication remain
-the separate downstream issues #7, #8, and #9.
+This ADR defines only the contract and the inventory. Other issues cover the next work: #7 (partition generation), #8 (property and integration coverage for the generator), and #9 (Hub publication).
 
 ## Rationale
 
-Using a row-level language avoids losing multilingual coverage or collapsing
-different documents associated with the same polygon. Separate configurations
-preserve the existing heterogeneous table schemas and let `datasets` select a
-single language split without downloading the default all-language table.
+A row-level language keeps the multilingual coverage. It does not merge different documents that belong to the same polygon. Separate configurations keep the different table schemas. They let `datasets` select one language split. The user does not download the default table with all languages.

@@ -2,8 +2,7 @@
 
 ## Setup
 
-The project supports Python 3.12 and uses [`uv`](https://docs.astral.sh/uv/)
-for the locked environment:
+The project supports Python 3.12. It uses [`uv`](https://docs.astral.sh/uv/) for the locked environment:
 
 ```bash
 uv sync --frozen
@@ -11,14 +10,9 @@ uv run pre-commit install
 just --list
 ```
 
-The source checkout contains code, tests, and documentation. Keep PBFs, Parquet
-files, credentials, generated cards, and other run output in an
-operator-selected data root outside the checkout.
+The source checkout has the code, the tests, and the documentation. Keep the PBFs, Parquet files, credentials, generated cards, and other run output in a data root that the operator selects. The data root is outside the checkout.
 
-Quality reports, temporary files, local tool state, and generated documentation
-also stay outside the checkout. `QUALITY_RUNTIME_DIR` defaults to the portable
-`../quality-runtime`; `QUALITY_TMP_DIR` defaults to its `tmp` directory. Set
-them explicitly when sharing a runtime location:
+Keep also the quality reports, the temporary files, the local tool state, and the generated documentation outside the checkout. `QUALITY_RUNTIME_DIR` defaults to the portable path `../quality-runtime`. `QUALITY_TMP_DIR` defaults to its `tmp` directory. When you share a runtime location, set them explicitly:
 
 ```bash
 export QUALITY_RUNTIME_DIR="${QUALITY_RUNTIME_DIR:-../quality-runtime}"
@@ -26,134 +20,96 @@ export QUALITY_TMP_DIR="${QUALITY_TMP_DIR:-${QUALITY_RUNTIME_DIR}/tmp}"
 just quality-runtime
 ```
 
-The optional V2 sentence stage is installed separately so the normal pipeline
-does not pull a large model runtime:
+Install the optional V2 sentence stage separately. The normal pipeline then does not pull a large model runtime:
 
 ```bash
 uv sync --extra sentence-splitting
 ```
 
-Its exact routing and resumability contract is documented in the
-[sentence-splitting guide](sentence-splitting.md).
+The [sentence-splitting guide](sentence-splitting.md) describes its exact routing contract and its resume contract.
 
-The GPU extra is reserved for the Grid5000 compute-node job:
+The GPU extra is only for the Grid5000 compute-node job:
 
 ```bash
 uv sync --extra sentence-splitting-gpu
 ```
 
-The local controller, short-job policy, CUDA requirement, token boundary, and
-resume/publish contract are documented in the
-[Grid5000 sentence operations guide](grid5000-sentence-splitting.md). The
-external data root remains authoritative; the controller stages only bounded
-batch inputs and keeps HF authentication local.
+The [Grid5000 sentence operations guide](grid5000-sentence-splitting.md) describes these items: the local controller, the short-job policy, the CUDA requirement, the token boundary, and the resume and publish contract. The external data root stays authoritative. The controller stages only the bounded batch inputs. It keeps the HF authentication local.
 
 ## Docker reproducibility
 
-The checked-in `Dockerfile` has `runtime` and `development` targets. Both are
-built from the locked `uv.lock` environment; the runtime image runs as a
-non-root, unprivileged `app` user and contains no source data or credentials.
-The `docker build` command selects either target without changing the host data
-root.
+The checked-in `Dockerfile` has the targets `runtime` and `development`. Both targets use the locked `uv.lock` environment. The runtime image runs as the non-root, unprivileged user `app`. It has no source data and no credentials. The `docker build` command selects a target. It does not change the data root of the host.
 
-Build and exercise the harmless default command:
+Build the image and run the harmless default command:
 
 ```bash
 just docker-build
 just docker-help
 ```
 
-Run development checks without production data:
+Run the development checks without production data:
 
 ```bash
 just docker-test
 just docker-check
 ```
 
-The development image declares no ambient `OSM_POLYGON_DATA_ROOT`; the suite
-resolves its own temporary roots, and only the runtime image declares that
-contract with the `/data` volume behind it. The image also runs
-`pytest -m "not repository"`, because `presentations/` is deliberately kept out
-of the build context. Those repository-completeness contracts run in the
-`quality` CI job against a full checkout.
+The development image does not declare an ambient `OSM_POLYGON_DATA_ROOT`. The test suite resolves its own temporary roots. Only the runtime image declares that contract, with the `/data` volume behind it. The image also runs `pytest -m "not repository"`. This is because `presentations/` is intentionally not in the build context. The `quality` CI job runs those repository-completeness contracts against a full checkout.
 
 ### Docker Compose runtime
 
-The root `compose.yaml` builds the `runtime` target. Its default command is
-`--help`, so starting it does not process data or publish anything. The
-optional `.env` file is loaded only at runtime; start from the example and keep
-the real file private:
+The root file `compose.yaml` builds the `runtime` target. Its default command is `--help`. When you start it, it does not process data and does not publish. Compose loads the optional `.env` file only at runtime. Start from the example. Keep the real file private:
 
 ```bash
 cp .env.example .env
 mkdir -p ../osm-polygon-data/raw  # bind sources must exist
 ```
 
-Set `OSM_POLYGON_DATA_ROOT` in `.env` to an absolute host directory outside the
-source checkout. That directory is used as a bind mount at `/data`; the default
-`../osm-polygon-data` is also outside the checkout. The CLI writes resumable
-state and generated files there. Set `HOST_UID` and `HOST_GID` to the host
-directory owner's numeric IDs so the non-root container can write to the
-mount. Compose overlays the host `raw/` directory as read-only at `/data/raw`.
-On Linux, the values are `id -u` and `id -g`; Compose environment
-variables can override the example defaults for one command:
+Set `OSM_POLYGON_DATA_ROOT` in `.env` to an absolute host directory outside the source checkout. Compose uses that directory as a bind mount at `/data`. The default `../osm-polygon-data` is also outside the checkout. The CLI writes the restart state and the generated files there.
+
+Set `HOST_UID` and `HOST_GID` to the numeric IDs of the owner of the host directory. The non-root container can then write to the mount. Compose overlays the host directory `raw/` as read-only at `/data/raw`. On Linux, the values are `id -u` and `id -g`. For one command, the Compose environment variables can override the example defaults:
 
 ```bash
 HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose run --rm pipeline --help
 ```
 
-To process local Geofabrik files, place them in `$OSM_POLYGON_DATA_ROOT/raw`
-and override the harmless default command:
+To process local Geofabrik files, put them in `$OSM_POLYGON_DATA_ROOT/raw`. Then override the harmless default command:
 
 ```bash
 HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
   docker compose run --rm pipeline sync-dir /data/raw --data-root /data --skip-existing
 ```
 
-Set `HF_TOKEN` in `.env` only when a command explicitly includes `--push`.
-Compose passes it through the optional `env_file` at runtime. For direct
-`docker run`, pass it with `--env-file .env`; never bake it into a Dockerfile
-or image. Compose does not add `--push` to commands. The image's health check
-runs the local CLI version command; it does not contact Hugging Face,
-Wikimedia, or another service.
+Set `HF_TOKEN` in `.env` only when a command explicitly includes `--push`. Compose passes it at runtime through the optional `env_file`. For a direct `docker run`, pass it with `--env-file .env`. Never put it in a Dockerfile or in an image. Compose does not add `--push` to commands. The health check of the image runs the version command of the local CLI. It does not contact Hugging Face, Wikimedia, or another service.
 
-To run the opt-in workflow, provide a host data root containing `raw/`:
+To run the opt-in workflow, supply a host data root that has `raw/`:
 
 ```bash
 just docker-run /path/to/osm-polygon-data
 ```
 
-The recipe uses Docker's explicit `--mount` form, mounts the data root at
-`/data`, and mounts `/data/raw` read-only. It passes `HF_TOKEN` and optional
-Wikimedia credentials only at runtime. Removing the container does not remove
-the host's resumable state; press `Ctrl-C` and rerun the same command to resume.
-Docker builds, help, and tests do not read a real PBF or make Hugging
-Face/Wikimedia requests.
+The recipe uses the explicit `--mount` form of Docker. It mounts the data root at `/data`. It mounts `/data/raw` as read-only. It passes `HF_TOKEN` and the optional Wikimedia credentials only at runtime. When you remove the container, the restart state of the host stays. To resume, press `Ctrl-C` and run the same command again. The Docker builds, the help, and the tests do not read a real PBF. They do not make requests to Hugging Face or Wikimedia.
 
 ## Wikimedia credentials
 
-Wikimedia authentication is optional. The [README authentication section](https://github.com/NoeFlandre/osm-polygon-wikidata-only#wikimedia-bot-password-authentication)
-describes how to create and revoke a least-privilege Bot Password. Keep the
-password out of source files, logs, issues, and pull requests. The
-`WIKIMEDIA_BOT_USERNAME`/`WIKIMEDIA_BOT_PASSWORD` pair is all-or-nothing:
-supply the password securely, never log it, and do not commit it. The
-`WIKIMEDIA_REQUESTS_PER_MINUTE` environment variable selects the client-side
-request ceiling; that ceiling remains subject to Wikimedia's service limits.
+Wikimedia authentication is optional. The [README authentication section](https://github.com/NoeFlandre/osm-polygon-wikidata-only#wikimedia-bot-password-authentication) describes how to create and revoke a Bot Password with the fewest privileges. Keep the password out of source files, logs, issues, and pull requests.
 
-The test suite never uses live credentials. Authentication tests pass explicit
-environment mappings and fake transports (for example,
-`tests/enrichment/test_wikimedia_auth.py` and
-`tests/cli/test_dependencies.py`) and assert that errors do not echo secrets.
+The pair `WIKIMEDIA_BOT_USERNAME` and `WIKIMEDIA_BOT_PASSWORD` is all or nothing. Supply the password in a secure way. Never log it. Do not commit it. The environment variable `WIKIMEDIA_REQUESTS_PER_MINUTE` selects the client-side request ceiling. The service limits of Wikimedia still apply to that ceiling.
+
+The test suite never uses live credentials. The authentication tests pass explicit environment mappings and fake transports. For example, see `tests/enrichment/test_wikimedia_auth.py` and `tests/cli/test_dependencies.py`. They assert that the errors do not repeat secrets.
 
 ## Tests and quality checks
 
-Use red-green-refactor for behavior or configuration changes: add one focused
-failing test, confirm the expected failure, implement the smallest change, and
-then refactor while the test remains green. Contract tests should check the
-observable CLI, schema, workflow, or documentation behavior rather than private
-implementation details.
+Use red-green-refactor for a change to behavior or configuration:
 
-The deterministic pre-completion gate is:
+1. Add one focused test that fails.
+2. Confirm the expected failure.
+3. Implement the smallest change.
+4. Refactor while the test passes.
+
+Contract tests must check the observable CLI, schema, workflow, or documentation behavior. They must not check private implementation details.
+
+The deterministic gate before completion is:
 
 ```bash
 just quality-gauntlet
@@ -165,10 +121,9 @@ For fast local feedback, use:
 just quality-fast
 ```
 
-That runs Ruff, `ty`, the no-coverage test suite, and diff checks. It is a
-development loop, not a replacement for the full completion gate below.
+This recipe runs Ruff, `ty`, the test suite with no coverage, and the diff checks. It is a development loop. It does not replace the full completion gate below.
 
-The command runs the current quality recipes once, in a fixed fail-fast order:
+The gauntlet runs the current quality recipes once, in a fixed fail-fast order:
 
 ```bash
 just baseline
@@ -185,54 +140,25 @@ just smoke-test
 just diff-review
 ```
 
-`just coverage-floor` reads the root `coverage.json` written by `just tests`
-and fails when any measured file is below 85% line coverage, so a healthy
-aggregate cannot hide a barely exercised module.
+`just coverage-floor` reads the root `coverage.json` that `just tests` writes. It fails when a measured file has a line coverage below 85%. A healthy aggregate thus cannot hide a module with almost no coverage.
 
-`just property-tests` runs deterministic Hypothesis properties for lossless
-sentence routing and batch-boundary invariance. `just acceptance-tests` runs
-the pytest-bdd resumability scenario plus local pipeline integration tests.
-Those checks use real local Parquet, JSON, and manifest formats while stubbing
-external clients; they do not require live network or GPU services. A resumed
-fixture run is compared with a clean replay so retry behavior cannot silently
-change rows, offsets, or routing.
+`just property-tests` runs the deterministic Hypothesis properties. They test lossless sentence routing and invariance at the batch boundary. `just acceptance-tests` runs the pytest-bdd resumability scenario and the local pipeline integration tests. These checks use the real local Parquet, JSON, and manifest formats. They stub the external clients. They do not need a live network or GPU services. The tests compare a resumed fixture run with a clean replay. A retry thus cannot change rows, offsets, or routing silently.
 
-`just architecture-checks` runs the local import-graph rules for cycles,
-domain purity, and pipeline-to-CLI direction, alongside package, documentation,
-and CLI contract checks. The smoke stage checks both public CLI help paths
-without reading a data root or making a network request. The Docker runtime has
-its own `docker-help` recipe and CI container contract.
-`diff-review` runs `git diff --check` and a short branch status check.
+`just architecture-checks` runs the local import-graph rules for cycles, domain purity, and the direction from the pipeline to the CLI. It also runs the package checks, documentation checks, and CLI contract checks. The smoke stage checks both public CLI help paths. It does not read a data root. It does not make a network request. The Docker runtime has its own recipe `docker-help` and its own CI container contract. `diff-review` runs `git diff --check` and a short branch status check.
 
-`just mutation` deletes the generated `mutants/` tree before each run. Mutation
-scope is configured in `pyproject.toml` and uses `mutate_only_covered_lines`,
-so the mutant population depends on mutmut's own coverage attribution. Reusing
-incremental mutmut state after a source edit was observed to generate 2801
-mutants instead of the 3038 produced from a clean tree, which weakens the gate
-without failing it. Regenerating from scratch keeps the reported mutant count
-reproducible, at the cost of a full run each time. The gate itself refuses any
-non-killed result and has no configured equivalence exemptions.
+`just mutation` deletes the generated `mutants/` tree before each run. `pyproject.toml` configures the mutation scope. The scope uses `mutate_only_covered_lines`. The mutant population thus depends on the own coverage attribution of mutmut. When the incremental mutmut state was reused after a source edit, the run generated 2801 mutants. A clean tree produced 3038 mutants. The gate is weaker in the first case, but it does not fail. A new generation from scratch keeps the reported mutant count reproducible. The cost is a full run each time. The gate refuses each result that is not killed. It has no configured equivalence exemptions.
 
-The root coverage report combines `osm_polygon_wikidata_only` and `scripts`
-with branch measurement and enforces the configured 90% total coverage floor.
-Preprocessing coverage is reported separately before its full-source CRAP check;
-the aggregate floor does not replace the function-level CRAP threshold.
+The root coverage report combines `osm_polygon_wikidata_only` and `scripts`. It measures branches. It enforces the configured total coverage floor of 90%. The preprocessing coverage is reported separately before its full-source CRAP check. The aggregate floor does not replace the CRAP threshold for each function.
 
 ### Nested preprocessing package
 
-The repository contains a separate locked distribution under `preprocessing/`.
-Its tests and wheel build use `preprocessing/uv.lock`; the root Ruff and ty
-installations lint and type-check its source without merging the two package
-environments. Run the boundary gate before changing that package:
+The repository has a separate locked distribution under `preprocessing/`. Its tests and its wheel build use `preprocessing/uv.lock`. The root Ruff and ty installations lint and type-check its source. They do not merge the two package environments. Before you change that package, run the boundary gate:
 
     just preprocessing-check
 
-The gate runs frozen preprocessing tests, Ruff, ty, and an offline isolated wheel
-build/install smoke.
-It does not read production data or publish artifacts.
+The gate runs the frozen preprocessing tests, Ruff, ty, and an offline isolated wheel build and install smoke test. It does not read production data. It does not publish artifacts.
 
-`just check` and the short alias `just qa-gauntlet` run the same deterministic
-completion gate locally:
+`just check` and the short alias `just qa-gauntlet` run the same deterministic completion gate locally:
 
 ```bash
 just check
@@ -240,34 +166,19 @@ just check
 
 ### Mutation and complexity gates
 
-The canonical gate runs full-source CRAP after the root tests and the
-preprocessing checks included in `architecture-checks`. `just crap-report`
-joins those coverage reports with Radon reports for `src`, `scripts`, and
-`preprocessing/src`; `--show-closures` includes nested functions, and any
-function must have cyclomatic complexity at most 5. Every function with
-complexity 3 or higher must have at least 80% coverage; CRAP scores remain
-visible for context. A source function missing from a coverage report fails
-the gate. `just crap-all` is the standalone variant that refreshes both
-coverage reports before reporting. Historical `crap-*` aliases delegate to
-that same full-source run; they are compatibility names, not separate focused
-inventories. The complexity cap of 5 and the 80% coverage floor for functions
-with complexity at least 3 bound every reported CRAP score below 6 (the maximum
-under those limits is 5.20).
+The standard gate runs the full-source CRAP after the root tests and the preprocessing checks. The preprocessing checks are in `architecture-checks`. `just crap-report` joins those coverage reports with the Radon reports for `src`, `scripts`, and `preprocessing/src`. `--show-closures` includes the nested functions. These rules apply:
 
-`just mutation` runs mutmut over the explicit deterministic helper, quality
-tool, and offline publication-orchestration scope. Its selected publication
-tests stub external upload effects while exercising queueing, deferral, and
-submission decisions. The gate rejects unreviewed survivors, timeouts,
-untested results, and other non-killed statuses; exact source-bound equivalent
-mutations may pass only through the reviewed equivalence mechanism. Network
-clients, large data, live GPU work, and other external effects remain outside
-the mutation scope and use focused integration or operational checks instead.
-Static Ruff and ty checks constrain source shape and types; they do not prove
-runtime side-effect safety. Reports and temporary files stay under the
-configured quality runtime. Mutation uses two workers by default to bound
-local memory; CI sets four workers for the same deterministic population
-without changing the gate. HTMLParser trampoline mutations remain unsupported
-by mutmut 3.7 and are not actionable.
+- Each function must have a cyclomatic complexity of 5 or less.
+- Each function with a complexity of 3 or more must have at least 80% coverage.
+- A source function that is missing from a coverage report fails the gate.
+
+The gate keeps the CRAP scores visible for information. `just crap-all` is the standalone variant. It refreshes both coverage reports before it reports. The historical `crap-*` aliases delegate to that same full-source run. They are compatibility names. They are not separate focused inventories. The complexity cap of 5 and the coverage floor of 80% for functions with a complexity of 3 or more keep each reported CRAP score below 6. The maximum under those limits is 5.20.
+
+`just mutation` runs mutmut over the explicit scope. The scope has the deterministic helpers, the quality tools, and the offline publication orchestration. The selected publication tests stub the external upload effects. They exercise the queueing, deferral, and submission decisions. The gate rejects these results: unreviewed survivors, timeouts, untested results, and other statuses that are not killed. Only the reviewed equivalence mechanism can pass exact source-bound equivalent mutations.
+
+The mutation scope does not include network clients, large data, live GPU work, and other external effects. Use focused integration checks or operational checks for them. The static Ruff and ty checks limit the source shape and the types. They do not prove that the runtime side effects are safe.
+
+The reports and the temporary files stay under the configured quality runtime. Mutation uses two workers by default. This bounds the local memory. CI sets four workers for the same deterministic population. This does not change the gate. mutmut 3.7 does not support the HTMLParser trampoline mutations. You cannot act on them.
 
 ```bash
 just crap
@@ -275,29 +186,21 @@ just mutation
 just quality-advanced
 ```
 
-Run `uv run pre-commit run --all-files` before opening a pull request. The
-hooks intentionally run the fast Ruff and `ty` subset; `just check` and
-GitHub Actions both use the complete `just quality-gauntlet` gate.
+Before you open a pull request, run `uv run pre-commit run --all-files`. The hooks run the fast subset of Ruff and `ty` on purpose. `just check` and GitHub Actions both use the complete `just quality-gauntlet` gate.
 
-In CI the `quality` job runs that gauntlet (which already includes the strict
-docs build, the wheel/sdist build, the package smoke install and the
-preprocessing checks), the `container` job builds and smoke-tests the images,
-and the `all-green` job fails unless every other job succeeded. Protect `main`
-with `all-green` as the only required status check. The Documentation
-workflow also builds on pull requests but deploys Pages only from `main`, and
-a new push to a pull request cancels its superseded runs.
+In CI, the jobs have these functions:
 
-The `security` CI job runs `just audit`, which exports both lockfiles with
-hashes and fails on any known vulnerability reported by `pip-audit --strict`;
-run it locally before bumping dependencies. The CodeQL workflow analyses the
-Python sources on pull requests, pushes to `main` and weekly.
+- The `quality` job runs the gauntlet. The gauntlet already includes the strict docs build, the wheel and sdist build, the package smoke install, and the preprocessing checks.
+- The `container` job builds and smoke-tests the images.
+- The `all-green` job fails unless all other jobs succeed.
+
+Protect `main` with `all-green` as the only required status check. The Documentation workflow also builds on pull requests. It deploys Pages only from `main`. A new push to a pull request cancels the superseded runs.
+
+The `security` CI job runs `just audit`. This recipe exports both lockfiles with hashes. It fails on each known vulnerability that `pip-audit --strict` reports. Run it locally before you update dependencies. The CodeQL workflow analyses the Python sources on pull requests, on pushes to `main`, and weekly.
 
 ## Benchmarks and the slow-test budget
 
-`benchmarks/` is outside the default test run. It holds the micro-benchmarks for
-the per-polygon hot paths and the workload benchmarks in
-`benchmarks/test_workloads.py`, which build seeded synthetic inputs (see
-`benchmarks/_workloads.py`) and call only public functions:
+`benchmarks/` is outside the default test run. It has the micro-benchmarks for the hot paths of each polygon. It also has the workload benchmarks in `benchmarks/test_workloads.py`. They build seeded synthetic inputs (see `benchmarks/_workloads.py`). They call only public functions:
 
 | Area | Benchmark input |
 |---|---|
@@ -307,9 +210,7 @@ the per-polygon hot paths and the workload benchmarks in
 | Link migration | `plan_link_migration` and `apply_link_migration`, 100,000 links |
 | CLI startup | `--version` in a fresh interpreter |
 
-The containment and language-partitioning cases also assert a
-peak of the Arrow memory pool in a fresh process (50 MiB and 40 MiB; `tracemalloc` cannot see Arrow buffers), so a memory regression fails even when elapsed time
-barely moves.
+The containment cases and the language-partitioning cases also assert a peak of the Arrow memory pool in a fresh process (50 MiB and 40 MiB). `tracemalloc` cannot see Arrow buffers. A memory regression thus fails even when the elapsed time changes very little.
 
 ```bash
 just bench                      # run and print timings
@@ -317,79 +218,62 @@ just bench-json bench.json      # write the pytest-benchmark JSON
 just bench-compare warn         # compare with benchmarks/baseline.json
 ```
 
-`scripts/quality/bench_compare.py` flags a benchmark whose median is more than
-25% slower than `benchmarks/baseline.json`. The CI `benchmarks` job runs in
-`warn` mode, so regressions are reported without failing the build, and a
-missing baseline is reported without failing. The baseline must be recorded on
-the CI runner type, not on a developer machine. After one week of stable
-warn-only runs, set `BENCH_MODE` to `enforce` in `.github/workflows/ci.yml`.
+`scripts/quality/bench_compare.py` flags a benchmark when its median is more than 25% slower than `benchmarks/baseline.json`. The CI job `benchmarks` runs in `warn` mode. It reports the regressions. It does not fail the build. It reports a missing baseline and does not fail. Record the baseline on the CI runner type. Do not record it on a developer machine. After one week of stable warn-only runs, set `BENCH_MODE` to `enforce` in `.github/workflows/ci.yml`.
 
-`just baseline` (the un-instrumented full run) also writes a JUnit report and
-`scripts/quality/slow_tests.py` fails it when any single test takes longer than
-3 seconds; the 20 slowest tests are printed on every run. The budget is not
-measured under coverage, which inflates durations several-fold. A test that
-legitimately needs longer is listed with its own limit in
-`scripts/quality/slow_test_budgets.json`. CI runners are about three times
-slower than a laptop, so tests that take about a second locally are listed there
-with 10 seconds of headroom.
+`just baseline` (the full run with no instrumentation) also writes a JUnit report. `scripts/quality/slow_tests.py` fails it when a single test takes more than 3 seconds. Each run prints the 20 slowest tests. Coverage increases the durations several times. The budget is thus not measured under coverage. If a test legitimately needs more time, list it with its own limit in `scripts/quality/slow_test_budgets.json`. CI runners are about three times slower than a laptop. A test that takes about one second locally thus has a limit of 10 seconds in that file.
 
-The CI job prints `bench.json` to its job summary; copy it from there into
-`benchmarks/baseline.json` to record the baseline.
+The CI job prints `bench.json` to its job summary. To record the baseline, copy it from there into `benchmarks/baseline.json`.
 
 ## Test strength checks
 
-The normal gate already runs full-source CRAP and the scoped mutation gate.
-The opt-in `just quality-strength` recipe repeats the standalone full-source
-CRAP refresh and mutation checks; it does not add a narrower module inventory.
+The standard gate already runs the full-source CRAP and the scoped mutation gate. The opt-in recipe `just quality-strength` repeats the standalone refresh of the full-source CRAP and the mutation checks. It does not add a narrower module inventory.
 
 ```bash
 just quality-strength
 ```
 
-Reviewed source-bound equivalent mutations are reported separately from
-killed mutants; incomplete or unreviewed mutation results still fail. The
-mutation scope deliberately excludes live network, GPU, publication, and
-large-data behavior, while full-source CRAP covers the configured source
-inventory including nested functions.
+The report shows the reviewed source-bound equivalent mutations separately from the killed mutants. Incomplete mutation results and unreviewed mutation results still fail. The mutation scope does not include the live network, GPU, publication, and large-data behavior. The full-source CRAP covers the configured source inventory, including the nested functions.
 
 ## Documentation and contribution
 
-Build the site without starting a server:
+To build the site without a server, run:
 
 ```bash
 just docs
 ```
 
-The strict build writes the site and its assembled public artifacts below the
-configured quality runtime. It is safe to point the runtime at a portable
-operator-owned location; no generated site or report belongs in the checkout.
+The strict build writes the site and its assembled public artifacts below the configured quality runtime. You can point the runtime at a portable location that the operator owns. No generated site and no report belongs in the checkout.
 
-Navigation targets must exist under `docs/`, links and images must resolve in a
-clean checkout, and public examples must use current CLI options. The Pages
-workflow builds with `--strict`, uploads only the generated site, and deploys
-that artifact with least-privilege permissions.
+These rules apply to the documentation:
 
-Please read the repository's [contributing guide](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/CONTRIBUTING.md)
-before proposing changes. Keep pull requests small, explain any compatibility
-effect on schemas or CLI options, and never commit source data or credentials.
+- The navigation targets must exist under `docs/`.
+- The links and images must resolve in a clean checkout.
+- The public examples must use the current CLI options.
+- Write the text in ASD-STE100 (Simplified Technical English). Add each new project term to the [glossary](glossary.md).
+
+The Pages workflow builds with `--strict`. It uploads only the generated site. It deploys that artifact with the fewest permissions.
+
+Read the [contributing guide](https://github.com/NoeFlandre/osm-polygon-wikidata-only/blob/main/CONTRIBUTING.md) before you propose changes. Keep the pull requests small. Explain each compatibility effect on schemas or CLI options. Never commit source data or credentials.
 
 ## Read-only operator audit
 
-The `osm-polygon-wikidata-only-audit-remote` command reports local/remote
-publication differences without uploading or deleting files:
+The command `osm-polygon-wikidata-only-audit-remote` reports the differences between the local publication and the remote publication. It does not upload or delete files:
 
 ```bash
 uv run osm-polygon-wikidata-only-audit-remote \
   --data-root "$OSM_POLYGON_DATA_ROOT"
 ```
 
-Typer parses this command, Rich renders the report, and tqdm shows progress only
-when stderr is interactive. It is separate from the stable argparse processing
-CLI and does not change dataset output.
+Typer parses this command. Rich renders the report. tqdm shows the progress only when stderr is interactive. The command is separate from the stable argparse processing CLI. It does not change the dataset output.
 
 ## Release checklist
 
-Before a release, run the complete gate, inspect the wheel for `py.typed` and
-the license, verify CLI help from the built artifact, review dataset schemas and
-attribution, and update the version intentionally. Publishing software or
-datasets is a maintainer action; ordinary tests do not publish anything.
+Do these steps before a release:
+
+1. Run the complete gate.
+2. Examine the wheel for `py.typed` and the license.
+3. Verify the CLI help from the built artifact.
+4. Review the dataset schemas and the attribution.
+5. Update the version intentionally.
+
+A maintainer publishes the software and the datasets. The ordinary tests do not publish anything.

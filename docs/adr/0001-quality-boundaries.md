@@ -5,26 +5,12 @@
 
 ## Decision
 
-- Project-local `domain` imports may point only to the local `domain` layer;
-  standard-library and third-party imports remain outside that local graph rule.
-- The architecture check uses Python's standard-library `ast` parser to build a
-  project-local import graph and detect cycles, domain violations, and
-  pipeline-to-CLI edges.
-- Full-source CRAP covers the configured `src`, `scripts`, and preprocessing
-  source inventories, including nested functions via Radon's
-  `--show-closures`. Mutation testing remains scoped to deterministic helpers
-  and quality tools.
+- A project-local `domain` import can point only to the local `domain` layer. The rule does not apply to imports from the standard library or from third parties.
+- The architecture check uses the `ast` parser of the Python standard library. It builds a project-local import graph. It finds cycles, domain violations, and edges from the pipeline to the CLI.
+- The full-source CRAP report covers the configured source lists for `src`, `scripts`, and preprocessing. It includes nested functions through the Radon option `--show-closures`. Mutation testing stays limited to deterministic helpers and quality tools.
 
-## Rationale and limitations
+## Rationale and limits
 
-The import graph and CRAP report make structural and function-level quality
-boundaries measurable without executing external services. Mutation remains
-scoped because live network, GPU, publication, and large-data paths produce
-slow or environment-dependent mutants; those boundaries use focused behavioral
-and local integration tests instead.
+The import graph and the CRAP report make the structural and function-level quality boundaries measurable. They do not run external services. Mutation testing stays limited because these paths make mutants that are slow or depend on the environment: live network, GPU, publication, and large data. Focused behavioral tests and local integration tests cover these paths.
 
-The AST graph does not prove behavior for dynamic imports or third-party side
-effects, and static checks do not prove runtime side-effect safety. When such a
-boundary is isolated behind a deterministic adapter, the cleanup path is to add
-behavioral tests for the boundary and expand the mutation scope to that
-adapter. Until then, the integration tests are the applicable evidence.
+The AST graph does not prove the behavior of dynamic imports or the side effects of third-party code. Static checks do not prove that runtime side effects are safe. When a deterministic adapter isolates such a boundary, add behavioral tests for the boundary. Then increase the mutation scope to include the adapter. Until then, the integration tests are the applicable evidence.

@@ -2,32 +2,34 @@
 
 ## Supported version
 
-Security fixes target the latest revision of the `main` branch while the
-project is in its `0.x` development series.
+The project is in the `0.x` development series. Security fixes apply to the latest revision of the `main` branch.
 
 ## Reporting a vulnerability
 
-Please use the repository's GitHub **Security → Report a vulnerability** flow
-to report security issues privately. Do not open a public issue containing
-credentials, tokens, private paths, or exploit details.
+Use the GitHub flow **Security → Report a vulnerability** to report a security issue in private. Do not open a public issue that contains credentials, tokens, private paths, or exploit details.
 
-For ordinary correctness problems that do not expose sensitive information,
-use the public [issue tracker](https://github.com/NoeFlandre/osm-polygon-wikidata-only/issues).
+For an ordinary correctness problem that does not show sensitive information, use the public [issue tracker](https://github.com/NoeFlandre/osm-polygon-wikidata-only/issues).
 
 ## Wikimedia credentials
 
-Treat `WIKIMEDIA_BOT_PASSWORD` as a secret. Do not commit it, store it in a
-checked-in `.env` or shell script, include it in logs, paste it into an issue or
-pull request, or share it with maintainers. Use a least-privilege Bot Password;
-never provide the main Wikimedia account password or exported browser cookies.
+Treat `WIKIMEDIA_BOT_PASSWORD` as a secret. Do not do any of these actions:
 
-If a Bot Password or authenticated cookie may have been disclosed, immediately
-open <https://meta.wikimedia.org/wiki/Special:BotPasswords> and revoke the named
-credential. Remove it from the current shell with
-`unset WIKIMEDIA_BOT_USERNAME WIKIMEDIA_BOT_PASSWORD`, create a replacement if
-needed, and privately report any repository exposure through GitHub Security.
-Deleting a leaked value from the latest commit is not sufficient because it can
-remain in Git history.
+- Commit it.
+- Store it in a `.env` file or a shell script that is in the repository.
+- Put it in logs.
+- Paste it into an issue or a pull request.
+- Share it with the maintainers.
 
-The maintainer, Noé Flandre, will acknowledge a private report when reviewed
-and coordinate disclosure after a fix is available.
+Use a Bot Password with the fewest privileges. Never give the main Wikimedia account password or exported browser cookies.
+
+If a Bot Password or an authenticated cookie is possibly exposed, do these steps:
+
+1. Open <https://meta.wikimedia.org/wiki/Special:BotPasswords> immediately.
+2. Revoke the named credential.
+3. Remove it from the current shell with `unset WIKIMEDIA_BOT_USERNAME WIKIMEDIA_BOT_PASSWORD`.
+4. Create a new credential if necessary.
+5. Report the repository exposure in private through GitHub Security.
+
+Do not only delete the leaked value from the latest commit. The value stays in the Git history.
+
+The maintainer, Noé Flandre, acknowledges a private report when he reviews it. He then coordinates the disclosure after a fix is available.
