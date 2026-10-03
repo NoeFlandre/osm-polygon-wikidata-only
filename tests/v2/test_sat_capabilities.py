@@ -127,14 +127,14 @@ def test_packaged_reference_has_valid_provenance_and_digests() -> None:
 
 @pytest.mark.parametrize("content", [b"", b"{}", b"invalid", b"[]"])
 def test_reference_loader_fails_closed_for_unpinned_bytes(content: bytes) -> None:
-    with pytest.raises(ValueError, match="SaT capability reference digest mismatch"):
+    with pytest.raises(ValueError, match=r"^SaT capability reference digest mismatch$"):
         parse_supported_languages(content)
 
 
 def test_a_valid_json_reference_with_one_changed_code_is_rejected() -> None:
     content = files("osm_polygon_wikidata_only").joinpath("v2/sat-capabilities.json").read_bytes()
     changed = content.replace(b'"en"', b'"xx"')
-    with pytest.raises(ValueError, match="SaT capability reference digest mismatch"):
+    with pytest.raises(ValueError, match=r"^SaT capability reference digest mismatch$"):
         parse_supported_languages(changed)
 
 
