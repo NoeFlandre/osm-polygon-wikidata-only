@@ -1,0 +1,44 @@
+{
+  "candidate": [
+    "relation",
+    8,
+    {
+      "wikidata": "Q42",
+      "natural": "water"
+    },
+    "{\"type\": \"MultiPolygon\", \"coordinates\": [[[[2, 1], [6, 1], [6, 5], [2, 5], [2, 1]], [[3, 2], [3, 3], [4, 3], [4, 2], [3, 2]]], [[[8, 2], [9, 2], [9, 3], [8, 3], [8, 2]]]]}"
+  ],
+  "expected": {
+    "polygon_id": "fixture-latest:relation:8",
+    "region": "fixture",
+    "source_pbf": "fixture-latest.osm.pbf",
+    "osm_type": "relation",
+    "osm_id": 8,
+    "wikidata": "Q42",
+    "name": "",
+    "tags": "{\"natural\":\"water\"}",
+    "tag_keys": "[\"natural\"]",
+    "tag_count": 1,
+    "osm_primary_tag": "natural=water",
+    "centroid": "{\"coordinates\": [4.3125, 3.0], \"type\": \"Point\"}",
+    "lat": 3.0,
+    "lon": 4.3125,
+    "bbox": "[2.0,1.0,9.0,5.0]",
+    "area_m2": 198000738965.87427,
+    "area_km2": 198000.73896587428,
+    "area_bucket": ">100km2",
+    "geometry": "{\"coordinates\":[[[[2,1],[6,1],[6,5],[2,5],[2,1]],[[3,2],[3,3],[4,3],[4,2],[3,2]]],[[[8,2],[9,2],[9,3],[8,3],[8,2]]]],\"type\":\"MultiPolygon\"}",
+    "has_name": false,
+    "has_wikidata": true,
+    "has_wikipedia": false,
+    "wikipedia_language_count": 0,
+    "wikipedia_languages": "[]",
+    "wikipedia_article_count": 0,
+    "has_english_wikipedia": false,
+    "has_french_wikipedia": false,
+    "text_available": false,
+    "best_language": "",
+    "extraction_version": "0.1.0",
+    "extracted_at": "2026-01-02T03:04:05+00:00"
+  }
+}

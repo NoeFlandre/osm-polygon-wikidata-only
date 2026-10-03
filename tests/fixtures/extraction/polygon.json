@@ -1,0 +1,49 @@
+{
+  "candidate": [
+    "way",
+    7,
+    {
+      "wikidata": " Q42 ",
+      "name": "Église 東京",
+      "zebra": "é/漢字",
+      "amenity": "school",
+      "landuse": "forest",
+      "boundary": "administrative",
+      "name:fr": "École"
+    },
+    "{\"type\": \"Polygon\", \"coordinates\": [[[7, 43], [7.01, 43], [7.01, 43.01], [7, 43.01], [7, 43]]]}"
+  ],
+  "expected": {
+    "polygon_id": "fixture-latest:way:7",
+    "region": "fixture",
+    "source_pbf": "fixture-latest.osm.pbf",
+    "osm_type": "way",
+    "osm_id": 7,
+    "wikidata": "Q42",
+    "name": "Église 東京",
+    "tags": "{\"amenity\":\"school\",\"boundary\":\"administrative\",\"landuse\":\"forest\",\"name\":\"Église 東京\",\"name:fr\":\"École\",\"zebra\":\"é/漢字\"}",
+    "tag_keys": "[\"amenity\",\"boundary\",\"landuse\",\"name\",\"name:fr\",\"zebra\"]",
+    "tag_count": 6,
+    "osm_primary_tag": "boundary=administrative",
+    "centroid": "{\"coordinates\": [7.005, 43.005], \"type\": \"Point\"}",
+    "lat": 43.005,
+    "lon": 7.005,
+    "bbox": "[7.0,43.0,7.01,43.01]",
+    "area_m2": 906221.8748649515,
+    "area_km2": 0.9062218748649514,
+    "area_bucket": "0.1-1km2",
+    "geometry": "{\"coordinates\":[[[7,43],[7.01,43],[7.01,43.01],[7,43.01],[7,43]]],\"type\":\"Polygon\"}",
+    "has_name": true,
+    "has_wikidata": true,
+    "has_wikipedia": false,
+    "wikipedia_language_count": 0,
+    "wikipedia_languages": "[]",
+    "wikipedia_article_count": 0,
+    "has_english_wikipedia": false,
+    "has_french_wikipedia": false,
+    "text_available": false,
+    "best_language": "",
+    "extraction_version": "0.1.0",
+    "extracted_at": "2026-01-02T03:04:05+00:00"
+  }
+}

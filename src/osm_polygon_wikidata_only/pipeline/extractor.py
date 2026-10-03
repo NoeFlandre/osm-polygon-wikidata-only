@@ -23,18 +23,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from osm_polygon_wikidata_only import VERSION
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.domain.analysis import area_bucket, bbox_from_geom, osm_primary_tag
 from osm_polygon_wikidata_only.domain.geometry import (
     GeometryError,
     PolygonGeometry,
-    centroid_geojson,
     compute_polygon_geometry,
 )
 from osm_polygon_wikidata_only.domain.models import Polygon
 from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
-from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
+from osm_polygon_wikidata_only.pipeline.polygon_fields import build_common_polygon_fields
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 
 LOGGER = logging.getLogger(__name__)
@@ -102,14 +99,6 @@ def _compute_geom(geom_json: str) -> tuple[PolygonGeometry, dict[str, object]] |
     return pg, geom
 
 
-def _candidate_tag_data(tags: dict[str, str]) -> tuple[str, dict[str, str]] | None:
-    """Return the required QID and cleaned tags for one candidate."""
-    wikidata = tags.get("wikidata", "").strip()
-    if not wikidata:
-        return None
-    return wikidata, {key: value for key, value in tags.items() if key != "wikidata"}
-
-
 def candidate_to_polygon(
     candidate: PolygonCandidate,
     *,
@@ -121,7 +110,7 @@ def candidate_to_polygon(
     """Convert one osmium polygon candidate to a :class:`Polygon`.
 
     Returns ``None`` if geometry cannot be computed. Tags, primary
-    tag, bbox, area, and bucket are all derived here. Wikipedia
+    tag, bbox, area, and bucket use the shared field builder. Wikipedia
     coverage fields are left at their defaults and filled in by the
     enrichment step later.
     """
@@ -131,37 +120,24 @@ def candidate_to_polygon(
         return None
     pg, geom = computed
 
-    tag_data = _candidate_tag_data(tags)
-    if tag_data is None:
+    wikidata = tags.get("wikidata", "").strip()
+    if not wikidata:
         return None
-    wikidata, cleaned_tags = tag_data
-    name = cleaned_tags.get("name", "")
-    bbox = bbox_from_geom(geom)
-
-    return Polygon.make(
-        source_pbf_stem=source_pbf_stem,
-        region=region,
-        source_pbf=source_pbf,
+    fields = build_common_polygon_fields(
         osm_type=osm_type,
         osm_id=osm_id,
+        tags=tags,
+        geom=geom,
+        computed=pg,
+        region=region,
+        source_pbf=source_pbf,
+        extracted_at=extracted_at,
+    )
+    return Polygon.make(
+        source_pbf_stem=source_pbf_stem,
         wikidata=wikidata,
-        name=name,
-        tags=json_dumps(cleaned_tags),
-        tag_keys=json_dumps(sorted(cleaned_tags.keys())),
-        tag_count=len(cleaned_tags),
-        osm_primary_tag=osm_primary_tag(cleaned_tags),
-        centroid=centroid_geojson(pg.lon, pg.lat),
-        lat=pg.lat,
-        lon=pg.lon,
-        bbox=json_dumps(bbox),
-        geometry=json_dumps(geom),
-        area_m2=pg.area_m2,
-        area_km2=pg.area_m2 / 1_000_000.0,
-        area_bucket=area_bucket(pg.area_m2),
-        has_name=bool(name),
         has_wikidata=True,
-        extraction_version=VERSION,
-        extracted_at=extracted_at or utc_now_iso(),
+        **fields,
     )
 
 
