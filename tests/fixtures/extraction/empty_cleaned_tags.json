@@ -1,0 +1,43 @@
+{
+  "candidate": [
+    "way",
+    9,
+    {
+      "wikidata": "Q42"
+    },
+    "{\"type\": \"Polygon\", \"coordinates\": [[[7, 43], [7.00001, 43], [7.00001, 43.00001], [7, 43.00001], [7, 43]]]}"
+  ],
+  "expected": {
+    "polygon_id": "fixture-latest:way:9",
+    "region": "fixture",
+    "source_pbf": "fixture-latest.osm.pbf",
+    "osm_type": "way",
+    "osm_id": 9,
+    "wikidata": "Q42",
+    "name": "",
+    "tags": "{}",
+    "tag_keys": "[]",
+    "tag_count": 0,
+    "osm_primary_tag": "",
+    "centroid": "{\"coordinates\": [7.000005, 43.000005], \"type\": \"Point\"}",
+    "lat": 43.000005,
+    "lon": 7.000005,
+    "bbox": "[7.0,43.0,7.00001,43.00001]",
+    "area_m2": 0.9062955567023895,
+    "area_km2": 9.062955567023895e-07,
+    "area_bucket": "<100m2",
+    "geometry": "{\"coordinates\":[[[7,43],[7.00001,43],[7.00001,43.00001],[7,43.00001],[7,43]]],\"type\":\"Polygon\"}",
+    "has_name": false,
+    "has_wikidata": true,
+    "has_wikipedia": false,
+    "wikipedia_language_count": 0,
+    "wikipedia_languages": "[]",
+    "wikipedia_article_count": 0,
+    "has_english_wikipedia": false,
+    "has_french_wikipedia": false,
+    "text_available": false,
+    "best_language": "",
+    "extraction_version": "0.1.0",
+    "extracted_at": "2026-01-02T03:04:05+00:00"
+  }
+}

@@ -17,17 +17,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from osm_polygon_wikidata_only import VERSION
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.domain.analysis import area_bucket, bbox_from_geom, osm_primary_tag
 from osm_polygon_wikidata_only.domain.geometry import (
     GeometryError,
-    centroid_geojson,
+    PolygonGeometry,
     compute_polygon_geometry,
 )
 from osm_polygon_wikidata_only.domain.ids import polygon_id
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.pbf_reader import PBFReader, PolygonCandidate
+from osm_polygon_wikidata_only.pipeline.polygon_fields import (
+    CommonPolygonFields,
+    build_common_polygon_fields,
+)
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
 from osm_polygon_wikidata_only.v2.checkpoints import ExtractionCheckpoint
@@ -61,7 +63,7 @@ class V2ExtractedPbf:
     extraction_duration_s: float
 
 
-def _geometry(geom_json: str) -> tuple[dict[str, Any], Any] | None:
+def _geometry(geom_json: str) -> tuple[dict[str, Any], PolygonGeometry] | None:
     try:
         raw = json.loads(geom_json)
         if not isinstance(raw, dict):
@@ -90,66 +92,37 @@ def candidate_to_v2_row(
     if parsed is None:
         return None
     geom, computed = parsed
-    cleaned_tags = _clean_tags(tags)
-    return _build_v2_row(
+    fields = build_common_polygon_fields(
         osm_type=osm_type,
         osm_id=osm_id,
-        source_pbf_stem=source_pbf_stem,
+        tags=tags,
+        geom=geom,
+        computed=computed,
         region=region,
         source_pbf=source_pbf,
         extracted_at=extracted_at,
+    )
+    return _build_v2_row(
+        source_pbf_stem=source_pbf_stem,
+        fields=fields,
         qids=qids,
         refs=refs,
         rejections=rejections,
-        geom=geom,
-        computed=computed,
-        cleaned_tags=cleaned_tags,
     )
-
-
-def _clean_tags(tags: dict[str, str]) -> dict[str, str]:
-    return {key: value for key, value in tags.items() if key != "wikidata"}
 
 
 def _build_v2_row(
     *,
-    osm_type: str,
-    osm_id: int,
     source_pbf_stem: str,
-    region: str,
-    source_pbf: str,
-    extracted_at: str | None,
+    fields: CommonPolygonFields,
     qids: Sequence[str],
     refs: Sequence[Any],
     rejections: Sequence[Any],
-    geom: dict[str, Any],
-    computed: Any,
-    cleaned_tags: dict[str, str],
 ) -> dict[str, Any]:
-    lat, lon = computed.lat, computed.lon
-    name = cleaned_tags.get("name", "")
-    bbox = bbox_from_geom(geom)
     row: dict[str, Any] = {
-        "polygon_id": polygon_id(source_pbf_stem, osm_type, osm_id),
-        "region": region,
-        "source_pbf": source_pbf,
-        "osm_type": osm_type,
-        "osm_id": osm_id,
+        **fields,
+        "polygon_id": polygon_id(source_pbf_stem, fields["osm_type"], fields["osm_id"]),
         "wikidata": ";".join(qids) if qids else None,
-        "name": name,
-        "tags": json_dumps(cleaned_tags),
-        "tag_keys": json_dumps(sorted(cleaned_tags)),
-        "tag_count": len(cleaned_tags),
-        "osm_primary_tag": osm_primary_tag(cleaned_tags),
-        "centroid": centroid_geojson(lon, lat),
-        "lat": lat,
-        "lon": lon,
-        "bbox": json_dumps(bbox),
-        "geometry": json_dumps(geom),
-        "area_m2": computed.area_m2,
-        "area_km2": computed.area_m2 / 1_000_000.0,
-        "area_bucket": area_bucket(computed.area_m2),
-        "has_name": bool(name),
         "has_wikidata": bool(qids),
         "has_wikipedia": False,
         "wikipedia_language_count": 0,
@@ -159,8 +132,6 @@ def _build_v2_row(
         "has_french_wikipedia": False,
         "text_available": False,
         "best_language": "",
-        "extraction_version": VERSION,
-        "extracted_at": extracted_at or utc_now_iso(),
     }
     row.update(_wikipedia_tag_metadata(refs, rejections))
     row["discovery_sources"] = _discovery_sources(qids, refs)
