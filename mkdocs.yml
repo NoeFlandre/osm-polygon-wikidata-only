@@ -43,6 +43,7 @@ exclude_docs: |
   .DS_Store
 
 nav:
+  - Shared SaT capabilities: sat-capabilities.md
   - Home: index.md
   - Glossary: glossary.md
   - API reference: api.md

@@ -277,3 +277,8 @@ Do these steps before a release:
 5. Update the version intentionally.
 
 A maintainer publishes the software and the datasets. The ordinary tests do not publish anything.
+
+## Shared sentence-model capabilities
+
+See [Shared SaT capabilities](sat-capabilities.md) for ownership, offline pins,
+cross-repository drift checks, and the reviewed update procedure.

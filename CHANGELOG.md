@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+- Read SaT model capabilities from a versioned, digest-checked offline reference.
+  Preserve sentence-routing policy, runtime model pins, and historical fingerprints.
+
 ### Changed
 
 - `pyproject.toml` is the only source of the package version. `__version__` and the default Wikimedia User-Agent come from the installed metadata.
