@@ -198,6 +198,7 @@ def _recover_directory(directory: Path, stem: str) -> None:
     if not journal_path.is_file():
         return
     raw = _load_recovery_journal(journal_path, stem)
+    _validate_recovery_journal_paths(raw, _recovery_data_root(directory))
     _recover_entries(raw.get("entries", []))
     _cleanup(directory)
 
@@ -210,6 +211,43 @@ def _load_recovery_journal(path: Path, stem: str) -> dict[str, Any]:
     if raw.get("stem") != stem:
         raise RuntimeError(f"Link migration journal stem mismatch: {raw.get('stem')!r} vs {stem!r}")
     return raw
+
+
+def _recovery_data_root(directory: Path) -> Path:
+    """Return the processed-data root that owns this journal directory."""
+    if directory.name == ".link_migration_journal":
+        return directory.parent.resolve()
+    if directory.parent.name == ".link_migration_journal":
+        return directory.parent.parent.resolve()
+    return directory.parent.resolve()
+
+
+def _validate_recovery_journal_paths(raw: dict[str, Any], data_root: Path) -> None:
+    """Validate every persisted path before replay can modify any entry."""
+    entries = raw.get("entries", [])
+    if not isinstance(entries, list):
+        raise RuntimeError("Invalid link migration journal entries")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise RuntimeError("Invalid link migration journal entry")
+        for name in ("target", "staged", "backup"):
+            _validate_recovery_path(entry, name, data_root)
+
+
+def _validate_recovery_path(entry: dict[str, Any], name: str, data_root: Path) -> None:
+    """Reject one journal path that resolves outside the processed-data root."""
+    value = entry.get(name)
+    if name == "backup" and not value:
+        return
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"Invalid link migration journal {name} path")
+    resolved = Path(value).resolve()
+    try:
+        resolved.relative_to(data_root)
+    except ValueError:
+        raise RuntimeError(
+            f"Link migration journal {name} path escapes the data root: {value}"
+        ) from None
 
 
 def _recover_entries(entries: list[dict[str, Any]]) -> None:

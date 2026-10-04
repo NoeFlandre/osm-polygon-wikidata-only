@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.pipeline import link_migration
+from osm_polygon_wikidata_only.pipeline._link_migration import transaction
 from tests.migration._builders import seed_processed_migration_stem
 
 
@@ -133,27 +135,93 @@ def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_journal_paths_are_inside_data_root(tmp_path: Path) -> None:
-    """The journal target/staged/backup paths must resolve inside the
-    processed/ subdirectory (not anywhere outside).
-    """
+def _create_interrupted_path_test_journal(
+    tmp_path: Path,
+) -> tuple[Path, Path, dict[str, Any]]:
+    """Create a real interrupted journal with two entries still to replay."""
     processed = tmp_path / "processed"
+    target_dir = processed / "targets"
+    staged_dir = processed / "staging"
+    target_dir.mkdir(parents=True)
+    staged_dir.mkdir()
+    replacements = []
+    for index in range(4):
+        target = target_dir / f"target_{index}.bin"
+        staged = staged_dir / f"target_{index}.bin"
+        target.write_text(f"original-{index}", encoding="utf-8")
+        staged.write_text(f"staged-{index}", encoding="utf-8")
+        replacements.append((target, staged))
+
     stem = "alpha-latest"
-    seed_processed_migration_stem(processed, stem, region="r")
+    journal_dir = processed / ".link_migration_journal" / stem
 
-    link_migration.apply_link_migration(processed, stems={stem})
+    def crash_after_second(index: int, _target: Path) -> None:
+        if index == 1:
+            raise RuntimeError("simulated crash")
 
-    # The link parquet and manifests must all live under processed/.
-    data_root = _fresh_process(tmp_path)
-    for sub in (
-        "polygons",
-        "polygon_articles",
-        "wikipedia/documents",
-        "augmentation/manifests",
-        "manifests",
-    ):
-        path = data_root.processed / sub
-        assert str(path.resolve()).startswith(str(data_root.processed.resolve()))
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        transaction.commit_ordered_replacements(
+            journal_dir,
+            stem,
+            replacements,
+            _crash_hook=crash_after_second,
+        )
+
+    journal_path = journal_dir / "journal.json"
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["phase"] == "interrupted"
+    assert replacements[0][0].read_text(encoding="utf-8") == "staged-0"
+    assert replacements[1][0].read_text(encoding="utf-8") == "staged-1"
+    assert replacements[2][0].read_text(encoding="utf-8") == "original-2"
+    assert replacements[3][0].read_text(encoding="utf-8") == "original-3"
+    return processed, journal_path, journal
+
+
+@pytest.mark.parametrize("unsafe_field", ["target", "staged", "backup"])
+def test_recovery_rejects_unsafe_journal_paths_before_writes(
+    tmp_path: Path, unsafe_field: str
+) -> None:
+    """Reject sibling, prefix, and symlink escapes before replay mutates state."""
+    processed, journal_path, journal = _create_interrupted_path_test_journal(tmp_path)
+    unsafe_entry = journal["entries"][3]
+
+    if unsafe_field == "target":
+        escaped_path = tmp_path / "outside-targets" / "target_3.bin"
+        escaped_path.parent.mkdir()
+        escaped_path.write_text("target-canary", encoding="utf-8")
+        unsafe_entry["target"] = str(escaped_path)
+        canaries = [(escaped_path, "target-canary")]
+    elif unsafe_field == "staged":
+        processed_other = tmp_path / "processed-other"
+        escaped_path = processed_other / "staging" / "target_3.bin"
+        escaped_path.parent.mkdir(parents=True)
+        escaped_path.write_text("staged-3", encoding="utf-8")
+        canary = processed_other / "independent-canary.txt"
+        canary.write_text("processed-other-canary", encoding="utf-8")
+        assert str(escaped_path).startswith(str(processed))
+        unsafe_entry["staged"] = str(escaped_path)
+        canaries = [(escaped_path, "staged-3"), (canary, "processed-other-canary")]
+    else:
+        outside_backup_dir = tmp_path / "outside-backups"
+        outside_backup_dir.mkdir()
+        escaped_path = outside_backup_dir / "target_3.bin.backup"
+        escaped_path.write_text("backup-canary", encoding="utf-8")
+        backup_link = processed / "backup-link"
+        backup_link.symlink_to(outside_backup_dir, target_is_directory=True)
+        unsafe_entry["backup"] = str(backup_link / escaped_path.name)
+        canaries = [(escaped_path, "backup-canary")]
+
+    journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    untouched_target = processed / "targets" / "target_2.bin"
+
+    with pytest.raises((RuntimeError, ValueError), match=r"(?i)(path|root|escape|journal)"):
+        transaction._recover_directory(journal_path.parent, "alpha-latest")
+
+    # Validate the complete entry set before any earlier safe entry can roll forward.
+    assert untouched_target.read_text(encoding="utf-8") == "original-2"
+    for canary, expected in canaries:
+        assert canary.read_text(encoding="utf-8") == expected
+    assert journal_path.is_file()
 
 
 def test_manifest_failure_cannot_leave_canonical_link_without_manifest_state(
