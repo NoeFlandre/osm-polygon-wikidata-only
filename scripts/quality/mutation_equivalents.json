@@ -199,11 +199,6 @@
     "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
     "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
   },
-  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_11": {
-    "mutant_sha256": "3d14c45ee0d2dc28e01776bcdd58225055d828aaab5a92f89de2508eedc9fffb",
-    "reason": "Changing the JSON-file sort priority from 1 to 2 preserves JSON-after-data ordering and leaves the path tie-breaker unchanged.",
-    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
-  },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_28": {
     "mutant_sha256": "60d44dc2d46e84f5cd7b034d82e80b39601846395de475d2d18f6f5cbe605973",
     "reason": "Changing the JSON-file sort priority from 1 to 2 preserves JSON-after-data ordering and leaves the path tie-breaker unchanged.",
