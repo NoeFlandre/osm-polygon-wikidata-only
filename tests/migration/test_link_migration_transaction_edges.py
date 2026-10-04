@@ -30,16 +30,71 @@ def test_recovery_backup_is_removed_only_for_existing_targets(tmp_path: Path) ->
     backup = tmp_path / "target.backup"
     backup.write_text("old", encoding="utf-8")
 
-    transaction_module._remove_recovery_backup({"backup": str(backup), "existed": True})
+    transaction_module._remove_recovery_backup(
+        {"backup": str(backup), "existed": True}, data_root=tmp_path
+    )
     assert not backup.exists()
 
     backup.write_text("old", encoding="utf-8")
-    transaction_module._remove_recovery_backup({"backup": str(backup), "existed": False})
+    transaction_module._remove_recovery_backup(
+        {"backup": str(backup), "existed": False}, data_root=tmp_path
+    )
     assert backup.exists()
 
 
-def test_recovery_without_a_backup_path_is_a_noop() -> None:
-    transaction_module._remove_recovery_backup({"existed": False})
+def test_recovery_without_a_backup_path_is_a_noop(tmp_path: Path) -> None:
+    transaction_module._remove_recovery_backup({"existed": False}, data_root=tmp_path)
+
+
+def test_recovery_entry_rejects_an_unresolvable_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "processed"
+    root.mkdir()
+    target = root / "target.txt"
+    original_resolve = Path.resolve
+
+    def fail_for_root(path: Path) -> Path:
+        if path == root:
+            raise OSError("parent cannot be resolved")
+        return original_resolve(path)
+
+    monkeypatch.setattr(Path, "resolve", fail_for_root)
+
+    with pytest.raises(RuntimeError, match="Invalid link migration journal target path"):
+        transaction_module._ensure_recovery_entry_within_root(target, "target", root)
+
+
+def test_cleanup_preserves_symlinked_directory_entries(tmp_path: Path) -> None:
+    transaction_dir = tmp_path / "txn"
+    transaction_dir.mkdir()
+    target_dir = tmp_path / "targets"
+    target_dir.mkdir()
+    target_canary = target_dir / "canary.txt"
+    target_canary.write_text("canary", encoding="utf-8")
+    nested_alias = transaction_dir / "nested-alias"
+    nested_alias.symlink_to(target_dir, target_is_directory=True)
+
+    transaction_module._cleanup(transaction_dir, tmp_path)
+
+    assert nested_alias.is_symlink()
+    assert target_canary.read_text(encoding="utf-8") == "canary"
+    assert transaction_dir.is_dir()
+
+
+def test_cleanup_unlinks_file_symlinks_without_touching_referents(tmp_path: Path) -> None:
+    transaction_dir = tmp_path / "txn"
+    transaction_dir.mkdir()
+    referent = tmp_path / "referent.txt"
+    referent.write_text("canary", encoding="utf-8")
+    file_alias = transaction_dir / "journal-alias.json"
+    file_alias.symlink_to(referent)
+
+    transaction_module._cleanup(transaction_dir, tmp_path)
+
+    assert not file_alias.exists()
+    assert referent.read_text(encoding="utf-8") == "canary"
+    assert not transaction_dir.exists()
 
 
 def test_rollback_entry_removes_new_target(tmp_path: Path) -> None:

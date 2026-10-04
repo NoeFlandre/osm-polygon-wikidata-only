@@ -123,6 +123,7 @@ def test_replacement_order_uses_target_paths_not_staged_paths(tmp_path: Path) ->
         tmp_path / "txn",
         "alpha",
         [(target_b, staged_a), (target_a, staged_z)],
+        data_root=tmp_path,
         _crash_hook=lambda _index, target: seen.append(target),
     )
 
@@ -335,7 +336,7 @@ def test_recovery_with_missing_entries_defaults_to_empty_list(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    transaction_module._recover_directory(journal_dir, "alpha")
+    transaction_module._recover_directory(journal_dir, "alpha", data_root=tmp_path)
 
     assert not journal.exists()
 
@@ -368,7 +369,10 @@ def test_recovery_journal_reader_requests_utf8_explicitly(
 
     monkeypatch.setattr(Path, "read_text", read_text)
 
-    assert transaction_module._load_recovery_journal(journal, "alpha")["entries"] == []
+    assert (
+        transaction_module._load_recovery_journal(journal, "alpha", data_root=tmp_path)["entries"]
+        == []
+    )
     assert len(encodings) == 1
     assert encodings[0] is not None
     assert codecs.lookup(encodings[0]).name == "utf-8"
@@ -463,7 +467,7 @@ def test_recovery_journal_rejects_wrong_version_and_stem(
     journal.write_text(json.dumps({"contract_version": "wrong", "stem": "expected"}))
 
     with pytest.raises(RuntimeError, match="Invalid link migration journal"):
-        transaction_module._load_recovery_journal(journal, "expected")
+        transaction_module._load_recovery_journal(journal, "expected", data_root=tmp_path)
 
     journal.write_text(
         json.dumps(
@@ -477,7 +481,7 @@ def test_recovery_journal_rejects_wrong_version_and_stem(
         RuntimeError,
         match=r"Link migration journal stem mismatch: 'actual' vs 'expected'",
     ):
-        transaction_module._load_recovery_journal(journal, "expected")
+        transaction_module._load_recovery_journal(journal, "expected", data_root=tmp_path)
 
 
 def test_cleanup_keeps_nonempty_nested_directories_without_raising(tmp_path: Path) -> None:
@@ -485,7 +489,7 @@ def test_cleanup_keeps_nonempty_nested_directories_without_raising(tmp_path: Pat
     nested = transaction_dir / "nested"
     nested.mkdir(parents=True)
 
-    transaction_module._cleanup(transaction_dir)
+    transaction_module._cleanup(transaction_dir, tmp_path)
 
     assert nested.is_dir()
     assert transaction_dir.is_dir()
@@ -503,7 +507,8 @@ def test_recovery_creates_missing_target_parent_directories(tmp_path: Path) -> N
             "staged_hash": _sha256(staged),
             "backup": "",
             "existed": False,
-        }
+        },
+        data_root=tmp_path,
     )
 
     assert target.read_text(encoding="utf-8") == "new"
