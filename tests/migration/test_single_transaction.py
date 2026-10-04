@@ -322,22 +322,21 @@ def test_recovery_rejects_in_root_symlinks_to_outside_before_writes(
     journal_path.write_text(json.dumps(journal), encoding="utf-8")
     untouched_target = processed / "targets" / "target_2.bin"
 
-    recovery_error: RuntimeError | None = None
-    try:
+    with pytest.raises(
+        RuntimeError,
+        match=rf"^Link migration journal {unsafe_field} path escapes the data root:",
+    ):
         transaction._recover_directory(journal_path.parent, "alpha-latest", data_root=processed)
-    except RuntimeError as error:
-        recovery_error = error
 
     assert (
-        recovery_error is not None
-        and alias.is_symlink()
+        alias.is_symlink()
         and alias.resolve() == outside_path.resolve()
         and outside_path.read_text(encoding="utf-8") == outside_contents
         and outside_canary.read_text(encoding="utf-8") == "outside-canary"
         and untouched_target.read_text(encoding="utf-8") == "original-2"
         and journal_path.is_file()
     ), (
-        f"recovery_error={recovery_error!r}; alias_is_symlink={alias.is_symlink()}; "
+        f"alias_is_symlink={alias.is_symlink()}; "
         f"outside_value={outside_path.read_text(encoding='utf-8')!r}; "
         f"earlier_safe_target={untouched_target.read_text(encoding='utf-8')!r}; "
         f"journal_exists={journal_path.is_file()}"
@@ -408,19 +407,18 @@ def test_recovery_rejects_journal_directory_symlink_to_data_before_cleanup(
     data_canary = data_dir / "target-canary.txt"
     data_canary.write_text("target-canary", encoding="utf-8")
 
-    recovery_error: RuntimeError | None = None
-    try:
+    with pytest.raises(
+        RuntimeError,
+        match=r"^Link migration journal directory cannot contain symlinks:",
+    ):
         transaction._recover_directory(journal_dir, "alpha-latest", data_root=processed)
-    except RuntimeError as error:
-        recovery_error = error
 
     assert (
-        recovery_error is not None
-        and journal_dir.is_symlink()
+        journal_dir.is_symlink()
         and journal_path.read_text(encoding="utf-8") == json.dumps(journal)
         and data_canary.read_text(encoding="utf-8") == "target-canary"
     ), (
-        f"recovery_error={recovery_error!r}; journal_dir_is_symlink={journal_dir.is_symlink()}; "
+        f"journal_dir_is_symlink={journal_dir.is_symlink()}; "
         f"journal_exists={journal_path.exists()}; data_canary_exists={data_canary.exists()}"
     )
 

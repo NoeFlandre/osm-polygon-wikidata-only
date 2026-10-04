@@ -169,8 +169,43 @@
     "reason": "If a malformed polygon row omits wikidata, the original empty-string fallback and the omitted default both yield no valid QID components; qids_from_osm_tag returns the same empty tuple.",
     "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
   },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_61": {
+    "mutant_sha256": "2173c128fe3fee7c2580e008dea3394dfbd5bbd5d96629af27668cc589875272",
+    "reason": "The initial index_ref value is overwritten by _apply_entries with the current zero-based entry index before any entry is applied or a crash hook can fail. Empty transactions never enter the failure path.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__load_recovery_journal__mutmut_14": {
+    "mutant_sha256": "3f7b5cdde4be3d893320b2d174ede24675c77f82851c8688033c97b3ac58523d",
+    "reason": "Python codec names are case-insensitive; UTF-8 and utf-8 decode the same journal bytes.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__recover_entry__mutmut_19": {
+    "mutant_sha256": "0cc8fc26513409f4fbb19a1571ba2de89920deb29c40b48d96a5a4da73a1ce4e",
+    "reason": "_validate_recovery_path rejects missing or invalid target/staged values and returns Path for both valid required fields, so neither value can be None at this assertion.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_17": {
+    "mutant_sha256": "63caee522952762d43443b93b5d0effb2554430bde0179b4dbd881e08625c7e4",
+    "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_23": {
+    "mutant_sha256": "3ac323e30eb7fdfb0ee951383d2121126d33c20e51e910c638a2d4faa926158b",
+    "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_24": {
+    "mutant_sha256": "b58aef974980aa2f86078b7b61b2352fe04fbeaa0cbc385a15ba0c55e7d69473",
+    "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_11": {
     "mutant_sha256": "3d14c45ee0d2dc28e01776bcdd58225055d828aaab5a92f89de2508eedc9fffb",
+    "reason": "Changing the JSON-file sort priority from 1 to 2 preserves JSON-after-data ordering and leaves the path tie-breaker unchanged.",
+    "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_28": {
+    "mutant_sha256": "60d44dc2d46e84f5cd7b034d82e80b39601846395de475d2d18f6f5cbe605973",
     "reason": "Changing the JSON-file sort priority from 1 to 2 preserves JSON-after-data ordering and leaves the path tie-breaker unchanged.",
     "source_sha256": "3a5d949a517855eb23445ae1c067683743a395462ce4f62d2de9cc9884f910b5"
   }
