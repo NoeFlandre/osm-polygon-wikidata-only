@@ -177,6 +177,71 @@ def _create_interrupted_path_test_journal(
     return processed, journal_path, journal
 
 
+@pytest.mark.parametrize("root_spelling", ["parent-component", "symlinked-ancestor"])
+def test_interrupted_journal_recovers_with_noncanonical_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_spelling: str
+) -> None:
+    """A persisted journal remains recoverable through the original root spelling."""
+    physical_parent = tmp_path / "physical"
+    physical_root = physical_parent / "data"
+    physical_root.mkdir(parents=True)
+    canary = tmp_path / "outside-canary.txt"
+    canary.write_text("outside-canary", encoding="utf-8")
+
+    if root_spelling == "parent-component":
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        monkeypatch.chdir(workdir)
+        data_root = Path("../physical/data")
+    else:
+        root_alias = tmp_path / "root-alias"
+        root_alias.symlink_to(physical_parent, target_is_directory=True)
+        data_root = root_alias / "data"
+
+    target_dir = data_root / "targets"
+    staged_dir = data_root / "staging"
+    target_dir.mkdir(parents=True)
+    staged_dir.mkdir()
+    replacements: list[tuple[Path, Path]] = []
+    for index in range(3):
+        target = target_dir / f"target-{index}.bin"
+        staged = staged_dir / f"target-{index}.bin"
+        target.write_text(f"original-{index}", encoding="utf-8")
+        staged.write_text(f"staged-{index}", encoding="utf-8")
+        replacements.append((target, staged))
+
+    stem = "alpha-latest"
+    journal_dir = data_root / ".link_migration_journal" / stem
+
+    def crash_after_second(index: int, _target: Path) -> None:
+        if index == 1:
+            raise RuntimeError("simulated crash")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        transaction.commit_ordered_replacements(
+            journal_dir,
+            stem,
+            replacements,
+            data_root=data_root,
+            _crash_hook=crash_after_second,
+        )
+
+    journal_path = journal_dir / "journal.json"
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["phase"] == "interrupted"
+    assert replacements[2][0].read_text(encoding="utf-8") == "original-2"
+
+    transaction.commit_ordered_replacements(journal_dir, stem, replacements, data_root=data_root)
+
+    assert [target.read_text(encoding="utf-8") for target, _ in replacements] == [
+        "staged-0",
+        "staged-1",
+        "staged-2",
+    ]
+    assert not journal_path.exists()
+    assert canary.read_text(encoding="utf-8") == "outside-canary"
+
+
 @pytest.mark.parametrize("unsafe_field", ["target", "staged", "backup"])
 def test_recovery_rejects_unsafe_journal_paths_before_writes(
     tmp_path: Path, unsafe_field: str

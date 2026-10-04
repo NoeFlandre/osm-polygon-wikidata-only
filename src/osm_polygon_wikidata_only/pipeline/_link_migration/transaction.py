@@ -51,7 +51,8 @@ def commit_ordered_replacements(
     journal_path = directory / "journal.json"
     _ensure_recovery_path_within_root(str(journal_path), "journal", root)
     if journal_path.exists():
-        _recover_directory(directory, stem, data_root=root)
+        # Keep the owner's original spelling for the lexical symlink check.
+        _recover_directory(directory, stem, data_root=data_root)
         return
 
     _commit_new_transaction(directory, stem, ordered, data_root, _crash_hook)
