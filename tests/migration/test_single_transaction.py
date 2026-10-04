@@ -135,6 +135,14 @@ def test_crash_before_any_commit_does_not_mark_current(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_recovery_data_root_handles_direct_journal_directory(tmp_path: Path) -> None:
+    """A direct journal directory is rooted at its parent, even when names repeat."""
+    processed = tmp_path / ".link_migration_journal"
+    journal_directory = processed / ".link_migration_journal"
+
+    assert transaction._recovery_data_root(journal_directory) == processed.resolve()
+
+
 def _create_interrupted_path_test_journal(
     tmp_path: Path,
 ) -> tuple[Path, Path, dict[str, Any]]:
@@ -214,13 +222,61 @@ def test_recovery_rejects_unsafe_journal_paths_before_writes(
     journal_path.write_text(json.dumps(journal), encoding="utf-8")
     untouched_target = processed / "targets" / "target_2.bin"
 
-    with pytest.raises((RuntimeError, ValueError), match=r"(?i)(path|root|escape|journal)"):
+    with pytest.raises(
+        RuntimeError,
+        match=rf"^Link migration journal {unsafe_field} path escapes the data root:",
+    ):
         transaction._recover_directory(journal_path.parent, "alpha-latest")
 
     # Validate the complete entry set before any earlier safe entry can roll forward.
     assert untouched_target.read_text(encoding="utf-8") == "original-2"
     for canary, expected in canaries:
         assert canary.read_text(encoding="utf-8") == expected
+    assert journal_path.is_file()
+
+
+@pytest.mark.parametrize("malformation", ["entries", "entry"])
+def test_recovery_rejects_malformed_journal_before_writes(
+    tmp_path: Path, malformation: str
+) -> None:
+    """Reject malformed journal structure before any pending target is changed."""
+    processed, journal_path, journal = _create_interrupted_path_test_journal(tmp_path)
+    if malformation == "entries":
+        journal["entries"] = None
+    else:
+        journal["entries"][3] = None
+    journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    untouched_target = processed / "targets" / "target_2.bin"
+
+    with pytest.raises(RuntimeError, match=r"^Invalid link migration journal (entries|entry)$"):
+        transaction._recover_directory(journal_path.parent, "alpha-latest")
+
+    assert untouched_target.read_text(encoding="utf-8") == "original-2"
+    assert journal_path.is_file()
+
+
+def test_recovery_accepts_empty_optional_backup_path(tmp_path: Path) -> None:
+    """A missing backup is valid for an entry without a preexisting target."""
+    processed, _journal_path, journal = _create_interrupted_path_test_journal(tmp_path)
+    journal["entries"][3]["backup"] = ""
+
+    transaction._validate_recovery_journal_paths(journal, processed.resolve())
+
+
+@pytest.mark.parametrize("target_value", [None, 17], ids=["missing", "non-string"])
+def test_recovery_rejects_invalid_required_path_before_writes(
+    tmp_path: Path, target_value: Any
+) -> None:
+    """Reject malformed required targets before replaying earlier pending entries."""
+    processed, journal_path, journal = _create_interrupted_path_test_journal(tmp_path)
+    journal["entries"][3]["target"] = target_value
+    journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    untouched_target = processed / "targets" / "target_2.bin"
+
+    with pytest.raises(RuntimeError, match="Invalid link migration journal target path"):
+        transaction._recover_directory(journal_path.parent, "alpha-latest")
+
+    assert untouched_target.read_text(encoding="utf-8") == "original-2"
     assert journal_path.is_file()
 
 

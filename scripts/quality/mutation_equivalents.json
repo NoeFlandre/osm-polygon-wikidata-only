@@ -172,16 +172,16 @@
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_46": {
     "mutant_sha256": "b56027bf1af494eeaa0d164f2ead26765e90799e5815c973adc7f243d9aeffdb",
     "reason": "_apply_entries overwrites index_ref[0] with enumerate's first index before any entry operation can fail. With no entries, commit_ordered_replacements returns before calling _commit_new_transaction. The initial value is never observed.",
-    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+    "source_sha256": "2ae8876b74c4987db1913192aae5d2b4c99c561c07a273b698306fa7029162a3"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__load_recovery_journal__mutmut_5": {
     "mutant_sha256": "2584b23ecf946cc9c428430f7d4fdf26d5f88c3faf2b39bee19f90d5575f92f9",
     "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same journal bytes. The recovery-reader test checks codec identity rather than its spelling.",
-    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+    "source_sha256": "2ae8876b74c4987db1913192aae5d2b4c99c561c07a273b698306fa7029162a3"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_11": {
     "mutant_sha256": "c3b8d778f6f667b2413085959678674c1acc68ebd66d05d67f11b2a00d6725d5",
     "reason": "The sort priority is 0 for data files and either 1 or 2 for JSON files. Changing 1 to 2 preserves JSON-after-data ordering and the path tie-breaker.",
-    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+    "source_sha256": "2ae8876b74c4987db1913192aae5d2b4c99c561c07a273b698306fa7029162a3"
   }
 }

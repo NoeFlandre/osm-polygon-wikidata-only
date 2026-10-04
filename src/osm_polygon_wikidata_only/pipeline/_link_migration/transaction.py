@@ -241,6 +241,11 @@ def _validate_recovery_path(entry: dict[str, Any], name: str, data_root: Path) -
         return
     if not isinstance(value, str) or not value:
         raise RuntimeError(f"Invalid link migration journal {name} path")
+    _ensure_recovery_path_within_root(value, name, data_root)
+
+
+def _ensure_recovery_path_within_root(value: str, name: str, data_root: Path) -> None:
+    """Reject one resolved journal path outside the processed-data root."""
     resolved = Path(value).resolve()
     try:
         resolved.relative_to(data_root)
