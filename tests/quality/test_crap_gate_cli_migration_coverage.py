@@ -123,7 +123,7 @@ def test_manifest_record_readers_reject_wrong_shapes_and_escape_roots(tmp_path: 
 
 @pytest.mark.parametrize("stem", ["", ".", "..", "nested/path", r"nested\path"])
 def test_link_migration_stem_validation_rejects_unsafe_values(stem: str) -> None:
-    assert not link_planning._is_valid_stem(stem)
+    assert not link_planning.is_safe_stem(stem)
 
 
 @pytest.mark.parametrize("error", [KeyError("missing column"), pa.ArrowInvalid("bad schema")])

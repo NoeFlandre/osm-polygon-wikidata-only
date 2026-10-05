@@ -25,6 +25,8 @@ from typing import Any, cast
 
 import pyarrow as pa
 
+from osm_polygon_wikidata_only.domain.stems import is_safe_stem
+
 from .wikidata_qids import is_valid_qid, qids_from_osm_tag
 
 CANONICAL_COLUMNS: tuple[str, ...] = (
@@ -126,16 +128,10 @@ def _document_id_wikidata(document_id: str) -> str | None:
     return None
 
 
-def _is_valid_stem(stem: str) -> bool:
-    if not stem or stem in {".", ".."}:
-        return False
-    return "/" not in stem and "\\" not in stem
-
-
 def _coerce_polygon_row(polygon: dict[str, Any]) -> dict[str, Any]:
     """Return the canonical polygon fields used to populate a link row."""
     polygon_id = str(polygon.get("polygon_id", ""))
-    if not _is_valid_stem(polygon_id):
+    if not is_safe_stem(polygon_id):
         raise ValueError(f"Invalid polygon_id: {polygon_id!r}")
     raw_wikidata = str(polygon.get("wikidata", ""))
     qids = qids_from_osm_tag(raw_wikidata)
@@ -267,7 +263,7 @@ def _copy_canonical_columns(row: dict[str, Any]) -> dict[str, Any]:
 
 def _validated_polygon_id(value: Any) -> str:
     polygon_id = str(value)
-    if not _is_valid_stem(polygon_id):
+    if not is_safe_stem(polygon_id):
         raise ValueError(f"Invalid polygon_id: {polygon_id!r}")
     return polygon_id
 

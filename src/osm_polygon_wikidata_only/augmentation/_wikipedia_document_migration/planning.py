@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import article_schema
+from osm_polygon_wikidata_only.domain.stems import is_safe_stem
 from osm_polygon_wikidata_only.io.hashing import sha256_file_uncached
 
 from .models import MigrationError, MigrationOperation, MigrationPlan, StemPlan
@@ -218,9 +219,9 @@ def _validate_stem_path(stem: str, docs_dir: Path) -> Path:
 
 def _validate_stem_name(stem: str) -> None:
     """Reject empty, parent, or separator-containing stem names."""
-    if not stem or stem in (".", ".."):
-        raise MigrationError(f"Invalid stem name: '{stem}'")
-    if "/" in stem or "\\" in stem:
+    if not is_safe_stem(stem):
+        if not stem or stem in (".", ".."):
+            raise MigrationError(f"Invalid stem name: '{stem}'")
         raise MigrationError(f"Stem '{stem}': must not contain path separators")
 
 

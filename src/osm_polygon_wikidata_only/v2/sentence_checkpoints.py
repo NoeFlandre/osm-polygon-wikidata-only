@@ -10,6 +10,7 @@ from typing import Any, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -281,8 +282,7 @@ def _batch_index(path: Path) -> int | None:
 
 
 def _validate_component(value: str, name: str) -> None:
-    if not value or value in {".", ".."} or "/" in value or "\\" in value:
-        raise ValueError(f"Invalid sentence checkpoint {name}: {value!r}")
+    require_safe_stem(value, label=f"sentence checkpoint {name}")
 
 
 __all__ = ["SENTENCE_CHECKPOINT_CONTRACT_VERSION", "SentenceCheckpoint"]

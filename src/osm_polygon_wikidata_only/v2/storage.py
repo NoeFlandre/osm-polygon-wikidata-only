@@ -12,6 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.io.staged_install import cleanup_transaction as _cleanup_transaction
@@ -182,8 +183,7 @@ def write_v2_region(
 
 
 def _validate_stem(stem: str) -> None:
-    if not stem or "/" in stem or "\\" in stem or stem in {".", ".."}:
-        raise ValueError(f"Invalid V2 stem: {stem!r}")
+    require_safe_stem(stem, label="V2 stem")
 
 
 def _region_paths(processed_v2: Path, stem: str) -> tuple[Path, Path, Path, Path]:

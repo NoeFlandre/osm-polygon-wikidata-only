@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import POLYGON_ARTICLE_COLUMNS
+from osm_polygon_wikidata_only.domain.stems import is_safe_stem
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import (
     qids_from_osm_tag as _qids_from_osm_tag,
 )
@@ -70,12 +71,6 @@ def is_canonical_table_schema(table: pa.Table) -> bool:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _is_valid_stem(stem: str) -> bool:
-    if not stem or stem in {".", ".."}:
-        return False
-    return "/" not in stem and "\\" not in stem
 
 
 def _read_table(path: Path) -> pa.Table:
@@ -389,7 +384,7 @@ def _validate_requested_stems(stems: set[str] | None) -> None:
     if stems is None:
         return
     for stem in stems:
-        if not _is_valid_stem(stem):
+        if not is_safe_stem(stem):
             raise ValueError(f"Invalid stem name: {stem!r}")
 
 

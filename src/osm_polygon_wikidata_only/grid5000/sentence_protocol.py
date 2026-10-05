@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.config.defaults import (
     DEFAULT_MAX_STEMS,
     DEFAULT_WALLTIME,
 )
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -473,8 +474,7 @@ def _install_checkpoint_tree(
 
 
 def _validate_stem(stem: str) -> None:
-    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-        raise ValueError(f"Invalid sentence stem: {stem!r}")
+    require_safe_stem(stem, label="sentence stem")
 
 
 __all__ = [

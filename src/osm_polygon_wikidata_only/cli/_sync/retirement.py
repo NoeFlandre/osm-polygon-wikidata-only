@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.stems import is_safe_stem
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_ARTICLES_DIR,
@@ -77,7 +78,7 @@ def _operation_stem(operation: PublicationOp) -> str | None:
     if not isinstance(remote, str) or not remote:
         return None
     stem = Path(remote).stem
-    return stem if _is_valid_stem(stem) else None
+    return stem if is_safe_stem(stem) else None
 
 
 def _canonical_add_path(
@@ -119,10 +120,6 @@ def _merge_add_path(prior: Path | None, resolved: Path) -> Path:
 
 def _is_legacy_delete(remote: object, stem: str) -> bool:
     return remote == f"{LEGACY_REMOTE_ARTICLES_DIR}/{stem}.parquet"
-
-
-def _is_valid_stem(stem: str) -> bool:
-    return bool(stem and stem not in {".", ".."} and "/" not in stem and "\\" not in stem)
 
 
 __all__ = ["paired_retirement_stems"]

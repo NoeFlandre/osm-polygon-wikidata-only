@@ -80,6 +80,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import ARTICLE_COLUMNS, article_schema
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet, atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
@@ -109,8 +110,7 @@ CONTRACT_VERSION = "text-sidecars-v1"
 
 def _validate_source_stem(stem: str) -> None:
     """Reject empty stems, path separators, and traversal-like names."""
-    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-        raise ValueError(f"Invalid Wikipedia source stem: {stem!r}")
+    require_safe_stem(stem, label="Wikipedia source stem")
 
 
 @dataclass(frozen=True, slots=True)

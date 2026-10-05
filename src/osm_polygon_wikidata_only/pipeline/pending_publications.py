@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 
 # The durable envelope holds both the pending-publication stems and the
@@ -26,9 +27,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _validate_stem(stem: str) -> str:
-    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-        raise ValueError(f"Invalid pending publication stem: {stem!r}")
-    return stem
+    return require_safe_stem(stem, label="pending publication stem")
 
 
 def _validate_marker_stem(stem: str) -> str:
