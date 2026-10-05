@@ -23,6 +23,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     WIKIPEDIA_DOCUMENT_COLUMNS,
     wikipedia_document_schema,
 )
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.parquet import write_typed_table
 from osm_polygon_wikidata_only.utils.json import dumps, loads
@@ -63,8 +64,7 @@ class RecoveryCheckpointStore:
     """Persist complete batch artifacts; incomplete directories are never reusable."""
 
     def __init__(self, root: Path, stem: str, plan_key: str) -> None:
-        if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-            raise ValueError(f"Invalid recovery checkpoint stem: {stem!r}")
+        require_safe_stem(stem, label="recovery checkpoint stem")
         self._region_root = root / stem
         self._plan_root = self._region_root / plan_key
 

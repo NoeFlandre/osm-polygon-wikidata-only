@@ -82,9 +82,9 @@ def test_polygon_row_and_document_identity_helpers_validate_slots() -> None:
     links = polygon_document_links
     assert links._document_id_wikidata("Q42:wikipedia:en:1:2") == "Q42"
     assert links._document_id_wikidata("invalid:wikipedia:en:1:2") is None
-    assert links._is_valid_stem("region-latest")
+    assert links.is_safe_stem("region-latest")
     for invalid in ("", ".", "..", "a/b", "a\\b"):
-        assert not links._is_valid_stem(invalid)
+        assert not links.is_safe_stem(invalid)
 
     row = links._coerce_polygon_row(
         {

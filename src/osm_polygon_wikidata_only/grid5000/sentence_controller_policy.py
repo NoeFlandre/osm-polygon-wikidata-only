@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.utils.json import loads as json_loads
 
 from .sentence_protocol import (
     FileDigest,
+    is_safe_run_id,
     sentence_source_paths,
 )
 
@@ -311,10 +312,6 @@ def git_source_commit(
 
 def new_run_id() -> str:
     return datetime.now(UTC).strftime("run-%Y%m%d-%H%M%S")
-
-
-def is_safe_run_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[a-z0-9_-]+", value))
 
 
 def timestamp() -> str:

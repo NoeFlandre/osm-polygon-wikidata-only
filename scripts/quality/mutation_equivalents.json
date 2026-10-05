@@ -2,12 +2,12 @@
   "osm_polygon_wikidata_only.augmentation._wikipedia_document_migration.planning.x__shared_comparison_inputs__mutmut_21": {
     "mutant_sha256": "b220351f5e5e2793e69eda81b4b89eb462c26237dd2d0c8c78027bd82fa98dfe",
     "reason": "The changed exclusion lets select_cols include document_id before appending it again. _validate_shared_identities has already established equal identity sets; Arrow preserves the duplicate column and to_pylist collapses the identical key, leaving the same comparison rows.",
-    "source_sha256": "bbcb23935876d8a3ab1acc558e4047298b74e32119fa5e90128a7f572657343d"
+    "source_sha256": "1fa067d3877b4e298fca84c5adb040ca8cebd03da7cea1a7f3f0d2b5a63e9a40"
   },
   "osm_polygon_wikidata_only.augmentation._wikipedia_document_migration.planning.x__shared_comparison_inputs__mutmut_22": {
     "mutant_sha256": "b0ed6c91c5773e1ca26e6c35b5fa68e6045f033d85af0e9c2bd05198a2d24146",
     "reason": "The changed exclusion lets select_cols include document_id before appending it again. _validate_shared_identities has already established equal identity sets; Arrow preserves the duplicate column and to_pylist collapses the identical key, leaving the same comparison rows.",
-    "source_sha256": "bbcb23935876d8a3ab1acc558e4047298b74e32119fa5e90128a7f572657343d"
+    "source_sha256": "1fa067d3877b4e298fca84c5adb040ca8cebd03da7cea1a7f3f0d2b5a63e9a40"
   },
   "osm_polygon_wikidata_only.augmentation.wikidata_facts.x__label_map__mutmut_11": {
     "mutant_sha256": "742a5d9a315e486769ea10f921c3743fb49f8b06accfb2b5b8d528683e29fc08",
@@ -137,37 +137,37 @@
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__classify_existing_stem__mutmut_11": {
     "mutant_sha256": "cd39863034fcffa9d656276d0e180521bce424d999f0319e602c28cc834a06c7",
     "reason": "_link_classification returns a nonempty reason whenever classification is None: schema read failures return a typed error detail, and unsupported schemas return an explanatory ValueError message. The fallback literal is unreachable.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__classify_existing_stem__mutmut_12": {
     "mutant_sha256": "8e4452b5975760754982febb40cc0f268336821276a0c7a666a740f47d846c31",
     "reason": "_link_classification returns a nonempty reason whenever classification is None: schema read failures return a typed error detail, and unsupported schemas return an explanatory ValueError message. The fallback literal is unreachable.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__legacy_stem_plan__mutmut_32": {
     "mutant_sha256": "582f5d967d1b32bfe6459db23d6728f560d655939f3a956c0fda49980ad97734",
     "reason": "Validated canonical_rows have the fixed 11 canonical keys in schema order and only string/integer values; inferred Arrow types and column order therefore match the explicit schema. _table_digest hashes serialized record batches (not field metadata), and both implementations use the same row count and batches, including the empty-table case.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__legacy_stem_plan__mutmut_34": {
     "mutant_sha256": "64476c65b19665c8efd877cefcbe6fd293bf0734986f6b211d0a3d0703c39ff6",
     "reason": "Validated canonical_rows have the fixed 11 canonical keys in schema order and only string/integer values; inferred Arrow types and column order therefore match the explicit schema. _table_digest hashes serialized record batches (not field metadata), and both implementations use the same row count and batches, including the empty-table case.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_11": {
     "mutant_sha256": "bc78e17043f6d6e4ccf7a566b4f0a095f94f2700ee57cc41c43967f39aedb57d",
     "reason": "If a malformed polygon row omits wikidata, \"XXXX\" is an invalid QID component just like the original empty-string fallback; qids_from_osm_tag returns the same empty tuple.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_6": {
     "mutant_sha256": "f23549796581a40f701d9dd39f19ee89b711af95fe0b1fb031d22f8edde1e66b",
     "reason": "If a malformed polygon row omits wikidata, both the original empty-string fallback and None stringify to invalid QID components; qids_from_osm_tag returns the same empty tuple.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.planning.x__polygon_qids_by_id__mutmut_8": {
     "mutant_sha256": "e4a697ffc292f6f8239145af06f6080247d447c9d18edbeea040268f0b67ca59",
     "reason": "If a malformed polygon row omits wikidata, the original empty-string fallback and the omitted default both yield no valid QID components; qids_from_osm_tag returns the same empty tuple.",
-    "source_sha256": "b24286e3ee366b23ef3d35955f1f16f2fd01a54c31d5c72ab319350ce7bf7111"
+    "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_46": {
     "mutant_sha256": "b56027bf1af494eeaa0d164f2ead26765e90799e5815c973adc7f243d9aeffdb",

@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_replacement, atomic_write_json
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -425,8 +426,7 @@ def _validate_schema(path: Path, schema: pa.Schema) -> None:
 
 
 def _validate_stem(stem: str) -> None:
-    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-        raise ValueError(f"Invalid V2 stem: {stem!r}")
+    require_safe_stem(stem, label="V2 stem")
 
 
 __all__ = [

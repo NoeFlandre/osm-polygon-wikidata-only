@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from osm_polygon_wikidata_only.augmentation.steps import sha256_file
+from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_copy_file, atomic_write_json
 from osm_polygon_wikidata_only.utils.json import loads
 
@@ -15,9 +16,7 @@ _TRANSACTION_VERSION = "wikidata-recovery-transaction-v1"
 
 
 def transaction_directory(root: Path, stem: str) -> Path:
-    if not stem or stem in {".", ".."} or "/" in stem or "\\" in stem:
-        raise ValueError(f"Invalid recovery transaction stem: {stem!r}")
-    return root / stem
+    return root / require_safe_stem(stem, label="recovery transaction stem")
 
 
 def recover_interrupted_transactions(root: Path) -> tuple[str, ...]:

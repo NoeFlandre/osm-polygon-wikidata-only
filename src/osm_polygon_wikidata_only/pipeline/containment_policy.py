@@ -52,7 +52,11 @@ TABLE_CONTRACTS = (
 
 
 def validate_stem(stem: str) -> str:
-    """Return a safe canonical stem or raise before path construction."""
+    """Return a safe canonical stem or raise before path construction.
+
+    Stricter than ``domain.stems.is_safe_stem``: only the canonical stem
+    pattern is accepted, not any separator-free component.
+    """
     if not _STEM_PATTERN.fullmatch(stem):
         raise ValueError(f"Invalid containment stem: {stem!r}")
     return stem
