@@ -6,12 +6,11 @@ import ast
 import hashlib
 import io
 import json
-import tomllib
 from pathlib import Path
 
 import pytest
 
-from scripts.quality import mutation_equivalents, mutation_gate
+from scripts.quality import mutation_equivalents, mutation_gate, mutation_scope
 from scripts.quality.mutation_equivalents import _review_fields, reviewed_equivalents
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -137,18 +136,10 @@ def test_mutation_gate_combines_builtin_and_json_reviews(
 
 
 def test_mutation_scope_names_only_existing_sources_and_tests() -> None:
-    mutation = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))["tool"][
-        "mutmut"
-    ]
-    configured = [
-        *mutation["source_paths"],
-        *(
-            selector.partition("::")[0]
-            for selector in mutation["pytest_add_cli_args_test_selection"]
-        ),
-    ]
+    scope = mutation_scope.load_scope(REPOSITORY / "pyproject.toml", root=REPOSITORY)
 
-    assert [path for path in configured if not (REPOSITORY / path).is_file()] == []
+    assert len(scope.source_paths) == 48
+    assert len(scope.test_selectors) == 65
 
 
 @pytest.mark.parametrize("reason", [None, "", " \t"])
