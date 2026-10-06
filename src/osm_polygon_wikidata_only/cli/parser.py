@@ -49,6 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 DISTRIBUTION = "osm-polygon-wikidata-only"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+DEFAULT_ENRICHMENT_BATCH_SIZE = 50
+DEFAULT_ENRICHMENT_SITE_WORKERS = 8
+DEFAULT_UPLOAD_THREADS = 5
 CONTROLLER_DESCRIPTION = "Run and resume the local Grid5000 sentence-splitting controller."
 JOB_DESCRIPTION = "Run one CUDA-required sentence batch on a reserved Grid5000 node."
 AUDIT_CONTAINMENT_DESCRIPTION = "Read-only audit of configured whole-file containment retirements."
@@ -186,6 +189,28 @@ def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
     add_audit_containment_arguments(containment)
 
 
+def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the Hugging Face publication options shared by processing commands."""
+    parser.add_argument("--push", action="store_true", help="Push artifacts to Hugging Face")
+    parser.add_argument("--commit-message", default=None, help="Commit message for the upload")
+    parser.add_argument(
+        "--upload-threads",
+        type=int,
+        default=DEFAULT_UPLOAD_THREADS,
+        help="Concurrent Hugging Face upload workers per atomic commit",
+    )
+    parser.add_argument(
+        "--hf-token",
+        default=None,
+        help=(
+            "Hugging Face write token. Defaults to the HF_TOKEN env var "
+            "or the saved `huggingface-cli login` token."
+        ),
+    )
+    parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
+    parser.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
+
+
 def _common_parser() -> argparse.ArgumentParser:
     """Return the shared options of the processing and augmentation commands."""
     common = argparse.ArgumentParser(add_help=False)
@@ -202,31 +227,14 @@ def _common_parser() -> argparse.ArgumentParser:
         "--no-full-text", action="store_true", help="Skip Wikipedia full-text fetch"
     )
     common.add_argument("--max-articles-per-qid", type=int, default=None)
-    common.add_argument("--enrichment-batch-size", type=int, default=50)
-    common.add_argument("--enrichment-site-workers", type=int, default=8)
+    common.add_argument("--enrichment-batch-size", type=int, default=DEFAULT_ENRICHMENT_BATCH_SIZE)
+    common.add_argument(
+        "--enrichment-site-workers", type=int, default=DEFAULT_ENRICHMENT_SITE_WORKERS
+    )
     common.add_argument("--limit", type=int, default=None, help="Cap number of polygons per PBF")
     common.add_argument("--skip-existing", action="store_true")
     common.add_argument("--force", action="store_true")
-    common.add_argument("--push", action="store_true", help="Push artifacts to Hugging Face")
-    common.add_argument("--commit-message", default=None)
-    common.add_argument(
-        "--upload-threads",
-        type=int,
-        default=5,
-        help="Concurrent Hugging Face upload workers per atomic commit",
-    )
-    common.add_argument(
-        "--hf-token",
-        default=None,
-        help=(
-            "Hugging Face write token. Defaults to the HF_TOKEN env var "
-            "or the saved `huggingface-cli login` token."
-        ),
-    )
-    common.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
-    common.add_argument("--dry-run", action="store_true", help="Use a stub HF client (no network)")
+    add_publish_arguments(common)
     return common
 
 
@@ -241,18 +249,7 @@ def _sentence_common_parser() -> argparse.ArgumentParser:
     sentence_common.add_argument(
         "--inference-batch-size", type=int, default=DEFAULT_INFERENCE_BATCH_SIZE
     )
-    sentence_common.add_argument(
-        "--push", action="store_true", help="Push artifacts to Hugging Face"
-    )
-    sentence_common.add_argument("--commit-message", default=None)
-    sentence_common.add_argument("--upload-threads", type=int, default=5)
-    sentence_common.add_argument("--hf-token", default=None)
-    sentence_common.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
-    sentence_common.add_argument(
-        "--dry-run", action="store_true", help="Use a stub HF client (no network)"
-    )
+    add_publish_arguments(sentence_common)
     return sentence_common
 
 
@@ -319,9 +316,7 @@ def _add_language_splits_parser(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Validate inventories and print the deterministic plan without writing",
     )
-    p_language.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
+    p_language.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
     p_language.set_defaults(push=False)
 
 
@@ -361,9 +356,7 @@ def _add_publish_language_splits_parser(sub: argparse._SubParsersAction) -> None
         help="Validate inventories and print the publication plan without writing or uploading",
     )
     p_publish_language.add_argument("--hf-token", default=None)
-    p_publish_language.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
+    p_publish_language.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
     p_publish_language.set_defaults(push=False)
 
 
@@ -392,9 +385,7 @@ def _add_release_stats_parser(sub: argparse._SubParsersAction) -> None:
         "--apply", action="store_true", help="Publish and verify (default: dry run)"
     )
     release.add_argument("--hf-token", default=None)
-    release.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
+    release.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
     release_mode.add_argument(
         "--dry-run", action="store_true", help="Use a stub HF client (no network)"
     )
