@@ -35,7 +35,6 @@ from osm_polygon_wikidata_only.hf.language_split_release import (
     _generated_file_sort_key,
     _generated_release_payload,
     _recompute_inventory,
-    _source_language_counts,
     _validate_generated_inventory,
     plan_language_split_release,
     run_language_split_release,
@@ -744,60 +743,6 @@ def test_expected_files_honor_explicit_inventory_override(
     expected = _expected_files(plan, alternate_inventory)
 
     assert not any(record["table"] == table_name for record in expected)
-
-
-def test_source_language_counts_are_bounded_exact_and_stably_ordered(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = tmp_path / "documents.parquet"
-    schema = wikipedia_document_v2_schema()
-    _write_table(
-        source,
-        [
-            _row_for_schema(schema, document_id="missing", language=None),
-            _row_for_schema(schema, document_id="english-1", language="en"),
-            _row_for_schema(schema, document_id="english-2", language="en"),
-            _row_for_schema(schema, document_id="zz", language="zz"),
-        ],
-        schema,
-    )
-    original_parquet_file = language_split_release.open_parquet
-    batch_calls: list[dict[str, object]] = []
-
-    class RecordingParquetFile:
-        def __init__(self, path: Path) -> None:
-            self._inner = original_parquet_file(path)
-
-        def __enter__(self) -> RecordingParquetFile:
-            self._inner.__enter__()
-            return self
-
-        def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-            self._inner.__exit__(exc_type, exc_value, traceback)
-
-        def iter_batches(self, **kwargs: object):
-            batch_calls.append(kwargs)
-            return self._inner.iter_batches(**kwargs)
-
-    monkeypatch.setattr(language_split_release, "open_parquet", RecordingParquetFile)
-
-    counts = _source_language_counts(source, "language")
-    assert counts == {
-        "en": 2,
-        "zz": 1,
-        "unknown": 1,
-    }
-    assert list(counts) == ["en", "zz", "unknown"]
-    # The scan stays column-pruned and bounded, and reads on the calling
-    # thread so Arrow's prefetch pool cannot stall it.
-    assert batch_calls == [
-        {
-            "batch_size": language_split_release.DEFAULT_BATCH_SIZE,
-            "use_threads": False,
-            "columns": ["language"],
-        }
-    ]
 
 
 def test_release_file_sort_keys_distinguish_table_language_and_path() -> None:

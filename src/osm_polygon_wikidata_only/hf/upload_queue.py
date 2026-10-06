@@ -22,10 +22,6 @@ from osm_polygon_wikidata_only.hf._upload_state import (
 from osm_polygon_wikidata_only.hf._upload_state_files import (
     independent_copy as _independent_copy,
 )
-from osm_polygon_wikidata_only.hf._upload_state_files import read_envelope as _state_read_envelope
-from osm_polygon_wikidata_only.hf._upload_state_files import (
-    remove_failed_upgrade as _remove_failed_upgrade_artifacts,
-)
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.hashing import sha256_file as _sha256_file
 
@@ -33,11 +29,6 @@ LOGGER = logging.getLogger(__name__)
 
 UploadOps = list[PublicationOp]
 UploadOperation = Callable[[UploadOps, str], None]
-
-
-def _read_envelope(path: Path) -> dict[str, object] | None:
-    """Compatibility wrapper for current-envelope parsing."""
-    return _state_read_envelope(path)
 
 
 @dataclass(frozen=True)
@@ -135,11 +126,6 @@ class BackgroundUploadQueue:
                 )
             )
         return result.discovered_count
-
-    @staticmethod
-    def _remove_failed_upgrade(state_dir: Path, sequence: int, snapshot_dir: Path) -> None:
-        """Compatibility wrapper for cleanup of a failed legacy upgrade."""
-        _remove_failed_upgrade_artifacts(state_dir, sequence, snapshot_dir)
 
     def close_and_wait(self) -> list[str]:
         if not self._closed:

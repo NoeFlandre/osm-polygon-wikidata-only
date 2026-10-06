@@ -26,8 +26,3 @@ def dumps(value: Any) -> str:
 def loads(s: str | bytes) -> Any:
     """Tiny wrapper to keep callers symmetric with :func:`dumps`."""
     return json.loads(s)
-
-
-def dumps_compact_list(values: list[str]) -> str:
-    """Sort + dedup + JSON-encode a list of strings."""
-    return dumps(sorted({v for v in values if v}))

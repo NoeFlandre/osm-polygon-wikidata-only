@@ -57,48 +57,9 @@ class _AxesSpy:
         self._record("set_aspect", *args, **kwargs)
 
 
-def test_feature_rings_accepts_polygon_and_multipolygon() -> None:
-    polygon = {"type": "Polygon", "coordinates": [[[1, 2], [3, 4], [5, 6]]]}
-    multipolygon = {
-        "type": "MultiPolygon",
-        "coordinates": [
-            [[[1, 2], [3, 4], [5, 6]]],
-            [],
-            [[[7, 8], [9, 10], [11, 12]]],
-        ],
-    }
-
-    assert basemap._feature_rings({"geometry": polygon}) == [[[1, 2], [3, 4], [5, 6]]]
-    assert basemap._feature_rings({"geometry": multipolygon}) == [
-        [[1, 2], [3, 4], [5, 6]],
-        [[7, 8], [9, 10], [11, 12]],
-    ]
-
-
-@pytest.mark.parametrize(
-    "feature",
-    [
-        None,
-        [],
-        {},
-        {"geometry": None},
-        {"geometry": {"coordinates": []}},
-        {"geometry": {"type": "Point", "coordinates": [1, 2]}},
-        {"geometry": {"type": "Polygon", "coordinates": []}},
-        {"geometry": {"type": "MultiPolygon", "coordinates": []}},
-    ],
-)
-def test_feature_rings_ignores_non_area_features(feature: object) -> None:
-    assert basemap._feature_rings(feature) == []
-
-
 def test_feature_geometry_returns_only_mapping_geometry() -> None:
     assert basemap._feature_geometry({"geometry": {"type": "Point"}}) == {"type": "Point"}
     assert basemap._feature_geometry({"geometry": None}) is None
-
-
-def test_geometry_rings_ignores_unsupported_geometry() -> None:
-    assert basemap._geometry_rings({"type": "Point", "coordinates": [1, 2]}) == []
 
 
 def test_draw_landmasses_batches_features_into_one_collection() -> None:
@@ -148,6 +109,40 @@ def test_draw_landmasses_ignores_short_rings() -> None:
         [{"geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 1]]]}}],
     )
     assert axes.collections == []
+
+
+@pytest.mark.parametrize(
+    "feature",
+    [
+        None,
+        [],
+        {},
+        {"geometry": None},
+        {"geometry": {"coordinates": []}},
+        {"geometry": {"type": "Point", "coordinates": [1, 2]}},
+        {"geometry": {"type": "Polygon", "coordinates": []}},
+        {"geometry": {"type": "MultiPolygon", "coordinates": []}},
+        {"geometry": {"type": "MultiPolygon", "coordinates": ["not-a-polygon"]}},
+    ],
+)
+def test_draw_landmasses_ignores_non_area_features(feature: object) -> None:
+    axes = _AxesSpy()
+    basemap.draw_landmasses(axes, [feature])
+    assert axes.collections == []
+
+
+def test_draw_landmasses_draws_polygon_and_multipolygon_members() -> None:
+    ring = [[0, 0], [4, 0], [4, 4], [0, 0]]
+    axes = _AxesSpy()
+    basemap.draw_landmasses(
+        axes,
+        [
+            {"geometry": {"type": "Polygon", "coordinates": [ring]}},
+            {"geometry": {"type": "MultiPolygon", "coordinates": [[ring], [], [ring]]}},
+        ],
+    )
+    assert len(axes.collections) == 1
+    assert len(axes.collections[0][0].get_paths()) == 3
 
 
 def test_draw_landmasses_preserves_polygon_holes_in_rendered_image() -> None:

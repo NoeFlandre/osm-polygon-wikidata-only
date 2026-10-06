@@ -338,17 +338,6 @@ def _draw_landmasses(ax: Any, geojson_path: Path) -> None:
         )
 
 
-def _draw_land_feature(ax: Any, feature: dict[str, Any]) -> None:
-    """Draw one feature through the shared geometry renderer."""
-    draw_landmasses(
-        ax,
-        [feature],
-        facecolor=_LAND_COLOR,
-        edgecolor=_LAND_EDGE,
-        linewidth=0.3,
-    )
-
-
 __all__ = [
     "WORLD_LAND_FILENAME",
     "ensure_world_land",

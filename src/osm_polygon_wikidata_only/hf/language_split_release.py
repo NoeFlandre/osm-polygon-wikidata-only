@@ -14,9 +14,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageInventory,
     LanguageInventoryError,
     build_language_inventory,
-    normalize_language,
 )
-from osm_polygon_wikidata_only.io.parquet_scan import iter_record_batches, open_parquet
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.v2.language_splits import DEFAULT_MAX_ROWS_PER_SHARD
 
@@ -286,23 +284,6 @@ def _expected_v2_files(
 
 def _shard_count(row_count: int, max_rows_per_shard: int) -> int:
     return (row_count + max_rows_per_shard - 1) // max_rows_per_shard
-
-
-def _source_language_counts(source_path: Path, language_column: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    try:
-        with open_parquet(source_path) as parquet_file:
-            for batch in iter_record_batches(
-                parquet_file, columns=[language_column], batch_size=DEFAULT_BATCH_SIZE
-            ):
-                for value in batch.column(0).to_pylist():
-                    language = normalize_language(value).partition
-                    counts[language] = counts.get(language, 0) + 1
-    except (OSError, RuntimeError, ValueError) as error:
-        raise LanguageSplitReleaseError(
-            f"Could not inspect V2 source file for dry-run planning: {source_path}: {error}"
-        ) from error
-    return dict(sorted(counts.items(), key=lambda item: (item[0] == "unknown", item[0])))
 
 
 def _expected_file_sort_key(record: dict[str, object]) -> tuple[str, str, str, str]:

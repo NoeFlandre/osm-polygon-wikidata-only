@@ -97,10 +97,8 @@ def test_response_message_falls_back_when_response_text_cannot_be_read() -> None
 
 
 def test_upload_queue_reads_only_current_envelopes(tmp_path: Path) -> None:
-    from osm_polygon_wikidata_only.hf.upload_queue import (
-        QUEUE_CONTRACT_VERSION,
-        _read_envelope,
-    )
+    from osm_polygon_wikidata_only.hf._upload_state_files import read_envelope as _read_envelope
+    from osm_polygon_wikidata_only.hf.upload_queue import QUEUE_CONTRACT_VERSION
 
     envelope = tmp_path / "pending.json"
     envelope.write_text(json.dumps({"contract_version": QUEUE_CONTRACT_VERSION}))
@@ -111,7 +109,7 @@ def test_upload_queue_reads_only_current_envelopes(tmp_path: Path) -> None:
 
 
 def test_upload_queue_removes_failed_upgrade_artifacts(tmp_path: Path) -> None:
-    from osm_polygon_wikidata_only.hf.upload_queue import BackgroundUploadQueue
+    from osm_polygon_wikidata_only.hf._upload_state_files import remove_failed_upgrade
 
     state_dir = tmp_path / "state"
     snapshot_dir = state_dir / "snapshots" / "000001"
@@ -120,7 +118,7 @@ def test_upload_queue_removes_failed_upgrade_artifacts(tmp_path: Path) -> None:
     state_path = state_dir / "000001.json"
     state_path.write_text("{}")
 
-    BackgroundUploadQueue._remove_failed_upgrade(state_dir, 1, snapshot_dir)
+    remove_failed_upgrade(state_dir, 1, snapshot_dir)
 
     assert not state_path.exists()
     assert not snapshot_dir.exists()

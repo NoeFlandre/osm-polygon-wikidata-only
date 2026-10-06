@@ -194,40 +194,12 @@ def _ring_needs_reversal(signed_area: float, *, exterior: bool) -> bool:
     return signed_area < 0 if exterior else signed_area > 0
 
 
-def _feature_rings(feature: Any) -> list[Sequence[Sequence[float]]]:
-    """Return exterior rings from one Natural Earth feature."""
-    geometry = _feature_geometry(feature)
-    return _geometry_rings(geometry) if geometry is not None else []
-
-
 def _feature_geometry(feature: Any) -> dict[str, Any] | None:
     """Return a feature's geometry mapping when it has one."""
     if not isinstance(feature, dict):
         return None
     geom = feature.get("geometry")
     return geom if isinstance(geom, dict) else None
-
-
-def _geometry_rings(geom: dict[str, Any]) -> list[Sequence[Sequence[float]]]:
-    """Return exterior rings for a Polygon or MultiPolygon geometry."""
-    gtype = geom.get("type")
-    if gtype == "Polygon":
-        return _polygon_rings(geom.get("coordinates"))
-    if gtype == "MultiPolygon":
-        return _multipolygon_rings(geom.get("coordinates"))
-    return []
-
-
-def _polygon_rings(coords: Any) -> list[Sequence[Sequence[float]]]:
-    """Return the exterior ring of a non-empty Polygon."""
-    return [coords[0]] if coords else []
-
-
-def _multipolygon_rings(coords: Any) -> list[Sequence[Sequence[float]]]:
-    """Return exterior rings of all non-empty MultiPolygon members."""
-    if not coords:
-        return []
-    return [polygon[0] for polygon in coords if polygon]
 
 
 def init_axes(ax: Any, *, equal_aspect: bool = True) -> None:
