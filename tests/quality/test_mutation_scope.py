@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import NoReturn
 
 import mutmut.configuration
 import pytest
@@ -11,6 +12,16 @@ import pytest
 from scripts.quality import mutation_scope
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+
+
+class _WorkerExit(Exception):
+    def __init__(self, exit_code: int) -> None:
+        super().__init__(exit_code)
+        self.exit_code = exit_code
+
+
+def _raise_worker_exit(exit_code: int) -> NoReturn:
+    raise _WorkerExit(exit_code)
 
 
 def _touch(root: Path, relative: str) -> None:
@@ -184,7 +195,7 @@ def test_load_scope_reports_missing_configuration(tmp_path: Path) -> None:
         mutation_scope.load_scope(tmp_path / "missing.toml", root=tmp_path)
 
 
-def test_run_mutation_validates_before_cleaning_and_running(
+def test_run_mutation_validates_before_cleaning_and_running_in_a_child_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     scope = mutation_scope.MutationScope(("src/example.py",), ("tests/test_example.py",))
@@ -201,21 +212,152 @@ def test_run_mutation_validates_before_cleaning_and_running(
         lambda path, ignore_errors: calls.append(("remove", path, ignore_errors)),
     )
     monkeypatch.setattr(
-        mutation_scope,
-        "configure_mutmut",
-        lambda current, root: calls.append(("configure", current, root)),
+        mutation_scope.subprocess,
+        "run",
+        lambda command, **options: (
+            calls.append(("mutmut", command, options)) or subprocess.CompletedProcess(command, 0)
+        ),
     )
     monkeypatch.setattr(
         mutation_scope,
         "mutmut_cli",
-        lambda args, standalone_mode: calls.append(("mutmut", args, standalone_mode)),
+        lambda *args, **kwargs: pytest.fail("mutmut must run in a child process"),
     )
 
     mutation_scope.run_mutation(max_children=3, root=tmp_path)
 
-    assert [call[0] for call in calls] == ["collect", "remove", "configure", "mutmut"]
-    assert calls[-1] == ("mutmut", ["run", "--max-children", "3"], False)
+    assert [call[0] for call in calls] == ["collect", "remove", "mutmut"]
+    assert calls[-1] == (
+        "mutmut",
+        [
+            mutation_scope.sys.executable,
+            str(Path(mutation_scope.__file__).resolve()),
+            "_mutmut-worker",
+            "--max-children",
+            "3",
+        ],
+        {"cwd": tmp_path, "check": False},
+    )
     assert "Validated 1 mutation sources and 1 test selectors" in capsys.readouterr().out
+
+
+def test_mutmut_worker_exits_after_cli_returns_with_a_live_thread() -> None:
+    script = "\n".join(
+        [
+            "from threading import Event, Thread",
+            "from scripts.quality import mutation_scope",
+            "mutation_scope.mutmut_cli = lambda *args, **kwargs: Thread(",
+            "    target=Event().wait, daemon=False).start()",
+            "mutation_scope._run_mutmut_cli(['run'])",
+        ]
+    )
+
+    result = subprocess.run(
+        [mutation_scope.sys.executable, "-c", script],
+        cwd=REPOSITORY,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("failure", "exit_code"),
+    [(SystemExit(7), 7), (KeyboardInterrupt(), 130), (RuntimeError("worker failed"), 1)],
+)
+def test_mutmut_cli_exits_the_worker_with_its_status(
+    failure: BaseException,
+    exit_code: int,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(mutation_scope, "mutmut_cli", fail)
+
+    with pytest.raises(_WorkerExit) as captured:
+        mutation_scope._run_mutmut_cli(["run"], exit_process=_raise_worker_exit)
+
+    assert captured.value.exit_code == exit_code
+    if isinstance(failure, RuntimeError):
+        assert "RuntimeError: worker failed" in capsys.readouterr().err
+
+
+def test_mutmut_worker_runs_a_small_real_scope(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.mutmut.source_to_tests]\n"src/tiny.py" = ["tests/test_tiny.py"]\n\n'
+        '[tool.pytest.ini_options]\npythonpath = ["src"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src/tiny.py").write_text(
+        "def increment(value: int) -> int:\n    return value + 1\n", encoding="utf-8"
+    )
+    (tmp_path / "tests/test_tiny.py").write_text(
+        "from tiny import increment\n\n"
+        "def test_increment() -> None:\n    assert increment(1) == 2\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            mutation_scope.sys.executable,
+            str(Path(mutation_scope.__file__).resolve()),
+            "_mutmut-worker",
+            "--max-children",
+            "1",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Running mutation testing" in result.stdout
+
+
+@pytest.mark.parametrize(("code", "expected"), [(None, 0), (7, 7), ("mutation failed", 1)])
+def test_mutmut_worker_preserves_click_exit_codes(
+    code: object, expected: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert mutation_scope._system_exit_code(SystemExit(code)) == expected
+    if isinstance(code, str):
+        assert "mutation failed" in capsys.readouterr().err
+
+
+def test_run_mutmut_in_subprocess_reports_worker_start_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        mutation_scope.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("python unavailable")),
+    )
+
+    with pytest.raises(mutation_scope.MutationScopeError, match="Could not start mutmut worker"):
+        mutation_scope._run_mutmut_in_subprocess(max_children=2, root=tmp_path)
+
+
+def test_run_mutmut_in_subprocess_reports_worker_exit_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        mutation_scope.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 7),
+    )
+
+    with pytest.raises(
+        mutation_scope.MutationScopeError, match=r"worker process failed \(exit 7\)"
+    ):
+        mutation_scope._run_mutmut_in_subprocess(max_children=2, root=tmp_path)
 
 
 def test_run_results_configures_derived_scope_before_call(

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 import tomllib
+import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import mutmut.configuration as mutmut_configuration
 from mutmut.__main__ import cli as mutmut_cli
@@ -142,9 +145,70 @@ def run_mutation(*, max_children: int, root: Path) -> None:
         f"Validated {len(scope.source_paths)} mutation sources and {len(scope.test_selectors)} test selectors"
     )
     shutil.rmtree(root / "mutants", ignore_errors=True)
-    configure_mutmut(scope, root=root)
+    _run_mutmut_in_subprocess(max_children=max_children, root=root)
 
-    mutmut_cli(["run", "--max-children", str(max_children)], standalone_mode=False)
+
+def _run_mutmut_in_subprocess(*, max_children: int, root: Path) -> None:
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "_mutmut-worker",
+        "--max-children",
+        str(max_children),
+    ]
+    try:
+        result = subprocess.run(command, cwd=root, check=False)  # noqa: S603
+    except OSError as error:
+        raise MutationScopeError("Could not start mutmut worker process") from error
+    if result.returncode:
+        raise MutationScopeError(f"mutmut worker process failed (exit {result.returncode})")
+
+
+def _exit_mutmut_worker(
+    exit_code: int, *, exit_process: Callable[[int], NoReturn] = os._exit
+) -> NoReturn:
+    """Flush mutmut output, then exit before Python waits on leftover threads."""
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    finally:
+        exit_process(exit_code)
+
+
+def _system_exit_code(error: SystemExit) -> int:
+    if error.code is None:
+        return 0
+    if isinstance(error.code, int):
+        return error.code
+    print(error.code, file=sys.stderr)
+    return 1
+
+
+def _run_mutmut_cli(
+    arguments: list[str], *, exit_process: Callable[[int], NoReturn] = os._exit
+) -> NoReturn:
+    """Run mutmut in its dedicated worker and exit without interpreter teardown."""
+    exit_code = 0
+    try:
+        mutmut_cli(arguments, standalone_mode=False)
+    except SystemExit as error:
+        exit_code = _system_exit_code(error)
+    except KeyboardInterrupt:
+        exit_code = 130
+    except Exception:  # noqa: BLE001 - exit the worker after reporting its failure
+        traceback.print_exc()
+        exit_code = 1
+    _exit_mutmut_worker(exit_code, exit_process=exit_process)
+
+
+def _run_mutmut_worker_command(arguments: list[str]) -> NoReturn:
+    parser = argparse.ArgumentParser(description="Run mutmut in an isolated worker process")
+    parser.add_argument("--max-children", type=int, required=True)
+    args = parser.parse_args(arguments)
+    root = Path.cwd()
+    scope = load_scope(root / "pyproject.toml", root=root)
+    configure_mutmut(scope, root=root)
+    _run_mutmut_cli(["run", "--max-children", str(args.max_children)])
 
 
 def run_results(arguments: list[str], *, root: Path) -> None:
@@ -157,6 +221,12 @@ def run_results(arguments: list[str], *, root: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run the mutation scope used by the Justfile mutation gate."""
     arguments = sys.argv[1:] if argv is None else argv
+    return _main(arguments)
+
+
+def _main(arguments: list[str]) -> int:
+    if arguments[:1] == ["_mutmut-worker"]:
+        return _run_mutmut_worker_command(arguments[1:])
     if arguments and arguments[0] == "results":
         run_results(arguments[1:], root=Path.cwd())
         return 0
