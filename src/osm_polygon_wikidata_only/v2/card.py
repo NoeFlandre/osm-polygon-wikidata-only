@@ -183,7 +183,6 @@ from osm_polygon_wikidata_only.v2.card_scanning_polygons import (
     load_polygon_index,
     merge_link_sources,
     merge_polygon_sources,
-    osm_polygon_identity,
     parse_source_list,
     polygon_columns,
     polygon_ids_with_link_source,

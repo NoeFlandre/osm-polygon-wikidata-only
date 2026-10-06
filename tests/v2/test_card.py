@@ -607,7 +607,7 @@ def test_osm_polygon_identity_preserves_metric_input_boundaries(
     osm_id: object,
     expected: tuple[str, int] | None,
 ) -> None:
-    assert card.osm_polygon_identity(osm_type, osm_id) == expected
+    assert card_scanning_polygons.osm_polygon_identity(osm_type, osm_id) == expected
 
 
 def test_card_metrics_preserve_rows_when_metric_columns_are_missing(tmp_path: Path) -> None:

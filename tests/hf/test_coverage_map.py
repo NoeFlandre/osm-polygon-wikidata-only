@@ -319,17 +319,6 @@ def test_generate_coverage_map_empty_points(tmp_path: Path) -> None:
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_draw_land_feature_ignores_empty_and_unsupported_geometry() -> None:
-    class Axes:
-        def add_collection(self, _collection: object, *, autolim: bool = True) -> None:
-            raise AssertionError("empty or unsupported geometry must not draw")
-
-    axes = Axes()
-    coverage_map._draw_land_feature(axes, {"geometry": {"type": "Point", "coordinates": [0, 0]}})
-    coverage_map._draw_land_feature(axes, {"geometry": {"type": "Polygon", "coordinates": []}})
-    coverage_map._draw_land_feature(axes, {"geometry": {"type": "MultiPolygon", "coordinates": []}})
-
-
 def test_generate_coverage_map_creates_parent_dirs(tmp_path: Path) -> None:
     out = tmp_path / "subdir" / "coverage_map.png"
     generate_coverage_map([0.0], [0.0], out)

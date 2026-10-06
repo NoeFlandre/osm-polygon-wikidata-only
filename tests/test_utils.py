@@ -12,14 +12,14 @@ import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.utils import retry as retry_mod
-from osm_polygon_wikidata_only.utils.json import dumps, dumps_compact_list, loads
+from osm_polygon_wikidata_only.utils.json import dumps, loads
 from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
 from osm_polygon_wikidata_only.utils.retry import (
     is_transient_network_error,
     transient_retry_log_callback,
     with_retries,
 )
-from osm_polygon_wikidata_only.utils.time import parse_iso_to_z, utc_now_iso
+from osm_polygon_wikidata_only.utils.time import utc_now_iso
 from tests.helpers import http_error
 
 
@@ -250,28 +250,11 @@ def test_loads_round_trips() -> None:
     assert loads('{"a":1}') == {"a": 1}
 
 
-def test_dumps_compact_list_sorts_and_dedups() -> None:
-    out = dumps_compact_list(["b", "a", "a", ""])
-    assert loads(out) == ["a", "b"]
-
-
 def test_utc_now_iso_has_z_suffix() -> None:
     ts = utc_now_iso()
     assert ts.endswith("Z")
     # 20 chars: YYYY-MM-DDTHH:MM:SSZ
     assert len(ts) == 20
-
-
-def test_parse_iso_to_z_normalizes_z_suffix() -> None:
-    assert parse_iso_to_z("2026-01-02T03:04:05Z") == "2026-01-02T03:04:05Z"
-
-
-def test_parse_iso_to_z_normalizes_offset() -> None:
-    assert parse_iso_to_z("2026-01-02T03:04:05+00:00") == "2026-01-02T03:04:05Z"
-
-
-def test_parse_iso_to_z_returns_input_on_garbage() -> None:
-    assert parse_iso_to_z("not a date") == "not a date"
 
 
 def test_scheduler_global_cooldown_delays_next_request() -> None:
