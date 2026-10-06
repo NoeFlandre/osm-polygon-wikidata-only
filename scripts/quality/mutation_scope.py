@@ -31,6 +31,10 @@ def _repository_file(root: Path, relative: object, *, kind: str) -> Path:
     if not isinstance(relative, str):
         raise MutationScopeError(f"Mutation {kind} path must be a string: {relative!r}")
     path = Path(relative)
+    if path.is_absolute() or ".." in path.parts:
+        raise MutationScopeError(
+            f"Mutation {kind} path must be a relative Python file: {relative!r}"
+        )
     repository = root.resolve()
     resolved = (root / path).resolve()
     if not resolved.is_relative_to(repository) or resolved.suffix != ".py":

@@ -80,6 +80,22 @@ def test_scope_rejects_invalid_source_test_pairs(
         mutation_scope.build_scope({source: [selector]}, root=tmp_path)
 
 
+def test_scope_rejects_absolute_and_traversing_paths_that_resolve_inside_repo(
+    tmp_path: Path,
+) -> None:
+    _touch(tmp_path, "src/present.py")
+    _touch(tmp_path, "tests/test_present.py")
+
+    with pytest.raises(mutation_scope.MutationScopeError, match="relative Python file"):
+        mutation_scope.build_scope(
+            {str(tmp_path / "src/present.py"): ["tests/test_present.py"]}, root=tmp_path
+        )
+
+    traversal = f"../{tmp_path.name}/tests/test_present.py"
+    with pytest.raises(mutation_scope.MutationScopeError, match="relative Python file"):
+        mutation_scope.build_scope({"src/present.py": [traversal]}, root=tmp_path)
+
+
 def test_scope_rejects_test_selectors_that_pytest_cannot_collect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
