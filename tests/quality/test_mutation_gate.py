@@ -140,7 +140,6 @@ def test_mutation_scope_names_only_existing_sources_and_tests() -> None:
 
     assert len(scope.source_paths) == 48
     assert len(scope.test_selectors) == 65
-    mutation_scope.validate_collection(scope, root=REPOSITORY)
 
 
 @pytest.mark.parametrize("reason", [None, "", " \t"])

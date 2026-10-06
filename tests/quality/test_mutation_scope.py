@@ -109,6 +109,38 @@ def test_scope_rejects_test_selectors_that_pytest_cannot_collect(
         mutation_scope.validate_collection(scope, root=tmp_path)
 
 
+def test_scope_validates_collection_with_derived_test_selectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scope = mutation_scope.MutationScope(
+        source_paths=("src/present.py",),
+        test_selectors=("tests/test_present.py", "tests/test_other.py::test_case"),
+    )
+    completed = subprocess.CompletedProcess(args=[], returncode=0)
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(
+        mutation_scope.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or completed,
+    )
+
+    mutation_scope.validate_collection(scope, root=tmp_path)
+
+    command, options = calls[0]
+    assert command[1:8] == [
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--no-cov",
+    ]
+    assert command[8:] == list(scope.test_selectors)
+    assert options["cwd"] == tmp_path
+    assert options["check"] is False
+
+
 def test_scope_reports_when_pytest_cannot_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
