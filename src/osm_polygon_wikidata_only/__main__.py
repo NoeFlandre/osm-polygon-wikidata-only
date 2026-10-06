@@ -4,5 +4,5 @@ from __future__ import annotations
 
 from osm_polygon_wikidata_only.cli.app import run
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     raise SystemExit(run())

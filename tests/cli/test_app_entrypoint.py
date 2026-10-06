@@ -65,3 +65,15 @@ def test_python_dash_m_package_entrypoint_renders_help() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "sync-dir" in completed.stdout
+
+
+def test_package_main_module_runs_in_process(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["osm-polygon-wikidata-only", "--help"])
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_module("osm_polygon_wikidata_only", run_name="__main__")
+    assert exit_info.value.code == 0
+    assert "sync-dir" in capsys.readouterr().out
