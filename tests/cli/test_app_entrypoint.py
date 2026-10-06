@@ -52,3 +52,16 @@ def test_python_dash_m_entrypoint_rejects_unknown_command() -> None:
     )
     assert completed.returncode == 2
     assert "invalid choice" in completed.stderr
+
+
+def test_python_dash_m_package_entrypoint_renders_help() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "osm_polygon_wikidata_only", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env={**os.environ, "PYTHONWARNINGS": "ignore"},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "sync-dir" in completed.stdout
