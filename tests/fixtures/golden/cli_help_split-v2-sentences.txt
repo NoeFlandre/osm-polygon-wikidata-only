@@ -15,7 +15,10 @@ options:
  --inference-batch-size INFERENCE_BATCH_SIZE
  --push Push artifacts to Hugging Face
  --commit-message COMMIT_MESSAGE
+ Commit message for the upload
  --upload-threads UPLOAD_THREADS
- --hf-token HF_TOKEN
+ Concurrent Hugging Face upload workers per atomic commit
+ --hf-token HF_TOKEN Hugging Face write token. Defaults to the HF_TOKEN env var or the
+ saved `huggingface-cli login` token.
  --log-level {DEBUG,INFO,WARNING,ERROR}
  --dry-run Use a stub HF client (no network)
