@@ -27,17 +27,23 @@ class MutationScope:
     test_selectors: tuple[str, ...]
 
 
+def _is_safe_repository_python_file(path: Path, resolved: Path, repository: Path) -> bool:
+    """Return whether a relative path resolves to a Python file inside the repository."""
+    return (
+        not path.is_absolute()
+        and ".." not in path.parts
+        and resolved.is_relative_to(repository)
+        and resolved.suffix == ".py"
+    )
+
+
 def _repository_file(root: Path, relative: object, *, kind: str) -> Path:
     if not isinstance(relative, str):
         raise MutationScopeError(f"Mutation {kind} path must be a string: {relative!r}")
     path = Path(relative)
-    if path.is_absolute() or ".." in path.parts:
-        raise MutationScopeError(
-            f"Mutation {kind} path must be a relative Python file: {relative!r}"
-        )
     repository = root.resolve()
     resolved = (root / path).resolve()
-    if not resolved.is_relative_to(repository) or resolved.suffix != ".py":
+    if not _is_safe_repository_python_file(path, resolved, repository):
         raise MutationScopeError(
             f"Mutation {kind} path must be a relative Python file: {relative!r}"
         )
