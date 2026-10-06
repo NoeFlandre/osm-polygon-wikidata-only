@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
+from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pyarrow as pa
@@ -103,12 +104,43 @@ def test_v2_table_shard_counts_omit_empty_buckets() -> None:
     assert language_split_writer._table_shard_counts(inventory, 100_000) == {"fr": 1}
 
 
+def test_v2_table_write_context_is_frozen(tmp_path: Path) -> None:
+    spec = language_table_specs(DatasetContract.V2)[0]
+    shard_counts = {"en": 2}
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=8,
+        shard_counts=shard_counts,
+        expected_schema=spec.schema_factory(),
+    )
+
+    assert context.destination == tmp_path / "destination"
+    assert context.shard_counts == {"en": 2}
+    shard_counts["en"] = 3
+    assert context.shard_counts == {"en": 2}
+    with pytest.raises(TypeError):
+        cast(dict[str, int], context.shard_counts)["en"] = 4
+    with pytest.raises(FrozenInstanceError):
+        setattr(context, "max_rows_per_shard", 9)
+
+
 def test_v2_write_language_indices_respects_existing_shard_capacity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     batch = pa.record_batch([pa.array(["en"] * 8)], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 2},
+        expected_schema=batch.schema,
+    )
+    writer = language_split_writer._LanguageTableWriter(context, batch_size=8)
+    state = writer.state
 
     class FakeWriter:
         def __init__(self) -> None:
@@ -127,26 +159,11 @@ def test_v2_write_language_indices_respects_existing_shard_capacity(
     state.current["en"] = first
     writers = iter((first, second))
 
-    def fake_writer_for_language(*_args: object) -> language_split_models.LanguageShardWriteState:
+    def fake_writer_for_language(_language: str) -> language_split_models.LanguageShardWriteState:
         return next(writers)
 
-    monkeypatch.setattr(language_split_writer, "_writer_for_language", fake_writer_for_language)
-
-    with ExitStack() as stack:
-        language_split_writer._write_language_indices(
-            "en",
-            pa.array(range(8), type=pa.int64()),
-            batch,
-            tmp_path / "destination",
-            tmp_path / "stage",
-            spec,
-            "source",
-            10,
-            {"en": 2},
-            batch.schema,
-            state,
-            stack,
-        )
+    monkeypatch.setattr(writer, "writer_for_language", fake_writer_for_language)
+    writer.write_batch(batch, language_index=0, source_file="source")
 
     # The filled shard is flushed when it closes; the partial one stays buffered
     # until the table finishes, which is what keeps writes large and sequential.
@@ -167,7 +184,15 @@ def test_v2_write_language_indices_advances_offset_across_shards(
 ) -> None:
     batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=2,
+        shard_counts={"en": 2},
+        expected_schema=batch.schema,
+    )
+    writer = language_split_writer._LanguageTableWriter(context, batch_size=3)
 
     class FakeWriter:
         def write_table(self, selected: pa.Table) -> None:
@@ -178,32 +203,17 @@ def test_v2_write_language_indices_advances_offset_across_shards(
 
     first = _shard_state(FakeWriter())
     second = _shard_state(FakeWriter())
-    state.current["en"] = first
+    writer.state.current["en"] = first
     writers = iter((first, second))
 
-    def fake_writer_for_language(*_args: object) -> language_split_models.LanguageShardWriteState:
+    def fake_writer_for_language(_language: str) -> language_split_models.LanguageShardWriteState:
         try:
             return next(writers)
         except StopIteration as error:
             raise AssertionError("offset did not advance across shards") from error
 
-    monkeypatch.setattr(language_split_writer, "_writer_for_language", fake_writer_for_language)
-
-    with ExitStack() as stack:
-        language_split_writer._write_language_indices(
-            "en",
-            pa.array(range(3), type=pa.int64()),
-            batch,
-            tmp_path / "destination",
-            tmp_path / "stage",
-            spec,
-            "source",
-            2,
-            {"en": 2},
-            batch.schema,
-            state,
-            stack,
-        )
+    monkeypatch.setattr(writer, "writer_for_language", fake_writer_for_language)
+    writer.write_batch(batch, language_index=0, source_file="source")
 
     assert first.row_count == 2
     assert second.row_count == 1
@@ -220,7 +230,15 @@ def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
 
 def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 1},
+        expected_schema=spec.schema_factory(),
+    )
+    writer = language_split_writer._LanguageTableWriter(context, batch_size=10)
     observed: dict[str, object] = {}
 
     @contextmanager
@@ -235,26 +253,76 @@ def test_v2_writer_uses_snappy_compression(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(language_split_writer, "atomic_replacement", fake_atomic)
     monkeypatch.setattr(language_split_writer.pq, "ParquetWriter", FakeWriter)
 
-    with ExitStack() as stack:
-        writer = language_split_writer._writer_for_language(
-            "en",
-            tmp_path / "destination",
-            tmp_path / "stage",
-            spec,
-            10,
-            {"en": 1},
-            spec.schema_factory(),
-            state,
-            stack,
-        )
+    with writer._stack:
+        shard = writer.writer_for_language("en")
 
-    assert writer is state.current["en"]
-    assert writer.shard_index == 0
+    assert shard is writer.state.current["en"]
+    assert shard.shard_index == 0
     assert observed["writer"] == (
         tmp_path / "stage" / spec.configuration / "lang-en" / "part-00000-of-00001.parquet",
         spec.schema_factory(),
         "snappy",
     )
+
+
+def test_v2_writer_discards_staged_file_when_source_stream_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    batch = pa.record_batch([pa.array(["en"])], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    root = tmp_path / "root"
+    root.mkdir()
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 1},
+        expected_schema=batch.schema,
+    )
+    inventory = LanguageTableInventory(
+        table=spec.table,
+        configuration=spec.configuration,
+        language_column=spec.language_column,
+        identity_columns=spec.identity_columns,
+        source_files=("source.parquet",),
+        row_count=1,
+        buckets=(),
+    )
+    staged = context.stage_root / spec.configuration / "lang-en" / "part-00000-of-00001.parquet"
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(b"previous staged output")
+    events: list[str] = []
+
+    @contextmanager
+    def fake_open_parquet(_path: Path):
+        yield SimpleNamespace(schema_arrow=batch.schema)
+
+    def failing_batches(_parquet_file: object, *, batch_size: int):
+        assert batch_size == 1
+        yield batch
+        raise RuntimeError("source stream failed")
+
+    class FakeWriter:
+        def write_table(self, selected: pa.Table) -> None:
+            events.append(f"write:{selected.to_pylist()}")
+
+        def close(self) -> None:
+            events.append("close")
+
+    monkeypatch.setattr(language_split_writer, "open_parquet", fake_open_parquet)
+    monkeypatch.setattr(language_split_writer, "iter_record_batches", failing_batches)
+    monkeypatch.setattr(language_split_writer.pq, "ParquetWriter", lambda *_a, **_kw: FakeWriter())
+    writer = language_split_writer._LanguageTableWriter(context, batch_size=1)
+
+    with pytest.raises(RuntimeError, match="source stream failed"):
+        writer.stream_sources(root, inventory)
+
+    final = context.destination / spec.configuration / "lang-en" / staged.name
+    assert events == ["write:[{'language': 'en'}]", "close"]
+    assert staged.read_bytes() == b"previous staged output"
+    assert not final.exists()
+    assert not list(staged.parent.glob(f".{staged.name}.*.tmp"))
 
 
 def test_v2_staging_reuses_an_existing_stage_root(

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -35,33 +38,56 @@ from osm_polygon_wikidata_only.v2.language_split_models import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class TableWriteContext:
+    """Immutable configuration shared by every shard in one table write."""
+
+    destination: Path
+    stage_root: Path
+    spec: LanguageTableSpec
+    max_rows_per_shard: int
+    shard_counts: Mapping[str, int]
+    expected_schema: pa.Schema
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "shard_counts", MappingProxyType(dict(self.shard_counts)))
+
+    @classmethod
+    def for_inventory(
+        cls,
+        destination: Path,
+        stage_root: Path,
+        spec: LanguageTableSpec,
+        table_inventory: LanguageTableInventory,
+        max_rows_per_shard: int,
+    ) -> TableWriteContext:
+        """Build the per-table settings once, before opening staged writers."""
+        expected_schema = spec.schema_factory()
+        shard_counts = _table_shard_counts(table_inventory, max_rows_per_shard)
+        return cls(
+            destination=destination,
+            stage_root=stage_root,
+            spec=spec,
+            max_rows_per_shard=max_rows_per_shard,
+            shard_counts=shard_counts,
+            expected_schema=expected_schema,
+        )
+
+
 def write_table(
     root: Path,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
+    context: TableWriteContext,
     table_inventory: LanguageTableInventory,
     batch_size: int,
-    max_rows_per_shard: int,
 ) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
-    expected_schema = spec.schema_factory()
-    shard_counts = _table_shard_counts(table_inventory, max_rows_per_shard)
-    state = LanguageTableWriteState({}, defaultdict(int), [], {})
-    _stream_table_sources(
-        root,
-        destination,
-        stage_root,
-        spec,
-        table_inventory,
-        batch_size,
-        max_rows_per_shard,
-        shard_counts,
-        expected_schema,
-        state,
-    )
+    writer = _LanguageTableWriter(context, batch_size)
+    writer.stream_sources(root, table_inventory)
 
-    files = [_validated_output_file(root, spec, shard, expected_schema) for shard in state.shards]
-    return files, state.staged_paths
+    files = [
+        _validated_output_file(root, context.spec, shard, context.expected_schema)
+        for shard in writer.state.shards
+    ]
+    return files, writer.state.staged_paths
 
 
 def _table_shard_counts(
@@ -72,69 +98,6 @@ def _table_shard_counts(
         if bucket.row_count > 0:
             shard_counts[bucket.language] = _shard_count(bucket.row_count, max_rows_per_shard)
     return shard_counts
-
-
-def _stream_table_sources(
-    root: Path,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
-    table_inventory: LanguageTableInventory,
-    batch_size: int,
-    max_rows_per_shard: int,
-    shard_counts: dict[str, int],
-    expected_schema: pa.Schema,
-    state: LanguageTableWriteState,
-) -> None:
-    """Stream all source files for one language-bearing table."""
-    with ExitStack() as stack:
-        try:
-            _stream_source_files(
-                root,
-                destination,
-                stage_root,
-                spec,
-                table_inventory,
-                batch_size,
-                max_rows_per_shard,
-                shard_counts,
-                expected_schema,
-                state,
-                stack,
-            )
-        finally:
-            _close_current_writers(state)
-
-
-def _stream_source_files(
-    root: Path,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
-    table_inventory: LanguageTableInventory,
-    batch_size: int,
-    max_rows_per_shard: int,
-    shard_counts: dict[str, int],
-    expected_schema: pa.Schema,
-    state: LanguageTableWriteState,
-    stack: ExitStack,
-) -> None:
-    for source_file in table_inventory.source_files:
-        source_path = (root / source_file).resolve()
-        _ensure_source_is_under_root(source_path, root)
-        _stream_source_file(
-            source_path,
-            destination,
-            stage_root,
-            spec,
-            source_file,
-            batch_size,
-            max_rows_per_shard,
-            shard_counts,
-            expected_schema,
-            state,
-            stack,
-        )
 
 
 def _close_current_writers(state: LanguageTableWriteState) -> None:
@@ -180,102 +143,91 @@ def _flush_all_shards(state: LanguageTableWriteState) -> None:
         _flush_shard(state, shard)
 
 
-def _stream_source_file(
-    source_path: Path,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
-    source_file: str,
-    batch_size: int,
-    max_rows_per_shard: int,
-    shard_counts: dict[str, int],
-    expected_schema: pa.Schema,
-    state: LanguageTableWriteState,
-    stack: ExitStack,
-) -> None:
-    """Stream one validated source file into its language writers."""
-    with open_parquet(source_path) as parquet_file:
-        language_index = parquet_file.schema_arrow.get_field_index(spec.language_column)
-        for batch in iter_record_batches(parquet_file, batch_size=batch_size):
-            _write_batch(
-                batch,
-                language_index,
-                destination,
-                stage_root,
-                spec,
-                source_file,
-                max_rows_per_shard,
-                shard_counts,
-                expected_schema,
-                state,
-                stack,
+class _LanguageTableWriter:
+    """Own the buffers and staged writers for one language-bearing table."""
+
+    def __init__(self, context: TableWriteContext, batch_size: int) -> None:
+        self.context = context
+        self.batch_size = batch_size
+        self.state = LanguageTableWriteState({}, defaultdict(int), [], {})
+        self._stack = ExitStack()
+
+    def stream_sources(self, root: Path, table_inventory: LanguageTableInventory) -> None:
+        """Stream one table and close its writers before staging contexts exit."""
+        with self._stack:
+            try:
+                for source_file in table_inventory.source_files:
+                    source_path = (root / source_file).resolve()
+                    _ensure_source_is_under_root(source_path, root)
+                    self.stream_source_file(source_path, source_file)
+            finally:
+                _close_current_writers(self.state)
+
+    def stream_source_file(self, source_path: Path, source_file: str) -> None:
+        """Stream one validated source file into this table's language writers."""
+        with open_parquet(source_path) as parquet_file:
+            language_index = parquet_file.schema_arrow.get_field_index(
+                self.context.spec.language_column
             )
+            for batch in iter_record_batches(parquet_file, batch_size=self.batch_size):
+                self.write_batch(batch, language_index, source_file)
 
+    def write_batch(self, batch: pa.RecordBatch, language_index: int, source_file: str) -> None:
+        for language, indices in _partition_batch(batch, language_index).items():
+            self._write_language_indices(language, indices, batch, source_file)
 
-def _write_batch(
-    batch: pa.RecordBatch,
-    language_index: int,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
-    source_file: str,
-    max_rows_per_shard: int,
-    shard_counts: dict[str, int],
-    expected_schema: pa.Schema,
-    state: LanguageTableWriteState,
-    stack: ExitStack,
-) -> None:
-    for language, indices in _partition_batch(batch, language_index).items():
-        _write_language_indices(
+    def _write_language_indices(
+        self,
+        language: str,
+        indices: pa.Array,
+        batch: pa.RecordBatch,
+        source_file: str,
+    ) -> None:
+        offset = 0
+        while offset < len(indices):
+            shard = self.writer_for_language(language)
+            _record_source_file(shard, source_file)
+            available = self.context.max_rows_per_shard - shard.row_count
+            count = min(available, len(indices) - offset)
+            _buffer_rows(self.state, shard, batch.take(indices.slice(offset, count)))
+            shard.row_count += count
+            offset += count
+            _close_full_shard(shard, language, self.context.max_rows_per_shard, self.state)
+
+    def writer_for_language(self, language: str) -> LanguageShardWriteState:
+        current = self.state.current.get(language)
+        if current is not None:
+            return current
+        shard_index = self.state.next_shard_index[language]
+        self.state.next_shard_index[language] += 1
+        final_path = _output_path(
+            self.context.destination,
+            self.context.spec,
             language,
-            indices,
-            batch,
-            destination,
-            stage_root,
-            spec,
-            source_file,
-            max_rows_per_shard,
-            shard_counts,
-            expected_schema,
-            state,
-            stack,
+            shard_index,
+            self.context.shard_counts[language],
         )
-
-
-def _write_language_indices(
-    language: str,
-    indices: pa.Array,
-    batch: pa.RecordBatch,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
-    source_file: str,
-    max_rows_per_shard: int,
-    shard_counts: dict[str, int],
-    expected_schema: pa.Schema,
-    state: LanguageTableWriteState,
-    stack: ExitStack,
-) -> None:
-    offset = 0
-    while offset < len(indices):
-        shard = _writer_for_language(
+        staged_path = _output_path(
+            self.context.stage_root,
+            self.context.spec,
             language,
-            destination,
-            stage_root,
-            spec,
-            max_rows_per_shard,
-            shard_counts,
-            expected_schema,
-            state,
-            stack,
+            shard_index,
+            self.context.shard_counts[language],
         )
-        _record_source_file(shard, source_file)
-        available = max_rows_per_shard - shard.row_count
-        count = min(available, len(indices) - offset)
-        _buffer_rows(state, shard, batch.take(indices.slice(offset, count)))
-        shard.row_count += count
-        offset += count
-        _close_full_shard(shard, language, max_rows_per_shard, state)
+        temporary = self._stack.enter_context(atomic_replacement(staged_path))
+        shard = LanguageShardWriteState(
+            language=language,
+            shard_index=shard_index,
+            writer=pq.ParquetWriter(temporary, self.context.expected_schema, compression="snappy"),
+            final_path=final_path,
+            staged_path=staged_path,
+            row_count=0,
+            source_files=[],
+        )
+        self.state.current[language] = shard
+        self.state.shards.append(shard)
+        self.state.staged_paths[final_path] = staged_path
+        return shard
 
 
 def _record_source_file(shard: LanguageShardWriteState, source_file: str) -> None:
@@ -293,40 +245,6 @@ def _close_full_shard(
         _flush_shard(state, shard)
         shard.writer.close()
         state.current.pop(language)
-
-
-def _writer_for_language(
-    language: str,
-    destination: Path,
-    stage_root: Path,
-    spec: LanguageTableSpec,
-    max_rows_per_shard: int,  # noqa: ARG001 -- writer factory signature kept uniform
-    shard_counts: dict[str, int],
-    expected_schema: pa.Schema,
-    state: LanguageTableWriteState,
-    stack: ExitStack,
-) -> LanguageShardWriteState:
-    current = state.current.get(language)
-    if current is not None:
-        return current
-    shard_index = state.next_shard_index[language]
-    state.next_shard_index[language] += 1
-    final_path = _output_path(destination, spec, language, shard_index, shard_counts[language])
-    staged_path = _output_path(stage_root, spec, language, shard_index, shard_counts[language])
-    temporary = stack.enter_context(atomic_replacement(staged_path))
-    shard = LanguageShardWriteState(
-        language=language,
-        shard_index=shard_index,
-        writer=pq.ParquetWriter(temporary, expected_schema, compression="snappy"),
-        final_path=final_path,
-        staged_path=staged_path,
-        row_count=0,
-        source_files=[],
-    )
-    state.current[language] = shard
-    state.shards.append(shard)
-    state.staged_paths[final_path] = staged_path
-    return shard
 
 
 def _partition_batch(batch: pa.RecordBatch, language_index: int) -> dict[str, pa.Array]:

@@ -138,16 +138,14 @@
       "_stage_v2_files": 2,
       "_validate_conservation": 1,
       "_verify_source_inventory": 1,
-      "_write_table": 2,
-      "_writer_for_language": 2
+      "_write_table": 2
     },
     "v2/test_language_splits_partition_writing.py": {
       "_install_staged_files": 1,
       "_manifest_payload": 1,
       "_stage_v2_files": 1,
       "_validate_conservation": 1,
-      "_verify_source_inventory": 1,
-      "_writer_for_language": 2
+      "_verify_source_inventory": 1
     },
     "v2/test_language_splits_resume_buffers.py": {
       "_write_table": 3
