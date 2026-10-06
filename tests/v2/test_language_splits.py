@@ -7,7 +7,8 @@ import json
 import subprocess
 import sys
 from collections import defaultdict
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -441,7 +442,16 @@ def test_v2_write_batch_routes_rows_to_language_shard(
     """``_write_batch`` routes selected rows to the language's shard writer."""
     batch = pa.record_batch([pa.array(["en", "en"])], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 1},
+        expected_schema=batch.schema,
+    )
+    table_writer = language_split_writer._LanguageTableWriter(context, batch_size=2)
+    state = table_writer.state
     observed: dict[str, object] = {}
 
     class FakeWriter:
@@ -453,31 +463,15 @@ def test_v2_write_batch_routes_rows_to_language_shard(
     state.current["en"] = shard
     state.shards.append(shard)
 
-    def fake_writer_for_language(*args: object) -> language_split_models.LanguageShardWriteState:
-        observed["max_rows_per_shard"] = args[4]
+    def fake_writer_for_language(_language: str) -> language_split_models.LanguageShardWriteState:
         return shard
 
-    monkeypatch.setattr(language_split_writer, "_writer_for_language", fake_writer_for_language)
-
-    with ExitStack() as stack:
-        language_split_writer._write_batch(
-            batch,
-            0,
-            tmp_path / "destination",
-            tmp_path / "stage",
-            spec,
-            "source",
-            10,
-            {"en": 1},
-            batch.schema,
-            state,
-            stack,
-        )
+    monkeypatch.setattr(table_writer, "writer_for_language", fake_writer_for_language)
+    table_writer.write_batch(batch, language_index=0, source_file="source")
 
     # Rows are buffered rather than written per slice, so flush before asserting.
     language_split_writer._flush_shard(state, shard)
     assert observed["rows"] == [{"language": "en"}, {"language": "en"}]
-    assert observed["max_rows_per_shard"] == 10
 
 
 def test_v2_writer_and_resume_helpers_keep_boundary_contracts_explicit(
@@ -571,7 +565,16 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
     """A slice is written once, then the next shard receives only its remainder."""
     batch = pa.record_batch([pa.array(["en"] * 3)], names=["language"])
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 2},
+        expected_schema=batch.schema,
+    )
+    table_writer = language_split_writer._LanguageTableWriter(context, batch_size=3)
+    state = table_writer.state
 
     class FakeWriter:
         def __init__(self) -> None:
@@ -596,22 +599,8 @@ def test_v2_write_indices_observes_capacity_offsets_and_close_boundaries(
         except StopIteration as error:
             raise AssertionError("the writer loop consumed more than two shards") from error
 
-    monkeypatch.setattr(language_split_writer, "_writer_for_language", next_writer)
-    with ExitStack() as stack:
-        language_split_writer._write_language_indices(
-            "en",
-            pa.array([0, 1, 2], type=pa.int64()),
-            batch,
-            tmp_path / "destination",
-            tmp_path / "stage",
-            spec,
-            "source.parquet",
-            10,
-            {"en": 2},
-            batch.schema,
-            state,
-            stack,
-        )
+    monkeypatch.setattr(table_writer, "writer_for_language", next_writer)
+    table_writer.write_batch(batch, language_index=0, source_file="source.parquet")
     language_split_writer._flush_shard(state, second)
 
     assert first.row_count == 10
@@ -662,7 +651,15 @@ def test_v2_writer_increments_shard_indices_after_rotation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = language_table_specs(DatasetContract.V2)[0]
-    state = language_split_models.LanguageTableWriteState({}, defaultdict(int), [], {})
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 3},
+        expected_schema=spec.schema_factory(),
+    )
+    table_writer = language_split_writer._LanguageTableWriter(context, batch_size=10)
     created: list[Path] = []
 
     @contextmanager
@@ -676,23 +673,11 @@ def test_v2_writer_increments_shard_indices_after_rotation(
     monkeypatch.setattr(language_split_writer, "atomic_replacement", fake_atomic)
     monkeypatch.setattr(language_split_writer.pq, "ParquetWriter", FakeWriter)
 
-    with ExitStack() as stack:
+    with table_writer._stack:
         shards = []
         for _ in range(3):
-            shards.append(
-                language_split_writer._writer_for_language(
-                    "en",
-                    tmp_path / "destination",
-                    tmp_path / "stage",
-                    spec,
-                    10,
-                    {"en": 3},
-                    spec.schema_factory(),
-                    state,
-                    stack,
-                )
-            )
-            state.current.pop("en")
+            shards.append(table_writer.writer_for_language("en"))
+            table_writer.state.current.pop("en")
 
     assert [shard.shard_index for shard in shards] == [0, 1, 2]
     assert [path.name for path in created] == [
@@ -831,6 +816,57 @@ def test_v2_split_is_byte_stable_on_repeated_runs(tmp_path: Path) -> None:
     assert second == first
     assert (root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH).read_bytes() == first_manifest
     assert not list((root / "language_splits").rglob("*.tmp"))
+
+
+def test_v2_split_preserves_characterized_release_bytes(tmp_path: Path) -> None:
+    root = _write_v2_fixture(tmp_path)
+
+    build_v2_language_splits(root)
+
+    observed = {
+        path.relative_to(root).as_posix(): sha256(path.read_bytes()).hexdigest()
+        for path in sorted((root / "language_splits").rglob("*.parquet"))
+    }
+    manifest = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
+    observed[manifest.relative_to(root).as_posix()] = sha256(manifest.read_bytes()).hexdigest()
+
+    assert observed == {
+        (
+            "language_splits/polygon_document_links_by_language/"
+            "lang-be-tarask/part-00000-of-00001.parquet"
+        ): "ba55738411bef5500f28c984ba90462650952be9b88e32da9afa319254a9c29a",
+        (
+            "language_splits/polygon_document_links_by_language/lang-de/part-00000-of-00001.parquet"
+        ): "1a6a5a03566b0b860f365c81bd9dddc24bcd6863bb1601b3a1fb83349e618aa1",
+        (
+            "language_splits/polygon_document_links_by_language/lang-fr/part-00000-of-00001.parquet"
+        ): "24a2b54be66bd991ab78fbabfaeb7008a9cf413a08d241a3b9014e71e08e77fb",
+        (
+            "language_splits/polygon_document_links_by_language/"
+            "lang-unknown/part-00000-of-00001.parquet"
+        ): "eeb2af35bae6f0d29870ffbd121642f2c512aeefaab153c370de5024ee4797e9",
+        (
+            "language_splits/wikipedia_documents_by_language/lang-de/part-00000-of-00001.parquet"
+        ): "3c521577ccc93fb40fe63558478d3ce355459a370d096d980919802fef9d3dc7",
+        (
+            "language_splits/wikipedia_documents_by_language/lang-fr/part-00000-of-00001.parquet"
+        ): "c9ab7ba271f835407dddb1104b5836dd02583bb4061ac22b25764bb92e71c6e8",
+        (
+            "language_splits/wikipedia_documents_by_language/"
+            "lang-unknown/part-00000-of-00001.parquet"
+        ): "dc45de81b958ab4104b828f1d7da795d80b4e96f348f8da895228d64b7b57138",
+        (
+            "language_splits/wikipedia_sections_by_language/lang-de/part-00000-of-00001.parquet"
+        ): "c664d856e44b50c6f03bff3508f7686432b87acef49c0d442ba06f1a8750ed8b",
+        (
+            "language_splits/wikipedia_sections_by_language/lang-fr/part-00000-of-00001.parquet"
+        ): "136af3ff212477bd52c7b276b00a69c285e8cd30410ca7373f2ce363f5b09d5c",
+        (
+            "language_splits/wikipedia_sections_by_language/"
+            "lang-unknown/part-00000-of-00001.parquet"
+        ): "237804bd5698fecfe1ea26d6c7b52fd04ecead974fb0cae25e33f8ab34400f52",
+        "manifests/language_splits.json": "875ab5802528e7ffa0119c1166a409d39fc22be432b9fca5015c57a3a7f15f67",
+    }
 
 
 def test_v2_split_removes_obsolete_shards_before_manifest_publication(tmp_path: Path) -> None:

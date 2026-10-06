@@ -51,7 +51,12 @@ from osm_polygon_wikidata_only.v2.language_split_resume import (
 from osm_polygon_wikidata_only.v2.language_split_resume import (
     resume_completed_table as _resume_completed_table,
 )
-from osm_polygon_wikidata_only.v2.language_split_writer import write_table as _write_table
+from osm_polygon_wikidata_only.v2.language_split_writer import (
+    TableWriteContext,
+)
+from osm_polygon_wikidata_only.v2.language_split_writer import (
+    write_table as _write_table,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -235,9 +240,10 @@ def _staged_table(
             "Resuming: reusing %d staged shards for %s", len(completed[0]), spec.table.value
         )
         return completed
-    generated, staged_paths = _write_table(
-        root, destination, stage_root, spec, table_inventory, batch_size, max_rows_per_shard
+    context = TableWriteContext.for_inventory(
+        destination, stage_root, spec, table_inventory, max_rows_per_shard
     )
+    generated, staged_paths = _write_table(root, context, table_inventory, batch_size)
     _record_completed_table(stage_root, spec, table_inventory, generated, staged_paths)
     return generated, staged_paths
 
