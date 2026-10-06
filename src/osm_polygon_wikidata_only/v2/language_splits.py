@@ -8,7 +8,6 @@ own ``language`` value is the only partition key.
 
 from __future__ import annotations
 
-import argparse
 import logging
 import shutil
 from pathlib import Path
@@ -248,17 +247,6 @@ def _staged_table(
     return generated, staged_paths
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the local V2 language split generator."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("processed_root", type=Path)
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    args = parser.parse_args(argv)
-    result = build_v2_language_splits(args.processed_root, batch_size=args.batch_size)
-    print(result.manifest_path)  # noqa: T201 -- script entrypoint writes JSON to stdout
-    return 0
-
-
 __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_MAX_ROWS_PER_SHARD",
@@ -269,9 +257,4 @@ __all__ = [
     "V2LanguageSplitFile",
     "V2LanguageSplitResult",
     "build_v2_language_splits",
-    "main",
 ]
-
-
-if __name__ == "__main__":  # pragma: no cover - exercised through the module command
-    raise SystemExit(main())

@@ -34,14 +34,11 @@ from osm_polygon_wikidata_only.v2 import (
     language_splits,
 )
 from osm_polygon_wikidata_only.v2.language_splits import (
-    DEFAULT_BATCH_SIZE,
     LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
     V2_LANGUAGE_SPLIT_CONTRACT_VERSION,
     V2LanguageSplitError,
     V2LanguageSplitFile,
-    V2LanguageSplitResult,
     build_v2_language_splits,
-    main,
 )
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
@@ -741,42 +738,6 @@ def test_v2_validated_output_checks_schema_and_records_all_metadata(
         row_count=0,
         sha256="digest",
     )
-
-
-def test_v2_main_parses_a_path_and_default_batch_size(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    calls: list[tuple[object, int]] = []
-
-    def fake_build(
-        processed_root: Path,
-        *,
-        output_root: Path | None = None,
-        batch_size: int,
-    ) -> V2LanguageSplitResult:
-        calls.append((processed_root, batch_size))
-        return V2LanguageSplitResult(
-            processed_root=processed_root,
-            output_root=output_root or processed_root / "language_splits",
-            manifest_path=processed_root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH,
-            inventory=cast(LanguageInventory, object()),
-            files=(),
-        )
-
-    monkeypatch.setattr(language_splits, "build_v2_language_splits", fake_build)
-
-    assert main([str(tmp_path)]) == 0
-    assert calls == [(tmp_path, DEFAULT_BATCH_SIZE)]
-    assert capsys.readouterr().out.strip() == str(tmp_path / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH)
-
-
-def test_v2_main_help_describes_the_generator(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit):
-        main(["--help"])
-
-    assert "Bounded, deterministic row-level language partitions" in capsys.readouterr().out
 
 
 def test_v2_split_preserves_sorted_source_and_row_order(tmp_path: Path) -> None:
@@ -1562,17 +1523,6 @@ def test_v2_split_can_be_loaded_with_standard_datasets(tmp_path: Path) -> None:
         "column_names": [field.name for field in wikipedia_document_v2_schema()],
         "document_id": ["doc-fr-a", "doc-fr-z"],
     }
-
-
-def test_v2_split_module_runs_as_a_local_command(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    root = _write_v2_fixture(tmp_path)
-
-    assert main([str(root), "--batch-size", "1"]) == 0
-
-    captured = capsys.readouterr()
-    assert str(root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH) in captured.out
 
 
 def test_v2_completed_table_is_reused_instead_of_rebuilt(tmp_path: Path) -> None:
