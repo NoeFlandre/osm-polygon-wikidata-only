@@ -29,6 +29,7 @@ options:
  --force
  --push Push artifacts to Hugging Face
  --commit-message COMMIT_MESSAGE
+ Commit message for the upload
  --upload-threads UPLOAD_THREADS
  Concurrent Hugging Face upload workers per atomic commit
  --hf-token HF_TOKEN Hugging Face write token. Defaults to the HF_TOKEN env var or the
