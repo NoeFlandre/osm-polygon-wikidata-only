@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +19,7 @@ from osm_polygon_wikidata_only.config.defaults import (
     DEFAULT_WALLTIME,
     V2_REPO_ID,
 )
+from osm_polygon_wikidata_only.version import PACKAGE_VERSION
 
 if TYPE_CHECKING:
     from osm_polygon_wikidata_only.config.settings import Settings
@@ -34,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Build a Hugging Face dataset of OSM polygons with Wikidata, Wikipedia, and Wikivoyage."
         ),
     )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {PACKAGE_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
     common = _common_parser()
     _add_process_parsers(sub, common)
@@ -47,7 +46,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-DISTRIBUTION = "osm-polygon-wikidata-only"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 DEFAULT_ENRICHMENT_BATCH_SIZE = 50
 DEFAULT_ENRICHMENT_SITE_WORKERS = 8
@@ -103,14 +101,6 @@ def add_audit_containment_arguments(parser: argparse.ArgumentParser) -> None:
     """Register containment-audit options without importing its runtime."""
     parser.add_argument("data_root", type=Path, help="Data root containing processed/")
     parser.add_argument("--output", type=Path, help="Write the JSON report here instead of stdout")
-
-
-def package_version() -> str:
-    """Return the installed distribution version, or ``unknown`` without metadata."""
-    try:
-        return distribution_version(DISTRIBUTION)
-    except PackageNotFoundError:
-        return "unknown"
 
 
 def add_enforce_integrity_arguments(parser: argparse.ArgumentParser) -> None:

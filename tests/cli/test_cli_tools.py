@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import argparse
 import re
-from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
 import pytest
 import typer
 
-from osm_polygon_wikidata_only.cli import commands, parser, tools
+from osm_polygon_wikidata_only.cli import commands, tools
 from osm_polygon_wikidata_only.cli.parser import build_parser
 from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID
+from osm_polygon_wikidata_only.version import PACKAGE_VERSION
 
 README = Path(__file__).resolve().parents[2] / "README.md"
 CLI_REFERENCE = README.parent / "docs/cli-reference.md"
@@ -25,17 +25,7 @@ def test_version_prints_package_version_and_exits_zero(
     with pytest.raises(SystemExit) as exc:
         commands.main(["--version"])
     assert exc.value.code == 0
-    assert capsys.readouterr().out.strip() == (
-        f"osm-polygon-wikidata-only {parser.package_version()}"
-    )
-
-
-def test_package_version_without_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
-    def missing(name: str) -> str:
-        raise PackageNotFoundError(name)
-
-    monkeypatch.setattr(parser, "distribution_version", missing)
-    assert parser.package_version() == "unknown"
+    assert capsys.readouterr().out.strip() == (f"osm-polygon-wikidata-only {PACKAGE_VERSION}")
 
 
 def test_enforce_integrity_subcommand_reuses_the_standalone_implementation(

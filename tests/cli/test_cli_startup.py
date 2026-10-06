@@ -111,6 +111,17 @@ def test_app_version_shortcut_reports_the_shared_package_version(
     assert capsys.readouterr().out == f"osm-polygon-wikidata-only {__version__}\n"
 
 
+def test_app_run_accepts_an_explicit_argv(capsys: pytest.CaptureFixture[str]) -> None:
+    from osm_polygon_wikidata_only.cli.app import run
+    from osm_polygon_wikidata_only.version import PACKAGE_VERSION
+
+    with pytest.raises(SystemExit) as exit_info:
+        run(["--version"])
+
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == f"osm-polygon-wikidata-only {PACKAGE_VERSION}\n"
+
+
 def test_app_dispatches_tool_and_regular_command_statuses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
