@@ -18,7 +18,6 @@ bounded Arrow batches are retained while partition files are written.
 
 from __future__ import annotations
 
-import argparse
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -556,28 +555,6 @@ def _is_partition_path(candidate: Path, relative: Path) -> bool:
     return relative.parts[:1] == (V1_LANGUAGE_DATA_DIR,) and candidate.suffix == ".parquet"
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the V1 generator as a local release command."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--processed-root", type=Path, required=True)
-    parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--manifest-path", type=Path)
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    args = parser.parse_args(argv)
-    release = generate_v1_language_splits(
-        args.processed_root,
-        args.output_root,
-        manifest_path=args.manifest_path,
-        batch_size=args.batch_size,
-    )
-    print(f"Generated {len(release.files)} V1 language files and {release.manifest_path}")  # noqa: T201 -- script entrypoint writes JSON to stdout
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 __all__ = [
     "DEFAULT_BATCH_SIZE",
     "V1_LANGUAGE_DATA_DIR",
@@ -587,5 +564,4 @@ __all__ = [
     "V1LanguageSplitRelease",
     "V1PartitionFile",
     "generate_v1_language_splits",
-    "main",
 ]
