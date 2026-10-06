@@ -30,9 +30,21 @@ _SHA256_CHUNK_SIZE = 1024 * 1024
 _CACHE_CONTRACT_VERSION = "sha256-v1"
 _CACHE_FILENAME = "hash_cache.json"
 
+_SHA256_HEX_LENGTH = 64
+_LOWER_HEX = frozenset("0123456789abcdef")
+
 _Fingerprint = tuple[int, int, int]
 _CACHE: dict[str, tuple[_Fingerprint, str]] = {}
 _CACHE_DIR: Path | None = None
+
+
+def is_sha256_hex(value: object) -> bool:
+    """Return whether *value* is a lowercase 64-character SHA-256 hex digest string."""
+    return (
+        isinstance(value, str)
+        and len(value) == _SHA256_HEX_LENGTH
+        and all(character in _LOWER_HEX for character in value)
+    )
 
 
 def _fingerprint(path: Path) -> _Fingerprint:

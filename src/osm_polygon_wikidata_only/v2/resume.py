@@ -6,25 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
-from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.hashing import is_sha256_hex, sha256_file
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 
 _CACHE_CONTRACT_VERSION = "v2-resume-file-hashes-v1"
-_HASH_LENGTH = 64
 
 
 def _fingerprint(path: Path) -> dict[str, int]:
     return FileStatFingerprint.from_path(path).resume()
-
-
-def _is_valid_digest(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == _HASH_LENGTH
-        and all(character in "0123456789abcdef" for character in value)
-    )
 
 
 def _valid_cache_entry(value: object) -> dict[str, Any] | None:
@@ -33,7 +24,7 @@ def _valid_cache_entry(value: object) -> dict[str, Any] | None:
         return None
     digest = value.get("sha256")
     fingerprint = value.get("fingerprint")
-    if not _is_valid_digest(digest) or not isinstance(fingerprint, dict):
+    if not is_sha256_hex(digest) or not isinstance(fingerprint, dict):
         return None
     return {"fingerprint": fingerprint, "sha256": digest}
 

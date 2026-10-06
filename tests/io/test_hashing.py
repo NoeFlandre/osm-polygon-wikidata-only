@@ -190,3 +190,23 @@ def test_a_malformed_entry_does_not_discard_the_valid_ones(tmp_path: Path) -> No
     hashing.enable_hash_cache(cache_dir)
 
     assert hashing._CACHE == {"/good": ((1, 2, 3), "digest")}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("a" * 64, True),
+        ("0123456789abcdef" * 4, True),
+        ("a" * 63, False),
+        ("a" * 65, False),
+        ("A" * 64, False),
+        ("g" * 64, False),
+        (("a" * 63) + "\n", False),
+        ("", False),
+        (None, False),
+        (b"a" * 64, False),
+        (123, False),
+    ],
+)
+def test_is_sha256_hex_accepts_only_lowercase_64_hex_strings(value: object, expected: bool) -> None:
+    assert hashing.is_sha256_hex(value) is expected
