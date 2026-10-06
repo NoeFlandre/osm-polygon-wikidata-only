@@ -24,6 +24,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 )
 from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.hashing import is_sha256_hex
 from osm_polygon_wikidata_only.io.parquet import write_typed_table
 from osm_polygon_wikidata_only.utils.json import dumps, loads
 
@@ -199,7 +200,7 @@ def _validate_augmentation_stem(stem: str) -> str:
 
 def _validate_plan_key(plan_key: str) -> str:
     """Validate and return a SHA-256 augmentation plan key."""
-    if len(plan_key) != 64 or any(character not in "0123456789abcdef" for character in plan_key):
+    if not is_sha256_hex(plan_key):
         raise ValueError("Invalid augmentation checkpoint plan key")
     return plan_key
 

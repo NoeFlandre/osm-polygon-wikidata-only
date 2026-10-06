@@ -27,7 +27,6 @@ from osm_polygon_wikidata_only.augmentation.existing_results import (
     _augmentation_inputs_exist,
     _core_hashes_are_current,
     _is_valid_core_hash_path,
-    _is_valid_sha256_hash,
     _link_artifacts_are_current,
     augmentation_is_current,
 )
@@ -45,6 +44,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_document_migration import 
     plan_migration,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.io.hashing import is_sha256_hex
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "processed"
 STEM = "monaco-latest"
@@ -289,8 +289,8 @@ def test_core_hash_helpers_validate_hex_and_tree_membership(tmp_path: Path) -> N
     data_root = _seed_data_root(tmp_path)
     polygon = data_root.processed_polygons / f"{STEM}.parquet"
     allowed = {str(polygon)}
-    assert _is_valid_sha256_hash("a" * 64)
-    assert not _is_valid_sha256_hash("g" * 64)
+    assert is_sha256_hex("a" * 64)
+    assert not is_sha256_hex("g" * 64)
     assert _is_valid_core_hash_path(str(polygon), allowed, data_root.processed.resolve())
     assert not _is_valid_core_hash_path(
         str(tmp_path / "outside.parquet"), allowed, data_root.processed.resolve()

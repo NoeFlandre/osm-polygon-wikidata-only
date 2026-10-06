@@ -19,7 +19,7 @@ from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
     wikipedia_document_schema,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.hashing import is_sha256_hex, sha256_file
 
 
 def sidecar_paths(data_root: DataRoot, stem: str) -> tuple[Path, Path, Path, Path, Path]:
@@ -129,9 +129,6 @@ def _hashes_match_files(expected_hashes: dict[str, str], paths: list[Path]) -> b
     return bool(expected_hashes == current)
 
 
-_SHA256_HEX_LENGTH = 64
-
-
 def _is_valid_core_hashes(value: object, data_root: DataRoot, stem: str) -> bool:
     """Return True iff *value* is the exact two-entry hash dict we accept.
 
@@ -183,15 +180,6 @@ def _has_expected_core_hash_keys(
     return sum(key in value for key in (legacy_key, canonical_key)) == 1
 
 
-def _is_valid_sha256_hash(value: object) -> bool:
-    """Return whether a value is a lowercase 64-character SHA-256 hash."""
-    return (
-        isinstance(value, str)
-        and len(value) == _SHA256_HEX_LENGTH
-        and all(ch in "0123456789abcdef" for ch in value)
-    )
-
-
 def _is_valid_core_hash_path(key: str, allowed_keys: set[str], processed_root: Path) -> bool:
     """Return whether a manifest path is allowed and inside ``processed_root``."""
     if key not in allowed_keys:
@@ -213,9 +201,7 @@ def _is_valid_core_hash_entry(
     """Validate one path/hash pair from the core hash map."""
     if not isinstance(key, str):
         return False
-    return _is_valid_sha256_hash(hash_value) and _is_valid_core_hash_path(
-        key, allowed_keys, processed_root
-    )
+    return is_sha256_hex(hash_value) and _is_valid_core_hash_path(key, allowed_keys, processed_root)
 
 
 def read_augmentation_manifest(manifest_path: Path) -> dict[str, Any]:
