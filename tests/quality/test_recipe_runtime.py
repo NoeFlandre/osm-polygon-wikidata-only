@@ -15,6 +15,7 @@ import pytest
 pytestmark = pytest.mark.requires_just
 
 ROOT = Path(__file__).resolve().parents[2]
+CRAP_FLAGS = "--maximum 6 --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3"
 _CACHE_ROUTING_ENV_NAMES = frozenset(
     {
         "TMPDIR",
@@ -158,10 +159,21 @@ def test_mutation_worker_count_is_configurable() -> None:
     default = _run_just("--dry-run", "mutation", env={"MUTMUT_MAX_CHILDREN": None})
     assert default.returncode == 0, default.stderr
     assert '--max-children "2"' in default.stdout + default.stderr
+    assert "scripts/quality/mutation_scope.py" in default.stdout + default.stderr
+    assert "mutation_scope.py results --all=true" in default.stdout + default.stderr
 
     ci = _run_just("--dry-run", "mutation", env={"MUTMUT_MAX_CHILDREN": "4"})
     assert ci.returncode == 0, ci.stderr
     assert '--max-children "4"' in ci.stdout + ci.stderr
+
+
+def test_crap_threshold_flags_have_one_definition_and_apply_to_both_reports() -> None:
+    justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+    result = _run_just("--dry-run", "crap-report")
+
+    assert result.returncode == 0, result.stderr
+    assert justfile.count(CRAP_FLAGS) == 1
+    assert (result.stdout + result.stderr).count(CRAP_FLAGS) == 2
 
 
 def test_crap_recipe_report_includes_a_nested_function(tmp_path: Path) -> None:

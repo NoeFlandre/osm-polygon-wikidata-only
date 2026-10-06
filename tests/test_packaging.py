@@ -293,20 +293,21 @@ def test_crap_all_refreshes_reports_before_running_the_canonical_reporter() -> N
 def test_grid5000_protocol_is_in_the_pure_quality_scopes() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    mutation = config["tool"]["mutmut"]
+    mutation = config["tool"]["mutmut"]["source_to_tests"]
 
     protocol_source = "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py"
     protocol_tests = "tests/grid5000/test_sentence_protocol.py"
     artifact_tests = "tests/grid5000/test_sentence_artifacts.py"
-    assert protocol_source in mutation["source_paths"]
-    assert protocol_tests in mutation["pytest_add_cli_args_test_selection"]
-    assert artifact_tests in mutation["pytest_add_cli_args_test_selection"]
+    assert protocol_source in mutation
+    assert protocol_tests in mutation[protocol_source]
+    assert artifact_tests in mutation[protocol_source]
 
 
 def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    mutation = config["tool"]["mutmut"]
+    mutation = config["tool"]["mutmut"]["source_to_tests"]
+    test_selectors = {selector for selectors in mutation.values() for selector in selectors}
 
     for source_path, test_path in (
         (
@@ -334,29 +335,26 @@ def test_file_boundary_refactors_stay_out_of_mutation_scope() -> None:
         # `crap-atomic` scope instead.
         ("src/osm_polygon_wikidata_only/io/atomic.py", "tests/io/test_atomic.py"),
     ):
-        assert source_path not in mutation["source_paths"]
-        assert test_path not in mutation["pytest_add_cli_args_test_selection"]
+        assert source_path not in mutation
+        assert test_path not in test_selectors
 
 
 def test_upload_retry_policy_is_in_mutation_scope() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    mutation = config["tool"]["mutmut"]
+    mutation = config["tool"]["mutmut"]["source_to_tests"]
 
-    assert "src/osm_polygon_wikidata_only/hf/_upload_retry.py" in mutation["source_paths"]
-    assert (
-        "tests/hf/test_upload_operation_helpers.py"
-        in mutation["pytest_add_cli_args_test_selection"]
-    )
+    source = "src/osm_polygon_wikidata_only/hf/_upload_retry.py"
+    assert source in mutation
+    assert "tests/hf/test_upload_operation_helpers.py" in mutation[source]
 
 
 def test_package_smoke_helpers_are_quality_gated() -> None:
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    mutation = config["tool"]["mutmut"]
+    mutation = config["tool"]["mutmut"]["source_to_tests"]
 
-    assert "scripts/quality/package_smoke.py" in mutation["source_paths"]
-    assert "tests/quality/test_package_smoke.py" in mutation["pytest_add_cli_args_test_selection"]
+    assert "tests/quality/test_package_smoke.py" in mutation["scripts/quality/package_smoke.py"]
 
 
 def _floors(requirements: list[str]) -> dict[str, str]:

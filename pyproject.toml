@@ -151,82 +151,83 @@ fail_under = 90
 [tool.mutmut]
 # Keep exhaustive mutation focused on bounded, offline-testable contracts.
 on_dependency_change = "rerun"
-source_paths = [
-    "src/osm_polygon_wikidata_only/hf/augmentation_publication.py",
-    "src/osm_polygon_wikidata_only/hf/core_publication.py",
-    "src/osm_polygon_wikidata_only/v2/deduplication.py",
-    "src/osm_polygon_wikidata_only/v2/fingerprints.py",
-    "src/osm_polygon_wikidata_only/v2/wikipedia_tags.py",
-    "src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py",
-    "src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py",
-    "src/osm_polygon_wikidata_only/domain/wikidata_qids.py",
-    "src/osm_polygon_wikidata_only/io/pbf_reader.py",
-    "src/osm_polygon_wikidata_only/hf/_upload_state.py",
-    "src/osm_polygon_wikidata_only/hf/_upload_state_files.py",
-    "src/osm_polygon_wikidata_only/hf/_upload_retry.py",
-    "src/osm_polygon_wikidata_only/hf/language_split_release.py",
-    "src/osm_polygon_wikidata_only/cli/run_sync.py",
-    "src/osm_polygon_wikidata_only/cli/sync_runtime.py",
-    "src/osm_polygon_wikidata_only/cli/sync_publication.py",
-    "src/osm_polygon_wikidata_only/pipeline/sync_planning.py",
-    "src/osm_polygon_wikidata_only/pipeline/polygon_fields.py",
-    "src/osm_polygon_wikidata_only/pipeline/sync_reconciliation.py",
-    "src/osm_polygon_wikidata_only/pipeline/link_migration.py",
-    "src/osm_polygon_wikidata_only/pipeline/_link_migration/application.py",
-    "src/osm_polygon_wikidata_only/pipeline/_link_migration/artifacts.py",
-    "src/osm_polygon_wikidata_only/pipeline/_link_migration/conversion.py",
-    "src/osm_polygon_wikidata_only/pipeline/_link_migration/models.py",
-    "src/osm_polygon_wikidata_only/pipeline/_link_migration/planning.py",
-    "src/osm_polygon_wikidata_only/pipeline/_link_migration/transaction.py",
-    "src/osm_polygon_wikidata_only/augmentation/wikipedia_document_migration.py",
-    "src/osm_polygon_wikidata_only/augmentation/_wikipedia_document_migration/application.py",
-    "src/osm_polygon_wikidata_only/augmentation/_wikipedia_document_migration/models.py",
-    "src/osm_polygon_wikidata_only/augmentation/_wikipedia_document_migration/planning.py",
-    "src/osm_polygon_wikidata_only/augmentation/wikidata_facts.py",
-    "src/osm_polygon_wikidata_only/v2/language_splits.py",
-    "src/osm_polygon_wikidata_only/v2/language_split_manifest.py",
-    "src/osm_polygon_wikidata_only/v2/language_split_models.py",
-    "src/osm_polygon_wikidata_only/v2/language_split_resume.py",
-    "src/osm_polygon_wikidata_only/v2/language_split_writer.py",
-    "src/osm_polygon_wikidata_only/v2/sentence_logic.py",
-    "src/osm_polygon_wikidata_only/v2/sat_capabilities.py",
-    "src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py",
-    "src/osm_polygon_wikidata_only/domain/geometry.py",
-    "src/osm_polygon_wikidata_only/domain/ids.py",
-    "src/osm_polygon_wikidata_only/hf/_dataset_stats/summary_codec.py",
-    "src/osm_polygon_wikidata_only/hf/_polygon_geometry/codec.py",
-    "scripts/quality/package_smoke.py",
-    "scripts/quality/qa_gauntlet.py",
-    "scripts/quality/architecture.py",
-    "scripts/quality/bench_compare.py",
-    "scripts/quality/slow_tests.py",
-]
+
 also_copy = ["src/osm_polygon_wikidata_only", "requirements", "assets"]
 mutate_only_covered_lines = true
 # Generated dataclass frames have no filesystem path. Unlimited stack depth
 # also avoids omitting tests that reach validation through several adapters.
 max_stack_depth = -1
 pytest_add_cli_args = ["--no-cov", "-q"]
-pytest_add_cli_args_test_selection = [
-    "tests/quality/test_benchmark_gates.py",
-    "tests/v2/test_deduplication.py",
-    "tests/v2/test_fingerprints.py",
-    "tests/v2/test_wikipedia_tags.py",
+
+[tool.mutmut.source_to_tests]
+"src/osm_polygon_wikidata_only/hf/augmentation_publication.py" = ["tests/hf/test_hf.py"]
+"src/osm_polygon_wikidata_only/hf/core_publication.py" = [
+    "tests/contracts/test_publication.py::test_legacy_core_command_submits_exactly_once",
+]
+"src/osm_polygon_wikidata_only/v2/deduplication.py" = ["tests/v2/test_deduplication.py"]
+"src/osm_polygon_wikidata_only/v2/fingerprints.py" = ["tests/v2/test_fingerprints.py"]
+"src/osm_polygon_wikidata_only/v2/wikipedia_tags.py" = ["tests/v2/test_wikipedia_tags.py"]
+"src/osm_polygon_wikidata_only/enrichment/wikipedia/parsing.py" = [
     "tests/enrichment/test_parsing_quality.py",
     "tests/enrichment/test_enrichment.py",
+]
+"src/osm_polygon_wikidata_only/enrichment/wikidata/parsing.py" = [
+    "tests/enrichment/test_parsing_quality.py",
+    "tests/enrichment/test_enrichment.py",
+]
+"src/osm_polygon_wikidata_only/domain/wikidata_qids.py" = [
     "tests/domain/test_multi_qid_osm_tags.py",
     "tests/domain/test_qid_parser_boundary.py",
+    "tests/test_ids.py",
+]
+"src/osm_polygon_wikidata_only/io/pbf_reader.py" = [
     "tests/io/test_pbf_reader_area_quality.py",
     "tests/io/test_pbf_reader_contracts.py",
+    "tests/v2/test_pbf_reader_scope.py",
+]
+"src/osm_polygon_wikidata_only/hf/_upload_state.py" = [
+    "tests/hf/test_upload_state.py",
     "tests/io/test_upload_queue.py",
     "tests/io/test_upload_queue_legacy_migration.py",
-    "tests/hf/test_hf.py",
+]
+"src/osm_polygon_wikidata_only/hf/_upload_state_files.py" = [
+    "tests/hf/test_upload_state.py",
+    "tests/io/test_upload_queue_legacy_migration.py",
+]
+"src/osm_polygon_wikidata_only/hf/_upload_retry.py" = [
+    "tests/hf/test_upload_operation_helpers.py",
+    "tests/io/test_upload_queue.py",
+]
+"src/osm_polygon_wikidata_only/hf/language_split_release.py" = [
     "tests/hf/test_language_split_release.py",
+    "tests/hf/test_hf.py",
+]
+"src/osm_polygon_wikidata_only/cli/run_sync.py" = [
     "tests/cli/test_run_sync_preparation.py",
-    "tests/cli/test_migration_coordination.py",
+    "tests/cli/test_sync_application.py",
+]
+"src/osm_polygon_wikidata_only/cli/sync_runtime.py" = [
     "tests/cli/test_sync_application.py",
     "tests/cli/test_sync_wiring.py",
+    "tests/cli/test_migration_coordination.py",
+]
+"src/osm_polygon_wikidata_only/cli/sync_publication.py" = [
     "tests/cli/test_sync_publication.py",
+    "tests/cli/test_sync_application.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/sync_planning.py" = [
+    "tests/pipeline/test_publish_before_process.py",
+    "tests/contracts/test_sync_runner_decomposition.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/polygon_fields.py" = [
+    "tests/pipeline/test_common_polygon_fields.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/sync_reconciliation.py" = [
+    "tests/pipeline/test_sync_reconciliation.py",
+    "tests/pipeline/test_sync_recovery_integration.py",
+    "tests/contracts/test_sync_runner_decomposition.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/link_migration.py" = [
     "tests/migration/test_crash_restart_lifecycle.py",
     "tests/migration/test_paired_retirement_path_validation.py",
     "tests/migration/test_paired_retirement_validation.py",
@@ -238,9 +239,6 @@ pytest_add_cli_args_test_selection = [
     "tests/migration/test_link_migration_reconstruction.py",
     "tests/migration/test_link_migration_transaction.py",
     "tests/migration/test_link_migration_artifacts.py",
-    "tests/migration/test_wikipedia_document_backfill.py",
-    "tests/augmentation/test_augmentation_split.py",
-    "tests/augmentation/test_augmentation_steps.py",
     "tests/migration/test_link_migration_transaction_edges.py",
     "tests/migration/test_lossless_link_conversion.py",
     "tests/migration/test_manifest_fields_required.py",
@@ -248,29 +246,114 @@ pytest_add_cli_args_test_selection = [
     "tests/migration/test_recovery_transaction_contracts.py",
     "tests/migration/test_single_transaction.py",
     "tests/migration/test_transaction_rollforward.py",
-    "tests/pipeline/test_publish_before_process.py",
-    "tests/pipeline/test_common_polygon_fields.py",
-    "tests/pipeline/test_sync_reconciliation.py",
-    "tests/pipeline/test_sync_recovery_integration.py",
-    "tests/contracts/test_sync_runner_decomposition.py",
-    "tests/quality/test_crap_gate_remaining_coverage.py",
-    "tests/hf/test_upload_operation_helpers.py",
-    "tests/hf/test_upload_state.py",
-    "tests/contracts/test_publication.py::test_legacy_core_command_submits_exactly_once",
+]
+"src/osm_polygon_wikidata_only/pipeline/_link_migration/application.py" = [
+    "tests/cli/test_sync_application.py",
+    "tests/cli/test_migration_coordination.py",
+    "tests/migration/test_crash_restart_lifecycle.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/_link_migration/artifacts.py" = [
+    "tests/migration/test_link_migration_artifacts.py",
+    "tests/migration/test_canonical_parquet_schema.py",
+    "tests/grid5000/test_sentence_artifacts.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/_link_migration/conversion.py" = [
+    "tests/migration/test_lossless_link_conversion.py",
+    "tests/migration/test_per_polygon_qid_membership.py",
+    "tests/migration/test_audit_both_defect_classes.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/_link_migration/models.py" = [
+    "tests/migration/test_canonical_parquet_schema.py",
+    "tests/migration/test_recovery_transaction_contracts.py",
+    "tests/migration/test_paired_retirement_validation.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/_link_migration/planning.py" = [
+    "tests/migration/test_canonical_planning_schema.py",
+    "tests/migration/test_link_migration_planning.py",
+    "tests/migration/test_link_migration_reconstruction.py",
+]
+"src/osm_polygon_wikidata_only/pipeline/_link_migration/transaction.py" = [
+    "tests/migration/test_crash_restart_lifecycle.py",
+    "tests/migration/test_paired_retirement_path_validation.py",
+    "tests/migration/test_paired_retirement_validation.py",
+    "tests/migration/test_manifest_fields_required.py",
+    "tests/migration/test_manifest_atomicity.py",
+    "tests/migration/test_recovery_transaction_contracts.py",
+    "tests/migration/test_link_migration_transaction.py",
+    "tests/migration/test_link_migration_transaction_edges.py",
+    "tests/migration/test_single_transaction.py",
+    "tests/migration/test_transaction_rollforward.py",
+]
+"src/osm_polygon_wikidata_only/augmentation/wikipedia_document_migration.py" = [
+    "tests/augmentation/test_augmentation_split.py",
+    "tests/augmentation/test_augmentation_steps.py",
+    "tests/migration/test_wikipedia_document_backfill.py",
+]
+"src/osm_polygon_wikidata_only/augmentation/_wikipedia_document_migration/application.py" = [
+    "tests/cli/test_sync_application.py",
+    "tests/migration/test_wikipedia_document_backfill.py",
+]
+"src/osm_polygon_wikidata_only/augmentation/_wikipedia_document_migration/models.py" = [
+    "tests/augmentation/test_augmentation_split.py",
+    "tests/migration/test_manifest_fields_required.py",
+]
+"src/osm_polygon_wikidata_only/augmentation/_wikipedia_document_migration/planning.py" = [
+    "tests/augmentation/test_augmentation_steps.py",
+    "tests/migration/test_wikipedia_document_backfill.py",
+]
+"src/osm_polygon_wikidata_only/augmentation/wikidata_facts.py" = [
+    "tests/augmentation/test_augmentation_steps.py",
+    "tests/enrichment/test_enrichment.py",
+    "tests/domain/test_qid_parser_boundary.py",
+]
+"src/osm_polygon_wikidata_only/v2/language_splits.py" = [
     "tests/v2/test_language_splits.py",
     "tests/v2/test_language_splits_partition_writing.py",
     "tests/v2/test_language_splits_resume_buffers.py",
-    "tests/v2/test_pbf_reader_scope.py",
-    "tests/v2/test_sentence_logic.py",
-    "tests/v2/test_sat_capabilities.py",
+]
+"src/osm_polygon_wikidata_only/v2/language_split_manifest.py" = [
+    "tests/v2/test_language_splits.py",
+    "tests/v2/test_language_splits_partition_writing.py",
+    "tests/migration/test_manifest_fields_required.py",
+    "tests/migration/test_manifest_atomicity.py",
+]
+"src/osm_polygon_wikidata_only/v2/language_split_models.py" = [
+    "tests/v2/test_language_splits.py",
+    "tests/v2/test_language_splits_partition_writing.py",
+]
+"src/osm_polygon_wikidata_only/v2/language_split_resume.py" = [
+    "tests/v2/test_language_splits_resume_buffers.py",
+    "tests/v2/test_language_splits_partition_writing.py",
+]
+"src/osm_polygon_wikidata_only/v2/language_split_writer.py" = [
+    "tests/v2/test_language_splits_partition_writing.py",
+    "tests/v2/test_language_splits.py",
+]
+"src/osm_polygon_wikidata_only/v2/sentence_logic.py" = ["tests/v2/test_sentence_logic.py"]
+"src/osm_polygon_wikidata_only/v2/sat_capabilities.py" = ["tests/v2/test_sat_capabilities.py"]
+"src/osm_polygon_wikidata_only/grid5000/sentence_protocol.py" = [
     "tests/grid5000/test_sentence_protocol.py",
     "tests/grid5000/test_sentence_artifacts.py",
+]
+"src/osm_polygon_wikidata_only/domain/geometry.py" = [
     "tests/test_geometry.py",
-    "tests/test_ids.py",
-    "tests/hf/test_summary_codec.py",
     "tests/hf/test_polygon_geometry_codec.py",
-    "tests/quality/test_package_smoke.py",
-    "tests/quality/test_qa_gauntlet.py",
+]
+"src/osm_polygon_wikidata_only/domain/ids.py" = ["tests/test_ids.py"]
+"src/osm_polygon_wikidata_only/hf/_dataset_stats/summary_codec.py" = [
+    "tests/hf/test_summary_codec.py",
+]
+"src/osm_polygon_wikidata_only/hf/_polygon_geometry/codec.py" = [
+    "tests/hf/test_polygon_geometry_codec.py",
+]
+"scripts/quality/package_smoke.py" = ["tests/quality/test_package_smoke.py"]
+"scripts/quality/qa_gauntlet.py" = ["tests/quality/test_qa_gauntlet.py"]
+"scripts/quality/architecture.py" = [
     "tests/quality/test_architecture.py",
     "tests/quality/test_architecture_imports.py",
+]
+"scripts/quality/bench_compare.py" = ["tests/quality/test_benchmark_gates.py"]
+"scripts/quality/slow_tests.py" = [
+    "tests/quality/test_benchmark_gates.py",
+    "tests/quality/test_crap_gate_remaining_coverage.py",
 ]

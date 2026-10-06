@@ -12,6 +12,7 @@ export HYPOTHESIS_STORAGE_DIRECTORY := absolute_path(env_var_or_default("HYPOTHE
 export MPLCONFIGDIR := absolute_path(env_var_or_default("MPLCONFIGDIR", QUALITY_CACHE_DIR + "/matplotlib"))
 export UV_PYTHON_INSTALL_DIR := absolute_path(env_var_or_default("UV_PYTHON_INSTALL_DIR", QUALITY_CACHE_DIR + "/python"))
 COVERAGE_FLOOR_EXEMPTIONS := ""
+CRAP_FLAGS := "--maximum 6 --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3"
 MUTMUT_MAX_CHILDREN := env_var_or_default("MUTMUT_MAX_CHILDREN", "2")
 
 default:
@@ -109,9 +110,9 @@ crap-report: quality-runtime
     @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
     @test -s "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" || { echo "Run just preprocessing-check first to generate preprocessing coverage." >&2; exit 1; }
     uv run python -m radon cc --show-closures -j src scripts > "{{ QUALITY_REPORT_DIR }}/complexity.json"
-    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/complexity.json" --maximum 6 --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3
+    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/complexity.json" {{ CRAP_FLAGS }}
     cd preprocessing && uv run --project .. python -m radon cc --show-closures -j src > "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json"
-    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json" --maximum 6 --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3
+    uv run python scripts/quality/crap_score.py --coverage "{{ QUALITY_REPORT_DIR }}/preprocessing-coverage.json" --complexity "{{ QUALITY_REPORT_DIR }}/preprocessing-complexity.json" {{ CRAP_FLAGS }}
 
 # Standalone CRAP runs refresh both coverage reports before reporting.
 crap-all: quality-runtime
@@ -133,17 +134,12 @@ crap-inventory: crap-all
 crap-atomic: crap-all
 crap-preprocessing: crap-all
 
-# Run mutmut with two workers to keep peak Mac memory bounded. The explicit
-# source scope contains deterministic helpers, quality tooling, and offline
-# publication orchestration contracts. The gate refuses unreviewed survivors,
-# timeouts, and untested mutants; equivalents need exact source-bound reviews.
+# Validate the source-to-test mapping and pytest collection before mutmut runs.
+# The gate refuses unreviewed survivors, timeouts, and untested mutants;
+# equivalents need exact source-bound reviews.
 mutation:
-    # Regenerate the mutant tree from scratch. Reusing incremental mutmut state
-    # after a source edit was observed to under-generate the mutant population
-    # (2801 instead of 3038 mutants), which silently weakens the gate.
-    rm -rf mutants
-    uv run python -m mutmut run --max-children "{{ MUTMUT_MAX_CHILDREN }}"
-    uv run python -m mutmut results --all=true | uv run python -m scripts.quality.mutation_gate --equivalents scripts/quality/mutation_equivalents.json
+    uv run python scripts/quality/mutation_scope.py --max-children "{{ MUTMUT_MAX_CHILDREN }}"
+    uv run python scripts/quality/mutation_scope.py results --all=true | uv run python -m scripts.quality.mutation_gate --equivalents scripts/quality/mutation_equivalents.json
 
 smoke-test: quality-runtime
     uv run osm-polygon-wikidata-only --help
