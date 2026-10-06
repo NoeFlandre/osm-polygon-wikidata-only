@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import NoReturn
@@ -287,40 +288,44 @@ def test_mutmut_cli_exits_the_worker_with_its_status(
         assert "RuntimeError: worker failed" in capsys.readouterr().err
 
 
-def test_mutmut_worker_runs_a_small_real_scope(tmp_path: Path) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "tests").mkdir()
+def test_mutmut_worker_configures_scope_and_invokes_cli(tmp_path: Path) -> None:
+    marker = tmp_path / "worker.json"
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.mutmut.source_to_tests]\n"src/tiny.py" = ["tests/test_tiny.py"]\n\n'
-        '[tool.pytest.ini_options]\npythonpath = ["src"]\n',
-        encoding="utf-8",
+        '[tool.mutmut]\nsource_paths = ["src"]\n', encoding="utf-8"
     )
-    (tmp_path / "src/tiny.py").write_text(
-        "def increment(value: int) -> int:\n    return value + 1\n", encoding="utf-8"
-    )
-    (tmp_path / "tests/test_tiny.py").write_text(
-        "from tiny import increment\n\n"
-        "def test_increment() -> None:\n    assert increment(1) == 2\n",
-        encoding="utf-8",
-    )
-
-    result = subprocess.run(
+    script = "\n".join(
         [
-            mutation_scope.sys.executable,
-            str(Path(mutation_scope.__file__).resolve()),
-            "_mutmut-worker",
-            "--max-children",
-            "1",
-        ],
+            "import json, sys",
+            "from pathlib import Path",
+            "sys.path.insert(0, sys.argv[1])",
+            "import mutmut.configuration as configuration",
+            "from scripts.quality import mutation_scope",
+            "scope = mutation_scope.MutationScope(",
+            "    ('src/tiny.py',), ('tests/test_tiny.py',))",
+            "mutation_scope.load_scope = lambda *args, **kwargs: scope",
+            "mutation_scope.mutmut_cli = lambda args, standalone_mode: Path(",
+            "    sys.argv[2]).write_text(json.dumps((args, standalone_mode,",
+            "    [str(path) for path in configuration.config().source_paths],",
+            "    configuration.config().pytest_add_cli_args_test_selection)))",
+            "mutation_scope.main(['_mutmut-worker', '--max-children', '2'])",
+        ]
+    )
+    result = subprocess.run(
+        [mutation_scope.sys.executable, "-c", script, str(REPOSITORY), str(marker)],
         cwd=tmp_path,
         check=False,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=5,
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Running mutation testing" in result.stdout
+    assert json.loads(marker.read_text(encoding="utf-8")) == [
+        ["run", "--max-children", "2"],
+        False,
+        ["src/tiny.py"],
+        ["tests/test_tiny.py"],
+    ]
 
 
 @pytest.mark.parametrize(("code", "expected"), [(None, 0), (7, 7), ("mutation failed", 1)])
