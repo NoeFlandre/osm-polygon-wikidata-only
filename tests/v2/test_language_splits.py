@@ -52,6 +52,7 @@ from tests.v2.language_splits_support import (
     _resume_inventory,
     _rows,
     _shard,
+    _write_resume_source,
     _write_table,
     _write_v2_fixture,
 )
@@ -615,12 +616,13 @@ def test_v2_staged_table_uses_the_resume_result_and_inventory(
     """A completed table is returned without rebuilding or changing its inputs."""
     spec = language_table_specs(DatasetContract.V2)[0]
     inventory = _resume_inventory()
+    _write_resume_source(tmp_path)
     record = _resume_file_record("language_splits/lang-fr.parquet")
     resumed = ([record], {tmp_path / record.path: tmp_path / "staged.parquet"})
     observed: list[object] = []
 
-    def resume(_stage: Path, _spec: object, table: object):
-        observed.append(table)
+    def resume(_stage: Path, _spec: object, fingerprint: object):
+        observed.append(fingerprint)
         return resumed
 
     monkeypatch.setattr(language_splits, "_resume_completed_table", resume)
@@ -641,7 +643,7 @@ def test_v2_staged_table_uses_the_resume_result_and_inventory(
     )
 
     assert result == resumed
-    assert observed == [inventory]
+    assert observed == [language_split_resume.table_fingerprint(tmp_path, inventory, 10)]
 
 
 def test_v2_writer_increments_shard_indices_after_rotation(
@@ -1535,12 +1537,19 @@ def test_v2_completed_table_is_reused_instead_of_rebuilt(tmp_path: Path) -> None
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
     record = _resume_file_record("language_splits/lang-fr.parquet")
+    _write_resume_source(tmp_path)
 
     language_split_resume.record_completed_table(
-        stage_root, spec, inventory, [record], {final: staged}
+        stage_root,
+        spec,
+        language_split_resume.table_fingerprint(tmp_path, inventory, 10),
+        [record],
+        {final: staged},
     )
 
-    resumed = language_split_resume.resume_completed_table(stage_root, spec, inventory)
+    resumed = language_split_resume.resume_completed_table(
+        stage_root, spec, language_split_resume.table_fingerprint(tmp_path, inventory, 10)
+    )
     assert resumed is not None
     files, staged_paths = resumed
     assert [file.to_dict() for file in files] == [record.to_dict()]
@@ -1555,17 +1564,20 @@ def test_v2_resume_is_rejected_when_the_sources_changed(tmp_path: Path) -> None:
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
+    _write_resume_source(tmp_path)
     language_split_resume.record_completed_table(
         stage_root,
         spec,
-        _resume_inventory(row_count=4),
+        language_split_resume.table_fingerprint(tmp_path, _resume_inventory(row_count=4), 10),
         [_resume_file_record("language_splits/lang-fr.parquet")],
         {final: staged},
     )
 
     assert (
         language_split_resume.resume_completed_table(
-            stage_root, spec, _resume_inventory(row_count=5)
+            stage_root,
+            spec,
+            language_split_resume.table_fingerprint(tmp_path, _resume_inventory(row_count=5), 10),
         )
         is None
     )
@@ -1580,26 +1592,38 @@ def test_v2_resume_is_rejected_when_a_staged_file_disappeared(tmp_path: Path) ->
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
+    _write_resume_source(tmp_path)
     language_split_resume.record_completed_table(
         stage_root,
         spec,
-        inventory,
+        language_split_resume.table_fingerprint(tmp_path, inventory, 10),
         [_resume_file_record("language_splits/lang-fr.parquet")],
         {final: staged},
     )
     staged.unlink()
 
-    assert language_split_resume.resume_completed_table(stage_root, spec, inventory) is None
+    assert (
+        language_split_resume.resume_completed_table(
+            stage_root, spec, language_split_resume.table_fingerprint(tmp_path, inventory, 10)
+        )
+        is None
+    )
 
 
 def test_v2_resume_is_rejected_when_the_marker_is_corrupt(tmp_path: Path) -> None:
     """A truncated or non-JSON marker falls back to rebuilding the table."""
     spec = language_table_specs(DatasetContract.V2)[0]
     stage_root = tmp_path / "stage"
+    _write_resume_source(tmp_path)
     marker = language_split_resume._resume_marker_path(stage_root, spec)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("{not json", encoding="utf-8")
 
     assert (
-        language_split_resume.resume_completed_table(stage_root, spec, _resume_inventory()) is None
+        language_split_resume.resume_completed_table(
+            stage_root,
+            spec,
+            language_split_resume.table_fingerprint(tmp_path, _resume_inventory(), 10),
+        )
+        is None
     )

@@ -210,6 +210,13 @@ def _resume_inventory(row_count: int = 4) -> LanguageTableInventory:
     )
 
 
+def _write_resume_source(source_root: Path) -> None:
+    """Write the source file named by ``_resume_inventory`` so it can be hashed."""
+    path = source_root / "polygon_document_links/a.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"source-v1")
+
+
 def _resume_file_record(path: str) -> V2LanguageSplitFile:
     spec = language_table_specs(DatasetContract.V2)[0]
     return V2LanguageSplitFile(

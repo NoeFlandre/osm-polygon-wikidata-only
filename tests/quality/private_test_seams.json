@@ -150,6 +150,10 @@
     "v2/test_language_splits_resume_buffers.py": {
       "_write_table": 3
     },
+    "v2/test_language_splits_stale_resume.py": {
+      "_install_staged_files": 1,
+      "_write_table": 2
+    },
     "v2/test_reconcile_helpers.py": {
       "_existing_sibling_land": 2
     },

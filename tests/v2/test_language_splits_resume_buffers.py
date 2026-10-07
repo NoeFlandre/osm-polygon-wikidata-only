@@ -29,6 +29,7 @@ from osm_polygon_wikidata_only.v2.language_splits import (
 from tests.v2.language_splits_support import (
     _resume_file_record,
     _resume_inventory,
+    _write_resume_source,
 )
 
 
@@ -196,8 +197,13 @@ def test_v2_staged_table_reuses_a_completed_table_without_writing(
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
     record = _resume_file_record("language_splits/lang-fr.parquet")
+    _write_resume_source(tmp_path)
     language_split_resume.record_completed_table(
-        stage_root, spec, inventory, [record], {final: staged}
+        stage_root,
+        spec,
+        language_split_resume.table_fingerprint(tmp_path, inventory, 10),
+        [record],
+        {final: staged},
     )
 
     def fail(*_args: object) -> None:
@@ -223,10 +229,11 @@ def test_v2_staged_table_rebuilds_when_the_inventory_no_longer_matches(
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
+    _write_resume_source(tmp_path)
     language_split_resume.record_completed_table(
         stage_root,
         spec,
-        _resume_inventory(row_count=4),
+        language_split_resume.table_fingerprint(tmp_path, _resume_inventory(row_count=4), 10),
         [_resume_file_record("language_splits/lang-fr.parquet")],
         {final: staged},
     )
@@ -356,10 +363,11 @@ def test_v2_staged_table_reports_the_resumed_table_and_shard_count(
     staged.parent.mkdir(parents=True, exist_ok=True)
     staged.write_bytes(b"staged")
     final = tmp_path / "language_splits/lang-fr.parquet"
+    _write_resume_source(tmp_path)
     language_split_resume.record_completed_table(
         stage_root,
         spec,
-        inventory,
+        language_split_resume.table_fingerprint(tmp_path, inventory, 10),
         [_resume_file_record("language_splits/lang-fr.parquet")],
         {final: staged},
     )

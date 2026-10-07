@@ -7,6 +7,7 @@ from pathlib import Path
 
 from osm_polygon_wikidata_only.hf.language_splits import LanguageTableInventory, LanguageTableSpec
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json
+from osm_polygon_wikidata_only.io.hashing import sha256_file_uncached
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
 from osm_polygon_wikidata_only.v2.language_split_models import V2LanguageSplitFile
@@ -16,15 +17,33 @@ def _resume_marker_path(stage_root: Path, spec: LanguageTableSpec) -> Path:
     return stage_root / ".resume" / f"{spec.table.value}.json"
 
 
-def _table_fingerprint(table_inventory: LanguageTableInventory) -> str:
-    """Bind a staged table to the exact sources that produced it."""
-    return hashlib.sha256(json_dumps(table_inventory.to_dict()).encode()).hexdigest()
+def table_fingerprint(
+    source_root: Path,
+    table_inventory: LanguageTableInventory,
+    max_rows_per_shard: int,
+) -> str:
+    """Bind a staged table to the exact source bytes and shard layout that produce it.
+
+    Source files are hashed without the stat-keyed digest cache: an edit that
+    keeps size and mtime (same-tick rewrite, restored mtime) must still
+    invalidate the staged shards. Callers compute this before staging, so a
+    source edited mid-run cannot be recorded against shards built from its
+    earlier bytes.
+    """
+    payload = {
+        "inventory": table_inventory.to_dict(),
+        "max_rows_per_shard": max_rows_per_shard,
+        "source_sha256": {
+            name: sha256_file_uncached(source_root / name) for name in table_inventory.source_files
+        },
+    }
+    return hashlib.sha256(json_dumps(payload).encode()).hexdigest()
 
 
 def record_completed_table(
     stage_root: Path,
     spec: LanguageTableSpec,
-    table_inventory: LanguageTableInventory,
+    fingerprint: str,
     files: list[V2LanguageSplitFile],
     staged_paths: dict[Path, Path],
 ) -> None:
@@ -32,7 +51,7 @@ def record_completed_table(
     atomic_write_json(
         _resume_marker_path(stage_root, spec),
         {
-            "fingerprint": _table_fingerprint(table_inventory),
+            "fingerprint": fingerprint,
             "files": [file.to_dict() for file in files],
             "staged_paths": {
                 str(final): str(staged) for final, staged in sorted(staged_paths.items())
@@ -44,17 +63,18 @@ def record_completed_table(
 def resume_completed_table(
     stage_root: Path,
     spec: LanguageTableSpec,
-    table_inventory: LanguageTableInventory,
+    fingerprint: str,
 ) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]] | None:
     """Return a previously staged table, or ``None`` when it must be rebuilt.
 
-    The marker is honoured only when it was written from exactly these sources
-    and every staged file it names is still on disk.
+    The marker is honoured only when it was written from exactly this
+    fingerprint (source bytes and shard size) and every staged file it names is
+    still on disk.
     """
     payload = _resume_payload(stage_root, spec)
     if payload is None:
         return None
-    if payload.get("fingerprint") != _table_fingerprint(table_inventory):
+    if payload.get("fingerprint") != fingerprint:
         return None
     staged_paths = _resume_staged_paths(payload.get("staged_paths"))
     files = _resume_files(payload.get("files"), spec)
