@@ -10,6 +10,7 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     ensure_world_land,
     generate_coverage_map,
     load_centroids_from_parquet,
+    try_ensure_world_land,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_density import (
     generate_geographic_text_density,
@@ -106,11 +107,13 @@ def _resolve_land_context(
         if sibling is not None:
             return sibling, sibling.parent
         return None, None
-    try:
-        return ensure_world_land(land_cache_dir), land_cache_dir
-    except Exception as error:  # noqa: BLE001 -- optional network map context falls back to no continents
-        LOGGER.warning("V2 maps will omit Natural Earth land context: %s", error)
-        return None, land_cache_dir
+    land_path = try_ensure_world_land(
+        land_cache_dir,
+        ensure=ensure_world_land,
+        warn=LOGGER.warning,
+        message="V2 maps will omit Natural Earth land context",
+    )
+    return land_path, land_cache_dir
 
 
 def _existing_sibling_land(processed_v2: Path) -> Path | None:

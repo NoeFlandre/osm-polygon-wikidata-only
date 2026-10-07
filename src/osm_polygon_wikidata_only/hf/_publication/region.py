@@ -17,6 +17,7 @@ from osm_polygon_wikidata_only.hf._publication.artifacts import (
 from osm_polygon_wikidata_only.hf._publication.hooks import PublicationHooks
 from osm_polygon_wikidata_only.hf._publication.models import CorePublicationArtifacts
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
+from osm_polygon_wikidata_only.hf.coverage_map import try_ensure_world_land
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_COVERAGE_MAP_FILE,
     LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
@@ -218,15 +219,11 @@ def _core_land_path(
     world_land_warning: Callable[[str], None] | None,
     hooks: PublicationHooks,
 ) -> Path | None:
-    try:
-        return hooks.ensure_world_land(data_root.cache)
-    # ``ensure_world_land`` performs network I/O and can raise several
-    # exception types; this unified path intentionally falls back to a map
-    # without continents.
-    except Exception:  # noqa: BLE001 -- optional network map context, see comment above
-        if world_land_warning is not None:
-            world_land_warning("Could not fetch world land data; map will omit continents")
-        return None
+    return try_ensure_world_land(
+        data_root.cache,
+        ensure=hooks.ensure_world_land,
+        warn=world_land_warning,
+    )
 
 
 def _text_map_snapshots(
@@ -307,11 +304,12 @@ def _augmentation_only_map_operations(
     hooks: PublicationHooks,
 ) -> list[PublicationOp]:
     text_presence_snapshot = snapshots / "geographic_text_presence.png"
-    try:
-        land_path = hooks.ensure_world_land(data_root.cache)
-    except Exception:  # noqa: BLE001 -- optional network map context falls back to no continents
-        LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
-        land_path = None
+    land_path = try_ensure_world_land(
+        data_root.cache,
+        ensure=hooks.ensure_world_land,
+        warn=LOGGER.warning,
+        message="Could not fetch world land data; combined text map will omit continents",
+    )
     text_presence_snapshot, text_density_snapshot = _text_map_snapshots(
         data_root, snapshots, land_path, hooks
     )
