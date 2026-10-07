@@ -184,6 +184,13 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
             f'--receipt "{receipt}" --stems {stems}'
         )
 
+    def _query_job_status(self, job_id: str) -> tuple[str, int | None]:
+        try:
+            result = self._run_frontend(("oarstat", "-s", "-j", job_id), allow_failure=True)
+        except (OSError, subprocess.SubprocessError):
+            return "unknown", None
+        return parse_job_status(result, job_id=job_id)
+
     def _reconcile_batch(self, batch: BatchDict) -> None:
         job_id = batch.get("oar_job_id")
         if not isinstance(job_id, str) or not job_id:
@@ -191,17 +198,11 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
                 f"Batch {batch['index']} is {batch['state']} without a recorded OAR job ID; refusing duplicate submission"
             )
         while True:
-            try:
-                result = self._run_frontend(("oarstat", "-s", "-j", job_id), allow_failure=True)
-            except (OSError, subprocess.SubprocessError):
-                self._sleep(self.poll_interval_s)
-                continue
-            state, exit_code = parse_job_status(result, job_id=job_id)
-            if state not in TERMINAL_STATES:
-                self._sleep(self.poll_interval_s)
-                continue
-            self._retrieve_batch(batch, state=state, exit_code=exit_code)
-            return
+            state, exit_code = self._query_job_status(job_id)
+            if state in TERMINAL_STATES:
+                self._retrieve_batch(batch, state=state, exit_code=exit_code)
+                return
+            self._sleep(self.poll_interval_s)
 
     def _retrieve_batch(
         self,
