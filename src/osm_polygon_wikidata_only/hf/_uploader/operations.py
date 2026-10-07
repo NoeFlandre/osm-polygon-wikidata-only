@@ -488,16 +488,25 @@ def _build_publication_operations(
     return out, add_paths, delete_paths
 
 
+def _publication_source_path(op: PublicationOp) -> Path:
+    snapshot_path = op.snapshot_path
+    if snapshot_path is not None:
+        if not snapshot_path.is_file():
+            raise UploadError(f"Snapshot file does not exist: {snapshot_path}")
+        return snapshot_path
+    local_path = op.local_path
+    assert local_path is not None
+    if not local_path.exists():
+        raise UploadError(f"Local file does not exist: {local_path}")
+    return local_path
+
+
 def _translate_publication_op(op: PublicationOp, add_cls: Any, delete_cls: Any) -> Any:
     if op.action == "add":
-        source_path = op.snapshot_path if op.snapshot_path is not None else op.local_path
-        assert source_path is not None
-        if op.snapshot_path is not None:
-            if not source_path.is_file():
-                raise UploadError(f"Snapshot file does not exist: {source_path}")
-        elif not source_path.exists():
-            raise UploadError(f"Local file does not exist: {source_path}")
-        return add_cls(path_in_repo=op.path_in_repo, path_or_fileobj=str(source_path))
+        return add_cls(
+            path_in_repo=op.path_in_repo,
+            path_or_fileobj=str(_publication_source_path(op)),
+        )
     if op.action == "delete":
         return delete_cls(path_in_repo=op.path_in_repo)
     raise UploadError(f"Unknown action: {op.action!r}")
