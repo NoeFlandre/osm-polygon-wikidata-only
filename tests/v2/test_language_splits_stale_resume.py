@@ -124,8 +124,11 @@ def test_source_edited_during_staging_is_rebuilt_on_resume(tmp_path: Path) -> No
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(language_splits, "_write_table", write_then_edit)
-        with pytest.raises(V2LanguageSplitError, match="changed during generation"):
+        with pytest.raises(V2LanguageSplitError) as raised:
             build_v2_language_splits(root)
+    assert str(raised.value).startswith(
+        "V2 source artifact fingerprint changed during generation: expected="
+    )
 
     build_v2_language_splits(root)
 

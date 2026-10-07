@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -14,9 +15,12 @@ import pytest
 from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf.language_splits import (
     DatasetContract,
+    LanguageTableInventory,
     language_table_specs,
     normalize_language,
 )
+from osm_polygon_wikidata_only.io.hashing import sha256_file_uncached
+from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.v2 import (
     language_split_models,
     language_split_resume,
@@ -175,6 +179,110 @@ def test_v2_flush_shard_resets_the_buffer_and_is_a_no_op_when_empty() -> None:
 
     language_split_writer._flush_shard(state, shard)
     assert [t.num_rows for t in written] == [4]
+
+
+def _fingerprint_inventory(
+    source_files: tuple[str, ...] = ("polygon_document_links/a.parquet",),
+    row_count: int = 4,
+) -> LanguageTableInventory:
+    spec = language_table_specs(DatasetContract.V2)[0]
+    return LanguageTableInventory(
+        table=spec.table,
+        configuration=spec.configuration,
+        language_column=spec.language_column,
+        identity_columns=spec.identity_columns,
+        source_files=source_files,
+        row_count=row_count,
+        buckets=(),
+    )
+
+
+def _write_fingerprint_source(source_root: Path, name: str, content: bytes) -> None:
+    path = source_root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
+def test_table_fingerprint_is_stable_for_identical_inputs(tmp_path: Path) -> None:
+    _write_fingerprint_source(tmp_path, "polygon_document_links/a.parquet", b"source-v1")
+    inventory = _fingerprint_inventory()
+
+    first = language_split_resume.table_fingerprint(tmp_path, inventory, 10)
+    second = language_split_resume.table_fingerprint(tmp_path, inventory, 10)
+
+    assert first == second
+    assert len(first) == 64
+
+
+def test_table_fingerprint_changes_when_same_size_source_bytes_change(tmp_path: Path) -> None:
+    inventory = _fingerprint_inventory()
+    _write_fingerprint_source(tmp_path, "polygon_document_links/a.parquet", b"source-v1")
+    before = language_split_resume.table_fingerprint(tmp_path, inventory, 10)
+
+    _write_fingerprint_source(tmp_path, "polygon_document_links/a.parquet", b"source-v2")
+
+    assert language_split_resume.table_fingerprint(tmp_path, inventory, 10) != before
+
+
+def test_table_fingerprint_changes_when_max_rows_per_shard_changes(tmp_path: Path) -> None:
+    _write_fingerprint_source(tmp_path, "polygon_document_links/a.parquet", b"source-v1")
+    inventory = _fingerprint_inventory()
+
+    assert language_split_resume.table_fingerprint(
+        tmp_path, inventory, 10
+    ) != language_split_resume.table_fingerprint(tmp_path, inventory, 1)
+
+
+def test_table_fingerprint_changes_when_the_inventory_changes(tmp_path: Path) -> None:
+    _write_fingerprint_source(tmp_path, "polygon_document_links/a.parquet", b"source-v1")
+
+    assert language_split_resume.table_fingerprint(
+        tmp_path, _fingerprint_inventory(row_count=4), 10
+    ) != language_split_resume.table_fingerprint(tmp_path, _fingerprint_inventory(row_count=5), 10)
+
+
+def test_table_fingerprint_covers_every_listed_source_file(tmp_path: Path) -> None:
+    """Editing any one of several sources invalidates the table, not only the first."""
+    names = ("polygon_document_links/a.parquet", "polygon_document_links/b.parquet")
+    _write_fingerprint_source(tmp_path, names[0], b"a-v1")
+    _write_fingerprint_source(tmp_path, names[1], b"b-v1")
+    inventory = _fingerprint_inventory(source_files=names)
+    before = language_split_resume.table_fingerprint(tmp_path, inventory, 10)
+
+    _write_fingerprint_source(tmp_path, names[1], b"b-v2")
+
+    assert language_split_resume.table_fingerprint(tmp_path, inventory, 10) != before
+
+
+def test_table_fingerprint_reads_sources_from_the_given_root(tmp_path: Path) -> None:
+    """The same bytes under the same relative names give the same fingerprint in any root."""
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    for root in (first_root, second_root):
+        _write_fingerprint_source(root, "polygon_document_links/a.parquet", b"source-v1")
+    inventory = _fingerprint_inventory()
+
+    assert language_split_resume.table_fingerprint(
+        first_root, inventory, 10
+    ) == language_split_resume.table_fingerprint(second_root, inventory, 10)
+
+
+def test_table_fingerprint_pins_the_persisted_payload_layout(tmp_path: Path) -> None:
+    """Resume markers persist this digest, so its payload layout is a compatibility contract."""
+    _write_fingerprint_source(tmp_path, "polygon_document_links/a.parquet", b"source-v1")
+    inventory = _fingerprint_inventory()
+    payload = {
+        "inventory": inventory.to_dict(),
+        "max_rows_per_shard": 10,
+        "source_sha256": {
+            "polygon_document_links/a.parquet": sha256_file_uncached(
+                tmp_path / "polygon_document_links/a.parquet"
+            ),
+        },
+    }
+    expected = hashlib.sha256(json_dumps(payload).encode()).hexdigest()
+
+    assert language_split_resume.table_fingerprint(tmp_path, inventory, 10) == expected
 
 
 def test_v2_resume_marker_lives_at_a_stable_path() -> None:
