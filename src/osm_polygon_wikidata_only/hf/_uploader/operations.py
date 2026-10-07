@@ -26,6 +26,8 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from osm_polygon_wikidata_only.utils.retry import is_transient_failure
+
 from .errors import UploadError
 from .http_transport import configure_hf_http_transport
 from .plan import PublicationOp
@@ -160,7 +162,10 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
     message = _sanitize_server_message(server_message)
     if _is_auth_error(status_code, message):
         return _auth_upload_error(repo_id, message)
-    return UploadError(f"Hugging Face upload to {repo_id} failed: {message}")
+    return UploadError(
+        f"Hugging Face upload to {repo_id} failed: {message}",
+        transient=is_transient_failure(error, status_code=status_code),
+    )
 
 
 def _error_details(error: Exception) -> tuple[int | None, str]:

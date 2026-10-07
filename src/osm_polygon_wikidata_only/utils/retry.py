@@ -58,6 +58,15 @@ def _wait_for_retry(delay: float) -> None:
         raise _RetryCancelled
 
 
+def wait_for_retry_or_cancel(delay: float) -> bool:
+    """Sleep up to *delay* seconds; return ``True`` if retries were cancelled.
+
+    Unlike the internal wait used by :func:`with_retries`, this never raises,
+    so callers that run on worker threads can surface their own last failure.
+    """
+    return _RETRY_CANCELLATION.wait(delay)
+
+
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 _TRANSIENT_ERRNOS = frozenset(
     {
@@ -71,6 +80,29 @@ _TRANSIENT_ERRNOS = frozenset(
         errno.ETIMEDOUT,
     }
 )
+
+
+_MAX_CAUSE_DEPTH = 8
+
+
+def is_transient_failure(error: BaseException, *, status_code: int | None = None) -> bool:
+    """Return whether a failed remote call is worth retrying.
+
+    An HTTP status, when the call produced a response, decides on its own.
+    Otherwise the exception and its cause chain are checked for a network outage.
+    """
+    if status_code is not None:
+        return status_code in _TRANSIENT_HTTP_STATUS_CODES
+    return any(is_transient_network_error(cause) for cause in _cause_chain(error))
+
+
+def _cause_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and len(chain) < _MAX_CAUSE_DEPTH:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
 
 
 def is_transient_network_error(error: BaseException) -> bool:
