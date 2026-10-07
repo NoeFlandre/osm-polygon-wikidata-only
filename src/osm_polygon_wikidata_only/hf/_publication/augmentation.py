@@ -11,6 +11,7 @@ from osm_polygon_wikidata_only.hf._publication.artifacts import (
 )
 from osm_polygon_wikidata_only.hf._publication.hooks import PublicationHooks
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp, add_op, delete_op
+from osm_polygon_wikidata_only.hf.coverage_map import try_ensure_world_land
 from osm_polygon_wikidata_only.hf.repo_layout import (
     LEGACY_REMOTE_GEOGRAPHIC_POLYGON_COUNT_FILE,
     LEGACY_REMOTE_GEOGRAPHIC_TEXT_COVERAGE_FILE,
@@ -63,11 +64,12 @@ def assemble_augmentation_upload(
     text_presence_snapshot = (
         snapshots / f"{augmentation.wikipedia_documents_path.stem}-geographic_text_presence.png"
     )
-    try:
-        land_path = hooks.ensure_world_land(data_root.cache)
-    except Exception:  # noqa: BLE001 -- optional network map context falls back to no continents
-        LOGGER.warning("Could not fetch world land data; combined text map will omit continents")
-        land_path = None
+    land_path = try_ensure_world_land(
+        data_root.cache,
+        ensure=hooks.ensure_world_land,
+        warn=LOGGER.warning,
+        message="Could not fetch world land data; combined text map will omit continents",
+    )
     text_snapshot = hooks.load_text_presence(data_root.processed)
     hooks.generate_geographic_text_presence(
         data_root.processed,

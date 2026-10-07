@@ -153,6 +153,7 @@ from osm_polygon_wikidata_only.hf.coverage_map import (
     ensure_world_land,
     generate_coverage_map,
     load_centroids_from_parquet,
+    try_ensure_world_land,
 )
 from osm_polygon_wikidata_only.hf.geographic_text_density import (
     generate_geographic_text_density as _generate_geographic_text_density,
@@ -309,14 +310,9 @@ def refresh_coverage_assets(
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     map_snapshot = snapshots_dir / f"{snapshot_stem}-coverage_map.png"
     lons, lats = load_centroids_from_parquet(data_root.processed_polygons)
-    try:
-        land_path = ensure_world_land(data_root.cache)
-    # Keep the established fallback for missing packaged data or cache I/O:
-    # render without continents and optionally invoke ``world_land_warning``.
-    except Exception:  # noqa: BLE001 -- documented map fallback
-        if world_land_warning is not None:
-            world_land_warning("Could not fetch world land data; map will omit continents")
-        land_path = None
+    land_path = try_ensure_world_land(
+        data_root.cache, ensure=ensure_world_land, warn=world_land_warning
+    )
     generate_coverage_map(lons, lats, map_snapshot, land_geojson_path=land_path)
     snapshot = text_snapshot or _load_text_presence(data_root.processed)
     text_presence_snapshot = snapshots_dir / f"{snapshot_stem}-geographic_text_presence.png"

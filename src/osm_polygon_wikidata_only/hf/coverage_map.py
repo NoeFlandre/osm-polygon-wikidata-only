@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -200,6 +200,28 @@ def _selected_centroid_rows(
         if row_lon is None or row_lat is None:
             continue
         yield float(row_lon), float(row_lat)
+
+
+def try_ensure_world_land(
+    cache_dir: Path,
+    *,
+    ensure: Callable[[Path], Path] | None = None,
+    warn: Callable[[str], None] | None = None,
+    message: str = "Could not fetch world land data; map will omit continents",
+) -> Path | None:
+    """Return the cached world land path, or ``None`` when it is unavailable.
+
+    ``ensure`` defaults to :func:`ensure_world_land` (resolved at call time).
+    Any failure is logged with its cause, then ``message`` is forwarded to the
+    optional ``warn`` callable so callers keep their own fallback reporting.
+    """
+    try:
+        return (ensure or ensure_world_land)(cache_dir)
+    except Exception as error:  # noqa: BLE001 -- optional network map context falls back to no continents
+        LOGGER.warning("World land data unavailable under %s: %r", cache_dir, error)
+        if warn is not None:
+            warn(message)
+        return None
 
 
 def ensure_world_land(cache_dir: Path) -> Path:

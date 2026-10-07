@@ -513,3 +513,38 @@ def test_map_uploaded_alongside_parquet_in_orchestrator_callback(
 
     # The callback fires once per PBF, after processing each one.
     assert callback_invocations == ["a.osm.pbf", "b.osm.pbf"]
+
+
+def test_try_ensure_world_land_returns_path_on_success(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf.coverage_map import try_ensure_world_land
+
+    result = try_ensure_world_land(tmp_path)
+
+    assert result is not None
+    assert result.is_file()
+
+
+def test_try_ensure_world_land_logs_cause_and_warns_on_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from osm_polygon_wikidata_only.hf.coverage_map import try_ensure_world_land
+
+    def failing(_cache: Path) -> Path:
+        raise OSError("disk exploded")
+
+    warnings: list[str] = []
+    with caplog.at_level("WARNING"):
+        result = try_ensure_world_land(tmp_path, ensure=failing, warn=warnings.append, message="m")
+
+    assert result is None
+    assert warnings == ["m"]
+    assert any("disk exploded" in record.getMessage() for record in caplog.records)
+
+
+def test_try_ensure_world_land_without_warn_callable_still_returns_none(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.hf.coverage_map import try_ensure_world_land
+
+    def failing(_cache: Path) -> Path:
+        raise RuntimeError("nope")
+
+    assert try_ensure_world_land(tmp_path, ensure=failing) is None
