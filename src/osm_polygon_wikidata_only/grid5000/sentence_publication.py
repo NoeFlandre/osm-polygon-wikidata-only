@@ -136,7 +136,8 @@ def verify_expected_sentence_files(
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="hf-sentence-verify-", dir=cache_dir) as temporary:
         for local, remote in expected:
-            assert local is not None
+            if local is None:
+                raise ControllerRunError("HF verification received an incomplete publication plan")
             verify_sentence_file(
                 repo_id,
                 local,

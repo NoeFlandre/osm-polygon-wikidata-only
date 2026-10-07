@@ -186,6 +186,11 @@ def test_augmentation_stems_selects_one_region_or_completed_regions(
     assert commands._augmentation_stems("augment-dir", None, data_root) == completed
 
 
+def test_augment_region_without_a_stem_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires a region stem"):
+        commands._augmentation_stems("augment-region", None, DataRoot(tmp_path))
+
+
 def test_load_augmentation_result_skips_a_current_canonical_region(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

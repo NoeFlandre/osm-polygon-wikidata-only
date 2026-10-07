@@ -69,7 +69,8 @@ class SentenceControllerLifecycleMixin(SentenceControllerContext):
 
     def _assert_baseline(self) -> None:
         readme_hash, map_hash = baseline_hashes(self.data_root)
-        assert self._ledger is not None
+        if self._ledger is None:
+            raise ControllerRunError("Run ledger is not loaded")
         if readme_hash != self._ledger["baseline_readme_sha256"]:
             raise ValueError("README baseline hash changed")
         if map_hash != self._ledger["baseline_map_sha256"]:
@@ -99,7 +100,8 @@ class SentenceControllerLifecycleMixin(SentenceControllerContext):
         return result
 
     def _finalize_run(self) -> None:
-        assert self._ledger is not None
+        if self._ledger is None:
+            raise ControllerRunError("Run ledger is not loaded")
         if self._ledger.get("cleanup_state") == "complete":
             return
         self._policy_check()

@@ -105,7 +105,6 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "TID", "PLC0415", "BLE", "ARG", "PLW", "T20", "C4", "PERF", "RET", "PIE", "PTH", "ERA", "C90", "PLR0913", "PGH004"]
 ignore = [
-    "S101",  # asserts are fine in tests
     "S104",  # binding to all interfaces is fine for local-only services
     "S311",  # we don't use random for crypto
     "E501",  # line length is enforced by the formatter
@@ -123,7 +122,7 @@ max-args = 23
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S", "B", "SIM", "PLC0415", "ARG", "T20", "BLE001", "C901", "PERF401"]
-"preprocessing/tests/**/*.py" = ["ARG", "T20", "BLE001", "C901", "PERF401"]
+"preprocessing/tests/**/*.py" = ["S101", "ARG", "T20", "BLE001", "C901", "PERF401"]
 "src/osm_polygon_wikidata_only/cli/**/*.py" = ["T201"]
 "scripts/**/*.py" = ["T201"]
 "preprocessing/scripts/**/*.py" = ["T201"]

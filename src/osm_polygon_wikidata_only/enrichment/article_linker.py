@@ -124,7 +124,8 @@ def _link_entity_articles(
     fetch_full_text: bool,
 ) -> None:
     entity = summary.entity
-    assert entity is not None
+    if entity is None:
+        raise ValueError(f"Cannot link articles without a Wikidata entity: {summary.qid}")
 
     for site, title in sorted(entity.sitelinks.items()):
         language = language_from_site(site)
