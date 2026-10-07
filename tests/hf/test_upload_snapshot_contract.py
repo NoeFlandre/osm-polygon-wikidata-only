@@ -1,5 +1,3 @@
-"""The uploader must honor explicit queue snapshots and preserve other ops."""
-
 from __future__ import annotations
 
 from pathlib import Path

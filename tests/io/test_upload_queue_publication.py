@@ -1,5 +1,3 @@
-"""Integration coverage for queued publication of verified snapshots."""
-
 from __future__ import annotations
 
 import threading
@@ -155,17 +153,19 @@ def test_resumed_upload_uses_snapshot_after_original_is_removed(
     assert hub.remote_content == {"polygons/region.parquet": b"VERSION-1"}
 
 
+@pytest.mark.parametrize("publisher", ["core", "sync"])
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])
 def test_resume_rejects_missing_or_corrupt_snapshot_without_live_file_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    publisher: str,
     damage: str,
 ) -> None:
     canonical = tmp_path / "region.parquet"
     canonical.write_bytes(b"VERSION-2")
     data_root = DataRoot(tmp_path / "data")
     settings = Settings(repo_id="org/dataset", hf_token="test-token")
-    state_dir = data_root.cache / "upload_jobs"
+    state_dir = data_root.cache / ("upload_jobs" if publisher == "core" else "sync_upload_jobs")
 
     def unavailable(*_args: Any) -> None:
         raise RuntimeError("simulated interruption before publication")
@@ -189,10 +189,21 @@ def test_resume_rejects_missing_or_corrupt_snapshot_without_live_file_fallback(
         kwargs["hub"] = hub
         return real_upload_files(repo_id, **kwargs)
 
-    monkeypatch.setattr(core_publication, "upload_files", upload)
-    monkeypatch.setattr(core_publication, "StubHfHub", lambda: hub)
-    options = SimpleNamespace(push=True, dry_run=True, upload_threads=2, commit_message=None)
-    queue = core_publication._build_upload_queue(options, settings, data_root=data_root)
+    if publisher == "core":
+        monkeypatch.setattr(core_publication, "upload_files", upload)
+        monkeypatch.setattr(core_publication, "StubHfHub", lambda: hub)
+        options = SimpleNamespace(push=True, dry_run=True, upload_threads=2, commit_message=None)
+        queue = core_publication._build_upload_queue(options, settings, data_root=data_root)
+    else:
+        monkeypatch.setattr(sync_publication, "upload_files", upload)
+        queue = sync_publication.build_upload_queue(
+            push=True,
+            dry_run=True,
+            settings=settings,
+            data_root=data_root,
+            num_threads=2,
+            _hub=hub,
+        )
     failures = queue.close_and_wait()
 
     assert failures
