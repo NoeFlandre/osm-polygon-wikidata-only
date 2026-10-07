@@ -172,3 +172,42 @@ def test_index_rows_from_table_rejects_boolean_identity_fields() -> None:
 def test_validated_parquet_file_closes_and_reports_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unreadable"):
         validated_parquet_file(tmp_path / "missing.parquet", legacy_articles=False)
+
+
+def test_shard_errors_reraises_value_error_and_wraps_other_errors(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.index_scanning import _shard_errors
+
+    path = tmp_path / "x.parquet"
+    original = ValueError("already specific")
+    with pytest.raises(ValueError, match="already specific") as same, _shard_errors(path):
+        raise original
+    assert same.value is original
+
+    with pytest.raises(
+        ValueError, match=f"V1 document shard is unreadable: {path}: boom"
+    ) as wrapped:
+        with _shard_errors(path):
+            raise OSError("boom")
+    assert isinstance(wrapped.value.__cause__, OSError)
+
+
+def test_unreadable_shard_message_is_consistent_across_entry_points(tmp_path: Path) -> None:
+    bad = tmp_path / "missing.parquet"
+    expected = f"V1 document shard is unreadable: {bad}"
+
+    with pytest.raises(ValueError, match="V1 document shard is unreadable") as read_error:
+        read_rows(bad)
+    with pytest.raises(ValueError, match="V1 document shard is unreadable") as open_error:
+        validated_parquet_file(bad, legacy_articles=False)
+    assert str(read_error.value).startswith(expected)
+    assert str(open_error.value).startswith(expected)
+
+
+def test_scan_row_group_keeps_arrow_value_errors_unwrapped(tmp_path: Path) -> None:
+    from osm_polygon_wikidata_only.v2.index_scanning import scan_index_row_group
+
+    path = tmp_path / "ok.parquet"
+    pq.write_table(_document_table([]), path)
+    with pytest.raises(ValueError, match="row_group_indices") as error:
+        scan_index_row_group(path, legacy_articles=False, row_group=5)
+    assert "unreadable" not in str(error.value)

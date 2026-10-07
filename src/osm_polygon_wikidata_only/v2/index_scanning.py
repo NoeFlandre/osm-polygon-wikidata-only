@@ -7,9 +7,11 @@ the SQLite lifecycle and lookup code in :mod:`v1_index`.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import (
@@ -21,6 +23,17 @@ from osm_polygon_wikidata_only.io.parquet import open_parquet_file as _open_parq
 
 DocumentRow = dict[str, object]
 _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id", "wikidata")
+
+
+@contextmanager
+def _shard_errors(path: Path) -> Iterator[None]:
+    """Re-raise ``ValueError`` unchanged; convert other errors to one message."""
+    try:
+        yield
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
 
 
 def required_int(value: object, field: str) -> int:
@@ -50,15 +63,12 @@ def read_rows(path: Path, *, legacy_articles: bool = False) -> list[DocumentRow]
     return _rows_from_table(table, path, legacy_articles)
 
 
-def _read_table(path: Path) -> Any:
-    try:
-        with _open_parquet_file(path) as parquet_file:
-            return parquet_file.read()
-    except Exception as exc:
-        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+def _read_table(path: Path) -> pa.Table:
+    with _shard_errors(path), _open_parquet_file(path) as parquet_file:
+        return parquet_file.read()
 
 
-def _validate_table_schema(schema: Any, path: Path, legacy_articles: bool) -> None:
+def _validate_table_schema(schema: pa.Schema, path: Path, legacy_articles: bool) -> None:
     expected = article_schema() if legacy_articles else wikipedia_document_schema()
     if schema.equals(expected, check_metadata=True):
         return
@@ -66,13 +76,13 @@ def _validate_table_schema(schema: Any, path: Path, legacy_articles: bool) -> No
     raise ValueError(f"V1 {label} shard has an invalid schema: {path}")
 
 
-def _rows_from_table(table: Any, path: Path, legacy_articles: bool) -> list[DocumentRow]:
+def _rows_from_table(table: pa.Table, path: Path, legacy_articles: bool) -> list[DocumentRow]:
     if legacy_articles:
         return _legacy_rows(table, path)
     return [dict(row) for row in table.to_pylist()]
 
 
-def _legacy_rows(table: Any, path: Path) -> list[DocumentRow]:
+def _legacy_rows(table: pa.Table, path: Path) -> list[DocumentRow]:
     try:
         return [wikipedia_document_from_article_row(row).to_dict() for row in table.to_pylist()]
     except Exception as exc:
@@ -89,15 +99,12 @@ def validated_parquet_file(path: Path, *, legacy_articles: bool) -> pq.ParquetFi
     """Open and schema-check one V1 shard, closing handles on failure."""
     parquet_file: pq.ParquetFile | None = None
     try:
-        parquet_file = pq.ParquetFile(path)
-        _validate_table_schema(parquet_file.schema_arrow, path, legacy_articles)
-        opened = parquet_file
-        parquet_file = None
-        return opened
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
+        with _shard_errors(path):
+            parquet_file = pq.ParquetFile(path)
+            _validate_table_schema(parquet_file.schema_arrow, path, legacy_articles)
+            opened = parquet_file
+            parquet_file = None
+            return opened
     finally:
         if parquet_file is not None:
             parquet_file.close()
@@ -125,7 +132,7 @@ def _read_row_group(
     parquet_file: pq.ParquetFile,
     row_group: int,
     legacy_articles: bool,
-) -> Any:
+) -> pa.Table:
     return parquet_file.read_row_group(row_group, columns=list(_index_columns(legacy_articles)))
 
 
@@ -135,17 +142,13 @@ def _read_index_rows(
     legacy_articles: bool,
     row_group: int,
 ) -> list[tuple[str, str, str, int, int, str, int, int]]:
-    try:
+    with _shard_errors(path):
         table = _read_row_group(parquet_file, row_group, legacy_articles)
         return index_rows_from_table(table, legacy_articles=legacy_articles, row_group=row_group)
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(f"V1 document shard is unreadable: {path}: {exc}") from exc
 
 
 def index_rows_from_table(
-    table: Any,
+    table: pa.Table,
     *,
     legacy_articles: bool,
     row_group: int,
