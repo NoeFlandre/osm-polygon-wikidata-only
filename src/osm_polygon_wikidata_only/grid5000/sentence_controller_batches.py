@@ -192,9 +192,7 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
             )
         while True:
             try:
-                result = self._run_frontend(
-                    ("oarstat", "-s", "-j", job_id), allow_failure=True
-                )
+                result = self._run_frontend(("oarstat", "-s", "-j", job_id), allow_failure=True)
             except (OSError, subprocess.SubprocessError):
                 self._sleep(self.poll_interval_s)
                 continue
