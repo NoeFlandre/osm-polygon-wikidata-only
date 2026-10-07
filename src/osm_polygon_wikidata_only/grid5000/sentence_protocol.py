@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,22 @@ from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
 GRID5000_SENTENCE_CONTRACT_VERSION = "grid5000-sentence-v1"
+
+# Every Hub credential variable that must never reach a child process on the
+# Grid5000 side. This is the single definition: the job environment filter and
+# the remote shell wrapper both derive from it.
+HF_CREDENTIAL_ENV_VARS: tuple[str, ...] = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+
+
+def scrub_hf_credentials(environment: Mapping[str, str]) -> dict[str, str]:
+    """Return a copy of ``environment`` without any Hub credential variable."""
+    return {key: value for key, value in environment.items() if key not in HF_CREDENTIAL_ENV_VARS}
+
+
+def hf_credential_unset_prefix() -> str:
+    """Return the shell prefix ``env -u ...`` that unsets every Hub credential variable."""
+    return "env " + " ".join(f"-u {shlex.quote(name)}" for name in HF_CREDENTIAL_ENV_VARS)
+
 
 _RUN_ID_PATTERN = re.compile(r"[a-z0-9_-]+")
 _CHECKPOINT_BATCH_PATTERN = re.compile(r"batch-(\d{8})\.parquet")

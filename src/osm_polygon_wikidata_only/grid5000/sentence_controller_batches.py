@@ -26,7 +26,7 @@ from .sentence_controller_policy import (
     remote_job_root,
     source_projects,
 )
-from .sentence_protocol import sentence_source_paths
+from .sentence_protocol import hf_credential_unset_prefix, sentence_source_paths
 
 
 class SentenceControllerBatchMixin(SentenceControllerContext):
@@ -159,19 +159,20 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
         uv_python = f"{uv_bootstrap}/bin/python"
         venv_lib = f"{remote_job_root}/code/.venv/lib"
         stems = " ".join(shlex.quote(stem) for stem in batch_stems(batch))
+        scrub = hf_credential_unset_prefix()
         return (
             f'cd "{remote_job_root}/code" && '
             f'if [ ! -x "{uv_bin}" ]; then '
-            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN python3 -m venv "{uv_bootstrap}" && '
-            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN "{uv_python}" -m pip install '
+            f'{scrub} python3 -m venv "{uv_bootstrap}" && '
+            f'{scrub} "{uv_python}" -m pip install '
             f'--disable-pip-version-check --no-input "uv=={GRID5000_UV_VERSION}"; '
             "fi && "
-            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
+            f'{scrub} UV_CACHE_DIR="{uv_cache}" '
             f'"{uv_bin}" sync --frozen --extra sentence-splitting-gpu --no-dev && '
             f'nvidia_libs="$(find "{venv_lib}" -path "*/site-packages/nvidia/*/lib" '
             '-type d -print | paste -sd: -)" && '
             'if [ -z "$nvidia_libs" ]; then echo "CUDA libraries were not installed" >&2; exit 1; fi && '
-            f'env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN UV_CACHE_DIR="{uv_cache}" '
+            f'{scrub} UV_CACHE_DIR="{uv_cache}" '
             'LD_LIBRARY_PATH="$nvidia_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" '
             f'"{uv_bin}" run --no-sync python scripts/grid5000_sentence_job.py '
             f'--data-root "{remote_data}" --model-cache "{model_cache}" '
