@@ -204,6 +204,7 @@ def test_resume_rejects_missing_or_corrupt_snapshot_without_live_file_fallback(
             num_threads=2,
             _hub=hub,
         )
+    assert queue is not None
     failures = queue.close_and_wait()
 
     assert failures
