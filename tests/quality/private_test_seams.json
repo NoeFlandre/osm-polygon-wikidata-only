@@ -30,9 +30,7 @@
       "_download_hf_file": 3,
       "_ensure_remote_namespace": 1,
       "_publish_batch": 1,
-      "_required_executable": 8,
-      "_retrieve_batch": 1,
-      "_run_frontend": 1
+      "_required_executable": 8
     },
     "hf/test_coverage_map.py": {
       "_CENTROID_BATCH_SIZE": 1

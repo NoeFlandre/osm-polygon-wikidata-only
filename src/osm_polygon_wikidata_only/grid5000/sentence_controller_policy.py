@@ -33,13 +33,28 @@ SEGMENTER_VERSION = "2.2.1"
 GRID5000_UV_VERSION = "0.11.16"
 EXOTIC_GRID5000_GPU_MODELS = frozenset({"A100-PCIE-40GB", "A100-SXM4-40GB", "H100 NVL"})
 ACTIVE_STATES = frozenset({"submitted", "running"})
-TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
-SUCCESS_STATES = frozenset({"terminated", "finishing"})
+OAR_STATES = frozenset(
+    {
+        "waiting",
+        "hold",
+        "tolaunch",
+        "toerror",
+        "toackreservation",
+        "launching",
+        "running",
+        "suspended",
+        "resuming",
+        "finishing",
+        "terminated",
+        "error",
+    }
+)
+TERMINAL_STATES = frozenset({"terminated", "error"})
+SUCCESS_STATES = frozenset({"terminated"})
 RETRYABLE_ARTIFACT_FAILURES = frozenset({"missing_receipt", "invalid_receipt"})
 
 _JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECASE)
-_STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
-_EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
+_JOB_STATUS_PATTERN = re.compile(r"(?P<job_id>\d+):[ \t]*(?P<state>[A-Za-z]+)")
 
 
 class BatchDict(TypedDict, total=False):
@@ -272,21 +287,22 @@ def parse_job_id(output: str) -> str:
     return match.group(1)
 
 
-def parse_job_status(result: subprocess.CompletedProcess[str]) -> tuple[str, int | None]:
-    text = f"{result.stdout or ''}\n{result.stderr or ''}"
-    match = _STATE_PATTERN.search(text)
-    state = match.group(1).lower() if match else infer_job_state(text)
-    exit_match = _EXIT_CODE_PATTERN.search(text)
-    exit_code = int(exit_match.group(1)) if exit_match else None
-    return state, exit_code
+def parse_job_status(
+    result: subprocess.CompletedProcess[str],
+    *,
+    job_id: str,
+) -> tuple[str, int | None]:
+    if result.returncode != 0:
+        return "unknown", None
+    match = _JOB_STATUS_PATTERN.fullmatch((result.stdout or "").strip())
+    if match is None or match.group("job_id") != job_id:
+        return "unknown", None
+    return infer_job_state(match.group("state")), None
 
 
 def infer_job_state(text: str) -> str:
-    lowered = text.lower()
-    for state in (*TERMINAL_STATES, "waiting", "launching", "running"):
-        if state in lowered:
-            return state
-    return "unknown"
+    state = text.strip().lower()
+    return state if state in OAR_STATES else "unknown"
 
 
 def remote_job_root(remote_run_root: str, index: int, attempt: int) -> str:
