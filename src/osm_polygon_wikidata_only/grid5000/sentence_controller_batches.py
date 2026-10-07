@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -16,6 +17,7 @@ from .sentence_controller_policy import (
     ACTIVE_STATES,
     EXOTIC_GRID5000_GPU_MODELS,
     GRID5000_UV_VERSION,
+    TERMINAL_STATES,
     BatchDict,
     ControllerRunError,
     batch_stems,
@@ -189,9 +191,15 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
                 f"Batch {batch['index']} is {batch['state']} without a recorded OAR job ID; refusing duplicate submission"
             )
         while True:
-            result = self._run_frontend(("oarstat", "-s", "-j", job_id), allow_failure=True)
-            state, exit_code = parse_job_status(result)
-            if state not in {"terminated", "finishing", "failed", "error", "cancelled"}:
+            try:
+                result = self._run_frontend(
+                    ("oarstat", "-s", "-j", job_id), allow_failure=True
+                )
+            except (OSError, subprocess.SubprocessError):
+                self._sleep(self.poll_interval_s)
+                continue
+            state, exit_code = parse_job_status(result, job_id=job_id)
+            if state not in TERMINAL_STATES:
                 self._sleep(self.poll_interval_s)
                 continue
             self._retrieve_batch(batch, state=state, exit_code=exit_code)
