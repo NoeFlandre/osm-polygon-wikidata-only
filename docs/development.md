@@ -264,7 +264,7 @@ uv run osm-polygon-wikidata-only-audit-remote \
   --data-root "$OSM_POLYGON_DATA_ROOT"
 ```
 
-argparse parses this command. Its options are declared once in `cli/parser.py`, and the `audit-remote` subcommand shares them. Both entry points print the same `--help` text, which the golden file `tests/fixtures/golden/cli_help_audit-remote.txt` freezes. Rich renders the report. tqdm shows the progress only when stderr is interactive. The command is separate from the stable argparse processing CLI. It does not change the dataset output.
+argparse parses this command. Its options are declared once in `add_audit_remote_arguments` in `cli/parser.py`, and both entry points share them. The two entry points do not print the same `--help` text. The standalone command `osm-polygon-wikidata-only-audit-remote` uses that program name and prints `AUDIT_REMOTE_DESCRIPTION` as its description. The subcommand `osm-polygon-wikidata-only audit-remote` uses its own program name and has no description. The golden file `tests/fixtures/golden/cli_help_audit-remote.txt` freezes only the subcommand help, rendered through `build_parser()`. No golden file freezes the standalone help. Rich renders the report. tqdm shows the progress only when stderr is interactive. The command is separate from the stable argparse processing CLI. It does not change the dataset output.
 
 ## Release checklist
 
