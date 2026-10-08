@@ -26,6 +26,7 @@ from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
+from osm_polygon_wikidata_only.pipeline.sync_runner import UploadHooks
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
@@ -139,7 +140,7 @@ class SyncApplication:
         self.context.core_will_be_repaired = self.context.core_will_be_repaired or bool(
             self._recovered_stems
         )
-        self._request_metadata_repair(rc, callbacks["submit_upload"])
+        self._request_metadata_repair(rc, callbacks["uploads"].submit_upload)
         return rc, False
 
     def _runner_callbacks(self) -> dict[str, Any]:
@@ -153,10 +154,12 @@ class SyncApplication:
             "extract_pbf": self.services.extract_pbf,
             "process_extracted_pbf": self.services.process_extracted_pbf,
             "augment_region": self._augment,
-            "build_upload_files": publish_builder,
-            "commit_message": self.services.commit_message,
-            "submit_upload": submit_upload,
-            "close_uploads": None,
+            "uploads": UploadHooks(
+                build_upload_files=publish_builder,
+                commit_message=self.services.commit_message,
+                submit_upload=submit_upload,
+                close_uploads=None,
+            ),
             "load_existing_augmentation": self._load_existing,
             "recover_region": self._recover,
             "on_complete": self._prepare_publication,

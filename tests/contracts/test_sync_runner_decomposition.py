@@ -217,10 +217,12 @@ def test_mixed_plan_executes_in_documented_order(tmp_path: Path) -> None:
         extract_pbf=fake_extract,
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
-        build_upload_files=lambda s, a, c: [(Path(f"{s.stem}.parquet"), f"x/{s.stem}.parquet")],
-        commit_message=lambda s: f"msg:{s.stem}",
-        submit_upload=fake_submit,
-        close_uploads=no_close,
+        uploads=sync_runner_mod.UploadHooks(
+            build_upload_files=lambda s, a, c: [(Path(f"{s.stem}.parquet"), f"x/{s.stem}.parquet")],
+            commit_message=lambda s: f"msg:{s.stem}",
+            submit_upload=fake_submit,
+            close_uploads=no_close,
+        ),
     )
     assert rc == 0
     # Required ordering invariants.
@@ -277,7 +279,7 @@ def test_extraction_failure_prevents_processing_and_later_regions(
             extract_pbf=fake_extract,
             process_extracted_pbf=fake_process,
             augment_region=fake_augment,
-            close_uploads=no_close,
+            uploads=sync_runner_mod.UploadHooks(close_uploads=no_close),
         )
     assert events.count("close") == 1
     assert not any(e.startswith("process:") for e in events)
@@ -325,7 +327,7 @@ def test_processing_exception_propagates_and_queue_still_closes(
             extract_pbf=fake_extract,
             process_extracted_pbf=fake_process,
             augment_region=fake_augment,
-            close_uploads=no_close,
+            uploads=sync_runner_mod.UploadHooks(close_uploads=no_close),
         )
     assert events == ["extract:kaboom", "process:explode", "close"]
 
@@ -385,7 +387,7 @@ def test_backlog_augmentation_exception_propagates_and_queue_still_closes(
             extract_pbf=fake_extract,
             process_extracted_pbf=fake_process,
             augment_region=fake_augment,
-            close_uploads=fake_close,
+            uploads=sync_runner_mod.UploadHooks(close_uploads=fake_close),
         )
     # Extract starts (prefetch) before backlog augment; ``fake_augment`` asserts that
     # ordering deterministically, since the two run on different threads.
@@ -437,7 +439,7 @@ def test_backlog_augmentation_exception_does_not_swallow_upload_failure_log(
             extract_pbf=fake_extract,
             process_extracted_pbf=fake_process,
             augment_region=fake_augment,
-            close_uploads=fake_close,
+            uploads=sync_runner_mod.UploadHooks(close_uploads=fake_close),
         )
     assert events == ["close"]
 
@@ -478,7 +480,7 @@ def test_run_sync_returns_one_only_for_upload_failures(tmp_path: Path) -> None:
         extract_pbf=fake_extract,
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
-        close_uploads=close_failures,
+        uploads=sync_runner_mod.UploadHooks(close_uploads=close_failures),
     )
     assert rc == 1
 
@@ -507,7 +509,7 @@ def test_run_sync_returns_zero_on_clean_close(tmp_path: Path) -> None:
         extract_pbf=fake_extract,
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
-        close_uploads=list,
+        uploads=sync_runner_mod.UploadHooks(close_uploads=list),
     )
     assert rc == 0
 
@@ -561,12 +563,9 @@ def test_no_publication_assembly_when_publish_callbacks_are_none(
         extract_pbf=fake_extract,
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
-        # The runner MUST NOT call these when both are None.
-        # We pass them in only to detect any accidental call by
-        # leaving them as None.
-        build_upload_files=None,
-        submit_upload=None,
-        close_uploads=None,
+        uploads=sync_runner_mod.UploadHooks(
+            build_upload_files=None, submit_upload=None, close_uploads=None
+        ),
     )
     assert rc == 0
     assert publication_calls == []
