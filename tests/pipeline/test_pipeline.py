@@ -15,7 +15,12 @@ import pytest
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.ids import polygon_id
-from osm_polygon_wikidata_only.domain.models import Polygon
+from osm_polygon_wikidata_only.domain.models import (
+    Polygon,
+    PolygonIdentity,
+    PolygonOsmFields,
+    PolygonShape,
+)
 from osm_polygon_wikidata_only.enrichment.wikidata_client import (
     InMemoryWikidataClient,
     WikidataEntity,
@@ -684,26 +689,32 @@ def test_orchestrate_does_not_extract_next_pbf_while_processing_current(
 def test_streaming_stats_aggregates_correctly() -> None:
     stats = StreamingStats()
     poly = Polygon.make(
-        source_pbf_stem="x",
-        region="x",
-        source_pbf="x.osm.pbf",
-        osm_type="way",
-        osm_id=1,
-        wikidata="Q1",
-        name="",
-        tags="{}",
-        tag_keys='["landuse"]',
-        tag_count=1,
-        osm_primary_tag="landuse=forest",
-        centroid='{"type":"Point"}',
-        lat=0,
-        lon=0,
-        bbox="[0,0,0,0]",
-        area_m2=1000,
-        area_km2=0.001,
-        area_bucket="100m2-1k_m2",
-        has_name=False,
-        has_wikidata=True,
+        identity=PolygonIdentity(
+            source_pbf_stem="x",
+            region="x",
+            source_pbf="x.osm.pbf",
+            osm_type="way",
+            osm_id=1,
+        ),
+        osm=PolygonOsmFields(
+            wikidata="Q1",
+            name="",
+            tags="{}",
+            tag_keys='["landuse"]',
+            tag_count=1,
+            osm_primary_tag="landuse=forest",
+            has_name=False,
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid='{"type":"Point"}',
+            lat=0,
+            lon=0,
+            bbox="[0,0,0,0]",
+            area_m2=1000,
+            area_km2=0.001,
+            area_bucket="100m2-1k_m2",
+        ),
         extraction_version="0.1.0",
         extracted_at="2026-01-01T00:00:00Z",
     )

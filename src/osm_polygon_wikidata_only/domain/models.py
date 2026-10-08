@@ -20,6 +20,45 @@ from .ids import article_id, polygon_id
 
 
 @dataclass(frozen=True)
+class PolygonIdentity:
+    """Source and OSM identity of one retained polygon."""
+
+    source_pbf_stem: str
+    region: str
+    source_pbf: str
+    osm_type: str  # "way" or "relation"
+    osm_id: int
+
+
+@dataclass(frozen=True)
+class PolygonOsmFields:
+    """OSM-derived descriptive fields of one retained polygon."""
+
+    wikidata: str
+    name: str
+    tags: str  # deterministic JSON of OSM tags minus wikidata
+    tag_keys: str  # deterministic JSON list of sorted tag keys
+    tag_count: int
+    osm_primary_tag: str
+    has_name: bool
+    has_wikidata: bool
+
+
+@dataclass(frozen=True)
+class PolygonShape:
+    """Geometry-derived fields of one retained polygon."""
+
+    centroid: str  # GeoJSON Point string
+    lat: float
+    lon: float
+    bbox: str  # deterministic JSON list [min_lon, min_lat, max_lon, max_lat]
+    area_m2: float
+    area_km2: float
+    area_bucket: str
+    geometry: str = ""  # deterministic GeoJSON Polygon/MultiPolygon string
+
+
+@dataclass(frozen=True)
 class Polygon:
     """One retained OSM polygon with analysis-friendly metadata."""
 
@@ -61,52 +100,34 @@ class Polygon:
     @staticmethod
     def make(
         *,
-        source_pbf_stem: str,
-        region: str,
-        source_pbf: str,
-        osm_type: str,
-        osm_id: int,
-        wikidata: str,
-        name: str,
-        tags: str,
-        tag_keys: str,
-        tag_count: int,
-        osm_primary_tag: str,
-        centroid: str,
-        lat: float,
-        lon: float,
-        bbox: str,
-        geometry: str = "",
-        area_m2: float,
-        area_km2: float,
-        area_bucket: str,
-        has_name: bool,
-        has_wikidata: bool,
+        identity: PolygonIdentity,
+        osm: PolygonOsmFields,
+        shape: PolygonShape,
         extraction_version: str,
         extracted_at: str,
     ) -> Polygon:
         return Polygon(
-            polygon_id=polygon_id(source_pbf_stem, osm_type, osm_id),
-            region=region,
-            source_pbf=source_pbf,
-            osm_type=osm_type,
-            osm_id=osm_id,
-            wikidata=wikidata,
-            name=name,
-            tags=tags,
-            tag_keys=tag_keys,
-            tag_count=tag_count,
-            osm_primary_tag=osm_primary_tag,
-            centroid=centroid,
-            lat=lat,
-            lon=lon,
-            bbox=bbox,
-            geometry=geometry,
-            area_m2=area_m2,
-            area_km2=area_km2,
-            area_bucket=area_bucket,
-            has_name=has_name,
-            has_wikidata=has_wikidata,
+            polygon_id=polygon_id(identity.source_pbf_stem, identity.osm_type, identity.osm_id),
+            region=identity.region,
+            source_pbf=identity.source_pbf,
+            osm_type=identity.osm_type,
+            osm_id=identity.osm_id,
+            wikidata=osm.wikidata,
+            name=osm.name,
+            tags=osm.tags,
+            tag_keys=osm.tag_keys,
+            tag_count=osm.tag_count,
+            osm_primary_tag=osm.osm_primary_tag,
+            centroid=shape.centroid,
+            lat=shape.lat,
+            lon=shape.lon,
+            bbox=shape.bbox,
+            geometry=shape.geometry,
+            area_m2=shape.area_m2,
+            area_km2=shape.area_km2,
+            area_bucket=shape.area_bucket,
+            has_name=osm.has_name,
+            has_wikidata=osm.has_wikidata,
             extraction_version=extraction_version,
             extracted_at=extracted_at,
         )

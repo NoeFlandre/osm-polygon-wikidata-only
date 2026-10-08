@@ -29,7 +29,12 @@ from osm_polygon_wikidata_only.domain.geometry import (
     PolygonGeometry,
     compute_polygon_geometry,
 )
-from osm_polygon_wikidata_only.domain.models import Polygon
+from osm_polygon_wikidata_only.domain.models import (
+    Polygon,
+    PolygonIdentity,
+    PolygonOsmFields,
+    PolygonShape,
+)
 from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
 from osm_polygon_wikidata_only.pipeline.polygon_fields import build_common_polygon_fields
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
@@ -134,10 +139,35 @@ def candidate_to_polygon(
         extracted_at=extracted_at,
     )
     return Polygon.make(
-        source_pbf_stem=source_pbf_stem,
-        wikidata=wikidata,
-        has_wikidata=True,
-        **fields,
+        identity=PolygonIdentity(
+            source_pbf_stem=source_pbf_stem,
+            region=fields["region"],
+            source_pbf=fields["source_pbf"],
+            osm_type=fields["osm_type"],
+            osm_id=fields["osm_id"],
+        ),
+        osm=PolygonOsmFields(
+            wikidata=wikidata,
+            name=fields["name"],
+            tags=fields["tags"],
+            tag_keys=fields["tag_keys"],
+            tag_count=fields["tag_count"],
+            osm_primary_tag=fields["osm_primary_tag"],
+            has_name=fields["has_name"],
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid=fields["centroid"],
+            lat=fields["lat"],
+            lon=fields["lon"],
+            bbox=fields["bbox"],
+            area_m2=fields["area_m2"],
+            area_km2=fields["area_km2"],
+            area_bucket=fields["area_bucket"],
+            geometry=fields["geometry"],
+        ),
+        extraction_version=fields["extraction_version"],
+        extracted_at=fields["extracted_at"],
     )
 
 

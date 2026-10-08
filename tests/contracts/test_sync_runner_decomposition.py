@@ -884,33 +884,44 @@ def test_enrichment_phase_logs_use_processor_logger(
     """The ``"Starting enrichment"`` lifecycle message and the
     heartbeat ``"Enrichment progress ..."`` record both emit
     under ``.pipeline.processor`` (legacy name)."""
-    from osm_polygon_wikidata_only.domain.models import Polygon
+    from osm_polygon_wikidata_only.domain.models import (
+        Polygon,
+        PolygonIdentity,
+        PolygonOsmFields,
+        PolygonShape,
+    )
     from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
     from osm_polygon_wikidata_only.enrichment.wikipedia_client import InMemoryWikipediaClient
     from osm_polygon_wikidata_only.pipeline.enrichment_phase import run_enrichment_phase
 
     polygon = Polygon.make(
-        source_pbf_stem="monaco-latest",
-        region="monaco",
-        source_pbf="monaco-latest.osm.pbf",
-        osm_type="way",
-        osm_id=1,
-        wikidata="Q1",
-        name="X",
-        tags="{}",
-        tag_keys="[]",
-        tag_count=0,
-        osm_primary_tag="forest",
-        centroid="{}",
-        lat=0.0,
-        lon=0.0,
-        bbox="[]",
-        geometry="{}",
-        area_m2=1.0,
-        area_km2=1e-6,
-        area_bucket="tiny",
-        has_name=True,
-        has_wikidata=True,
+        identity=PolygonIdentity(
+            source_pbf_stem="monaco-latest",
+            region="monaco",
+            source_pbf="monaco-latest.osm.pbf",
+            osm_type="way",
+            osm_id=1,
+        ),
+        osm=PolygonOsmFields(
+            wikidata="Q1",
+            name="X",
+            tags="{}",
+            tag_keys="[]",
+            tag_count=0,
+            osm_primary_tag="forest",
+            has_name=True,
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid="{}",
+            lat=0.0,
+            lon=0.0,
+            bbox="[]",
+            area_m2=1.0,
+            area_km2=1e-6,
+            area_bucket="tiny",
+            geometry="{}",
+        ),
         extraction_version="0",
         extracted_at="2024-01-01T00:00:00Z",
     )
@@ -934,33 +945,44 @@ def test_enrichment_phase_heartbeat_records_use_processor_logger(
     progress X"``) must be emitted under the legacy
     ``.pipeline.processor`` logger, not ``.pipeline.enrichment_phase``.
     """
-    from osm_polygon_wikidata_only.domain.models import Polygon
+    from osm_polygon_wikidata_only.domain.models import (
+        Polygon,
+        PolygonIdentity,
+        PolygonOsmFields,
+        PolygonShape,
+    )
     from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
     from osm_polygon_wikidata_only.enrichment.wikipedia_client import InMemoryWikipediaClient
     from osm_polygon_wikidata_only.pipeline.enrichment_phase import run_enrichment_phase
 
     polygon = Polygon.make(
-        source_pbf_stem="hb",
-        region="hb",
-        source_pbf="hb.osm.pbf",
-        osm_type="way",
-        osm_id=1,
-        wikidata="Q1",
-        name="X",
-        tags="{}",
-        tag_keys="[]",
-        tag_count=0,
-        osm_primary_tag="forest",
-        centroid="{}",
-        lat=0.0,
-        lon=0.0,
-        bbox="[]",
-        geometry="{}",
-        area_m2=1.0,
-        area_km2=1e-6,
-        area_bucket="tiny",
-        has_name=True,
-        has_wikidata=True,
+        identity=PolygonIdentity(
+            source_pbf_stem="hb",
+            region="hb",
+            source_pbf="hb.osm.pbf",
+            osm_type="way",
+            osm_id=1,
+        ),
+        osm=PolygonOsmFields(
+            wikidata="Q1",
+            name="X",
+            tags="{}",
+            tag_keys="[]",
+            tag_count=0,
+            osm_primary_tag="forest",
+            has_name=True,
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid="{}",
+            lat=0.0,
+            lon=0.0,
+            bbox="[]",
+            area_m2=1.0,
+            area_km2=1e-6,
+            area_bucket="tiny",
+            geometry="{}",
+        ),
         extraction_version="0",
         extracted_at="2024-01-01T00:00:00Z",
     )
@@ -1025,31 +1047,44 @@ def test_persistence_phase_logs_use_processor_logger(
 ) -> None:
     """The ``"Built N unique articles"`` lifecycle message must be
     emitted under ``.pipeline.processor`` (legacy name)."""
-    from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
+    from osm_polygon_wikidata_only.domain.models import (
+        Article,
+        Polygon,
+        PolygonArticleLink,
+        PolygonIdentity,
+        PolygonOsmFields,
+        PolygonShape,
+    )
     from osm_polygon_wikidata_only.pipeline.persistence import run_persistence_phase
 
     polygon = Polygon.make(
-        source_pbf_stem="x-latest",
-        region="x",
-        source_pbf="x-latest.osm.pbf",
-        osm_type="way",
-        osm_id=1,
-        wikidata="Q1",
-        name="N",
-        tags="{}",
-        tag_keys="[]",
-        tag_count=0,
-        osm_primary_tag="forest",
-        centroid="{}",
-        lat=0.0,
-        lon=0.0,
-        bbox="[]",
-        geometry="{}",
-        area_m2=1.0,
-        area_km2=1e-6,
-        area_bucket="tiny",
-        has_name=True,
-        has_wikidata=True,
+        identity=PolygonIdentity(
+            source_pbf_stem="x-latest",
+            region="x",
+            source_pbf="x-latest.osm.pbf",
+            osm_type="way",
+            osm_id=1,
+        ),
+        osm=PolygonOsmFields(
+            wikidata="Q1",
+            name="N",
+            tags="{}",
+            tag_keys="[]",
+            tag_count=0,
+            osm_primary_tag="forest",
+            has_name=True,
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid="{}",
+            lat=0.0,
+            lon=0.0,
+            bbox="[]",
+            area_m2=1.0,
+            area_km2=1e-6,
+            area_bucket="tiny",
+            geometry="{}",
+        ),
         extraction_version="0",
         extracted_at="2024-01-01T00:00:00Z",
     )
