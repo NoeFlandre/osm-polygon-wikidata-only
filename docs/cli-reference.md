@@ -26,3 +26,5 @@ uv run osm-polygon-wikidata-only sync-dir --help
 ```
 
 A command that publishes to Hugging Face or Trackio is opt-in. Before you use its apply or publish option, read its help and check the target repository. Keep the credentials in environment variables or in an untracked `.env` file. Never put them in source code or in a container image.
+
+Avoid the `--hf-token` option. A token given on the command line is visible to other users in the `ps` output and is saved in the shell history. Export `HF_TOKEN` instead, and read it from a file that is outside the repository, for example `export HF_TOKEN="$(cat ~/.config/hf/token)"`. You can also run `huggingface-cli login` once. The CLI does not read the `.env` file. Only Docker Compose does.
