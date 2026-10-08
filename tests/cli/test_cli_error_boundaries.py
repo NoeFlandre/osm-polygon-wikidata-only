@@ -65,6 +65,22 @@ def test_run_parsed_reports_an_expected_failure_once_and_returns_one(
     assert capsys.readouterr().err == "osm-polygon-wikidata-only: error: boom\n"
 
 
+def test_missing_data_root_is_one_stderr_line_and_exit_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "missing-data-root"
+
+    status = commands.main(["process-dir", str(tmp_path), "--data-root", str(missing)])
+
+    assert status == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"osm-polygon-wikidata-only: error: Data root {missing} (explicit --data-root) "
+        "does not exist.\n"
+    )
+
+
 def test_background_upload_failure_is_reported_on_stderr_and_returns_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
