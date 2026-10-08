@@ -118,8 +118,8 @@ ignore = [
 max-complexity = 10
 
 [tool.ruff.lint.pylint]
-# Ratchet: current maximum; lower as parameters are grouped into dataclasses (see #97).
-max-args = 23
+# Ratchet: current maximum; lower as parameters are grouped into dataclasses (see #97, #162).
+max-args = 12
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S", "B", "SIM", "PLC0415", "ARG", "T20", "BLE001", "C901", "PERF401"]
