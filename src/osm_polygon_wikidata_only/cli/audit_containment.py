@@ -3,7 +3,6 @@
 Audits the configured whole-file containment retirements and prints a JSON
 report. Exit status is 2 when any parent is blocked, 1 when the data root
 cannot be read, and 0 otherwise. See ``docs/cli-reference.md`` for the table.
-``scripts/audit_containment.py`` is a thin shim over :func:`main`.
 """
 
 from __future__ import annotations
@@ -95,7 +94,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Legacy ``scripts/audit_containment.py`` entry point."""
+    """Run the audit from command-line arguments and return the exit status."""
     return run(parse_args(argv))
 
 

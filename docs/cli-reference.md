@@ -29,7 +29,8 @@ These older entry points stay installed. Each one prints a deprecation notice on
 | `uv run osm-polygon-wikidata-only-audit-remote` | `uv run osm-polygon-wikidata-only audit-remote` | Same options. |
 | `uv run osm-polygon-wikidata-only-trackio` | `uv run osm-polygon-wikidata-only trackio-snapshot` | Publishes the V1 run, which is the default of `--dataset-version`. |
 | `uv run osm-polygon-wikidata-and-wikipedia-trackio` | `uv run osm-polygon-wikidata-only trackio-snapshot --dataset-version v2` | Publishes the V2 run. |
-| `python scripts/audit_containment.py` | `uv run osm-polygon-wikidata-only audit-containment` | Shim with the same arguments, output and exit codes. |
+
+The `python scripts/audit_containment.py` shim was removed. Scripts and jobs that still call it must run `uv run osm-polygon-wikidata-only audit-containment` instead. It takes the same arguments and gives the same JSON output and exit codes.
 
 ## Exit codes
 

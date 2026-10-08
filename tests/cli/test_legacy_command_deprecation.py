@@ -1,17 +1,14 @@
 """Legacy command paths keep their stdout, JSON and exit codes (issue #174).
 
-The standalone console scripts and ``scripts/audit_containment.py`` remain as
-compatibility paths. These tests pin what each one writes to stdout and the
-status it returns, and check that its replacement subcommand is named in
-``docs/cli-reference.md``.
+The four standalone console scripts remain as deprecated compatibility paths.
+These tests pin what each one writes to stdout and the status it returns, and
+check that its replacement subcommand is named in ``docs/cli-reference.md``.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import runpy
 import shlex
 import subprocess
 import sys
@@ -19,12 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_wikidata_only.cli import audit_containment
 from osm_polygon_wikidata_only.cli.errors import report_deprecated
 from tests.cli.test_enforce_integrity_cli import _seed_defect
 
 REPOSITORY = Path(__file__).resolve().parents[2]
-SHIM = REPOSITORY / "scripts" / "audit_containment.py"
 CLI_REFERENCE = REPOSITORY / "docs" / "cli-reference.md"
 
 MAIN = "osm-polygon-wikidata-only"
@@ -32,8 +27,7 @@ ENFORCE = "osm-polygon-wikidata-only-enforce-integrity"
 AUDIT_REMOTE = "osm-polygon-wikidata-only-audit-remote"
 TRACKIO = "osm-polygon-wikidata-only-trackio"
 TRACKIO_V2 = "osm-polygon-wikidata-and-wikipedia-trackio"
-SHIM_ID = "scripts/audit_containment.py"
-LEGACY_ENTRY_POINTS = [ENFORCE, AUDIT_REMOTE, TRACKIO, TRACKIO_V2, SHIM_ID]
+LEGACY_ENTRY_POINTS = [ENFORCE, AUDIT_REMOTE, TRACKIO, TRACKIO_V2]
 
 ENFORCE_JSON = (
     '{"audit_path": null, "dry_run": true, "polygon_articles_rejected": 1, '
@@ -41,11 +35,6 @@ ENFORCE_JSON = (
 )
 AUDIT_REMOTE_MISSING_ROOT = (
     "Error resolving data root: Data root absent (explicit --data-root) does not \nexist.\n"
-)
-CONTAINMENT_ABSENT_ROOT_SHA256 = "876a4a8d2694b29d76e6d211877b95c0beb87b4d5d8a8e87fae4ac146e1b5685"
-EMPTY_CONTAINMENT_JSON = (
-    '{\n  "blocked_parents": [],\n  "reports": [],\n  "retired_children": [],\n'
-    '  "safe_parents": []\n}\n'
 )
 
 
@@ -86,12 +75,6 @@ def _run_bytes(
         check=False,
         timeout=300,
     )
-
-
-def _legacy_argv(entry: str, *args: str) -> list[str]:
-    if entry == SHIM_ID:
-        return [sys.executable, str(SHIM), *args]
-    return [_console(entry), *args]
 
 
 def test_enforce_integrity_standalone_pins_json_stdout_and_exit_code(tmp_path: Path) -> None:
@@ -177,36 +160,6 @@ def test_trackio_standalone_usage_error_exits_2_with_empty_stdout(
     assert "No such option: --no-such-option" in proc.stderr
 
 
-def test_containment_script_absent_root_pins_stdout_and_exit_code_2(tmp_path: Path) -> None:
-    proc = _run([sys.executable, str(SHIM), "absent"], tmp_path)
-
-    assert proc.returncode == 2
-    assert hashlib.sha256(proc.stdout.encode("utf-8")).hexdigest() == (
-        CONTAINMENT_ABSENT_ROOT_SHA256
-    )
-
-
-def test_containment_script_help_exits_0(tmp_path: Path) -> None:
-    proc = _run([sys.executable, str(SHIM), "--help"], tmp_path)
-
-    assert proc.returncode == 0
-    assert proc.stdout.startswith("usage: audit_containment.py [-h] [--output OUTPUT] data_root\n")
-
-
-def test_containment_script_pins_json_and_exit_0_when_no_rule_is_blocked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(audit_containment, "CONTAINMENT_RULES", ())
-    monkeypatch.setattr(audit_containment, "load_retired_children", lambda _processed: set())
-    monkeypatch.setattr(sys, "argv", [str(SHIM), str(tmp_path)])
-
-    with pytest.raises(SystemExit) as exit_info:
-        runpy.run_path(str(SHIM), run_name="__main__")
-
-    assert exit_info.value.code == 0
-    assert capsys.readouterr().out == EMPTY_CONTAINMENT_JSON
-
-
 @pytest.mark.parametrize(
     "subcommand",
     ["enforce-integrity", "audit-remote", "trackio-snapshot", "audit-containment"],
@@ -249,18 +202,9 @@ def test_standalone_executable_notice_goes_to_stderr_only(
     assert "deprecated" not in proc.stdout
 
 
-def test_containment_script_notice_goes_to_stderr_only(tmp_path: Path) -> None:
-    proc = _run([sys.executable, str(SHIM), "absent"], tmp_path)
-
-    assert proc.returncode == 2
-    assert proc.stderr.count("scripts/audit_containment.py: warning: deprecated") == 1
-    assert "'osm-polygon-wikidata-only audit-containment'" in proc.stderr
-    assert "deprecated" not in proc.stdout
-
-
 @pytest.mark.parametrize("entry", LEGACY_ENTRY_POINTS)
 def test_legacy_help_prints_no_deprecation_notice(tmp_path: Path, entry: str) -> None:
-    proc = _run(_legacy_argv(entry, "--help"), tmp_path)
+    proc = _run([_console(entry), "--help"], tmp_path)
 
     assert proc.returncode == 0
     assert "deprecated" not in proc.stderr
@@ -273,13 +217,12 @@ def test_legacy_help_prints_no_deprecation_notice(tmp_path: Path, entry: str) ->
         (AUDIT_REMOTE, ["--bogus"]),
         (TRACKIO, ["--bogus"]),
         (TRACKIO_V2, ["--bogus"]),
-        (SHIM_ID, ["absent", "--bogus"]),
     ],
 )
 def test_legacy_usage_error_exits_2_with_no_stdout_and_no_notice(
     tmp_path: Path, entry: str, args: list[str]
 ) -> None:
-    proc = _run(_legacy_argv(entry, *args), tmp_path)
+    proc = _run([_console(entry), *args], tmp_path)
 
     assert proc.returncode == 2
     assert proc.stdout == ""
@@ -388,8 +331,5 @@ def test_cli_reference_maps_each_legacy_name_to_its_replacement() -> None:
     end = text.find("\n## ", start + 1)
     section = text[start : len(text) if end == -1 else end]
 
-    for legacy, replacement in {
-        **NOTICE_TARGETS,
-        "scripts/audit_containment.py": "osm-polygon-wikidata-only audit-containment",
-    }.items():
+    for legacy, replacement in NOTICE_TARGETS.items():
         assert any(legacy in line and replacement in line for line in section.splitlines()), legacy

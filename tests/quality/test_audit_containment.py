@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import runpy
-import sys
 from pathlib import Path
 
 import pytest
@@ -12,7 +10,6 @@ import pytest
 from osm_polygon_wikidata_only.cli import audit_containment, commands
 from osm_polygon_wikidata_only.pipeline.containment_migration import ChildAudit, RuleAudit
 from osm_polygon_wikidata_only.pipeline.containment_policy import ContainmentRule
-from scripts import audit_containment as audit_containment_shim
 
 
 def test_audit_main_separates_safe_and_blocked_parents_and_skips_retired_children(
@@ -54,16 +51,6 @@ def test_audit_main_prints_the_payload_and_passes_without_blocked_parents(
 
     assert audit_containment.main([str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["blocked_parents"] == []
-
-
-def test_script_entrypoint_renders_help(monkeypatch: pytest.MonkeyPatch) -> None:
-    script = Path(audit_containment_shim.__file__)
-    monkeypatch.setattr(sys, "argv", [str(script), "--help"])
-
-    with pytest.raises(SystemExit) as exit_info:
-        runpy.run_path(str(script), run_name="__main__")
-
-    assert exit_info.value.code == 0
 
 
 def test_audit_main_reports_unreadable_processed_root_without_traceback(
