@@ -30,6 +30,7 @@ import sys
 import pyarrow as pa
 
 from osm_polygon_wikidata_only.augmentation.integrity import IntegrityReport, enforce_all_regions
+from osm_polygon_wikidata_only.cli.errors import report_cli_error
 from osm_polygon_wikidata_only.cli.parser import add_enforce_integrity_arguments
 from osm_polygon_wikidata_only.config.paths import DataRootError, repository_root, resolve_data_root
 from osm_polygon_wikidata_only.utils.logging import configure_logging
@@ -37,7 +38,6 @@ from osm_polygon_wikidata_only.utils.logging import configure_logging
 LOGGER = logging.getLogger(__name__)
 
 PROG = "osm-polygon-wikidata-only-enforce-integrity"
-EXIT_FAILURE = 1
 
 # Expected operator-facing failures: an unusable data root, missing or
 # unreadable parquets, and data-contract violations (ValueError, which also
@@ -104,8 +104,7 @@ def execute(args: argparse.Namespace, *, prog: str = PROG) -> int:
             dry_run=args.dry_run,
         )
     except _EXPECTED_ERRORS as error:
-        print(f"{prog}: error: {error}", file=sys.stderr)
-        return EXIT_FAILURE
+        return report_cli_error(prog, error)
     _log_summary(report, dry_run=args.dry_run)
     if args.json:
         print(json.dumps(_summary(report, dry_run=args.dry_run), sort_keys=True))
