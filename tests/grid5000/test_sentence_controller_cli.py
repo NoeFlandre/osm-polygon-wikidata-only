@@ -9,6 +9,10 @@ import pytest
 from osm_polygon_wikidata_only.cli import commands
 from osm_polygon_wikidata_only.cli import grid5000 as grid5000_sentence_controller
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.grid5000.sentence_controller import (
+    ControllerLimits,
+    ControllerTarget,
+)
 from scripts import grid5000_sentence_controller as controller_shim
 from scripts import grid5000_sentence_job as job_shim
 
@@ -62,14 +66,18 @@ def test_controller_cli_forwards_all_resumable_run_options(
     )
 
     assert captured["data_root"] == DataRoot(tmp_path / "data-root")
-    assert captured["site"] == "lyon"
-    assert captured["queue"] == "besteffort"
-    assert captured["repo_id"] == "example/dataset"
-    assert captured["max_stems"] == 3
-    assert captured["max_input_bytes"] == 1234
-    assert captured["batch_size"] == 64
-    assert captured["inference_batch_size"] == 8
-    assert captured["walltime"] == "0:20"
+    target = captured["target"]
+    assert isinstance(target, ControllerTarget)
+    assert target.site == "lyon"
+    assert target.queue == "besteffort"
+    assert target.repo_id == "example/dataset"
+    assert captured["limits"] == ControllerLimits(
+        max_stems=3,
+        max_input_bytes=1234,
+        batch_size=64,
+        inference_batch_size=8,
+        walltime="0:20",
+    )
     assert captured["run_id"] == "run-test"
     assert captured["hf_token"] == "test-token"
     assert "run-test" in capsys.readouterr().out

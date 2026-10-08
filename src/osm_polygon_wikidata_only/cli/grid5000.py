@@ -14,6 +14,8 @@ from collections.abc import Sequence
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000.sentence_controller import (
+    ControllerLimits,
+    ControllerTarget,
     run_grid5000_sentence_controller,
 )
 from osm_polygon_wikidata_only.grid5000.sentence_job import run_sentence_job
@@ -37,15 +39,19 @@ def run_controller(args: argparse.Namespace) -> int:
     data_root.ensure()
     ledger = run_grid5000_sentence_controller(
         data_root,
-        site=args.site,
-        queue=args.queue,
-        gpu_model=args.gpu_model,
-        repo_id=args.repo_id,
-        max_stems=args.max_stems,
-        max_input_bytes=args.max_input_bytes,
-        batch_size=args.batch_size,
-        inference_batch_size=args.inference_batch_size,
-        walltime=args.walltime,
+        target=ControllerTarget(
+            site=args.site,
+            queue=args.queue,
+            gpu_model=args.gpu_model,
+            repo_id=args.repo_id,
+        ),
+        limits=ControllerLimits(
+            max_stems=args.max_stems,
+            max_input_bytes=args.max_input_bytes,
+            batch_size=args.batch_size,
+            inference_batch_size=args.inference_batch_size,
+            walltime=args.walltime,
+        ),
         run_id=args.run_id,
         hf_token=args.hf_token,
     )
