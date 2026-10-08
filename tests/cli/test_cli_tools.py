@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import typer
 
-from osm_polygon_wikidata_only.cli import commands, tools
+from osm_polygon_wikidata_only.cli import audit_remote, commands, tools
 from osm_polygon_wikidata_only.cli.parser import build_parser
 from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID
@@ -45,7 +45,7 @@ def test_audit_remote_subcommand_forwards_options(monkeypatch: pytest.MonkeyPatc
         seen.update(kwargs)
         raise typer.Exit(3)
 
-    monkeypatch.setattr(tools.audit_remote, "audit", fake_audit)
+    monkeypatch.setattr(audit_remote, "audit", fake_audit)
     status = commands.main(["audit-remote", "--repo-id", "o/r", "--hf-token", "t"])
     assert status == 3
     assert seen == {"data_root": None, "repo_id": "o/r", "hf_token": "t"}
