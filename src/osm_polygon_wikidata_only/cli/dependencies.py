@@ -36,6 +36,7 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
     SYSTEMIC_HOST_FRACTION,
     SYSTEMIC_MINIMUM_HOSTS,
     AdaptiveRequestScheduler,
+    HostHealthPolicy,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -135,9 +136,11 @@ def _build_scheduler(
         requests_per_minute=effective.wikimedia_requests_per_minute,
         max_requests_per_minute=ceiling,
         minimum_requests_per_minute=minimum_rate,
-        active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
-        minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
-        systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+        host_health=HostHealthPolicy(
+            active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+            minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+            systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+        ),
     )
 
 

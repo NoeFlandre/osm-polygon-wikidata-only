@@ -33,6 +33,7 @@ from osm_polygon_wikidata_only.utils.request_scheduler import (
     SYSTEMIC_HOST_FRACTION,
     SYSTEMIC_MINIMUM_HOSTS,
     AdaptiveRequestScheduler,
+    HostHealthPolicy,
     RequestScheduler,
 )
 from osm_polygon_wikidata_only.utils.retry import (
@@ -67,9 +68,11 @@ def _build_scheduler(rate: float, authenticated: bool) -> AdaptiveRequestSchedul
         requests_per_minute=rate,
         max_requests_per_minute=rate,
         minimum_requests_per_minute=min(200.0 if authenticated else 60.0, rate),
-        active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
-        minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
-        systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+        host_health=HostHealthPolicy(
+            active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+            minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+            systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+        ),
     )
 
 
