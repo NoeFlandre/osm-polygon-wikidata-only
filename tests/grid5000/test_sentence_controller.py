@@ -1002,6 +1002,22 @@ def test_changed_card_or_map_blocks_publication(tmp_path: Path) -> None:
     assert publisher.publish_calls == []
 
 
+def test_changed_comparison_map_blocks_publication(tmp_path: Path) -> None:
+    data_root = _data_root(tmp_path)
+    transport = _FakeTransport(tmp_path)
+    publisher = _FakePublisher()
+    controller = _controller(data_root, transport, publisher)
+    controller.initialize()
+    (data_root.processed_v2 / "assets/v2_added_wikipedia_tag_documents.png").write_bytes(
+        b"changed comparison map"
+    )
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="comparison-map baseline"):
+        controller.run()
+
+    assert publisher.publish_calls == []
+
+
 def test_hf_sentence_verification_uses_lfs_metadata_without_download(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1502,3 +1518,12 @@ def test_verified_incoming_artifact_rejects_untrusted_or_mismatched_files(
 
     with pytest.raises(sentence_controller.ControllerRunError, match=message):
         sentence_controller_policy.verified_incoming_artifact(root, artifacts, relative)
+
+
+@pytest.mark.parametrize("guard", ["_assert_baseline", "_finalize_run"])
+def test_lifecycle_guards_refuse_a_ledger_that_was_never_loaded(tmp_path: Path, guard: str) -> None:
+    data_root = _data_root(tmp_path)
+    controller = _controller(data_root, _FakeTransport(tmp_path), _FakePublisher())
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="Run ledger is not loaded"):
+        getattr(controller, guard)()
