@@ -215,6 +215,18 @@ def test_marker_rejects_malformed_hash_not_64_lowercase_hex(tmp_path: Path) -> N
         )
 
 
+def test_marker_rejects_hash_with_trailing_newline(tmp_path: Path) -> None:
+    """A digest followed by a newline is not a digest (regex ``$`` would accept it)."""
+    mod = _marker_helpers()
+    dr = _data_root(tmp_path)
+    with pytest.raises(ValueError, match="64 lowercase hex chars"):
+        mod.set_metadata_refresh_marker(
+            dr,
+            stems=["monaco-latest"],
+            fingerprint_hashes={"monaco-latest": _valid_sha("monaco") + "\n"},
+        )
+
+
 def test_marker_rejects_unsafe_traversal_stem(tmp_path: Path) -> None:
     mod = _marker_helpers()
     dr = _data_root(tmp_path)
