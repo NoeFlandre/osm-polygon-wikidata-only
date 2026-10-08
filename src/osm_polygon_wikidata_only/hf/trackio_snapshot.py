@@ -42,7 +42,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=STANDALONE_PROG, description=STANDALONE_DESCRIPTION)
     add_trackio_snapshot_arguments(parser)
     args = parser.parse_args(argv)
-    publish(data_root=args.data_root, space_id=args.space_id or TRACKIO_SPACE_ID)
+    publish(
+        data_root=args.data_root,
+        space_id=TRACKIO_SPACE_ID if args.space_id is None else args.space_id,
+    )
     return 0
 
 

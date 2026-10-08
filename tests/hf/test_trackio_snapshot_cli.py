@@ -11,7 +11,11 @@ import pytest
 from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.hf._trackio import publisher as trackio_publisher
 from osm_polygon_wikidata_only.v2.card import V2CardStats
-from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_RUN_NAME, V2_TRACKIO_SPACE_URL
+from osm_polygon_wikidata_only.v2.config import (
+    V2_TRACKIO_RUN_NAME,
+    V2_TRACKIO_SPACE_ID,
+    V2_TRACKIO_SPACE_URL,
+)
 from tests.hf.test_trackio_snapshot import _FakeTrackio
 
 
@@ -124,3 +128,39 @@ def test_console_entry_points_reject_unknown_options_with_status_two(
         module.main(["--dataset-version", "v2"])
     assert exit_info.value.code == 2
     assert "unrecognized arguments: --dataset-version v2" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("module", "default_space"),
+    [
+        (trackio_snapshot, trackio_snapshot.TRACKIO_SPACE_ID),
+        (v2_trackio_snapshot, V2_TRACKIO_SPACE_ID),
+    ],
+)
+def test_console_entry_points_forward_space_id_without_defaulting_empty(
+    module: Any, default_space: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forwarded: list[dict[str, object]] = []
+    monkeypatch.setattr(module, "publish", lambda **kwargs: forwarded.append(kwargs))
+
+    assert module.main(["--space-id", ""]) == 0
+    assert module.main([]) == 0
+    assert module.main(["--space-id", "me/space"]) == 0
+
+    assert [call["space_id"] for call in forwarded] == ["", default_space, "me/space"]
+
+
+@pytest.mark.parametrize("module", [trackio_snapshot, v2_trackio_snapshot])
+def test_console_empty_space_id_uploads_nothing_without_env(
+    module: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TRACKIO_SPACE_ID", raising=False)
+    monkeypatch.setattr(v2_trackio_snapshot, "compute_v2_card_stats", lambda *_, **__: _stats())
+    fake = _inject_fake_trackio(monkeypatch)
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+
+    status = module.main(["--data-root", str(data_root), "--space-id", ""])
+
+    assert status == 0
+    assert fake.sync_kwargs is None
