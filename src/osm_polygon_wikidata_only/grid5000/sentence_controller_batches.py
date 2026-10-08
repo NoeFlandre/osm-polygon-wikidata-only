@@ -19,6 +19,7 @@ from .sentence_controller_policy import (
     GRID5000_UV_VERSION,
     TERMINAL_STATES,
     BatchDict,
+    ControllerCommandTimeoutError,
     ControllerRunError,
     batch_stems,
     copy_required,
@@ -94,10 +95,17 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
         except KeyboardInterrupt:
             raise
         except Exception as error:
-            batch["state"] = "failed"
-            batch["error"] = type(error).__name__
-            self._write_ledger()
+            self._record_submission_failure(batch, error)
             raise ControllerRunError(f"Grid5000 batch submission failed: {error}") from error
+
+    def _record_submission_failure(self, batch: BatchDict, error: Exception) -> None:
+        # A timed-out oarsub may still have queued a job. Keep the batch "submitted"
+        # without a job ID so reconciliation refuses a duplicate submission.
+        if isinstance(error, ControllerCommandTimeoutError):
+            return
+        batch["state"] = "failed"
+        batch["error"] = type(error).__name__
+        self._write_ledger()
 
     def _ensure_remote_namespace(self) -> None:
         self._run_frontend(
@@ -187,7 +195,7 @@ class SentenceControllerBatchMixin(SentenceControllerContext):
     def _query_job_status(self, job_id: str) -> tuple[str, int | None]:
         try:
             result = self._run_frontend(("oarstat", "-s", "-j", job_id), allow_failure=True)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, ControllerCommandTimeoutError):
             return "unknown", None
         return parse_job_status(result, job_id=job_id)
 

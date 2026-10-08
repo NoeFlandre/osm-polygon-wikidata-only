@@ -50,6 +50,9 @@ from osm_polygon_wikidata_only.v2.language_split_resume import (
 from osm_polygon_wikidata_only.v2.language_split_resume import (
     resume_completed_table as _resume_completed_table,
 )
+from osm_polygon_wikidata_only.v2.language_split_resume import (
+    table_fingerprint as _table_fingerprint,
+)
 from osm_polygon_wikidata_only.v2.language_split_writer import (
     TableWriteContext,
 )
@@ -233,7 +236,9 @@ def _staged_table(
     max_rows_per_shard: int,
 ) -> tuple[list[V2LanguageSplitFile], dict[Path, Path]]:
     """Stage one table, reusing a completed staging run when one is present."""
-    completed = _resume_completed_table(stage_root, spec, table_inventory)
+    # Fingerprint before staging: the marker must describe the bytes the shards read.
+    fingerprint = _table_fingerprint(root, table_inventory, max_rows_per_shard)
+    completed = _resume_completed_table(stage_root, spec, fingerprint)
     if completed is not None:
         LOGGER.info(
             "Resuming: reusing %d staged shards for %s", len(completed[0]), spec.table.value
@@ -243,7 +248,7 @@ def _staged_table(
         destination, stage_root, spec, table_inventory, max_rows_per_shard
     )
     generated, staged_paths = _write_table(root, context, table_inventory, batch_size)
-    _record_completed_table(stage_root, spec, table_inventory, generated, staged_paths)
+    _record_completed_table(stage_root, spec, fingerprint, generated, staged_paths)
     return generated, staged_paths
 
 

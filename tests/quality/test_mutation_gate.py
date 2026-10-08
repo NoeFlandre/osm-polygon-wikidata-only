@@ -139,7 +139,7 @@ def test_mutation_scope_names_only_existing_sources_and_tests() -> None:
     scope = mutation_scope.load_scope(REPOSITORY / "pyproject.toml", root=REPOSITORY)
 
     assert len(scope.source_paths) == 48
-    assert len(scope.test_selectors) == 65
+    assert len(scope.test_selectors) == 66
 
 
 @pytest.mark.parametrize("reason", [None, "", " \t"])

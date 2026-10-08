@@ -19,6 +19,40 @@ class _RenderedTextParser(HTMLParser):
     """Collect visible text from MediaWiki parser HTML."""
 
     _IGNORED: ClassVar[frozenset[str]] = frozenset({"script", "style"})
+    # Elements that start a new visual unit. Each one gets a separator on
+    # both its start and end tag so that neighbouring cells, terms and
+    # blocks never fuse into a single token. Inline tags are left out on
+    # purpose: ``foo<b>bar</b>`` must stay ``foobar``.
+    _BLOCK_TAGS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "article",
+            "blockquote",
+            "br",
+            "caption",
+            "dd",
+            "div",
+            "dl",
+            "dt",
+            "figcaption",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "hr",
+            "li",
+            "ol",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "td",
+            "th",
+            "tr",
+            "ul",
+        }
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -28,13 +62,13 @@ class _RenderedTextParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002 -- HTMLParser override signature
         if tag in self._IGNORED:
             self._ignored_depth += 1
-        elif tag in {"br", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr"}:
+        elif tag in self._BLOCK_TAGS:
             self.parts.append(" ")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._IGNORED and self._ignored_depth:
             self._ignored_depth -= 1
-        elif tag in {"div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "tr"}:
+        elif tag in self._BLOCK_TAGS:
             self.parts.append(" ")
 
     def handle_data(self, data: str) -> None:

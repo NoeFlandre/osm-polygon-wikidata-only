@@ -285,6 +285,167 @@ def test_cached_wikipedia_hit_skips_inner_fetch() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Parse-fallback text written before the block-boundary fix (#201)
+# ---------------------------------------------------------------------------
+
+_CURRENT_CLEANING = "html-block-boundaries-v1"
+_FALLBACK_SOURCE = "mediawiki_action_api_parse_fallback"
+
+
+def _stored_payload(source_api: str, marker: str | None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "language": "en",
+        "site": "enwiki",
+        "title": "Stale",
+        "page_id": 1,
+        "revision_id": 1,
+        "revision_timestamp": "",
+        "url": "",
+        "lead_text": "stale lead",
+        "extract": "",
+        "full_text": "stale full",
+        "full_text_format": "plain_text",
+        "thumbnail_url": "",
+        "thumbnail_width": None,
+        "thumbnail_height": None,
+        "categories": [],
+        "license": "",
+        "attribution": "",
+        "source_api": source_api,
+        "retrieved_at": "",
+    }
+    if marker is not None:
+        payload["text_cleaning_version"] = marker
+    return payload
+
+
+def _fresh_article() -> WikipediaArticle:
+    return WikipediaArticle(
+        language="en",
+        site="enwiki",
+        title="Stale",
+        page_id=1,
+        revision_id=1,
+        revision_timestamp="",
+        url="",
+        lead_text="fresh lead",
+        extract="",
+        full_text="fresh full",
+        full_text_format="plain_text",
+        thumbnail_url="",
+        thumbnail_width=None,
+        thumbnail_height=None,
+        categories=[],
+        license="",
+        attribution="",
+        source_api=_FALLBACK_SOURCE,
+        retrieved_at="",
+    )
+
+
+class _RecordingWikipedia(WikipediaClient):
+    def __init__(self, article: WikipediaArticle) -> None:
+        self._article = article
+        self.calls: list[bool] = []
+
+    def fetch_article(
+        self,
+        language: str,
+        site: str,
+        title: str,
+        *,
+        wikidata_label: str = "",
+        wikidata_description: str = "",
+        wikidata_aliases: list[str] | None = None,
+        fetch_full_text: bool = True,
+    ) -> FetchResult:
+        del language, site, title, wikidata_label, wikidata_description, wikidata_aliases
+        self.calls.append(fetch_full_text)
+        return FetchResult("ok", self._article)
+
+
+@pytest.mark.parametrize(
+    ("fetch_full_text", "source_api", "marker", "expect_refetch"),
+    [
+        pytest.param(True, "mediawiki_action_api", None, False, id="normal-entry-hits"),
+        pytest.param(
+            True, "mediawiki_action_api", _CURRENT_CLEANING, False, id="normal-marked-entry-hits"
+        ),
+        pytest.param(True, _FALLBACK_SOURCE, None, True, id="fallback-without-marker-refetches"),
+        pytest.param(
+            True, _FALLBACK_SOURCE, "older-cleaning", True, id="fallback-older-marker-refetches"
+        ),
+        pytest.param(
+            True, _FALLBACK_SOURCE, _CURRENT_CLEANING, False, id="fallback-current-marker-hits"
+        ),
+        pytest.param(
+            False, _FALLBACK_SOURCE, None, True, id="lead-only-fallback-without-marker-refetches"
+        ),
+    ],
+)
+def test_cached_wikipedia_refetches_only_stale_parse_fallback_entries(
+    fetch_full_text: bool, source_api: str, marker: str | None, expect_refetch: bool
+) -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia_client import CachedWikipediaClient
+
+    key = CachedWikipediaClient._cache_key("enwiki", "Stale", fetch_full_text)
+    cache = _MemoryCache({key: _cache_entry("ok", _stored_payload(source_api, marker), None)})
+    inner = _RecordingWikipedia(_fresh_article())
+
+    result = CachedWikipediaClient(inner, cache).fetch_article(
+        "en", "enwiki", "Stale", fetch_full_text=fetch_full_text
+    )
+
+    if expect_refetch:
+        assert inner.calls == [fetch_full_text]
+        assert result.article is not None
+        assert result.article.full_text == "fresh full"
+    else:
+        assert inner.calls == []
+        assert result.article is not None
+        assert result.article.full_text == "stale full"
+
+
+def test_cached_wikipedia_refetched_parse_fallback_is_stored_with_marker() -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia_client import CachedWikipediaClient
+
+    key = CachedWikipediaClient._cache_key("enwiki", "Stale", fetch_full_text=True)
+    cache = _MemoryCache({key: _cache_entry("ok", _stored_payload(_FALLBACK_SOURCE, None), None)})
+    CachedWikipediaClient(_RecordingWikipedia(_fresh_article()), cache).fetch_article(
+        "en", "enwiki", "Stale"
+    )
+
+    ((stored_key, stored_payload, stored_kwargs),) = cache.writes
+    assert stored_key == key
+    assert stored_kwargs["status"] == "ok"
+    assert stored_payload["text_cleaning_version"] == _CURRENT_CLEANING
+
+    # The refreshed entry is a hit on the next read, so the refetch runs once.
+    next_inner = _RecordingWikipedia(_fresh_article())
+    next_cache = _MemoryCache({key: _cache_entry("ok", stored_payload, None)})
+    result = CachedWikipediaClient(next_inner, next_cache).fetch_article("en", "enwiki", "Stale")
+    assert next_inner.calls == []
+    assert result.article is not None
+    assert result.article.full_text == "fresh full"
+
+
+def test_cached_wikipedia_batch_refetches_stale_parse_fallback_entries() -> None:
+    from osm_polygon_wikidata_only.enrichment.wikipedia_client import CachedWikipediaClient
+
+    key = CachedWikipediaClient._cache_key("enwiki", "Stale", fetch_full_text=True)
+    cache = _MemoryCache({key: _cache_entry("ok", _stored_payload(_FALLBACK_SOURCE, None), None)})
+    inner = _RecordingWikipedia(_fresh_article())
+
+    results = CachedWikipediaClient(inner, cache).fetch_articles(
+        "en", "enwiki", ["Stale"], fetch_full_text=True
+    )
+
+    assert inner.calls == [True]
+    assert results["Stale"].article is not None
+    assert results["Stale"].article.full_text == "fresh full"
+
+
+# ---------------------------------------------------------------------------
 # Corrupt / malformed cached payload behaviour
 # ---------------------------------------------------------------------------
 
