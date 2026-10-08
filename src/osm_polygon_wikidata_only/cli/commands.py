@@ -82,7 +82,10 @@ def _prepare_runtime(
     """Configure logging and construct the immutable runtime inputs."""
     configure_logging(level=getattr(logging, args.log_level))
     data_root = _resolve_data_root(args)
-    data_root.ensure()
+    try:
+        data_root.ensure()
+    except OSError as error:
+        raise DataRootError(str(error)) from error
     settings = _build_settings(args)
     if getattr(args, "dataset_version", "v1") == "v2" and settings.repo_id == DEFAULT_REPO_ID:
         settings = replace(settings, repo_id=V2_REPO_ID)
@@ -493,7 +496,7 @@ def run_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int
         data_root, settings = _prepare_runtime(args)
         _authenticate_for_push(args, settings)
         return _dispatch_command(parser, args, data_root=data_root, settings=settings)
-    except (CliFailure, DataRootError, OSError) as failure:
+    except (CliFailure, DataRootError) as failure:
         return report_cli_error(parser.prog, failure)
 
 
