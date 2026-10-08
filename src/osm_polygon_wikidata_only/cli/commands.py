@@ -493,7 +493,7 @@ def run_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int
         data_root, settings = _prepare_runtime(args)
         _authenticate_for_push(args, settings)
         return _dispatch_command(parser, args, data_root=data_root, settings=settings)
-    except (CliFailure, DataRootError) as failure:
+    except (CliFailure, DataRootError, OSError) as failure:
         return report_cli_error(parser.prog, failure)
 
 
