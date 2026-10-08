@@ -19,6 +19,18 @@ The main command has the subcommands in the table. Each subcommand has a `--help
 | `uv run osm-polygon-wikidata-only grid5000` | Run the Grid5000 sentence-splitting controller or a job on a reserved node. |
 | `uv run osm-polygon-wikidata-only audit-containment` | Create an audit of the whole-file containment retirements. The command only reads. |
 
+## Legacy commands
+
+These older entry points stay installed. Each one prints a deprecation notice on stderr. Its stdout and exit codes do not change. Use the replacement in new scripts and jobs. If a script merges stderr into stdout (for example with `2>&1`), the notice appears in that output.
+
+| Legacy command | Replacement | Notes |
+| --- | --- | --- |
+| `uv run osm-polygon-wikidata-only-enforce-integrity` | `uv run osm-polygon-wikidata-only enforce-integrity` | Same options. |
+| `uv run osm-polygon-wikidata-only-audit-remote` | `uv run osm-polygon-wikidata-only audit-remote` | Same options. |
+| `uv run osm-polygon-wikidata-only-trackio` | `uv run osm-polygon-wikidata-only trackio-snapshot` | Publishes the V1 run, which is the default of `--dataset-version`. |
+| `uv run osm-polygon-wikidata-and-wikipedia-trackio` | `uv run osm-polygon-wikidata-only trackio-snapshot --dataset-version v2` | Publishes the V2 run. |
+| `python scripts/audit_containment.py` | `uv run osm-polygon-wikidata-only audit-containment` | Shim with the same arguments, output and exit codes. |
+
 ## Exit codes
 
 | Code | Meaning | Commands |

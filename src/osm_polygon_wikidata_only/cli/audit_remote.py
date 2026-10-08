@@ -13,6 +13,7 @@ from rich.table import Table
 from tqdm import tqdm
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import augmentation_is_current
+from osm_polygon_wikidata_only.cli.errors import report_deprecated
 from osm_polygon_wikidata_only.config.paths import (
     DataRoot,
     DataRootError,
@@ -149,7 +150,12 @@ def _build_plan(
 
 def run() -> None:
     """Installed console-script entry point."""
-    app()
+    try:
+        app()
+    finally:
+        report_deprecated(
+            "osm-polygon-wikidata-only-audit-remote", "osm-polygon-wikidata-only audit-remote"
+        )
 
 
 __all__ = ["app", "audit", "run"]

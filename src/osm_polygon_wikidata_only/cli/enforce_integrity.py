@@ -30,7 +30,7 @@ import sys
 import pyarrow as pa
 
 from osm_polygon_wikidata_only.augmentation.integrity import IntegrityReport, enforce_all_regions
-from osm_polygon_wikidata_only.cli.errors import report_cli_error
+from osm_polygon_wikidata_only.cli.errors import report_cli_error, report_deprecated
 from osm_polygon_wikidata_only.cli.parser import add_enforce_integrity_arguments
 from osm_polygon_wikidata_only.config.paths import DataRootError, repository_root, resolve_data_root
 from osm_polygon_wikidata_only.utils.logging import configure_logging
@@ -112,7 +112,10 @@ def execute(args: argparse.Namespace, *, prog: str = PROG) -> int:
 
 
 def run(argv: list[str] | None = None) -> int:
-    return execute(_build_parser().parse_args(argv))
+    try:
+        return execute(_build_parser().parse_args(argv))
+    finally:
+        report_deprecated(PROG, "osm-polygon-wikidata-only enforce-integrity")
 
 
 if __name__ == "__main__":  # pragma: no cover

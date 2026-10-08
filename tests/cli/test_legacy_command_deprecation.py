@@ -185,3 +185,63 @@ def test_replacement_subcommand_is_named_in_cli_reference(subcommand: str) -> No
     text = CLI_REFERENCE.read_text(encoding="utf-8")
 
     assert f"uv run {MAIN} {subcommand}" in text
+
+
+NOTICE_TARGETS = {
+    ENFORCE: "osm-polygon-wikidata-only enforce-integrity",
+    AUDIT_REMOTE: "osm-polygon-wikidata-only audit-remote",
+    TRACKIO: "osm-polygon-wikidata-only trackio-snapshot",
+    TRACKIO_V2: "osm-polygon-wikidata-only trackio-snapshot --dataset-version v2",
+}
+
+
+@pytest.mark.parametrize(("name", "replacement"), list(NOTICE_TARGETS.items()))
+def test_standalone_executable_notice_goes_to_stderr_only(
+    tmp_path: Path, name: str, replacement: str
+) -> None:
+    proc = _run([_console(name), "--help"], tmp_path)
+
+    assert proc.returncode == 0
+    assert f"{name}: warning: deprecated" in proc.stderr
+    assert f"'{replacement}'" in proc.stderr
+    assert "deprecated" not in proc.stdout
+
+
+def test_containment_script_notice_goes_to_stderr_only(tmp_path: Path) -> None:
+    proc = _run([sys.executable, str(SHIM), "--help"], tmp_path)
+
+    assert proc.returncode == 0
+    assert "scripts/audit_containment.py: warning: deprecated" in proc.stderr
+    assert "'osm-polygon-wikidata-only audit-containment'" in proc.stderr
+    assert "deprecated" not in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "subcommand",
+    [
+        ["enforce-integrity", "--help"],
+        ["audit-remote", "--help"],
+        ["trackio-snapshot", "--help"],
+        ["audit-containment", "--help"],
+    ],
+)
+def test_replacement_subcommands_emit_no_deprecation_notice(
+    tmp_path: Path, subcommand: list[str]
+) -> None:
+    proc = _run([_console(MAIN), *subcommand], tmp_path)
+
+    assert proc.returncode == 0
+    assert "deprecated" not in proc.stderr
+
+
+def test_cli_reference_maps_each_legacy_name_to_its_replacement() -> None:
+    text = CLI_REFERENCE.read_text(encoding="utf-8")
+    start = text.index("## Legacy commands")
+    end = text.find("\n## ", start + 1)
+    section = text[start : len(text) if end == -1 else end]
+
+    for legacy, replacement in {
+        **NOTICE_TARGETS,
+        "scripts/audit_containment.py": "osm-polygon-wikidata-only audit-containment",
+    }.items():
+        assert any(legacy in line and replacement in line for line in section.splitlines()), legacy
