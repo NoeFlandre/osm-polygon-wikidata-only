@@ -33,7 +33,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
     completed_region_stems,
 )
-from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.paths import DataRoot, DataRootError
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID, Settings
 from osm_polygon_wikidata_only.hf.core_publication import run_core_publication
 from osm_polygon_wikidata_only.hf.push_authentication import authenticate_push_targets
@@ -493,7 +493,7 @@ def run_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int
         data_root, settings = _prepare_runtime(args)
         _authenticate_for_push(args, settings)
         return _dispatch_command(parser, args, data_root=data_root, settings=settings)
-    except CliFailure as failure:
+    except (CliFailure, DataRootError) as failure:
         return report_cli_error(parser.prog, failure)
 
 
