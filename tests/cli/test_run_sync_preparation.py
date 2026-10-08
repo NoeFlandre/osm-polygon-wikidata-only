@@ -51,6 +51,7 @@ from osm_polygon_wikidata_only.pipeline.sync_reconciliation import (
     core_repair_required,
     prepare_remote_reconciliation,
     reconciliation_summary_message,
+    require_remote_helpers,
 )
 
 
@@ -876,3 +877,14 @@ def test_plan_sync_states_with_recovery_forwards_forced_and_migratable_stems(
             "recovery_stems": {"forced", "beta"},
         },
     )
+
+
+def test_remote_helpers_require_both_dependencies() -> None:
+    def canonical(_stem: str) -> dict[str, str]:
+        return {}
+
+    planner = type("Planner", (), {})
+    assert cast(Any, require_remote_helpers)(canonical, planner) == (canonical, planner)
+    for args in ((None, planner), (canonical, None), (None, None)):
+        with pytest.raises(RuntimeError, match="helpers are required"):
+            cast(Any, require_remote_helpers)(*args)

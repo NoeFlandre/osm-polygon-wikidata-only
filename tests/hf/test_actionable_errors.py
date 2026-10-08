@@ -28,6 +28,7 @@ import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
+from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.publication import (
     PublicationValidationError,
@@ -123,7 +124,7 @@ def test_remote_inventory_failure_raises_sanitized_error() -> None:
                 "body={u'error': u'invalid user token'}"
             )
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(UploadError) as excinfo:
         RemoteInventory.fetch(repo_id="user/secret-repo", hub=FailingHub())
 
     message = str(excinfo.value)
@@ -153,7 +154,7 @@ def test_remote_inventory_failure_preserves_chaining() -> None:
             del repo_id, revision, repo_type
             raise httpx.ConnectError("connection refused")
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(UploadError) as excinfo:
         RemoteInventory.fetch(repo_id="user/repo", hub=FailingHub())
     assert excinfo.value.__cause__ is not None
 
@@ -175,7 +176,7 @@ def test_remote_inventory_failure_message_does_not_contain_user_paths() -> None:
                 "OSError: [Errno 2] No such file or directory: '/Users/alice/private/x.json'"
             )
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(UploadError) as excinfo:
         RemoteInventory.fetch(repo_id="user/repo", hub=FailingHub())
     message = str(excinfo.value)
     assert "/Users/" not in message

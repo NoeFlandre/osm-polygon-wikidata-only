@@ -299,14 +299,20 @@ def test_load_existing_core_artifacts_validation_errors(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_existing_core_artifacts(data_root, stem)
 
-    # Incomplete schema parquet file raises ValueError
+    # An unreadable polygons parquet is a publication validation error
     data_root.processed_polygons.mkdir(parents=True, exist_ok=True)
     (data_root.processed_polygons / f"{stem}.parquet").write_text("not-parquet")
     (data_root.processed_links / f"{stem}.parquet").write_text("not-parquet")
-    manifest_entry: dict[str, dict[str, object]] = {f"{stem}.osm.pbf": {}}
+    manifest_entry: dict[str, dict[str, object]] = {
+        f"{stem}.osm.pbf": {
+            "source_pbf": f"{stem}.osm.pbf",
+            "polygons_path": f"polygons/{stem}.parquet",
+            "polygon_articles_path": f"polygon_articles/{stem}.parquet",
+        }
+    }
     (data_root.processed_manifests / "processed_pbfs.json").write_text(json.dumps(manifest_entry))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(PublicationValidationError, match="Could not read schema for"):
         load_existing_core_artifacts(data_root, stem)
 
 
@@ -591,10 +597,10 @@ def test_metadata_only_upload_contract(tmp_path: Path) -> None:
         data_root=data_root,
         repo_id="test/repo",
     )
-    assert len(ops) > 0
-    final_op = ops[-1]
-    assert final_op.action == "add"
-    assert final_op.path_in_repo == "README.md"
+    paths = [op.path_in_repo for op in ops]
+    assert paths.count("README.md") == 1
+    assert ops[-1].action == "add"
+    assert paths[-1] == "README.md"
 
 
 def test_repository_refresh_includes_the_hero_and_current_assets(tmp_path: Path) -> None:

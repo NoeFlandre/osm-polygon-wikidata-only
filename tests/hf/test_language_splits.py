@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     polygon_document_link_schema,
 )
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
+from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf.language_artifact_manifest import (
     _manifest_entry,
     _manifest_field_path,
@@ -36,6 +37,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageInventoryError,
     LanguageTable,
     LanguageTableInventory,
+    LanguageTableSpec,
     ValidatedArtifact,
     _ArtifactSpec,
     _BucketCounter,
@@ -595,3 +597,50 @@ def test_inventory_is_deterministic_for_the_same_artifacts(tmp_path: Path) -> No
     second = build_language_inventory(processed, DatasetContract.V1).to_dict()
 
     assert first == second
+
+
+def test_language_file_scan_checks_row_count_and_wraps_stream_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class Batch:
+        num_rows = 2
+
+        def column(self, _index: int) -> object:
+            return object()
+
+    class Parquet:
+        def __enter__(self) -> Parquet:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(hf_language_splits, "open_parquet", lambda _path: Parquet())
+    monkeypatch.setattr(
+        hf_language_splits,
+        "iter_record_batches",
+        lambda *_args, **_kwargs: [Batch()],
+    )
+    monkeypatch.setattr(hf_language_splits, "_observe_language_batch", lambda *_args: None)
+    spec = LanguageTableSpec(
+        table=LanguageTable.WIKIPEDIA_DOCUMENTS,
+        relative_dir="wikipedia/documents",
+        language_column="language",
+        identity_columns=("document_id",),
+        schema_factory=lambda: pa.schema([]),
+        configuration="test",
+    )
+    path = tmp_path / "table.parquet"
+
+    hf_language_splits._scan_language_file(path, spec, {}, expected_rows=2)
+    with pytest.raises(hf_language_splits.LanguageInventoryError, match="row count changed"):
+        hf_language_splits._scan_language_file(path, spec, {}, expected_rows=3)
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("stream failed")
+
+    monkeypatch.setattr(hf_language_splits, "iter_record_batches", fail)
+    with pytest.raises(
+        hf_language_splits.LanguageInventoryError, match="Could not scan language column"
+    ):
+        hf_language_splits._scan_language_file(path, spec, {}, expected_rows=0)

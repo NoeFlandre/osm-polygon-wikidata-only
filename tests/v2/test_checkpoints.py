@@ -7,6 +7,7 @@ import pytest
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
+from osm_polygon_wikidata_only.v2 import checkpoints as v2_checkpoints
 from osm_polygon_wikidata_only.v2 import extractor
 from osm_polygon_wikidata_only.v2.checkpoints import (
     ExtractionCheckpoint,
@@ -448,3 +449,27 @@ def test_region_fetch_checkpoint_reuses_article_after_section_failure(
     assert client.calls == 1
     assert sections.calls == 2
     assert RegionFetchCheckpoint(root.v2_cache / "checkpoints", "region-latest").has_work
+
+
+def test_extraction_checkpoint_clears_only_owned_chunk_and_temporary_files(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "region.osm.pbf"
+    source.touch()
+    checkpoint = v2_checkpoints.ExtractionCheckpoint(tmp_path / "cache", source)
+    for name in ("chunk-00000000.parquet", "partial.tmp", ".atomic.tmp"):
+        (checkpoint.root / name).touch()
+    unrelated = checkpoint.root / "notes.txt"
+    unrelated.touch()
+
+    checkpoint._clear_files()
+
+    assert {path.name for path in checkpoint.root.iterdir()} == {"metadata.json", "notes.txt"}
+    assert unrelated.is_file()
+
+
+def test_region_fetch_checkpoint_rejects_sections_for_another_document(tmp_path: Path) -> None:
+    fetch = v2_checkpoints.RegionFetchCheckpoint(tmp_path / "fetch", "region")
+    with pytest.raises(ValueError, match="do not match document"):
+        fetch.save_sections("document-1", [{"document_id": "document-2"}])
+    fetch.save_sections("document-1", [])

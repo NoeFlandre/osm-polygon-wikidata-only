@@ -408,8 +408,21 @@ def test_failed_checkpoint_import_leaves_prior_local_state_unchanged(tmp_path: P
     before_metadata = (local / "metadata.json").read_bytes()
     before_batch = (local / "batch-00000000.parquet").read_bytes()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unexpected schema"):
         import_checkpoint_tree(incoming, local, expected_identity=_identity())
 
     assert (local / "metadata.json").read_bytes() == before_metadata
     assert (local / "batch-00000000.parquet").read_bytes() == before_batch
+
+
+def test_checkpoint_metadata_reader_rejects_invalid_and_non_object_payloads(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "metadata.json"
+    for content in ("{broken", "[]"):
+        path.write_text(content, encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid checkpoint metadata"):
+            _read_checkpoint_metadata(path)
+
+    path.write_text('{"identity":{}}', encoding="utf-8")
+    assert _read_checkpoint_metadata(path) == {"identity": {}}

@@ -11,6 +11,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf._dataset_stats import augmentation as stats_augmentation
 from osm_polygon_wikidata_only.hf._dataset_stats.augmentation import (
     compute_augmentation_stats,
 )
@@ -20,6 +22,9 @@ from osm_polygon_wikidata_only.hf._dataset_stats.models import (
     WikidataFactStats,
 )
 from osm_polygon_wikidata_only.hf._dataset_stats.summary_codec import summary_from_json
+from osm_polygon_wikidata_only.hf._publication.readme_snapshot import (
+    integrity_audit as _integrity_audit,
+)
 from osm_polygon_wikidata_only.hf.dataset_stats import DatasetStats
 
 
@@ -1571,3 +1576,34 @@ def test_cache_module_docstring_matches_storage_path() -> None:
         "relative_path" in doc and "fingerprint" in doc
     ), f"Cache docstring must explain the cache key: {doc!r}"
     assert "stats_cache/index``" not in doc and "stats_cache/index " not in doc
+
+
+def test_integrity_audit_handles_missing_corrupt_non_object_and_valid_payloads(
+    tmp_path: Path,
+) -> None:
+    data_root = DataRoot(tmp_path)
+    path = data_root.processed / "integrity" / "integrity_audit.json"
+    assert _integrity_audit(data_root) is None
+
+    path.parent.mkdir(parents=True)
+    path.write_text("{broken", encoding="utf-8")
+    assert _integrity_audit(data_root) is None
+    path.write_text("[]", encoding="utf-8")
+    assert _integrity_audit(data_root) is None
+    path.write_text(json.dumps({"rejected": 1}), encoding="utf-8")
+    payload = _integrity_audit(data_root)
+    assert payload is not None
+    assert payload["rejected"] == 1
+    assert payload["contract_version"]
+
+
+def test_core_stems_reports_missing_and_existing_polygon_directories(
+    tmp_path: Path,
+) -> None:
+    assert stats_augmentation._core_stems(tmp_path) == set()
+    polygons = tmp_path / "polygons"
+    polygons.mkdir()
+    (polygons / "b.parquet").touch()
+    (polygons / "a.parquet").touch()
+    (polygons / "ignored.csv").touch()
+    assert stats_augmentation._core_stems(tmp_path) == {"a", "b"}

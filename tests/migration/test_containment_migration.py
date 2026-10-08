@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 import osm_polygon_wikidata_only.pipeline.containment_migration as containment_migration
+from osm_polygon_wikidata_only.pipeline import containment_audit
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
     ChildAudit,
     RuleAudit,
@@ -526,3 +530,89 @@ def test_stage_remaps_child_polygon_articles_to_parent_provenance(tmp_path: Path
     assert {(row["region"], row["source_pbf"]) for row in links} == {
         ("parent", "parent-latest.osm.pbf")
     }
+
+
+def test_containment_retirement_payload_and_staged_artifact_contract(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    assert containment_migration._load_retirement_payload(processed) == {
+        "contract_version": containment_migration.RETIREMENT_CONTRACT_VERSION,
+        "retired": {},
+    }
+
+    path = processed / "manifests" / containment_migration.RETIREMENT_FILENAME
+    path.parent.mkdir(parents=True)
+    path.write_text('{"contract_version":"wrong","retired":{}}', encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsupported containment retirement"):
+        containment_migration._load_retirement_payload(processed)
+    path.write_text(
+        json.dumps(
+            {
+                "contract_version": containment_migration.RETIREMENT_CONTRACT_VERSION,
+                "retired": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Malformed containment retirement"):
+        containment_migration._load_retirement_payload(processed)
+    path.write_text(
+        json.dumps(
+            {
+                "contract_version": containment_migration.RETIREMENT_CONTRACT_VERSION,
+                "retired": {"region": ["child"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert containment_migration._load_retirement_payload(processed)["retired"] == {
+        "region": ["child"]
+    }
+
+    staged_path = tmp_path / "polygons.parquet"
+    staged = containment_migration.StagedRule("parent", ("child",), (("polygons", staged_path),))
+    assert staged.artifact("polygons") == staged_path
+    with pytest.raises(KeyError, match="wikipedia/documents"):
+        staged.artifact("wikipedia/documents")
+
+
+def test_present_containment_contract_reports_schema_duplicates_and_read_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = SimpleNamespace(subdir="polygons", identity_columns=("identity",))
+    parent, child = Path("parent.parquet"), Path("child.parquet")
+    schema = pa.schema([("identity", pa.string())])
+    monkeypatch.setattr(
+        containment_audit.pq,
+        "read_schema",
+        lambda path: schema if path == parent else pa.schema([("other", pa.string())]),
+    )
+    audit, blockers = cast(Any, containment_audit._audit_present_contract)(
+        Path("processed"), contract, "parent", "child", parent, child
+    )
+    assert audit.child_rows == 0
+    assert blockers == ["child: schema mismatch for polygons"]
+
+    monkeypatch.setattr(containment_audit.pq, "read_schema", lambda _path: schema)
+    identities = iter((({("p",)}, 1), ({("c",)}, 2)))
+    monkeypatch.setattr(containment_audit, "_identity_set", lambda *_args: next(identities))
+    audit, blockers = cast(Any, containment_audit._audit_present_contract)(
+        Path("processed"), contract, "parent", "child", parent, child
+    )
+    assert audit.child_rows == 1
+    assert audit.missing_from_parent == 1
+    assert blockers == [
+        "child: polygons parent has 1 duplicate identities",
+        "child: polygons child has 2 duplicate identities",
+    ]
+
+    def fail_read(_path: Path) -> pa.Schema:
+        raise OSError("unreadable parquet")
+
+    monkeypatch.setattr(containment_audit.pq, "read_schema", fail_read)
+    audit, blockers = cast(Any, containment_audit._audit_present_contract)(
+        Path("processed"), contract, "parent", "child", parent, child
+    )
+    assert audit.child_rows == 0
+    assert blockers == ["child: unreadable polygons: OSError"]

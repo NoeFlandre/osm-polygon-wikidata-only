@@ -19,6 +19,7 @@ import pytest
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
+from osm_polygon_wikidata_only.hf import stats_release
 from osm_polygon_wikidata_only.hf._uploader.stub import StubHfHub
 from osm_polygon_wikidata_only.hf.language_split_publication import LANGUAGE_CARD_HEADING
 from osm_polygon_wikidata_only.hf.stats_release import (
@@ -825,3 +826,14 @@ def test_stats_release_manifest_revision_reading_and_inventory_validation(
             "region.osm.pbf",
             {**entry, "row_counts": {"polygons": 2}},
         )
+
+
+def test_remote_card_merge_handles_absent_and_invalid_utf8_cards(tmp_path: Path) -> None:
+    card = tmp_path / "README.md"
+    card.write_text("generated card", encoding="utf-8")
+    cast(Any, stats_release._merge_remote_card)(card, SimpleNamespace(contents={}))
+    assert card.read_text(encoding="utf-8") == "generated card"
+
+    remote = SimpleNamespace(contents={stats_release.REMOTE_CARD_FILE: b"\xff"})
+    with pytest.raises(stats_release.StatsReleaseError, match="not valid UTF-8"):
+        cast(Any, stats_release._merge_remote_card)(card, remote)

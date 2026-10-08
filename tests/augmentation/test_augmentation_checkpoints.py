@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from osm_polygon_wikidata_only.augmentation.checkpoints import (
+    AugmentationCheckpointStore,
+    _documents_from_rows,
+    _validated_section_batch,
+)
 from osm_polygon_wikidata_only.augmentation.models import Document, Section, WikidataFact
+from osm_polygon_wikidata_only.augmentation.schema import document_schema
 
 
 def _document() -> Document:
@@ -346,3 +352,75 @@ def test_clear_removes_only_one_region(tmp_path: Path) -> None:
 
     assert not first.region_root.exists()
     assert second.load_entities(("Q2",)) == {"Q2": {"id": "Q2"}}
+
+
+def _section_with_ids(*, document_id: str, section_id: str, section_index: int) -> Section:
+    return Section(
+        section_id=section_id,
+        document_id=document_id,
+        article_id="article-1",
+        wikidata="Q1",
+        project="wikipedia",
+        language="en",
+        site="enwiki",
+        page_id=1,
+        revision_id=1,
+        section_index=section_index,
+        heading="",
+        anchor="",
+        level=0,
+        parent_section_id="",
+        section_path="[]",
+        text="section text",
+        text_length_chars=12,
+        text_length_words=2,
+        text_length_tokens_estimate=3,
+        content_hash="hash",
+        license="CC BY-SA 4.0",
+        attribution="Wikipedia",
+    )
+
+
+def test_checkpoint_row_helpers_reject_malformed_documents_and_sections() -> None:
+    assert _documents_from_rows([{}]) is None
+
+    expected = (("doc-1", 1, "hash"),)
+    unknown = [_section_with_ids(document_id="other", section_id="s1", section_index=0)]
+    assert _validated_section_batch(unknown, expected) is None
+
+    duplicates = [
+        _section_with_ids(document_id="doc-1", section_id="same", section_index=0),
+        _section_with_ids(document_id="doc-1", section_id="same", section_index=1),
+    ]
+    assert _validated_section_batch(duplicates, expected) is None
+
+
+def test_checkpoint_directory_replacement_and_failed_write_cleanup(tmp_path: Path) -> None:
+    store = AugmentationCheckpointStore(tmp_path, "region-latest", "a" * 64)
+
+    def write_payload(value: str):
+        def write(directory: Path) -> None:
+            (directory / "payload.txt").write_text(value, encoding="utf-8")
+
+        return write
+
+    target = store._save_directory("snapshot", write_payload("old"))
+    store._save_directory("snapshot", write_payload("new"))
+    assert (target / "payload.txt").read_text(encoding="utf-8") == "new"
+
+    def fail(directory: Path) -> None:
+        (directory / "partial.txt").write_text("partial", encoding="utf-8")
+        raise RuntimeError("simulated write failure")
+
+    with pytest.raises(RuntimeError, match="simulated write failure"):
+        store._save_directory("snapshot", fail)
+
+    assert (target / "payload.txt").read_text(encoding="utf-8") == "new"
+    assert list(store.plan_root.glob(".snapshot-*")) == []
+
+
+def test_checkpoint_table_reader_rejects_a_missing_file(tmp_path: Path) -> None:
+    assert (
+        AugmentationCheckpointStore._read_table(tmp_path / "missing.parquet", document_schema())
+        is None
+    )

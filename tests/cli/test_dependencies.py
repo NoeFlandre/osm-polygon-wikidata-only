@@ -437,12 +437,8 @@ def test_verified_wikipedia_host_pacing(
     )
     runtime.wikipedia.fetch_article("en", "enwiki", "Andorra", fetch_full_text=False)
 
-    assert len(observed_pacing) > 0
-    hosts_paced = [host for host, _ in observed_pacing]
-    assert "en.wikipedia.org" in hosts_paced
     intervals = [interval for host, interval in observed_pacing if host == "en.wikipedia.org"]
-    assert len(intervals) > 0
-    assert all(i == 0.05 for i in intervals)
+    assert set(intervals) == {0.05}
 
 
 def test_rejected_wikipedia_host_pacing(
@@ -473,10 +469,8 @@ def test_rejected_wikipedia_host_pacing(
     )
     runtime.wikipedia.fetch_article("en", "enwiki", "Andorra", fetch_full_text=False)
 
-    assert len(observed_pacing) > 0
     intervals = [interval for host, interval in observed_pacing if host == "en.wikipedia.org"]
-    assert len(intervals) > 0
-    assert all(i == 0.5 for i in intervals)
+    assert set(intervals) == {0.5}
 
 
 def test_verified_wikidata_host_pacing(
@@ -507,10 +501,8 @@ def test_verified_wikidata_host_pacing(
     )
     runtime.wikidata.get_entity("Q5")
 
-    assert len(observed_pacing) > 0
     intervals = [interval for host, interval in observed_pacing if host == "www.wikidata.org"]
-    assert len(intervals) > 0
-    assert all(i == 0.05 for i in intervals)
+    assert set(intervals) == {0.05}
 
 
 def test_rejected_wikidata_host_pacing(
@@ -541,10 +533,8 @@ def test_rejected_wikidata_host_pacing(
     )
     runtime.wikidata.get_entity("Q5")
 
-    assert len(observed_pacing) > 0
     intervals = [interval for host, interval in observed_pacing if host == "www.wikidata.org"]
-    assert len(intervals) > 0
-    assert all(i == 1.2 for i in intervals)
+    assert set(intervals) == {1.2}
 
 
 def test_augmentation_client_pacing(
@@ -586,10 +576,8 @@ def test_augmentation_client_pacing(
         "https://en.wikipedia.org/w/api.php?action=query", key="test_v.json"
     )
 
-    assert len(observed_pacing) > 0
     intervals_v = [interval for host, interval in observed_pacing if host == "en.wikipedia.org"]
-    assert len(intervals_v) > 0
-    assert all(i == 0.05 for i in intervals_v)
+    assert set(intervals_v) == {0.05}
 
     # Case B: Rejected
     opener_rejected = MockOpener(login_success=False)
@@ -612,10 +600,8 @@ def test_augmentation_client_pacing(
         "https://en.wikipedia.org/w/api.php?action=query", key="test_r.json"
     )
 
-    assert len(observed_pacing) > 0
     intervals_r = [interval for host, interval in observed_pacing if host == "en.wikipedia.org"]
-    assert len(intervals_r) > 0
-    assert all(i == 0.5 for i in intervals_r)
+    assert set(intervals_r) == {0.5}
 
 
 def test_no_credentials_pacing(
@@ -656,7 +642,6 @@ def test_no_credentials_pacing(
         "https://es.wikipedia.org/w/api.php?action=query", key="test_no_creds.json"
     )
 
-    assert len(observed_pacing) > 0
     by_host = dict(observed_pacing)
     assert by_host["en.wikipedia.org"] == 0.5
     assert by_host["www.wikidata.org"] == 1.2

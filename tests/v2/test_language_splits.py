@@ -1627,3 +1627,28 @@ def test_v2_resume_is_rejected_when_the_marker_is_corrupt(tmp_path: Path) -> Non
         )
         is None
     )
+
+
+def test_manifest_record_readers_reject_wrong_shapes_and_escape_roots(tmp_path: Path) -> None:
+    assert language_split_manifest._manifest_records("not-a-list") == ()
+    assert language_split_manifest._manifest_records([{"path": "ok"}, None, 42]) == (
+        {"path": "ok"},
+    )
+
+    missing = tmp_path / "missing.json"
+    assert language_split_manifest._read_previous_manifest(missing) is None
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("[]", encoding="utf-8")
+    assert language_split_manifest._read_previous_manifest(manifest) is None
+    manifest.write_text("{broken", encoding="utf-8")
+    assert language_split_manifest._read_previous_manifest(manifest) is None
+
+    root = tmp_path.resolve()
+    assert language_split_manifest._manifest_output_root(None, root) is None
+    assert language_split_manifest._manifest_output_root({"output_root": 42}, root) is None
+    assert (
+        language_split_manifest._manifest_output_root({"output_root": "../outside"}, root) is None
+    )
+    assert language_split_manifest._manifest_output_root(
+        {"output_root": "language_splits"}, root
+    ) == (root / "language_splits")

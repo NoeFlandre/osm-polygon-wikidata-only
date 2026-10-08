@@ -17,10 +17,12 @@ prevent cleanup for that stem.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from osm_polygon_wikidata_only.cli._sync import retirement as retirement_helpers
 from osm_polygon_wikidata_only.cli._sync.retirement import (
     paired_retirement_stems as _paired_retirement_stems,
 )
@@ -399,3 +401,26 @@ def test_post_upload_cleanup_respects_hardened_pairing(tmp_path: Path) -> None:
     assert (data_root.processed_articles / f"{STEM}.parquet").exists()
     assert STEM in load_pending_publications(data_root)
     assert canonical.exists()
+
+
+def test_canonical_retirement_add_paths_and_conflicts(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    local = processed / "wikipedia/documents/region.parquet"
+    local.parent.mkdir(parents=True)
+    local.touch()
+    root = SimpleNamespace(processed=processed)
+    operation = SimpleNamespace(
+        path_in_repo=f"{retirement_helpers.REMOTE_WIKIPEDIA_DOCUMENTS_DIR}/region.parquet",
+        action="add",
+        local_path=local,
+    )
+    resolved = local.resolve()
+    assert cast(Any, retirement_helpers._canonical_add_path)(root, operation, "region") == resolved
+    operation.action = "delete"
+    assert cast(Any, retirement_helpers._canonical_add_path)(root, operation, "region") is None
+    operation.action = "add"
+    operation.local_path = None
+    assert cast(Any, retirement_helpers._canonical_add_path)(root, operation, "region") is None
+    assert retirement_helpers._merge_add_path(None, resolved) == resolved
+    assert retirement_helpers._merge_add_path(resolved, resolved) == resolved
+    assert retirement_helpers._merge_add_path(resolved, local.parent) == Path("__conflict__")

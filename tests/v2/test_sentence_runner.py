@@ -12,6 +12,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.ids import content_hash
+from osm_polygon_wikidata_only.v2 import sentence_runner
 from osm_polygon_wikidata_only.v2.sentence_checkpoints import SentenceCheckpoint
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from osm_polygon_wikidata_only.v2.sentence_runner import (
@@ -541,3 +542,15 @@ def test_checkpoint_batch_writer_skips_empty_tables(tmp_path: Path) -> None:
     _write_checkpoint_batches(_Writer(), checkpoint, batch_count=2)
 
     assert written_rows == [1]
+
+
+def test_sentence_manifest_loader_rejects_invalid_json_and_accepts_region_mappings(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sentence-manifest.json"
+    for content in ("{broken", "[]"):
+        path.write_text(content, encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid sentence manifest"):
+            sentence_runner._load_manifest_payload(path)
+    path.write_text('{"region":"ready"}', encoding="utf-8")
+    assert sentence_runner._load_manifest_payload(path) == {"region": "ready"}

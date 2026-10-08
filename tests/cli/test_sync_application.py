@@ -937,3 +937,43 @@ def test_a_failed_regional_upload_blocks_the_reconciliation_repair(tmp_path: Pat
     assert queue.synchronous == []
     assert queue.submissions == []
     assert "clear-marker" not in events
+
+
+@pytest.mark.parametrize(
+    (
+        "return_code",
+        "push_enabled",
+        "repository_refresh",
+        "core_repaired",
+        "containment_enqueued",
+        "expected",
+    ),
+    [
+        (0, True, True, False, False, True),
+        (1, True, True, False, False, False),
+        (0, False, True, False, False, False),
+        (0, True, False, False, False, False),
+        (0, True, True, True, False, False),
+        (0, True, True, False, True, False),
+    ],
+)
+def test_metadata_repair_is_needed_only_after_a_clean_pushed_repository_refresh(
+    return_code: int,
+    push_enabled: bool,
+    repository_refresh: bool,
+    core_repaired: bool,
+    containment_enqueued: bool,
+    expected: bool,
+) -> None:
+    application_class = _application_module().SyncApplication
+    application = application_class(
+        context=SimpleNamespace(
+            push_enabled=push_enabled,
+            reconciliation_plan=SimpleNamespace(repository_refresh=repository_refresh),
+            core_will_be_repaired=core_repaired,
+            containment_enqueued=containment_enqueued,
+        ),
+        services=SimpleNamespace(),
+    )
+
+    assert application._metadata_repair_needed(return_code) is expected

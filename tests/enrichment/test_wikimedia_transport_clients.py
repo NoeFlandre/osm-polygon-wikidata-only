@@ -24,12 +24,18 @@ import socket
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from email.message import Message
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, Unpack
+from types import SimpleNamespace
+from typing import Any, TypedDict, TypeVar, Unpack, cast
 
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
+from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaHttpSession
+from osm_polygon_wikidata_only.enrichment.wikipedia import transport as wikipedia_transport
+from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
+from osm_polygon_wikidata_only.utils.request_scheduler import RequestScheduler
 from tests.helpers import http_error as _http_error
 
 _T = TypeVar("_T")
@@ -820,3 +826,77 @@ class _CacheEntry:
         self.status: str = status
         self.parsed_result: Any = parsed_result
         self.request_url: str | None = request_url
+
+
+def test_wikipedia_request_translates_http_and_network_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = wikipedia_transport.HttpWikipediaClient(
+        Settings(),
+        scheduler=cast(RequestScheduler, SimpleNamespace()),
+        session=cast(WikimediaHttpSession, SimpleNamespace()),
+    )
+    monkeypatch.setattr(wikipedia_transport, "with_retries", lambda call, **_kwargs: call())
+
+    def http_error(_url: str) -> object:
+        raise urllib.error.HTTPError(
+            "https://en.wikipedia.org/api", 429, "slow down", Message(), None
+        )
+
+    monkeypatch.setattr(client, "_http_get", http_error)
+    data, result = client._request_article_data("https://en.wikipedia.org/api", fallback=False)
+    assert data is None
+    assert result is not None and result.status == "rate_limited"
+
+    def network_error(_url: str) -> object:
+        raise OSError("offline")
+
+    monkeypatch.setattr(client, "_http_get", network_error)
+    data, result = client._request_article_data("https://en.wikipedia.org/api", fallback=True)
+    assert data is None
+    assert result is not None and result.status == "http_error"
+    assert result.error.startswith("parse fallback failed:")
+
+
+def test_wikipedia_parse_fallback_preserves_error_and_handles_empty_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = wikipedia_transport.HttpWikipediaClient(
+        Settings(),
+        scheduler=cast(RequestScheduler, SimpleNamespace()),
+        session=cast(WikimediaHttpSession, SimpleNamespace()),
+    )
+    original = FetchResult("empty_text", None)
+    rejected = FetchResult("http_error", None, "fallback unavailable")
+    monkeypatch.setattr(client, "_request_article_data", lambda *_args, **_kwargs: (None, rejected))
+    assert (
+        client._parse_fallback(
+            "en",
+            "enwiki",
+            "Title",
+            {},
+            original,
+            "url",
+            wikidata_label="",
+            wikidata_description="",
+        )
+        is rejected
+    )
+
+    monkeypatch.setattr(
+        client,
+        "_request_article_data",
+        lambda *_args, **_kwargs: ({"parse": {"text": ""}}, None),
+    )
+    result = client._parse_fallback(
+        "en",
+        "enwiki",
+        "Title",
+        {},
+        original,
+        "url",
+        wikidata_label="",
+        wikidata_description="",
+    )
+    assert result.status == "empty_text"
+    assert "exact-revision parse were empty" in result.error

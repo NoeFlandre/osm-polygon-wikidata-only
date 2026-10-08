@@ -30,6 +30,8 @@ from osm_polygon_wikidata_only.enrichment.wikipedia_client import (
     InMemoryWikipediaClient,
 )
 from osm_polygon_wikidata_only.io.pbf_reader import PolygonCandidate
+from osm_polygon_wikidata_only.pipeline import orchestrator as pipeline_orchestrator
+from osm_polygon_wikidata_only.pipeline import row_construction
 from osm_polygon_wikidata_only.pipeline.extractor import candidate_to_polygon
 from osm_polygon_wikidata_only.pipeline.orchestrator import collect_pbfs, orchestrate
 from osm_polygon_wikidata_only.pipeline.processor import (
@@ -743,3 +745,67 @@ def test_candidate_to_polygon_includes_geometry() -> None:
     assert row is not None
     assert '"type":"Polygon"' in row.geometry or '"type": "Polygon"' in row.geometry
     assert "coordinates" in row.geometry
+
+
+def test_enrich_polygon_fetches_and_summarizes_missing_qid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    polygon = Polygon.make(
+        identity=PolygonIdentity(
+            source_pbf_stem="region-latest",
+            region="region",
+            source_pbf="region-latest.osm.pbf",
+            osm_type="relation",
+            osm_id=1,
+        ),
+        osm=PolygonOsmFields(
+            wikidata="Q1",
+            name="Place",
+            tags="{}",
+            tag_keys="[]",
+            tag_count=0,
+            osm_primary_tag="",
+            has_name=True,
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid='{"type":"Point","coordinates":[0,0]}',
+            lat=0.0,
+            lon=0.0,
+            bbox="[0,0,0,0]",
+            area_m2=1.0,
+            area_km2=0.000001,
+            area_bucket="small",
+        ),
+        extraction_version="v1",
+        extracted_at="now",
+    )
+    summary = SimpleNamespace(
+        articles=[
+            SimpleNamespace(language="en", full_text="English text"),
+            SimpleNamespace(language="fr", full_text=""),
+        ],
+        best_language=lambda: "en",
+    )
+    monkeypatch.setattr(row_construction, "fetch_qids", lambda *_args, **_kwargs: [summary])
+    summaries = {}
+
+    enriched = row_construction.enrich_polygon(
+        polygon,
+        wikidata_client=InMemoryWikidataClient({}),
+        wikipedia_client=InMemoryWikipediaClient({}),
+        settings=Settings(languages=("en", "fr")),
+        summaries=summaries,
+    )
+
+    assert summaries["Q1"] is summary
+    assert enriched.has_wikipedia
+    assert enriched.wikipedia_languages == '["en","fr"]'
+    assert enriched.wikipedia_article_count == 2
+    assert enriched.has_english_wikipedia and enriched.has_french_wikipedia
+    assert enriched.text_available
+
+
+def test_unprocessed_selection_skips_pbfs_that_were_already_processed() -> None:
+    paths = [Path("a.osm.pbf"), Path("b.osm.pbf")]
+    assert pipeline_orchestrator._select_unprocessed(paths, {"a.osm.pbf": {}}) == [paths[1]]

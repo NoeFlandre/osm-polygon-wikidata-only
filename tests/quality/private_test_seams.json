@@ -21,6 +21,10 @@
     "enrichment/test_wikimedia_auth.py": {
       "_read_json": 1
     },
+    "enrichment/test_wikimedia_transport_clients.py": {
+      "_http_get": 2,
+      "_request_article_data": 2
+    },
     "enrichment/test_wikipedia_split.py": {
       "_fetch_full_text_batch": 2,
       "_parse_wikipedia_batch_response": 1,
@@ -59,6 +63,9 @@
     "hf/test_language_split_release.py": {
       "_recompute_inventory": 1
     },
+    "hf/test_language_splits.py": {
+      "_observe_language_batch": 1
+    },
     "hf/test_stats_release.py": {
       "_download_remote_file": 2,
       "_remote_entries": 3,
@@ -90,6 +97,9 @@
       "_canonical_manifest_stats": 1,
       "_parquet_row_count": 1
     },
+    "migration/test_containment_migration.py": {
+      "_identity_set": 1
+    },
     "migration/test_containment_projection_benchmark.py": {
       "_BATCH_ROWS": 1,
       "_measure": 2,
@@ -104,20 +114,6 @@
     "pipeline/test_wikidata_recovery_repair_fetch.py": {
       "_fetch_recovery_document": 1
     },
-    "quality/test_crap_gate_cli_migration_coverage.py": {
-      "_read_row_group": 1
-    },
-    "quality/test_crap_gate_misc_coverage.py": {
-      "_observe_language_batch": 1
-    },
-    "quality/test_crap_gate_receipt_transport_coverage.py": {
-      "_http_get": 2,
-      "_request_article_data": 2
-    },
-    "quality/test_crap_gate_remaining_coverage.py": {
-      "_identity_set": 1,
-      "_region_artifacts_are_current": 1
-    },
     "v2/test_card.py": {
       "_sum_first_available": 1,
       "_sum_metadata": 1,
@@ -125,6 +121,9 @@
     },
     "v2/test_checkpoints.py": {
       "_load_section_payload": 1
+    },
+    "v2/test_index_scanning_behavior.py": {
+      "_read_row_group": 1
     },
     "v2/test_language_splits.py": {
       "_install_staged_files": 1,
@@ -154,6 +153,9 @@
     },
     "v2/test_reconcile_helpers.py": {
       "_existing_sibling_land": 2
+    },
+    "v2/test_runner.py": {
+      "_region_artifacts_are_current": 1
     },
     "v2/test_sat.py": {
       "_available_ort_providers": 3

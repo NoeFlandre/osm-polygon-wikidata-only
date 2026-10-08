@@ -3,9 +3,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.hf.uploader import UploadError
+from osm_polygon_wikidata_only.v2 import cli as v2_cli
 
 
 def test_sync_dir_has_explicit_v2_selector() -> None:
@@ -236,3 +240,26 @@ def test_sentence_executor_publishes_only_completed_sentence_artifacts(
     assert upload["ops"] == ["op"]
     assert upload["commit_message"] == "Add V2 sentence sidecars"
     assert upload["num_threads"] == 3
+
+
+def test_v2_inventory_handles_disabled_success_and_unavailable_remote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = argparse.Namespace(push=False)
+    settings = Settings(hf_token="token")
+    assert v2_cli._fetch_inventory(args, "owner/repo", settings, None) is None
+
+    inventory = object()
+    monkeypatch.setattr(
+        v2_cli.RemoteInventory,
+        "fetch",
+        lambda repo_id, *, hub, token: inventory,
+    )
+    args.push = True
+    assert v2_cli._fetch_inventory(args, "owner/repo", settings, None) is inventory
+
+    def unavailable(*_args: object, **_kwargs: object) -> object:
+        raise UploadError("not listable")
+
+    monkeypatch.setattr(v2_cli.RemoteInventory, "fetch", unavailable)
+    assert v2_cli._fetch_inventory(args, "owner/repo", settings, None) is None

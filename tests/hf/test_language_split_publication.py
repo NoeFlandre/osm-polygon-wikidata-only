@@ -1017,3 +1017,29 @@ def test_v2_publication_uses_one_commit_and_second_run_is_noop_for_multipart_lan
     assert "config_name: wikipedia_documents_by_language__lang_be_tarask" in remote_card
     assert "split: train" in remote_card
     assert "lang-be-tarask/part-*.parquet" in remote_card
+
+
+def test_language_split_command_translates_publication_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise LanguagePublicationError("release failed")
+
+    monkeypatch.setattr(
+        "osm_polygon_wikidata_only.hf.language_split_publication.run_language_split_publication",
+        fail,
+    )
+    args = argparse.Namespace(
+        dataset_version="v2",
+        batch_size=10,
+        confirm_repo=[],
+        apply=False,
+        dry_run=False,
+        hf_token=None,
+    )
+    with pytest.raises(SystemExit) as raised:
+        cast(Any, commands._run_publish_language_splits)(
+            argparse.ArgumentParser(), args, data_root=SimpleNamespace()
+        )
+    assert raised.value.code == 2
+    assert "release failed" in capsys.readouterr().err

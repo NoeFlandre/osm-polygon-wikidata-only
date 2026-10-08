@@ -11,6 +11,7 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation import progress as augmentation_progress
 from osm_polygon_wikidata_only.cli import run_sync, sync_runtime
+from osm_polygon_wikidata_only.cli.sync_runtime import load_existing_core_for_publication
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf import publication as hf_publication
@@ -404,3 +405,27 @@ def test_build_augmentation_client_uses_the_shared_runtime_and_cache_contract(
         "cache_args": (data_root.cache / "augmentation", "text-sidecars-v1"),
         "client_args": (settings, cache, scheduler, session),
     }
+
+
+def test_publication_core_loader_uses_existing_core_when_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import osm_polygon_wikidata_only.hf.publication as publication
+
+    existing = object()
+    assert (
+        cast(Any, load_existing_core_for_publication)(
+            SimpleNamespace(), "region", existing, required=True
+        )
+        is existing
+    )
+    assert (
+        cast(Any, load_existing_core_for_publication)(
+            SimpleNamespace(), "region", None, required=False
+        )
+        is None
+    )
+    monkeypatch.setattr(publication, "load_existing_core_artifacts", lambda _root, stem: (stem,))
+    assert cast(Any, load_existing_core_for_publication)(
+        SimpleNamespace(), "region", None, required=True
+    ) == ("region",)

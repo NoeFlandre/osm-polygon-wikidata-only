@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
-from osm_polygon_wikidata_only.grid5000 import sentence_controller
+from osm_polygon_wikidata_only.grid5000 import (
+    sentence_controller,
+    sentence_controller_ledger,
+    sentence_controller_policy,
+)
 from tests.grid5000.test_sentence_controller import (
     _controller,
     _data_root,
@@ -104,3 +110,31 @@ def test_uninitialized_ledger_cannot_be_written(tmp_path: Path) -> None:
     with pytest.raises(ControllerRunError, match="uninitialized sentence ledger"):
         controller._write_ledger()
     assert not controller.ledger_path.exists()
+
+
+def test_sentence_ledger_creation_and_immutable_validation() -> None:
+    mixin = sentence_controller_ledger.SentenceControllerLedgerMixin
+    written: list[object] = []
+    controller = SimpleNamespace(
+        run_id=None,
+        ledger_path=Path("missing-ledger.json"),
+        _ledger=None,
+        _create_ledger=lambda: cast(Any, mixin._create_ledger)(controller),
+        _new_ledger=lambda: cast(
+            sentence_controller_policy.LedgerDict, {"run_id": controller.run_id}
+        ),
+        _write_ledger=lambda ledger=None: written.append(ledger),
+    )
+    ledger = cast(Any, mixin.initialize)(controller)
+    assert ledger["run_id"] == controller.run_id
+    assert written == [ledger]
+
+    controller.run_id = "../unsafe"
+    with pytest.raises(
+        sentence_controller_policy.ControllerRunError, match="Unsafe Grid5000 run_id"
+    ):
+        cast(Any, mixin._create_ledger)(controller)
+
+    validator = SimpleNamespace(_immutable_ledger_fields=lambda: {"repo_id": "expected"})
+    with pytest.raises(sentence_controller_policy.ControllerRunError, match="repo_id"):
+        cast(Any, mixin._validate_immutable_ledger)(validator, {"repo_id": "other"})

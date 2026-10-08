@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -10,6 +12,7 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.domain.schema import article_schema
+from osm_polygon_wikidata_only.v2 import index_scanning
 from osm_polygon_wikidata_only.v2.index_scanning import (
     effective_paths,
     index_rows_from_table,
@@ -211,3 +214,31 @@ def test_scan_row_group_keeps_arrow_value_errors_unwrapped(tmp_path: Path) -> No
     with pytest.raises(ValueError, match="row_group_indices") as error:
         scan_index_row_group(path, legacy_articles=False, row_group=5)
     assert "unreadable" not in str(error.value)
+
+
+@pytest.mark.parametrize("error", [ValueError("bad value"), RuntimeError("bad table")])
+def test_v1_index_row_group_errors_keep_their_contract(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    monkeypatch.setattr(
+        index_scanning, "_read_row_group", lambda *_args: (_ for _ in ()).throw(error)
+    )
+
+    if isinstance(error, ValueError):
+        with pytest.raises(ValueError, match="bad value"):
+            cast(Any, index_scanning._read_index_rows)(object(), Path("shard.parquet"), False, 0)
+    else:
+        with pytest.raises(ValueError, match="V1 document shard is unreadable"):
+            cast(Any, index_scanning._read_index_rows)(object(), Path("shard.parquet"), False, 0)
+
+
+def test_v1_legacy_row_conversion_wraps_bad_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        index_scanning,
+        "wikipedia_document_from_article_row",
+        lambda _row: (_ for _ in ()).throw(TypeError("invalid legacy row")),
+    )
+    table = SimpleNamespace(to_pylist=lambda: [{"article_id": "bad"}])
+
+    with pytest.raises(ValueError, match="V1 legacy article shard is invalid"):
+        index_scanning._legacy_rows(table, Path("legacy.parquet"))
