@@ -35,6 +35,25 @@ def _backoff_seconds(attempt: int) -> float:
     return capped + random.uniform(0, _BASE_DELAY_SECONDS)
 
 
+def _should_retry(error: Exception, attempt: int, attempts: int) -> bool:
+    return attempt < attempts and _is_transient(error)
+
+
+def _wait_before_retry(message: str, attempt: int, attempts: int, error: Exception) -> bool:
+    """Log the failed attempt, back off, and return ``True`` if retries were cancelled."""
+    delay = _backoff_seconds(attempt)
+    LOGGER.warning(
+        "Upload '%s' attempt %d/%d failed (%s): %s; retrying in %.1fs",
+        message,
+        attempt,
+        attempts,
+        type(error).__name__,
+        error,
+        delay,
+    )
+    return wait_for_retry_or_cancel(delay)
+
+
 def _run_upload_attempts[OperationInput](
     upload: Callable[[OperationInput, str], None],
     ops: OperationInput,
@@ -48,19 +67,9 @@ def _run_upload_attempts[OperationInput](
             upload(ops, message)
             return
         except Exception as error:
-            if attempt == attempts or not _is_transient(error):
+            if not _should_retry(error, attempt, attempts):
                 raise
-            delay = _backoff_seconds(attempt)
-            LOGGER.warning(
-                "Upload '%s' attempt %d/%d failed (%s): %s; retrying in %.1fs",
-                message,
-                attempt,
-                attempts,
-                type(error).__name__,
-                error,
-                delay,
-            )
-            if wait_for_retry_or_cancel(delay):
+            if _wait_before_retry(message, attempt, attempts, error):
                 raise
 
 
