@@ -87,11 +87,16 @@ def run(args: argparse.Namespace) -> int:
     return 0 if not payload["blocked_parents"] else EXIT_BLOCKED
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Legacy ``scripts/audit_containment.py`` entry point."""
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse the audit-containment arguments. A usage error or ``--help`` exits here."""
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     add_arguments(parser)
-    return run(parser.parse_args(argv))
+    return parser.parse_args(argv)
 
 
-__all__ = ["DESCRIPTION", "add_arguments", "main", "run"]
+def main(argv: Sequence[str] | None = None) -> int:
+    """Legacy ``scripts/audit_containment.py`` entry point."""
+    return run(parse_args(argv))
+
+
+__all__ = ["DESCRIPTION", "add_arguments", "main", "parse_args", "run"]

@@ -112,8 +112,10 @@ def execute(args: argparse.Namespace, *, prog: str = PROG) -> int:
 
 
 def run(argv: list[str] | None = None) -> int:
+    # Parse outside the try: a usage error or --help exits here, before the notice.
+    args = _build_parser().parse_args(argv)
     try:
-        return execute(_build_parser().parse_args(argv))
+        return execute(args)
     finally:
         report_deprecated(PROG, "osm-polygon-wikidata-only enforce-integrity")
 

@@ -21,7 +21,7 @@ The main command has the subcommands in the table. Each subcommand has a `--help
 
 ## Legacy commands
 
-These older entry points stay installed. Each one prints a deprecation notice on stderr. Its stdout and exit codes do not change. Use the replacement in new scripts and jobs. If a script merges stderr into stdout (for example with `2>&1`), the notice appears in that output.
+These older entry points stay installed. Each one prints a deprecation notice on stderr after a run that gets past argument parsing, whatever its exit code. A usage error or `--help` prints no notice. Its stdout and exit codes do not change. Use the replacement in new scripts and jobs. If a script merges stderr into stdout (for example with `2>&1`), the notice appears in that output.
 
 | Legacy command | Replacement | Notes |
 | --- | --- | --- |

@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from osm_polygon_wikidata_only.cli.errors import report_deprecated
+from osm_polygon_wikidata_only.cli.errors import run_legacy_typer
 from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 from osm_polygon_wikidata_only.hf._trackio.models import FinalDatasetSnapshot
 from osm_polygon_wikidata_only.hf._trackio.publisher import (
@@ -95,13 +95,11 @@ def publish(
 
 def run() -> None:
     """Installed console-script entry point."""
-    try:
-        app()
-    finally:
-        report_deprecated(
-            "osm-polygon-wikidata-and-wikipedia-trackio",
-            "osm-polygon-wikidata-only trackio-snapshot --dataset-version v2",
-        )
+    run_legacy_typer(
+        app,
+        "osm-polygon-wikidata-and-wikipedia-trackio",
+        "osm-polygon-wikidata-only trackio-snapshot --dataset-version v2",
+    )
 
 
 __all__ = [
