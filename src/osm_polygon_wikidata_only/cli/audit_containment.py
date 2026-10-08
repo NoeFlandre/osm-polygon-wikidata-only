@@ -68,6 +68,24 @@ def _audit_reports(processed: Path, rules: Sequence[ContainmentRule]) -> list[Ru
     return [audit_rule(processed, rule) for rule in rules if rule.children]
 
 
+def _write_payload(output: Path | None, rendered: str) -> None:
+    """Write the rendered JSON report to ``output``, or to stdout when it is unset."""
+    if output:
+        output.write_text(rendered, encoding="utf-8")
+    else:
+        print(rendered, end="")
+
+
+def _blocked_result(reports: Sequence[RuleAudit]) -> int:
+    """Return 0 when every audited parent is safe, else the one-line stderr failure."""
+    blocked = [report.parent for report in reports if not report.safe_to_stage]
+    if not blocked:
+        return 0
+    return report_cli_error(
+        PROG, CliFailure(f"{len(blocked)} blocked parent(s): {', '.join(blocked)}")
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     """Audit the pending containment rules and emit the JSON report.
 
@@ -82,16 +100,8 @@ def run(args: argparse.Namespace) -> int:
         return report_cli_error(PROG, error)
     payload = _audit_payload(retired, reports)
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    if args.output:
-        args.output.write_text(rendered, encoding="utf-8")
-    else:
-        print(rendered, end="")
-    blocked = [report.parent for report in reports if not report.safe_to_stage]
-    if not blocked:
-        return 0
-    return report_cli_error(
-        PROG, CliFailure(f"{len(blocked)} blocked parent(s): {', '.join(blocked)}")
-    )
+    _write_payload(args.output, rendered)
+    return _blocked_result(reports)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
