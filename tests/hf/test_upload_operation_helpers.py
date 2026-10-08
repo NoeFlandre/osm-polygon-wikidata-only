@@ -115,6 +115,147 @@ def test_run_upload_attempts_stops_retrying_when_cancelled(monkeypatch: pytest.M
     assert len(calls) == 1
 
 
+@pytest.fixture
+def no_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the backoff jitter to zero so delays are exact."""
+    monkeypatch.setattr(_upload_retry, "random", SimpleNamespace(uniform=lambda _low, _high: 0.0))
+
+
+@pytest.mark.parametrize(
+    ("error", "transient"),
+    [
+        (UploadError("rate limited", transient=True), True),
+        (UploadError("Invalid HF_TOKEN"), False),
+        (ConnectionResetError(104, "reset"), True),
+        (ValueError("bad payload"), False),
+    ],
+)
+def test_is_transient_follows_the_upload_error_flag_or_the_network_error(
+    error: Exception, transient: bool
+) -> None:
+    assert _upload_retry._is_transient(error) is transient
+
+
+def test_upload_error_flag_is_authoritative_over_a_network_cause() -> None:
+    permanent = UploadError("rejected after a network blip")
+    permanent.__cause__ = ConnectionResetError(104, "reset")
+
+    assert not _upload_retry._is_transient(permanent)
+
+
+def test_backoff_doubles_from_the_base_delay_and_caps_at_the_maximum(no_jitter: None) -> None:
+    delays = [_upload_retry._backoff_seconds(attempt) for attempt in range(1, 7)]
+
+    assert delays == [0.5, 1.0, 2.0, 4.0, 8.0, 8.0]
+
+
+def test_backoff_adds_jitter_drawn_from_zero_to_the_base_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draws: list[tuple[float, float]] = []
+
+    def fake_uniform(low: float, high: float) -> float:
+        draws.append((low, high))
+        return high
+
+    monkeypatch.setattr(_upload_retry, "random", SimpleNamespace(uniform=fake_uniform))
+
+    assert _upload_retry._backoff_seconds(2) == pytest.approx(1.5)
+    assert _upload_retry._backoff_seconds(10) == pytest.approx(8.5)
+    assert draws == [(0, 0.5), (0, 0.5)]
+
+
+def test_wait_before_retry_logs_the_exact_attempt_and_waits_the_backoff(
+    recorded_waits: list[float], no_jitter: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("WARNING"):
+        cancelled = _upload_retry._wait_before_retry(
+            "repo upload", 2, 3, UploadError("rate limited", transient=True)
+        )
+
+    assert cancelled is False
+    assert recorded_waits == [1.0]
+    assert caplog.messages == [
+        "Upload 'repo upload' attempt 2/3 failed (UploadError): rate limited; retrying in 1.0s"
+    ]
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_wait_before_retry_returns_the_cancellation_signal_from_the_wait(
+    monkeypatch: pytest.MonkeyPatch, no_jitter: None, cancelled: bool
+) -> None:
+    def fake_wait(_delay: float) -> bool:
+        return cancelled
+
+    monkeypatch.setattr(_upload_retry, "wait_for_retry_or_cancel", fake_wait)
+
+    result = _upload_retry._wait_before_retry(
+        "retry", 1, 3, UploadError("transient", transient=True)
+    )
+
+    assert result is cancelled
+
+
+def test_run_upload_attempts_passes_the_operation_and_message_to_the_upload() -> None:
+    received: list[tuple[list[str], str]] = []
+    operation_input = ["region.parquet"]
+
+    def upload(ops: list[str], message: str) -> None:
+        received.append((ops, message))
+
+    _run_upload_attempts(upload, operation_input, "repo upload", attempts=1)
+
+    assert received == [(["region.parquet"], "repo upload")]
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 3])
+def test_run_upload_attempts_makes_exactly_the_allowed_attempts_for_persistent_failures(
+    recorded_waits: list[float], attempts: int
+) -> None:
+    calls: list[int] = []
+
+    def upload(_ops: list, _message: str) -> None:
+        calls.append(1)
+        raise UploadError("still down", transient=True)
+
+    with pytest.raises(UploadError, match="still down"):
+        _run_upload_attempts(upload, [], "retry", attempts=attempts)
+
+    assert len(calls) == attempts
+    assert len(recorded_waits) == attempts - 1
+
+
+def test_run_upload_attempts_logs_the_named_upload_before_each_retry(
+    recorded_waits: list[float], no_jitter: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    def upload(_ops: list, _message: str) -> None:
+        raise UploadError("rate limited", transient=True)
+
+    with caplog.at_level("WARNING"), pytest.raises(UploadError, match="rate limited"):
+        _run_upload_attempts(upload, [], "repo upload", attempts=2)
+
+    assert recorded_waits == [0.5]
+    assert caplog.messages == [
+        "Upload 'repo upload' attempt 1/2 failed (UploadError): rate limited; retrying in 0.5s"
+    ]
+
+
+@pytest.mark.parametrize("attempts", [0, -1])
+def test_run_upload_attempts_rejects_a_non_positive_attempt_budget(
+    recorded_waits: list[float], attempts: int
+) -> None:
+    calls: list[int] = []
+
+    def upload(_ops: list, _message: str) -> None:
+        calls.append(1)
+
+    with pytest.raises(ValueError, match=r"^attempts must be >= 1$"):
+        _run_upload_attempts(upload, [], "retry", attempts=attempts)
+
+    assert calls == []
+    assert recorded_waits == []
+
+
 class _HubHttpError(Exception):
     def __init__(self, status_code: int) -> None:
         super().__init__(f"HTTP {status_code}")

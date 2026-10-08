@@ -54,6 +54,13 @@ def _wait_before_retry(message: str, attempt: int, attempts: int, error: Excepti
     return wait_for_retry_or_cancel(delay)
 
 
+def _validate_attempts(attempts: int) -> None:
+    # A zero budget would skip the upload without raising, so the caller would
+    # treat the job as delivered.
+    if attempts < 1:
+        raise ValueError("attempts must be >= 1")
+
+
 def _run_upload_attempts[OperationInput](
     upload: Callable[[OperationInput, str], None],
     ops: OperationInput,
@@ -62,6 +69,7 @@ def _run_upload_attempts[OperationInput](
     attempts: int,
 ) -> None:
     """Run an upload, retrying transient failures; re-raise permanent or final failures."""
+    _validate_attempts(attempts)
     for attempt in range(1, attempts + 1):
         try:
             upload(ops, message)

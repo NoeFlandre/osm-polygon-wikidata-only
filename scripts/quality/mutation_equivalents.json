@@ -89,6 +89,11 @@
     "reason": "For None the original and mutated conditions both return False; for every non-None value both evaluate bool(value).",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
   },
+  "osm_polygon_wikidata_only.hf._upload_retry.x__run_upload_attempts__mutmut_8": {
+    "mutant_sha256": "21ad90191fe137d5888fca0bfa686b253ca6c74c6815f2b7032f1f5e4dcdc50b",
+    "reason": "attempts is validated to be at least 1 before the loop. For attempt == attempts, _should_retry is False, so every iteration either returns or re-raises and never completes normally. Iteration attempts + 1 is therefore unreachable, and range(1, attempts + 2) runs the same attempts as range(1, attempts + 1).",
+    "source_sha256": "678421302f2bb1ca2ba3fcf970e4b2ca798aa3f41816125cebd9e9fbaec8d5c5"
+  },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__load_json_object__mutmut_5": {
     "mutant_sha256": "588a1df6f4a463432755975bfd55cdffac2ed7f9f018d49d46e59c82e0bfac45",
     "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same bytes. The existing manifest test verifies the canonical codec name, not spelling.",
