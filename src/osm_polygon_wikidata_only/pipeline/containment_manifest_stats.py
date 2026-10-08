@@ -51,28 +51,6 @@ def polygon_manifest_table_stats(polygons: pa.Table) -> dict[str, Any]:
     }
 
 
-def polygon_manifest_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate manifest values derived from polygon rows."""
-    return {
-        "polygon_count": len(rows),
-        "unique_wikidata_count": len({row["wikidata"] for row in rows if row["wikidata"]}),
-        "rows_with_wikipedia": sum(bool(row["has_wikipedia"]) for row in rows),
-        "rows_with_full_text": sum(bool(row["text_available"]) for row in rows),
-        "area_bucket_counts": _area_bucket_counts(rows),
-        "top_tag_keys": _top_tag_keys(rows),
-    }
-
-
-def _area_bucket_counts(rows: list[dict[str, Any]]) -> dict[Any, int]:
-    """Count polygon rows by their existing area bucket."""
-    return dict(Counter(row["area_bucket"] for row in rows))
-
-
-def _top_tag_keys(rows: list[dict[str, Any]]) -> dict[str, int]:
-    """Count valid serialized tag keys, ignoring malformed rows."""
-    return top_tag_keys_from_values(row["tag_keys"] for row in rows)
-
-
 def top_tag_keys_from_values(values: Iterable[Any]) -> dict[str, int]:
     """Count valid serialized tag keys in row order, ignoring malformed values."""
     tag_keys: Counter[str] = Counter()

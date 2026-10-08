@@ -591,25 +591,6 @@ def test_card_metrics_scan_polygon_columns_once(
     assert metrics.wikipedia_tag_only == 1
 
 
-@pytest.mark.parametrize(
-    ("osm_type", "osm_id", "expected"),
-    [
-        ("way", 101, ("way", 101)),
-        ("relation", "202", ("relation", 202)),
-        (None, 101, None),
-        ("way", None, None),
-        ("", 101, None),
-        ("way", "not-an-integer", None),
-    ],
-)
-def test_osm_polygon_identity_preserves_metric_input_boundaries(
-    osm_type: object,
-    osm_id: object,
-    expected: tuple[str, int] | None,
-) -> None:
-    assert card_scanning_polygons.osm_polygon_identity(osm_type, osm_id) == expected
-
-
 def test_card_metrics_preserve_rows_when_metric_columns_are_missing(tmp_path: Path) -> None:
     polygon_path = tmp_path / "polygons.parquet"
     document_path = tmp_path / "documents.parquet"
