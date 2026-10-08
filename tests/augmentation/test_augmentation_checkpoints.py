@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,25 @@ def test_entities_round_trip_and_mismatched_qids_are_not_reused(tmp_path: Path) 
 
     assert store.load_entities(("Q1",)) == entities
     assert store.load_entities(("Q2",)) is None
+
+
+@pytest.mark.skipif(sys.get_int_max_str_digits() == 0, reason="integer digit limit is disabled")
+def test_entities_checkpoint_with_oversized_integer_is_recomputed_not_fatal(
+    tmp_path: Path,
+) -> None:
+    from osm_polygon_wikidata_only.augmentation.checkpoints import (
+        AugmentationCheckpointStore,
+    )
+
+    store = AugmentationCheckpointStore(tmp_path, "england-latest", "a" * 64)
+    store.save_entities(("Q1",), {"Q1": {"id": "Q1"}})
+    oversized = "1" * (sys.get_int_max_str_digits() + 1)
+    (store.plan_root / "entities" / "entities.json").write_text(
+        '{"Q1": {"id": "Q1", "sitelinks": ' + oversized + "}}",
+        encoding="utf-8",
+    )
+
+    assert store.load_entities(("Q1",)) is None
 
 
 def test_entities_checkpoint_allows_authoritatively_missing_qids(tmp_path: Path) -> None:
