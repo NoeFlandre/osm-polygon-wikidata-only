@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.v2.checkpoints import (
 )
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
+    DirectLookupOptions,
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
 )
@@ -370,8 +371,7 @@ def _find_reconciliation_candidates(
         wikipedia_client=wikipedia_client,
         polygon_context=polygon,
         cache=cache,
-        fetch_full_text=fetch_full_text,
-        wait_for_index=True,
+        options=DirectLookupOptions(fetch_full_text=fetch_full_text),
     )
     return recovered.documents
 

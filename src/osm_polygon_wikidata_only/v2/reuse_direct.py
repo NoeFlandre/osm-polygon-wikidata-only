@@ -19,6 +19,7 @@ from osm_polygon_wikidata_only.v2.checkpoints import (
 )
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
+    DirectLookupOptions,
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
 )
@@ -120,10 +121,12 @@ def _enrich_direct_item(
         wikipedia_client=wikipedia_client,
         polygon_context=polygon,
         cache=None,
-        fetch_full_text=fetch_full_text,
-        wait_for_index=False,
-        initial_matches=initial_matches,
-        defer_final_lookup=True,
+        options=DirectLookupOptions(
+            fetch_full_text=fetch_full_text,
+            wait_for_index=False,
+            initial_matches=initial_matches,
+            defer_final_lookup=True,
+        ),
     )
 
 

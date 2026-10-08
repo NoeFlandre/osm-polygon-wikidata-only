@@ -6,7 +6,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from osm_polygon_wikidata_only.enrichment.text_cleaning import count_words, estimate_tokens
@@ -40,6 +40,25 @@ class DirectEnrichmentResult:
     links: tuple[dict[str, Any], ...]
     statuses: tuple[DirectWikipediaStatus, ...]
     deferred_errors: tuple[tuple[int, Exception], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DirectLookupOptions:
+    """Fetch, index-wait and V1 lookup modes for one direct enrichment call."""
+
+    fetch_full_text: bool = True
+    wait_for_index: bool = True
+    initial_matches: Mapping[tuple[str, str], tuple[Mapping[str, Any], ...]] | None = None
+    defer_final_lookup: bool = False
+
+
+@dataclass(slots=True)
+class _DirectRows:
+    """Documents, links and statuses accumulated while resolving one polygon."""
+
+    documents: dict[str, dict[str, Any]] = field(default_factory=dict)
+    links: dict[str, dict[str, Any]] = field(default_factory=dict)
+    statuses: dict[int, DirectWikipediaStatus] = field(default_factory=dict)
 
 
 def _link_row(
@@ -124,10 +143,7 @@ def enrich_wikipedia_refs(
     wikipedia_client: WikipediaClient,
     polygon_context: Mapping[str, Any] | None = None,
     cache: JsonFileCache | None = None,
-    fetch_full_text: bool = True,
-    wait_for_index: bool = True,
-    initial_matches: Mapping[tuple[str, str], tuple[Mapping[str, Any], ...]] | None = None,
-    defer_final_lookup: bool = False,
+    options: DirectLookupOptions | None = None,
 ) -> DirectEnrichmentResult:
     """Resolve direct references, optionally without waiting for V1 indexing.
 
@@ -136,20 +152,19 @@ def enrich_wikipedia_refs(
     completed index before they are persisted because an index miss is not
     authoritative until every V1 shard has been checked.
     """
+    options = DirectLookupOptions() if options is None else options
     context = _polygon_context(polygon_context)
     client = _cached_client(wikipedia_client, cache)
-    documents: dict[str, dict[str, Any]] = {}
-    links: dict[str, dict[str, Any]] = {}
-    statuses: dict[int, DirectWikipediaStatus] = {}
-    initial_matches = _provided_or_lookup(index, refs, initial_matches)
+    rows = _DirectRows()
+    initial_matches = _provided_or_lookup(index, refs, options.initial_matches)
     pending = _partition_references(
         polygon_id,
         refs,
         initial_matches,
         context,
-        documents,
-        links,
-        statuses,
+        rows.documents,
+        rows.links,
+        rows.statuses,
     )
 
     # A miss is not authoritative until the background index has finished.
@@ -161,11 +176,11 @@ def enrich_wikipedia_refs(
         index,
         pending,
         client,
-        fetch_full_text=fetch_full_text,
-        wait_for_index=wait_for_index,
+        fetch_full_text=options.fetch_full_text,
+        wait_for_index=options.wait_for_index,
     )
 
-    final_matches = _final_matches(index, pending, defer_final_lookup)
+    final_matches = _final_matches(index, pending, options.defer_final_lookup)
     deferred_errors = _resolve_pending(
         polygon_id,
         pending,
@@ -173,17 +188,14 @@ def enrich_wikipedia_refs(
         speculative,
         client,
         context,
-        fetch_full_text,
-        wait_for_index,
-        documents,
-        links,
-        statuses,
+        options,
+        rows,
     )
 
     return DirectEnrichmentResult(
-        documents=tuple(documents.values()),
-        links=tuple(links.values()),
-        statuses=tuple(statuses[position] for position in range(len(refs))),
+        documents=tuple(rows.documents.values()),
+        links=tuple(rows.links.values()),
+        statuses=tuple(rows.statuses[position] for position in range(len(refs))),
         deferred_errors=tuple(sorted(deferred_errors.items())),
     )
 
@@ -316,11 +328,8 @@ def _resolve_pending(
     speculative: Mapping[int, FetchResult | Exception],
     client: WikipediaClient,
     context: Mapping[str, Any],
-    fetch_full_text: bool,
-    wait_for_index: bool,
-    documents: dict[str, dict[str, Any]],
-    links: dict[str, dict[str, Any]],
-    statuses: dict[int, DirectWikipediaStatus],
+    options: DirectLookupOptions,
+    rows: _DirectRows,
 ) -> dict[int, Exception]:
     deferred_errors: dict[int, Exception] = {}
     for position, ref in pending:
@@ -332,9 +341,9 @@ def _resolve_pending(
                 ref,
                 existing[0],
                 context,
-                documents,
-                links,
-                statuses,
+                rows.documents,
+                rows.links,
+                rows.statuses,
             )
             continue
         outcome = _resolve_pending_outcome(
@@ -342,8 +351,8 @@ def _resolve_pending(
             ref,
             speculative.get(position),
             client,
-            fetch_full_text=fetch_full_text,
-            wait_for_index=wait_for_index,
+            fetch_full_text=options.fetch_full_text,
+            wait_for_index=options.wait_for_index,
         )
         _apply_pending_outcome(
             polygon_id,
@@ -351,9 +360,9 @@ def _resolve_pending(
             outcome,
             ref,
             context,
-            documents,
-            links,
-            statuses,
+            rows.documents,
+            rows.links,
+            rows.statuses,
             deferred_errors,
         )
     return deferred_errors

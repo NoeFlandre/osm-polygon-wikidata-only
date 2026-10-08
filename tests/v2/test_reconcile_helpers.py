@@ -9,7 +9,10 @@ import pytest
 
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
 from osm_polygon_wikidata_only.v2 import direct_enrichment, maps, reuse_reconcile, runner
-from osm_polygon_wikidata_only.v2.direct_enrichment import DirectWikipediaStatus
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    DirectLookupOptions,
+    DirectWikipediaStatus,
+)
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
 
 
@@ -108,7 +111,7 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         cache="cache",
         fetch_full_text=False,
     ) == [recovered]
-    assert calls[0]["wait_for_index"] is True
+    assert calls[0]["options"] == DirectLookupOptions(fetch_full_text=False, wait_for_index=True)
 
 
 def test_has_wikipedia_refs_ignores_malformed_and_empty_values() -> None:
