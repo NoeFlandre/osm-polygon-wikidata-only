@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +24,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     LINK_CONTRACT_VERSION as _LINK_CONTRACT_VERSION,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
+from osm_polygon_wikidata_only.io.json_files import read_json
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemApplyContext,
     StemApplyInputs,
@@ -68,10 +68,7 @@ def source_pbf_for_stem(inputs: StemApplyInputs) -> str:
 
 def _load_json_object(path: Path, error: str) -> dict[str, Any]:
     """Load a JSON object, preserving a precise corruption error."""
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{error}: {exc}") from exc
+    payload = read_json(path, on_malformed=lambda exc: ValueError(f"{error}: {exc}"))
     if not isinstance(payload, dict):
         raise ValueError(f"{error} must be a JSON object")
     return dict(payload)
