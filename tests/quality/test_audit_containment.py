@@ -64,3 +64,35 @@ def test_script_entrypoint_renders_help(monkeypatch: pytest.MonkeyPatch) -> None
         runpy.run_path(str(script), run_name="__main__")
 
     assert exit_info.value.code == 0
+
+
+def test_audit_main_reports_unreadable_processed_root_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def missing(_processed: Path, _rule: ContainmentRule) -> RuleAudit:
+        raise FileNotFoundError("processed/polygons missing")
+
+    monkeypatch.setattr(
+        audit_containment, "CONTAINMENT_RULES", (ContainmentRule("parent", ("child",)),)
+    )
+    monkeypatch.setattr(audit_containment, "load_retired_children", lambda _p: set())
+    monkeypatch.setattr(audit_containment, "audit_rule", missing)
+
+    assert audit_containment.main([str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "osm-polygon-wikidata-only audit-containment: error: processed/polygons missing\n"
+    )
+
+
+def test_audit_main_reports_malformed_retirement_manifest_as_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def malformed(_processed: Path) -> set[str]:
+        raise ValueError("Malformed containment retirement manifest")
+
+    monkeypatch.setattr(audit_containment, "load_retired_children", malformed)
+
+    assert audit_containment.main([str(tmp_path)]) == 1
+    assert "Malformed containment retirement manifest" in capsys.readouterr().err
