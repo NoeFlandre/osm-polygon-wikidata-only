@@ -25,6 +25,12 @@ from osm_polygon_wikidata_only.io.cache import JsonCache
 from .models import FetchResult, WikipediaArticle, WikipediaClient
 from .transport import HttpWikipediaClient
 
+# Parse-API fallback text is cleaned by ``html_to_plain_text``. Entries written
+# before the block-boundary fix (#201) carry no marker, so they are refetched
+# once on read. New entries carry the marker, so they are not refetched again.
+_PARSE_FALLBACK_SOURCE = "mediawiki_action_api_parse_fallback"
+_TEXT_CLEANING_VERSION = "html-block-boundaries-v1"
+
 
 class CachedWikipediaClient(WikipediaClient):
     """Wrap another client and cache successful + failed fetches."""
@@ -149,6 +155,8 @@ class CachedWikipediaClient(WikipediaClient):
         hit = self._cache.get(key)
         if hit is None or hit.status != "ok" or not isinstance(hit.parsed_result, dict):
             return None
+        if _is_stale_parse_fallback(hit.parsed_result):
+            return None
         return FetchResult("ok", _article_from_dict(hit.parsed_result))
 
     def _store_result(
@@ -195,6 +203,14 @@ class CachedWikipediaClient(WikipediaClient):
         return ""
 
 
+def _is_stale_parse_fallback(payload: dict[str, Any]) -> bool:
+    """True for parse-fallback text cleaned before the current cleaning rules."""
+    return (
+        payload.get("source_api") == _PARSE_FALLBACK_SOURCE
+        and payload.get("text_cleaning_version") != _TEXT_CLEANING_VERSION
+    )
+
+
 def _article_to_dict(a: WikipediaArticle) -> dict[str, Any]:
     return {
         "language": a.language,
@@ -216,6 +232,7 @@ def _article_to_dict(a: WikipediaArticle) -> dict[str, Any]:
         "attribution": a.attribution,
         "source_api": a.source_api,
         "retrieved_at": a.retrieved_at,
+        "text_cleaning_version": _TEXT_CLEANING_VERSION,
     }
 
 

@@ -554,3 +554,45 @@ def test_html_to_plain_text_ignores_script_style_and_adds_boundaries() -> None:
     html = "<script>hidden()</script><style>.x{display:none}</style><ul><li>One</li><li>Two</li></ul><br>Three"
 
     assert html_to_plain_text(html) == "One Two Three"
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        pytest.param(
+            "<table><tr><td>Paris</td><td>2100000</td></tr></table>",
+            "Paris 2100000",
+            id="adjacent-td-cells",
+        ),
+        pytest.param(
+            "<table><tr><th>Name</th><th>Population</th></tr></table>",
+            "Name Population",
+            id="adjacent-th-cells",
+        ),
+        pytest.param(
+            "<table><tr><td><p>Paris</p></td><td>2100000</td></tr></table>",
+            "Paris 2100000",
+            id="cell-containing-paragraph",
+        ),
+        pytest.param(
+            "<table><caption>Cities</caption><tr><td>x</td></tr></table>Next",
+            "Cities x Next",
+            id="caption-and-table",
+        ),
+        pytest.param("<dl><dt>X</dt><dd>Y</dd></dl>", "X Y", id="definition-term-and-description"),
+        pytest.param("<blockquote>q</blockquote>Hello", "q Hello", id="blockquote"),
+        pytest.param("<section>a</section><article>b</article>", "a b", id="section-and-article"),
+        pytest.param("<ol>one</ol>two", "one two", id="ordered-list-outside-li"),
+        pytest.param("<pre>code</pre>after", "code after", id="preformatted"),
+        pytest.param(
+            "<figure><figcaption>Cap</figcaption></figure>Next", "Cap Next", id="figcaption"
+        ),
+        pytest.param("a<hr>b", "a b", id="horizontal-rule"),
+        pytest.param("a<br/>b", "a b", id="self-closing-br"),
+        pytest.param("<td>  a  </td><td>b</td>", "a b", id="cell-whitespace-collapsed"),
+        pytest.param("<p>foo<b>bar</b>baz</p>", "foobarbaz", id="inline-tags-do-not-split"),
+        pytest.param("Hello<sup>1</sup>", "Hello1", id="inline-sup-stays-attached"),
+    ],
+)
+def test_html_to_plain_text_separates_block_and_cell_boundaries(html: str, expected: str) -> None:
+    assert html_to_plain_text(html) == expected
