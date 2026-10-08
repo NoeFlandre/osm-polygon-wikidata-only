@@ -509,6 +509,17 @@ def test_recovery_creates_missing_target_parent_directories(tmp_path: Path) -> N
     assert target.read_text(encoding="utf-8") == "new"
 
 
+def test_move_recovery_staged_moves_the_staged_file_into_a_missing_target(tmp_path: Path) -> None:
+    staged = tmp_path / "staged.txt"
+    target = tmp_path / "target.txt"
+    staged.write_text("staged-payload", encoding="utf-8")
+
+    transaction_module._move_recovery_staged(staged, target)
+
+    assert target.read_text(encoding="utf-8") == "staged-payload"
+    assert not staged.exists()
+
+
 # ---------------------------------------------------------------------------
 # augmentation_is_current contract (valid minimal DataRoot)
 # ---------------------------------------------------------------------------
