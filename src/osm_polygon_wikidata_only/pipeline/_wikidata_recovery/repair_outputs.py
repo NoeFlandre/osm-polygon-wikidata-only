@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -109,23 +110,29 @@ def _stage_repair_tables(
     return staged
 
 
+@dataclass(frozen=True)
+class RepairPersistence:
+    """Transaction, verification and receipt collaborators for one repair commit."""
+
+    transaction_root: Path
+    wikidata_client: WikidataClient
+    settings: Settings
+    before_commit: Callable[[], None] | None
+    audit_fn: Callable[..., Any] = audit_wikidata_integrity
+    record_receipt_fn: Callable[..., Any] = record_region_recovery_receipt
+
+
 def persist_repair_outputs(
     data_root: DataRoot,
     region: RegionAuditResult,
     inputs: _RepairInputs,
     outputs: _RepairOutputs,
     checkpoint_store: RecoveryCheckpointStore,
-    *,
-    transaction_root: Path,
-    wikidata_client: WikidataClient,
-    settings: Settings,
-    before_commit: Callable[[], None] | None,
-    audit_fn: Callable[..., Any] = audit_wikidata_integrity,
-    record_receipt_fn: Callable[..., Any] = record_region_recovery_receipt,
+    persistence: RepairPersistence,
 ) -> RecoveryRepairResult:
     """Persist changed repair outputs transactionally and verify convergence."""
     if not outputs.changed:
-        record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
+        persistence.record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
         checkpoint_store.clear()
         return RecoveryRepairResult(
             region.stem,
@@ -135,7 +142,7 @@ def persist_repair_outputs(
             (),
             False,
         )
-    directory = transaction_directory(transaction_root, region.stem)
+    directory = transaction_directory(persistence.transaction_root, region.stem)
     directory.mkdir(parents=True, exist_ok=False)
     staged = _stage_repair_tables(
         region.stem,
@@ -145,12 +152,18 @@ def persist_repair_outputs(
         directory=directory,
     )
     replacements = [(inputs.paths[key], staged[key]) for key in staged]
-    commit_replacements(directory, region.stem, replacements, before_commit=before_commit)
-    record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
-    post_audit = audit_fn(
+    commit_replacements(
+        directory,
+        region.stem,
+        replacements,
+        before_commit=persistence.before_commit,
+    )
+    persistence.record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
+    settings = persistence.settings
+    post_audit = persistence.audit_fn(
         data_root,
         [region.stem],
-        wikidata_client,
+        persistence.wikidata_client,
         batch_size=settings.enrichment_batch_size,
         languages=settings.languages,
         max_articles_per_qid=settings.max_articles_per_qid,

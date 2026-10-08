@@ -208,6 +208,7 @@ from .repair_merge import (
 from .repair_merge import (
     validate_merged_repair as _validate_merged_repair,
 )
+from .repair_outputs import RepairPersistence
 from .repair_outputs import persist_repair_outputs as _persist_repair_outputs_impl
 from .repair_outputs import (
     polygon_qids as _polygon_qids,
@@ -333,12 +334,14 @@ def _persist_repair_outputs(
         inputs,
         outputs,
         checkpoint_store,
-        transaction_root=transaction_root,
-        wikidata_client=wikidata_client,
-        settings=settings,
-        before_commit=before_commit,
-        audit_fn=audit_wikidata_integrity,
-        record_receipt_fn=record_region_recovery_receipt,
+        RepairPersistence(
+            transaction_root=transaction_root,
+            wikidata_client=wikidata_client,
+            settings=settings,
+            before_commit=before_commit,
+            audit_fn=audit_wikidata_integrity,
+            record_receipt_fn=record_region_recovery_receipt,
+        ),
     )
 
 
