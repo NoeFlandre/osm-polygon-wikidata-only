@@ -31,6 +31,10 @@ from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from tests.helpers import write_single_text_row as _write_table
 
+# ssh options every frontend and rsync call must carry (SSH_NON_INTERACTIVE_OPTIONS).
+SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30")
+RSYNC_REMOTE_SHELL = "ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30"
+
 
 @pytest.mark.parametrize(
     ("batch", "expected"),
@@ -138,8 +142,15 @@ def test_rsync_resolves_remote_home_placeholder(tmp_path: Path, monkeypatch) -> 
     )
 
     assert calls == [
-        ("ssh", "grenoble", "printf", "%s", "$HOME"),
-        ("rsync", "-a", f"{staging}/", "grenoble:/home/test-user/project/"),
+        ("ssh", *SSH_OPTIONS, "grenoble", "printf", "%s", "$HOME"),
+        (
+            "rsync",
+            "-a",
+            "-e",
+            RSYNC_REMOTE_SHELL,
+            f"{staging}/",
+            "grenoble:/home/test-user/project/",
+        ),
     ]
 
 
@@ -210,6 +221,7 @@ def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
     assert calls == [
         (
             "ssh",
+            *SSH_OPTIONS,
             "grenoble",
             " ".join(
                 shlex.quote(argument)
@@ -736,6 +748,9 @@ def test_process_running_batch_retries_status_failures_before_retrieval_or_resub
     [
         OSError("SSH transport failed with an error"),
         subprocess.TimeoutExpired(("oarstat",), timeout=1),
+        sentence_controller_policy.ControllerCommandTimeoutError(
+            "Grid5000 command timed out after 300s: ssh"
+        ),
     ],
 )
 def test_reconcile_retries_after_frontend_transport_exception(
@@ -763,6 +778,40 @@ def test_reconcile_retries_after_frontend_transport_exception(
     assert sleeps == [controller.poll_interval_s]
     assert len(transport.downloads) == 1
     assert transport.removals == []
+
+
+def test_timed_out_submission_stays_submitted_and_blocks_duplicate_oarsub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _FakeTransport(tmp_path)
+    controller = _controller(_data_root(tmp_path), transport, _FakePublisher())
+    batch = controller.initialize()["batches"][0]
+    oarsub_calls: list[tuple[str, ...]] = []
+    run_frontend = transport.run_frontend
+
+    def stalled_oarsub(args: Sequence[str]) -> CompletedProcess[str]:
+        if args[0] == "oarsub":
+            oarsub_calls.append(tuple(args))
+            raise sentence_controller_policy.ControllerCommandTimeoutError(
+                "Grid5000 command timed out after 300s: ssh"
+            )
+        return run_frontend(args)
+
+    monkeypatch.setattr(transport, "run_frontend", stalled_oarsub)
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="submission failed"):
+        controller._submit_batch(batch)
+
+    assert batch["state"] == "submitted"
+    assert batch["oar_job_id"] is None
+    persisted = json.loads(controller.ledger_path.read_text(encoding="utf-8"))
+    assert persisted["batches"][0]["state"] == "submitted"
+    assert persisted["batches"][0]["oar_job_id"] is None
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="refusing duplicate"):
+        controller._process_batch(batch)
+
+    assert len(oarsub_calls) == 1
 
 
 def test_reconcile_batch_rejects_a_missing_job_id(tmp_path: Path) -> None:
@@ -1191,7 +1240,7 @@ def test_rsync_download_tree_creates_destination_and_uses_resolved_source(
         return CompletedProcess(
             args,
             0,
-            stdout="/home/test-user\n" if tuple(args[2:]) == ("printf", "%s", "$HOME") else "",
+            stdout="/home/test-user\n" if tuple(args[-3:]) == ("printf", "%s", "$HOME") else "",
             stderr="",
         )
 
@@ -1206,8 +1255,15 @@ def test_rsync_download_tree_creates_destination_and_uses_resolved_source(
 
     assert local_root.is_dir()
     assert calls == [
-        ("ssh", "grenoble", "printf", "%s", "$HOME"),
-        ("rsync", "-a", "grenoble:/home/test-user/project/result/", f"{local_root}/"),
+        ("ssh", *SSH_OPTIONS, "grenoble", "printf", "%s", "$HOME"),
+        (
+            "rsync",
+            "-a",
+            "-e",
+            RSYNC_REMOTE_SHELL,
+            "grenoble:/home/test-user/project/result/",
+            f"{local_root}/",
+        ),
     ]
 
 
@@ -1216,7 +1272,7 @@ def test_rsync_download_tree_reports_transfer_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_run(args, **_kwargs):
-        if tuple(args[2:]) == ("printf", "%s", "$HOME"):
+        if tuple(args[-3:]) == ("printf", "%s", "$HOME"):
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, 23, stdout="", stderr="connection lost")
 
@@ -1246,7 +1302,7 @@ def test_remove_tree_runs_only_inside_run_namespace_and_reports_failure(
 
     def fake_run(args, **_kwargs):
         calls.append(tuple(args))
-        if tuple(args[2:]) == ("printf", "%s", "$HOME"):
+        if tuple(args[-3:]) == ("printf", "%s", "$HOME"):
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, returncode, stdout="", stderr="cleanup unavailable")
 
@@ -1261,9 +1317,10 @@ def test_remove_tree_runs_only_inside_run_namespace_and_reports_failure(
         transport.remove_tree("$HOME/osm-polygon-wikidata-only-grid5000/run-1")
 
     assert calls == [
-        ("ssh", "grenoble", "printf", "%s", "$HOME"),
+        ("ssh", *SSH_OPTIONS, "grenoble", "printf", "%s", "$HOME"),
         (
             "ssh",
+            *SSH_OPTIONS,
             "grenoble",
             "rm",
             "-rf",

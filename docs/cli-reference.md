@@ -19,6 +19,14 @@ The main command has the subcommands in the table. Each subcommand has a `--help
 | `uv run osm-polygon-wikidata-only grid5000` | Run the Grid5000 sentence-splitting controller or a job on a reserved node. |
 | `uv run osm-polygon-wikidata-only audit-containment` | Create an audit of the whole-file containment retirements. The command only reads. |
 
+## Exit codes
+
+| Code | Meaning | Commands |
+| --- | --- | --- |
+| `0` | Success. | All commands. |
+| `1` | Expected operator failure, such as an unusable data root, a missing or unreadable file, or a data-contract violation. The message goes to stderr. | `enforce-integrity`, `audit-containment`, `audit-remote`, `process-pbf`, `process-dir` (a background upload failed). |
+| `2` | `audit-containment` found at least one blocked parent. The report is still printed. Argparse also uses `2` for a usage error, so check the output to tell the two apart. | `audit-containment`, and any command for a usage error. |
+
 To see the options of a command before you run it, use `--help`. For example:
 
 ```bash

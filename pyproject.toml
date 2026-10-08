@@ -310,6 +310,7 @@ pytest_add_cli_args = ["--no-cov", "-q"]
     "tests/v2/test_language_splits.py",
     "tests/v2/test_language_splits_partition_writing.py",
     "tests/v2/test_language_splits_resume_buffers.py",
+    "tests/v2/test_language_splits_stale_resume.py",
 ]
 "src/osm_polygon_wikidata_only/v2/language_split_manifest.py" = [
     "tests/v2/test_language_splits.py",
@@ -324,6 +325,7 @@ pytest_add_cli_args = ["--no-cov", "-q"]
 "src/osm_polygon_wikidata_only/v2/language_split_resume.py" = [
     "tests/v2/test_language_splits_resume_buffers.py",
     "tests/v2/test_language_splits_partition_writing.py",
+    "tests/v2/test_language_splits_stale_resume.py",
 ]
 "src/osm_polygon_wikidata_only/v2/language_split_writer.py" = [
     "tests/v2/test_language_splits_partition_writing.py",
