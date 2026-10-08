@@ -40,6 +40,8 @@ _NVIDIA_SMI_ARGS = (
     "--format=csv,noheader",
 )
 _GPU_ORT_PROVIDERS = (_CUDA_PROVIDER, _CPU_PROVIDER)
+# Bounds the nvidia-smi preflight so a hung driver fails the job instead of blocking it.
+_COMMAND_TIMEOUT_S = 30.0
 _CHECKPOINT_DIRECTORY = "sentence-checkpoints"
 
 
@@ -252,6 +254,7 @@ def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         env=_job_environment(),
+        timeout=_COMMAND_TIMEOUT_S,
     )
 
 

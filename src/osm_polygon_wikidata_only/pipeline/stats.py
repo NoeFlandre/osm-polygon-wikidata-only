@@ -56,7 +56,6 @@ class StreamingStats:
         self._total_chars = 0
         self._area_buckets: Counter[str] = Counter()
         self._tag_keys: Counter[str] = Counter()
-        self._links_count = 0
 
     def add_polygon(self, p: Polygon) -> None:
         self._polygon_count += 1
@@ -78,8 +77,8 @@ class StreamingStats:
         self._languages.add(a.language)
         self._total_chars += a.article_length_chars
 
-    def add_link(self, link: PolygonArticleLink) -> None:  # noqa: ARG002 -- collector interface: only the count is tracked
-        self._links_count += 1
+    def add_link(self, link: PolygonArticleLink) -> None:
+        """Accept a link for interface compatibility; no link statistic is kept."""
 
     def finalize(self) -> ManifestStats:
         return ManifestStats(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -139,9 +140,37 @@ def test_run_command_uses_capture_and_sanitized_environment(
     assert calls["check"] is False
     assert calls["capture_output"] is True
     assert calls["text"] is True
+    assert calls["timeout"] == sentence_job._COMMAND_TIMEOUT_S
     environment = calls["env"]
     assert isinstance(environment, dict)
     assert "HF_TOKEN" not in environment
+
+
+def test_sentence_job_hung_preflight_writes_failed_receipt_and_reraises(
+    tmp_path: Path,
+) -> None:
+    data_root = _data_root(tmp_path)
+    receipt_path = tmp_path / "receipt.json"
+
+    def hung_runner(args: Sequence[str]) -> CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(list(args), sentence_job._COMMAND_TIMEOUT_S)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        sentence_job.run_sentence_job(
+            data_root,
+            stems=("alpha-latest",),
+            model_cache=tmp_path / "model-cache",
+            source_commit="abc123",
+            job_id="job-1",
+            batch_size=256,
+            inference_batch_size=16,
+            receipt_path=receipt_path,
+            command_runner=hung_runner,
+        )
+
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["error_type"] == "TimeoutExpired"
 
 
 def test_sentence_job_requires_nvidia_smi_and_writes_sanitized_failure_receipt(

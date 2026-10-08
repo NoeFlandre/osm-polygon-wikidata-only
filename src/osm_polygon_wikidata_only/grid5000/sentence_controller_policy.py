@@ -33,13 +33,45 @@ SEGMENTER_VERSION = "2.2.1"
 GRID5000_UV_VERSION = "0.11.16"
 EXOTIC_GRID5000_GPU_MODELS = frozenset({"A100-PCIE-40GB", "A100-SXM4-40GB", "H100 NVL"})
 ACTIVE_STATES = frozenset({"submitted", "running"})
-TERMINAL_STATES = frozenset({"terminated", "finishing", "failed", "error", "cancelled"})
-SUCCESS_STATES = frozenset({"terminated", "finishing"})
+OAR_STATES = frozenset(
+    {
+        "waiting",
+        "hold",
+        "tolaunch",
+        "toerror",
+        "toackreservation",
+        "launching",
+        "running",
+        "suspended",
+        "resuming",
+        "finishing",
+        "terminated",
+        "error",
+    }
+)
+TERMINAL_STATES = frozenset({"terminated", "error"})
+SUCCESS_STATES = frozenset({"terminated"})
 RETRYABLE_ARTIFACT_FAILURES = frozenset({"missing_receipt", "invalid_receipt"})
+# Bounds for external commands so a stalled frontend, transfer or host-key prompt
+# cannot block the unattended controller forever. Transfers get a generous bound
+# because large result trees are legitimate.
+FRONTEND_COMMAND_TIMEOUT_S = 300.0
+TRANSFER_TIMEOUT_S = 3600.0
+GIT_QUERY_TIMEOUT_S = 30.0
+SSH_CONNECT_TIMEOUT_S = 15
+SSH_SERVER_ALIVE_INTERVAL_S = 30
+# Never let ssh/rsync wait for a password, passphrase or host-key confirmation.
+SSH_NON_INTERACTIVE_OPTIONS = (
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    f"ConnectTimeout={SSH_CONNECT_TIMEOUT_S}",
+    "-o",
+    f"ServerAliveInterval={SSH_SERVER_ALIVE_INTERVAL_S}",
+)
 
 _JOB_ID_PATTERN = re.compile(r"(?:job\s+id|job_id)\s*[:=]\s*(\d+)", re.IGNORECASE)
-_STATE_PATTERN = re.compile(r"state\s*=\s*([A-Za-z_]+)", re.IGNORECASE)
-_EXIT_CODE_PATTERN = re.compile(r"exit[_ ]code\s*=\s*(-?\d+)", re.IGNORECASE)
+_JOB_STATUS_PATTERN = re.compile(r"(?P<job_id>\d+):[ \t]*(?P<state>[A-Za-z]+)")
 
 
 class BatchDict(TypedDict, total=False):
@@ -83,6 +115,10 @@ class LedgerDict(TypedDict, total=False):
 
 class ControllerRunError(RuntimeError):
     """Raised when a batch needs operator-visible resume or retry handling."""
+
+
+class ControllerCommandTimeoutError(ControllerRunError):
+    """Raised when a bounded Grid5000 frontend or transfer command exceeds its timeout."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,21 +308,22 @@ def parse_job_id(output: str) -> str:
     return match.group(1)
 
 
-def parse_job_status(result: subprocess.CompletedProcess[str]) -> tuple[str, int | None]:
-    text = f"{result.stdout or ''}\n{result.stderr or ''}"
-    match = _STATE_PATTERN.search(text)
-    state = match.group(1).lower() if match else infer_job_state(text)
-    exit_match = _EXIT_CODE_PATTERN.search(text)
-    exit_code = int(exit_match.group(1)) if exit_match else None
-    return state, exit_code
+def parse_job_status(
+    result: subprocess.CompletedProcess[str],
+    *,
+    job_id: str,
+) -> tuple[str, int | None]:
+    if result.returncode != 0:
+        return "unknown", None
+    match = _JOB_STATUS_PATTERN.fullmatch((result.stdout or "").strip())
+    if match is None or match.group("job_id") != job_id:
+        return "unknown", None
+    return infer_job_state(match.group("state")), None
 
 
 def infer_job_state(text: str) -> str:
-    lowered = text.lower()
-    for state in (*TERMINAL_STATES, "waiting", "launching", "running"):
-        if state in lowered:
-            return state
-    return "unknown"
+    state = text.strip().lower()
+    return state if state in OAR_STATES else "unknown"
 
 
 def remote_job_root(remote_run_root: str, index: int, attempt: int) -> str:
@@ -299,12 +336,16 @@ def git_source_commit(
     executable_resolver: Callable[[str], str] | None = None,
 ) -> str:
     resolve_executable = executable_resolver or required_executable
-    result = subprocess.run(  # noqa: S603 - fixed git revision query
-        [resolve_executable("git"), "-C", str(repo_root), "rev-parse", "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed git revision query
+            [resolve_executable("git"), "-C", str(repo_root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GIT_QUERY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ControllerRunError("Controller source commit query timed out") from error
     if result.returncode != 0 or not result.stdout.strip():
         raise ControllerRunError("Could not determine the controller source commit")
     return result.stdout.strip()
@@ -328,13 +369,18 @@ def required_executable(name: str) -> str:
 __all__ = [
     "ACTIVE_STATES",
     "EXOTIC_GRID5000_GPU_MODELS",
+    "FRONTEND_COMMAND_TIMEOUT_S",
+    "GIT_QUERY_TIMEOUT_S",
     "GRID5000_UV_VERSION",
     "REMOTE_NAMESPACE",
     "RETRYABLE_ARTIFACT_FAILURES",
     "SEGMENTER_VERSION",
+    "SSH_NON_INTERACTIVE_OPTIONS",
     "SUCCESS_STATES",
     "TERMINAL_STATES",
+    "TRANSFER_TIMEOUT_S",
     "BatchDict",
+    "ControllerCommandTimeoutError",
     "ControllerLimits",
     "ControllerRunError",
     "LedgerDict",

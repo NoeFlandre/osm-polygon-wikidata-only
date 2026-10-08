@@ -1,7 +1,8 @@
 """``osm-polygon-wikidata-only audit-containment``: read-only containment audit.
 
 Audits the configured whole-file containment retirements and prints a JSON
-report. Exit status is 2 when any parent is blocked, 0 otherwise.
+report. Exit status is 2 when any parent is blocked, 1 when the data root
+cannot be read, and 0 otherwise. See ``docs/cli-reference.md`` for the table.
 ``scripts/audit_containment.py`` is a thin shim over :func:`main`.
 """
 
@@ -23,12 +24,15 @@ from osm_polygon_wikidata_only.pipeline.containment_policy import (
     ContainmentRule,
 )
 
+from .errors import report_cli_error
 from .parser import (
     AUDIT_CONTAINMENT_DESCRIPTION as DESCRIPTION,
 )
 from .parser import (
     add_audit_containment_arguments as add_arguments,
 )
+
+PROG = "osm-polygon-wikidata-only audit-containment"
 
 
 def _audit_payload(retired: Collection[str], reports: Sequence[RuleAudit]) -> dict[str, object]:
@@ -69,8 +73,11 @@ EXIT_BLOCKED = 2
 def run(args: argparse.Namespace) -> int:
     """Audit the pending containment rules and emit the JSON report."""
     processed = args.data_root / "processed"
-    retired = load_retired_children(processed)
-    reports = _audit_reports(processed, _pending_rules(retired))
+    try:
+        retired = load_retired_children(processed)
+        reports = _audit_reports(processed, _pending_rules(retired))
+    except (OSError, ValueError) as error:
+        return report_cli_error(PROG, error)
     payload = _audit_payload(retired, reports)
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if args.output:

@@ -5,7 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import ModuleType
@@ -30,6 +30,10 @@ from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.v2.publication import sentence_publication_ops
 from osm_polygon_wikidata_only.v2.sentence_logic import sentence_schema
 from tests.helpers import write_single_text_row as _write_table
+
+# ssh options every frontend and rsync call must carry (SSH_NON_INTERACTIVE_OPTIONS).
+SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30")
+RSYNC_REMOTE_SHELL = "ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30"
 
 
 @pytest.mark.parametrize(
@@ -138,8 +142,15 @@ def test_rsync_resolves_remote_home_placeholder(tmp_path: Path, monkeypatch) -> 
     )
 
     assert calls == [
-        ("ssh", "grenoble", "printf", "%s", "$HOME"),
-        ("rsync", "-a", f"{staging}/", "grenoble:/home/test-user/project/"),
+        ("ssh", *SSH_OPTIONS, "grenoble", "printf", "%s", "$HOME"),
+        (
+            "rsync",
+            "-a",
+            "-e",
+            RSYNC_REMOTE_SHELL,
+            f"{staging}/",
+            "grenoble:/home/test-user/project/",
+        ),
     ]
 
 
@@ -210,6 +221,7 @@ def test_oarsub_job_command_is_quoted_for_ssh(monkeypatch) -> None:
     assert calls == [
         (
             "ssh",
+            *SSH_OPTIONS,
             "grenoble",
             " ".join(
                 shlex.quote(argument)
@@ -282,17 +294,20 @@ class _FakeTransport:
         success: bool = True,
         interrupt_on_poll: bool = False,
         terminal_state: str = "Terminated",
+        status_responses: Sequence[object] = (),
     ) -> None:
         self.tmp_path = tmp_path
         self.success = success
         self.interrupt_on_poll = interrupt_on_poll
         self.terminal_state = terminal_state
+        self.status_responses = list(status_responses)
         self.frontend_calls: list[tuple[str, ...]] = []
         self.uploads: list[tuple[Path, str]] = []
         self.downloads: list[tuple[str, Path]] = []
         self.removals: list[str] = []
         self.staged: Path | None = None
         self.polls = 0
+        self.events: list[tuple[str, str]] = []
 
     def run_frontend(self, args: Sequence[str]) -> CompletedProcess[str]:
         args = tuple(args)
@@ -307,12 +322,20 @@ class _FakeTransport:
             self.polls += 1
             if self.interrupt_on_poll:
                 raise KeyboardInterrupt
+            if self.status_responses:
+                response = self.status_responses.pop(0)
+                if isinstance(response, BaseException):
+                    self.events.append(("status_exception", type(response).__name__))
+                    raise response
+                assert isinstance(response, CompletedProcess)
+                self.events.append(("status", response.stdout.strip()))
+                return response
             state = self.terminal_state
-            exit_code = "0" if self.success else "1"
+            self.events.append(("status", f"12345: {state}"))
             return CompletedProcess(
                 args,
                 0,
-                stdout=f"state = {state}\nexit_code = {exit_code}\n",
+                stdout=f"12345: {state}\n",
                 stderr="",
             )
         if args[0] == "oardel":
@@ -326,6 +349,7 @@ class _FakeTransport:
 
     def download_tree(self, remote_root: str, local_root: Path) -> None:
         self.downloads.append((remote_root, local_root))
+        self.events.append(("download", remote_root))
         if self.staged is None:
             (local_root / "data").mkdir(parents=True, exist_ok=True)
             shutil.copytree(
@@ -349,6 +373,7 @@ class _FakeTransport:
 
     def remove_tree(self, remote_root: str) -> None:
         self.removals.append(remote_root)
+        self.events.append(("remove", remote_root))
 
     def _write_success_result(self, data_root: DataRoot, result_root: Path) -> None:
         output = data_root.processed_v2 / "wikipedia/sentences/alpha-latest.parquet"
@@ -452,6 +477,7 @@ def _controller(
     queue: str = "besteffort",
     gpu_model: str = "A40",
     source_commit: str = "abc123",
+    sleep: Callable[[float], None] | None = None,
 ) -> sentence_controller.Grid5000SentenceController:
     return sentence_controller.Grid5000SentenceController(
         data_root,
@@ -464,8 +490,25 @@ def _controller(
         run_id=run_id,
         source_commit=source_commit,
         repo_root=Path.cwd(),
-        sleep=lambda _seconds: None,
+        sleep=sleep if sleep is not None else lambda _seconds: None,
     )
+
+
+def _running_batch(
+    controller: sentence_controller.Grid5000SentenceController,
+) -> BatchDict:
+    """Build a persisted-looking running batch for reconciliation coverage."""
+    batch = controller.initialize()["batches"][0]
+    batch.update(
+        state="running",
+        attempt=1,
+        oar_job_id="12345",
+        remote_job_root=sentence_controller_policy.remote_job_root(
+            controller.remote_run_root, int(batch["index"]), 1
+        ),
+        remote_cleaned=False,
+    )
+    return batch
 
 
 def test_unsafe_queue_is_rejected_before_a_run_can_start(tmp_path: Path) -> None:
@@ -539,27 +582,236 @@ def test_batch_submission_failure_is_persisted_and_rethrown(
     assert batch["error"] == "RuntimeError"
 
 
+@pytest.mark.parametrize(
+    ("terminal_output", "expected_state"),
+    [("12345: Terminated", "terminated"), ("12345: Error", "error")],
+)
 def test_reconcile_batch_polls_until_terminal_then_retrieves(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    terminal_output: str,
+    expected_state: str,
 ) -> None:
-    controller = _controller(_data_root(tmp_path), _FakeTransport(tmp_path), _FakePublisher())
-    batch: BatchDict = {"index": 0, "state": "running", "oar_job_id": "12345"}
-    states = iter(("Running", "Terminated exit_code=0"))
-    retrieved: list[tuple[str, int | None]] = []
-
-    def poll(*_args: object, **_kwargs: object) -> CompletedProcess[str]:
-        return CompletedProcess((), 0, stdout=next(states), stderr="")
-
-    monkeypatch.setattr(controller, "_run_frontend", poll)
-    monkeypatch.setattr(
-        controller,
-        "_retrieve_batch",
-        lambda _batch, *, state, exit_code: retrieved.append((state, exit_code)),
+    transport = _FakeTransport(
+        tmp_path,
+        success=expected_state == "terminated",
+        status_responses=[
+            CompletedProcess(("oarstat",), 0, "12345: Running\n", ""),
+            CompletedProcess(("oarstat",), 0, f"{terminal_output}\n", ""),
+        ],
     )
+    controller = _controller(_data_root(tmp_path), transport, _FakePublisher())
+    batch = _running_batch(controller)
+
+    if expected_state == "error":
+        with pytest.raises(sentence_controller.ControllerRunError, match="failed and is retryable"):
+            controller._reconcile_batch(batch)
+    else:
+        controller._reconcile_batch(batch)
+
+    assert len(transport.downloads) == 1
+    expected_events = ["status", "status", "download"]
+    if expected_state == "error":
+        expected_events.append("remove")
+    assert [event[0] for event in transport.events] == expected_events
+    assert [event[1] for event in transport.events if event[0] == "status"] == [
+        "12345: Running",
+        terminal_output,
+    ]
+    if expected_state == "terminated":
+        assert batch["state"] == "ready_to_publish"
+        assert transport.removals == []
+    else:
+        assert batch["state"] == "failed"
+        assert transport.removals == [str(batch["remote_job_root"])]
+
+
+@pytest.mark.parametrize("output", ["Running", "Terminated", "Error"])
+def test_parse_job_status_rejects_unqualified_oar_state_output(output: str) -> None:
+    result = CompletedProcess(("oarstat", "-s", "-j", "12345"), 0, f"{output}\n", "")
+
+    assert sentence_controller_policy.parse_job_status(result, job_id="12345") == (
+        "unknown",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "job_id", "expected"),
+    [
+        ("497: Running", "497", "running"),
+        ("12345: Running", "12345", "running"),
+        ("12345: Terminated", "12345", "terminated"),
+        ("12345: Error", "12345", "error"),
+    ],
+)
+def test_parse_job_status_accepts_matching_oar_job_id_prefix(
+    output: str,
+    job_id: str,
+    expected: str,
+) -> None:
+    result = CompletedProcess(("oarstat", "-s", "-j", "12345"), 0, f"{output}\n", "")
+
+    assert sentence_controller_policy.parse_job_status(result, job_id=job_id) == (expected, None)
+
+
+def test_parse_job_status_rejects_a_different_job_id_prefix() -> None:
+    result = CompletedProcess(("oarstat", "-s", "-j", "12345"), 0, "12346: Terminated\n", "")
+
+    assert sentence_controller_policy.parse_job_status(result, job_id="12345") == ("unknown", None)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (255, "", "ssh: command failed with an error", ("unknown", None)),
+        (255, "Terminated\n", "ssh: command failed with an error", ("unknown", None)),
+        (255, "12345: Terminated\n", "ssh: command failed with an error", ("unknown", None)),
+        (0, "12345: Running\n", "SSH failed with an error", ("running", None)),
+        (0, "", "Terminated", ("unknown", None)),
+        (0, "12346: Terminated\n", "", ("unknown", None)),
+    ],
+)
+def test_parse_job_status_requires_success_and_valid_stdout(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    expected: tuple[str, int | None],
+) -> None:
+    result = CompletedProcess(("oarstat", "-s", "-j", "12345"), returncode, stdout, stderr)
+
+    assert sentence_controller_policy.parse_job_status(result, job_id="12345") == expected
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "job failed",
+        "SSH error: job Terminated",
+        "state = Terminated",
+        "Running",
+        "Terminated",
+        "Error",
+        "12345: Terminated\nadditional output",
+        "Terminated exit_code=0",
+    ],
+)
+def test_parse_job_status_rejects_malformed_stdout(output: str) -> None:
+    result = CompletedProcess(("oarstat", "-s", "-j", "12345"), 0, output, "")
+
+    assert sentence_controller_policy.parse_job_status(result, job_id="12345") == (
+        "unknown",
+        None,
+    )
+
+
+def test_process_running_batch_retries_status_failures_before_retrieval_or_resubmit(
+    tmp_path: Path,
+) -> None:
+    sleeps: list[float] = []
+    responses: list[object] = [
+        OSError("SSH transport failed with an error"),
+        CompletedProcess(("oarstat",), 255, "", "ssh: command failed with an error"),
+        CompletedProcess(("oarstat",), 0, "status query failed\n", "Terminated"),
+        CompletedProcess(("oarstat",), 0, "Terminated\n", ""),
+        CompletedProcess(("oarstat",), 0, "Error\n", ""),
+        CompletedProcess(("oarstat",), 0, "497: Running\n", "SSH failed with an error"),
+        CompletedProcess(("oarstat",), 0, "497: Finishing\n", ""),
+        CompletedProcess(("oarstat",), 0, "498: Terminated\n", ""),
+        KeyboardInterrupt(),
+    ]
+    transport = _FakeTransport(tmp_path, status_responses=responses)
+    controller = _controller(_data_root(tmp_path), transport, _FakePublisher(), sleep=sleeps.append)
+    batch = _running_batch(controller)
+
+    with pytest.raises(KeyboardInterrupt):
+        controller._process_batch(batch)
+
+    assert [event[0] for event in transport.events] == [
+        "status_exception",
+        "status",
+        "status",
+        "status",
+        "status",
+        "status",
+        "status",
+        "status",
+        "status_exception",
+    ]
+    assert sleeps == [controller.poll_interval_s] * 8
+    assert transport.downloads == []
+    assert transport.removals == []
+    assert all(command[0] != "oarsub" for command in transport.frontend_calls)
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        OSError("SSH transport failed with an error"),
+        subprocess.TimeoutExpired(("oarstat",), timeout=1),
+        sentence_controller_policy.ControllerCommandTimeoutError(
+            "Grid5000 command timed out after 300s: ssh"
+        ),
+    ],
+)
+def test_reconcile_retries_after_frontend_transport_exception(
+    tmp_path: Path,
+    transport_error: Exception,
+) -> None:
+    sleeps: list[float] = []
+    transport = _FakeTransport(
+        tmp_path,
+        status_responses=[
+            transport_error,
+            CompletedProcess(("oarstat",), 0, "12345: Terminated\n", ""),
+        ],
+    )
+    controller = _controller(_data_root(tmp_path), transport, _FakePublisher(), sleep=sleeps.append)
+    batch = _running_batch(controller)
 
     controller._reconcile_batch(batch)
 
-    assert retrieved == [("terminated", 0)]
+    assert [event[0] for event in transport.events] == [
+        "status_exception",
+        "status",
+        "download",
+    ]
+    assert sleeps == [controller.poll_interval_s]
+    assert len(transport.downloads) == 1
+    assert transport.removals == []
+
+
+def test_timed_out_submission_stays_submitted_and_blocks_duplicate_oarsub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _FakeTransport(tmp_path)
+    controller = _controller(_data_root(tmp_path), transport, _FakePublisher())
+    batch = controller.initialize()["batches"][0]
+    oarsub_calls: list[tuple[str, ...]] = []
+    run_frontend = transport.run_frontend
+
+    def stalled_oarsub(args: Sequence[str]) -> CompletedProcess[str]:
+        if args[0] == "oarsub":
+            oarsub_calls.append(tuple(args))
+            raise sentence_controller_policy.ControllerCommandTimeoutError(
+                "Grid5000 command timed out after 300s: ssh"
+            )
+        return run_frontend(args)
+
+    monkeypatch.setattr(transport, "run_frontend", stalled_oarsub)
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="submission failed"):
+        controller._submit_batch(batch)
+
+    assert batch["state"] == "submitted"
+    assert batch["oar_job_id"] is None
+    persisted = json.loads(controller.ledger_path.read_text(encoding="utf-8"))
+    assert persisted["batches"][0]["state"] == "submitted"
+    assert persisted["batches"][0]["oar_job_id"] is None
+
+    with pytest.raises(sentence_controller.ControllerRunError, match="refusing duplicate"):
+        controller._process_batch(batch)
+
+    assert len(oarsub_calls) == 1
 
 
 def test_reconcile_batch_rejects_a_missing_job_id(tmp_path: Path) -> None:
@@ -669,16 +921,10 @@ def test_completed_batch_is_retrieved_published_verified_and_cleaned(tmp_path: P
     assert transport.removals[-1].endswith("run-20260827-01")
 
 
-def test_finishing_success_receipt_is_published(tmp_path: Path) -> None:
-    data_root = _data_root(tmp_path)
-    transport = _FakeTransport(tmp_path, terminal_state="Finishing")
-    publisher = _FakePublisher()
-    controller = _controller(data_root, transport, publisher)
-
-    ledger = controller.run()
-
-    assert ledger["batches"][0]["state"] == "published"
-    assert publisher.publish_calls
+def test_finishing_state_does_not_mark_a_receipt_successful() -> None:
+    assert not sentence_controller_policy.remote_batch_succeeded(
+        "finishing", None, {"status": "succeeded"}
+    )
 
 
 def test_running_ledger_is_reconciled_without_duplicate_submission(tmp_path: Path) -> None:
@@ -994,7 +1240,7 @@ def test_rsync_download_tree_creates_destination_and_uses_resolved_source(
         return CompletedProcess(
             args,
             0,
-            stdout="/home/test-user\n" if tuple(args[2:]) == ("printf", "%s", "$HOME") else "",
+            stdout="/home/test-user\n" if tuple(args[-3:]) == ("printf", "%s", "$HOME") else "",
             stderr="",
         )
 
@@ -1009,8 +1255,15 @@ def test_rsync_download_tree_creates_destination_and_uses_resolved_source(
 
     assert local_root.is_dir()
     assert calls == [
-        ("ssh", "grenoble", "printf", "%s", "$HOME"),
-        ("rsync", "-a", "grenoble:/home/test-user/project/result/", f"{local_root}/"),
+        ("ssh", *SSH_OPTIONS, "grenoble", "printf", "%s", "$HOME"),
+        (
+            "rsync",
+            "-a",
+            "-e",
+            RSYNC_REMOTE_SHELL,
+            "grenoble:/home/test-user/project/result/",
+            f"{local_root}/",
+        ),
     ]
 
 
@@ -1019,7 +1272,7 @@ def test_rsync_download_tree_reports_transfer_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_run(args, **_kwargs):
-        if tuple(args[2:]) == ("printf", "%s", "$HOME"):
+        if tuple(args[-3:]) == ("printf", "%s", "$HOME"):
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, 23, stdout="", stderr="connection lost")
 
@@ -1049,7 +1302,7 @@ def test_remove_tree_runs_only_inside_run_namespace_and_reports_failure(
 
     def fake_run(args, **_kwargs):
         calls.append(tuple(args))
-        if tuple(args[2:]) == ("printf", "%s", "$HOME"):
+        if tuple(args[-3:]) == ("printf", "%s", "$HOME"):
             return CompletedProcess(args, 0, stdout="/home/test-user\n", stderr="")
         return CompletedProcess(args, returncode, stdout="", stderr="cleanup unavailable")
 
@@ -1064,9 +1317,10 @@ def test_remove_tree_runs_only_inside_run_namespace_and_reports_failure(
         transport.remove_tree("$HOME/osm-polygon-wikidata-only-grid5000/run-1")
 
     assert calls == [
-        ("ssh", "grenoble", "printf", "%s", "$HOME"),
+        ("ssh", *SSH_OPTIONS, "grenoble", "printf", "%s", "$HOME"),
         (
             "ssh",
+            *SSH_OPTIONS,
             "grenoble",
             "rm",
             "-rf",
@@ -1085,18 +1339,19 @@ def test_remove_tree_rejects_a_path_outside_the_run_namespace() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("job terminated", "terminated"),
-        ("job finishing", "finishing"),
-        ("job failed", "failed"),
-        ("job error", "error"),
-        ("job cancelled", "cancelled"),
-        ("job waiting", "waiting"),
-        ("job launching", "launching"),
-        ("job running", "running"),
+        ("Terminated", "terminated"),
+        ("Finishing", "finishing"),
+        ("Error", "error"),
+        ("Waiting", "waiting"),
+        ("Launching", "launching"),
+        ("Running", "running"),
+        ("job terminated", "unknown"),
+        ("job failed", "unknown"),
+        ("SSH error: job Terminated", "unknown"),
         ("scheduler returned no state", "unknown"),
     ],
 )
-def test_infer_job_state_maps_known_status_words_and_unknown_output(
+def test_infer_job_state_requires_one_exact_oar_state(
     text: str,
     expected: str,
 ) -> None:

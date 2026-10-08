@@ -97,13 +97,4 @@ def dispatch_tool(args: argparse.Namespace) -> int | None:
     return None if handler is None else handler(args)
 
 
-def __getattr__(name: str) -> ModuleType:
-    """Keep the old module attributes available to callers and tests."""
-    if name in _TOOL_MODULES:
-        module = _tool_module(name)
-        globals()[name] = module
-        return module
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 __all__ = ["TOOL_HANDLERS", "dispatch_tool"]
