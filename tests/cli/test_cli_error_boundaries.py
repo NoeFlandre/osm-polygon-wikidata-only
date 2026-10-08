@@ -128,6 +128,25 @@ def test_data_root_subdirectory_blocked_by_a_file_is_one_stderr_line_and_exit_on
     assert captured.err.startswith("osm-polygon-wikidata-only: error: ")
 
 
+def test_overlong_data_root_component_is_one_stderr_line_and_exit_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A single path component longer than the usual 255-byte NAME_MAX makes the
+    # stat() behind Path.exists() fail with ENAMETOOLONG while the data root is
+    # being resolved, which happens before DataRoot.ensure() is reached.
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    data_root = tmp_path / ("d" * 300)
+
+    status = commands.main(["process-dir", str(input_dir), "--data-root", str(data_root)])
+
+    assert status == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.splitlines()) == 1
+    assert captured.err.startswith("osm-polygon-wikidata-only: error: ")
+
+
 def test_background_upload_failure_is_reported_on_stderr_and_returns_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
