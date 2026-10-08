@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from osm_polygon_wikidata_only.version import PACKAGE_VERSION
 
 if TYPE_CHECKING:
+    import argparse
     from collections.abc import Sequence
 
 
@@ -22,17 +23,14 @@ def run(argv: Sequence[str] | None = None) -> int:
         print(f"osm-polygon-wikidata-only {PACKAGE_VERSION}")
         raise SystemExit(0)
 
+    from .dispatch import parse_and_dispatch  # noqa: PLC0415
     from .parser import build_parser  # noqa: PLC0415
 
-    parser = build_parser()
-    args = parser.parse_args(args_in)
+    return parse_and_dispatch(build_parser(), args_in, _load_and_run_parsed)
 
-    from .tools import dispatch_tool  # noqa: PLC0415
 
-    tool_status = dispatch_tool(args)
-    if tool_status is not None:
-        return tool_status
-
+def _load_and_run_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Import the processing handlers only once the command line has parsed."""
     from .commands import run_parsed  # noqa: PLC0415
 
     return run_parsed(parser, args)

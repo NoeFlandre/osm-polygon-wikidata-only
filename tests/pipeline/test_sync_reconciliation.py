@@ -880,10 +880,8 @@ def test_inventory_auth_failure_raises_upload_error(
         "fake-token",
         "--skip-existing",
     ]
-    # commands.main handles UploadError and exits with 2
-    with pytest.raises(SystemExit) as excinfo:
-        commands.main(args)
-    assert excinfo.value.code == 2
+    # commands.main reports the rejected credential on stderr and exits with 1
+    assert commands.main(args) == 1
 
 
 def test_malformed_local_core_fails_closed(

@@ -24,8 +24,10 @@ The main command has the subcommands in the table. Each subcommand has a `--help
 | Code | Meaning | Commands |
 | --- | --- | --- |
 | `0` | Success. | All commands. |
-| `1` | Expected operator failure, such as an unusable data root, a missing or unreadable file, or a data-contract violation. The message goes to stderr. | `enforce-integrity`, `audit-containment`, `audit-remote`, `process-pbf`, `process-dir` (a background upload failed). |
-| `2` | `audit-containment` found at least one blocked parent. The report is still printed. Argparse also uses `2` for a usage error, so check the output to tell the two apart. | `audit-containment`, and any command for a usage error. |
+| `1` | Expected operator failure, such as an unusable data root, a missing or unreadable file, a data-contract violation, a rejected Hugging Face credential, a held run lock, a release confirmation that does not match, or a background upload that failed. The message goes to stderr as one line that starts with `osm-polygon-wikidata-only`. | Every command that can fail. |
+| `2` | Argparse usage error, such as an unknown command or option. Argparse prints the usage text on stderr. | All commands. |
+
+`audit-containment` exits `1` when at least one parent is blocked. It still prints the JSON report on stdout and adds one stderr line that names the blocked parents. Exit status `2` means only a usage error, so a script can tell the two apart.
 
 To see the options of a command before you run it, use `--help`. For example:
 

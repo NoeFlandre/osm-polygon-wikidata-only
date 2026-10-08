@@ -21,7 +21,7 @@ positional arguments:
  audit-remote Read-only audit of remote versus local canonical dataset files
  trackio-snapshot Publish the frozen dataset snapshot run to Trackio
  grid5000 Grid5000 GPU sentence-splitting controller and job
- audit-containment Read-only JSON audit of whole-file containment retirements (exit 2 if
+ audit-containment Read-only JSON audit of whole-file containment retirements (exit 1 if
  blocked)
 
 options:
