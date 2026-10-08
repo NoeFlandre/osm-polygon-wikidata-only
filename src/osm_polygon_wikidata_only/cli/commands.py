@@ -81,8 +81,8 @@ def _prepare_runtime(
 ) -> tuple[DataRoot, Settings]:
     """Configure logging and construct the immutable runtime inputs."""
     configure_logging(level=getattr(logging, args.log_level))
-    data_root = _resolve_data_root(args)
     try:
+        data_root = _resolve_data_root(args)
         data_root.ensure()
     except OSError as error:
         raise DataRootError(str(error)) from error
