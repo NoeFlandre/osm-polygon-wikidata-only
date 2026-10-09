@@ -5,12 +5,13 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from osm_polygon_wikidata_only.hf._publication.hub_snapshot import read_repo_sha
 from osm_polygon_wikidata_only.hf._stats_release.models import (
     ReleasedFile,
     RemoteState,
+    RemoteVerifier,
     StatsReleaseError,
     hub_revision,
 )
@@ -18,18 +19,6 @@ from osm_polygon_wikidata_only.hf._uploader.operations import build_hf_api as _b
 from osm_polygon_wikidata_only.hf._uploader.protocol import HfHub
 from osm_polygon_wikidata_only.hf._uploader.token import resolve_hf_token
 from osm_polygon_wikidata_only.io.hashing import sha256_file
-
-
-class RemoteVerifier(Protocol):
-    """Confirm the released files exist at the uploaded revision."""
-
-    def __call__(
-        self,
-        repo_id: str,
-        files: tuple[ReleasedFile, ...],
-        *,
-        revision: str,
-    ) -> str: ...
 
 
 def _remote_revision(client: HfHub, repo_id: str) -> str | None:

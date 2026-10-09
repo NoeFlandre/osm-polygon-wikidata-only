@@ -360,7 +360,6 @@ def _run_release_stats(
     """Recompute and publish only the card and statistics report."""
     # Release-only dependencies are intentionally isolated from normal sync startup.
     from osm_polygon_wikidata_only.hf.stats_release import (  # noqa: PLC0415
-        ReleaseOptions,
         StatsReleaseError,
         release_v1_polygon_stats,
         release_v2_polygon_stats,
@@ -377,13 +376,11 @@ def _run_release_stats(
                 data_root,
                 confirm_repo=confirmations[target],
                 generated_on=getattr(args, "generated_on", None),
-                options=ReleaseOptions(
-                    apply=args.apply,
-                    hub=hub,
-                    token=getattr(args, "hf_token", None),
-                    source_revision=getattr(args, "source_revision", None),
-                    data_revision=getattr(args, "data_revision", None),
-                ),
+                apply=args.apply,
+                hub=hub,
+                token=getattr(args, "hf_token", None),
+                source_revision=getattr(args, "source_revision", None),
+                data_revision=getattr(args, "data_revision", None),
             )
         except StatsReleaseError as error:
             parser.error(str(error))
