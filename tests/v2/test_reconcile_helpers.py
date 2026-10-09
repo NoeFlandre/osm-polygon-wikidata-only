@@ -160,9 +160,7 @@ def test_apply_pending_outcome_records_error_and_non_ok_article() -> None:
         (DirectWikipediaStatus(ref, "deferred_error"), None, deferred),
         ref,
         {},
-        {},
-        {},
-        statuses,
+        direct_enrichment._DirectRows(statuses=statuses),
         deferred_errors,
     )
     assert statuses[0].status == "deferred_error"
@@ -201,9 +199,7 @@ def test_apply_pending_outcome_records_error_and_non_ok_article() -> None:
         ),
         ref,
         {"source_pbf": "region.osm.pbf"},
-        documents,
-        links,
-        statuses,
+        direct_enrichment._DirectRows(documents=documents, links=links, statuses=statuses),
         deferred_errors,
     )
     [(document_id, document)] = list(documents.items())

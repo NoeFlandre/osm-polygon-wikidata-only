@@ -360,9 +360,7 @@ def _resolve_pending(
             outcome,
             ref,
             context,
-            rows.documents,
-            rows.links,
-            rows.statuses,
+            rows,
             deferred_errors,
         )
     return deferred_errors
@@ -400,13 +398,11 @@ def _apply_pending_outcome(
     outcome: tuple[DirectWikipediaStatus, FetchResult | None, Exception | None],
     ref: WikipediaTagRef,  # noqa: ARG001 -- outcome applier signature kept uniform
     context: Mapping[str, Any],
-    documents: dict[str, dict[str, Any]],
-    links: dict[str, dict[str, Any]],
-    statuses: dict[int, DirectWikipediaStatus],
+    rows: _DirectRows,
     deferred_errors: dict[int, Exception],
 ) -> None:
     status, result, deferred_error = outcome
-    statuses[position] = status
+    rows.statuses[position] = status
     if deferred_error is not None:
         deferred_errors[position] = deferred_error
     if result is None or result.article is None:
@@ -416,8 +412,8 @@ def _apply_pending_outcome(
         document["fetch_status"] = result.status
         document["fetch_error"] = result.error
     key = str(document["document_id"])
-    documents[key] = document
-    links[key] = _link_row(
+    rows.documents[key] = document
+    rows.links[key] = _link_row(
         polygon_id,
         document,
         polygon_context=context,
