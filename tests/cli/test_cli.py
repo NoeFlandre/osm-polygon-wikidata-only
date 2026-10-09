@@ -444,9 +444,7 @@ def test_main_push_without_token_fails_fast(
     monkeypatch.setattr(push_authentication, "resolve_hf_token", lambda value: None)
     raw = tmp_path / "raw"
     raw.mkdir()
-    with pytest.raises(SystemExit) as excinfo:
-        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
-    assert excinfo.value.code == 2
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"]) == 1
 
 
 def test_main_push_rejects_token_rejected_by_whoami(
@@ -465,9 +463,7 @@ def test_main_push_rejects_token_rejected_by_whoami(
     monkeypatch.setattr(commands.LOGGER, "info", messages.append)
     raw = tmp_path / "raw"
     raw.mkdir()
-    with pytest.raises(SystemExit) as excinfo:
-        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
-    assert excinfo.value.code == 2
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"]) == 1
     assert any("Connecting to Hugging Face" in message for message in messages)
 
 
@@ -505,9 +501,7 @@ def test_main_push_aborts_when_namespace_does_not_match_token_user(
     monkeypatch.setattr(push_authentication, "verify_repo_authorization", _fake_authorize)
     raw = tmp_path / "raw"
     raw.mkdir()
-    with pytest.raises(SystemExit) as excinfo:
-        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
-    assert excinfo.value.code == 2
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"]) == 1
 
 
 def test_main_push_distinguishes_missing_token_from_invalid_token(
@@ -517,9 +511,7 @@ def test_main_push_distinguishes_missing_token_from_invalid_token(
     monkeypatch.setattr(push_authentication, "resolve_hf_token", lambda value: None)
     raw = tmp_path / "raw"
     raw.mkdir()
-    with pytest.raises(SystemExit) as excinfo:
-        main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"])
-    assert excinfo.value.code == 2
+    assert main(["process-dir", str(raw), "--data-root", str(tmp_path), "--push"]) == 1
     err = capsys.readouterr().err
     assert "rejected" in err or "invalid" in err
     assert "https://huggingface.co/settings/tokens" in err
@@ -532,7 +524,7 @@ def test_main_push_reports_invalid_explicit_hf_token(
     monkeypatch.setattr(push_authentication, "resolve_hf_token", lambda value: None)
     raw = tmp_path / "raw"
     raw.mkdir()
-    with pytest.raises(SystemExit) as excinfo:
+    assert (
         main(
             [
                 "process-dir",
@@ -544,7 +536,8 @@ def test_main_push_reports_invalid_explicit_hf_token(
                 "definitely-not-a-real-token",
             ]
         )
-    assert excinfo.value.code == 2
+        == 1
+    )
     err = capsys.readouterr().err
     assert "--hf-token" in err
     assert "rejected" in err or "invalid" in err
@@ -1338,20 +1331,23 @@ def test_release_stats_requires_one_confirmation_per_released_dataset(
         links=[],
     )
 
-    with pytest.raises(SystemExit):
-        main(
-            [
-                "release-stats",
-                "--data-root",
-                str(tmp_path),
-                "--dataset-version",
-                "v2",
-                "--confirm-repo",
-                "NoeFlandre/osm-polygon-wikidata-only",
-            ]
-        )
+    status = main(
+        [
+            "release-stats",
+            "--data-root",
+            str(tmp_path),
+            "--dataset-version",
+            "v2",
+            "--confirm-repo",
+            "NoeFlandre/osm-polygon-wikidata-only",
+        ]
+    )
 
-    assert "one --confirm-repo per released dataset" in capsys.readouterr().err
+    assert status == 1
+    assert capsys.readouterr().err.startswith(
+        "osm-polygon-wikidata-only: error: release-stats requires one --confirm-repo "
+        "per released dataset: "
+    )
 
 
 def test_release_stats_dry_run_reports_the_v2_plan(
@@ -1420,7 +1416,6 @@ def test_release_apply_runs_credential_preflight_even_without_push_flag(
     )
 
     commands._authenticate_for_push(
-        argparse.ArgumentParser(),
         argparse.Namespace(
             command="release-stats",
             dataset_version="v2",

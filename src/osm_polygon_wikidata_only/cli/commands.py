@@ -24,6 +24,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import NoReturn
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
@@ -32,7 +33,7 @@ from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
     completed_region_stems,
 )
-from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.config.paths import DataRoot, DataRootError
 from osm_polygon_wikidata_only.config.settings import DEFAULT_REPO_ID, Settings
 from osm_polygon_wikidata_only.hf.core_publication import run_core_publication
 from osm_polygon_wikidata_only.hf.push_authentication import authenticate_push_targets
@@ -48,11 +49,13 @@ from osm_polygon_wikidata_only.v2.config import V2_REPO_ID
 
 from .dependencies import build_clients as _build_clients
 from .dependencies import resolve_cli_data_root as _resolve_data_root
+from .dispatch import parse_and_dispatch
+from .errors import CliFailure, report_cli_error
 from .parser import build_parser
 from .parser import build_settings as _build_settings
-from .tools import dispatch_tool
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
+PROG = "osm-polygon-wikidata-only"
 
 
 def _processing_inputs(command: str, input_path: Path) -> list[Path]:
@@ -79,8 +82,11 @@ def _prepare_runtime(
 ) -> tuple[DataRoot, Settings]:
     """Configure logging and construct the immutable runtime inputs."""
     configure_logging(level=getattr(logging, args.log_level))
-    data_root = _resolve_data_root(args)
-    data_root.ensure()
+    try:
+        data_root = _resolve_data_root(args)
+        data_root.ensure()
+    except OSError as error:
+        raise DataRootError(str(error)) from error
     settings = _build_settings(args)
     if getattr(args, "dataset_version", "v1") == "v2" and settings.repo_id == DEFAULT_REPO_ID:
         settings = replace(settings, repo_id=V2_REPO_ID)
@@ -101,15 +107,16 @@ def _push_target_repo_ids(args: argparse.Namespace, settings: Settings) -> list[
     return [settings.repo_id] if args.push else []
 
 
-def _authenticate_for_push(
-    parser: argparse.ArgumentParser,
-    args: argparse.Namespace,
-    settings: Settings,
-) -> None:
+def _raise_cli_failure(message: str) -> NoReturn:
+    """Report a credential-preflight rejection as an expected CLI failure."""
+    raise CliFailure(message)
+
+
+def _authenticate_for_push(args: argparse.Namespace, settings: Settings) -> None:
     """Validate Hugging Face credentials when a real push was requested."""
     repo_ids = _push_target_repo_ids(args, settings)
     if repo_ids:
-        authenticate_push_targets(settings, repo_ids, parser.error)
+        authenticate_push_targets(settings, repo_ids, _raise_cli_failure)
 
 
 def _run_v2_sync(
@@ -127,7 +134,7 @@ def _run_v2_sync(
         with exclusive_run_lock(data_root.cache / "sync.lock"):
             return execute_v2(args, data_root=data_root, settings=settings)
     except RunLockError as error:
-        parser.error(str(error))
+        return report_cli_error(parser.prog, error)
 
 
 def _run_v2_sentence_split(
@@ -145,7 +152,7 @@ def _run_v2_sentence_split(
         with exclusive_run_lock(data_root.cache / "sentence-splitting.lock"):
             return execute_v2_sentence_split(args, data_root=data_root, settings=settings)
     except RunLockError as error:
-        parser.error(str(error))
+        return report_cli_error(parser.prog, error)
 
 
 def _run_v1_sync(
@@ -171,7 +178,7 @@ def _run_v1_sync(
                 build_upload_files=None,
             )
     except RunLockError as error:
-        parser.error(str(error))
+        return report_cli_error(parser.prog, error)
 
 
 def _run_sync_command(
@@ -322,8 +329,10 @@ def _run_processing_command(
     )
     _log_process_results(outcome.results)
     if outcome.upload_failures:
-        LOGGER.error("%d background upload(s) failed", len(outcome.upload_failures))
-        return 1
+        return report_cli_error(
+            PROG,
+            CliFailure(f"{len(outcome.upload_failures)} background upload(s) failed"),
+        )
     return 0
 
 
@@ -338,7 +347,6 @@ def _selected_release_targets(dataset_version: str) -> tuple[str, ...]:
 
 
 def _release_confirmations(
-    parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     targets: tuple[str, ...],
 ) -> dict[str, str]:
@@ -346,7 +354,7 @@ def _release_confirmations(
     supplied = list(getattr(args, "confirm_repo", None) or [])
     expected = [_RELEASE_TARGETS[target] for target in targets]
     if sorted(supplied) != sorted(expected):
-        parser.error(
+        raise CliFailure(
             "release-stats requires one --confirm-repo per released dataset: " + ", ".join(expected)
         )
     return dict(zip(targets, expected, strict=True))
@@ -367,7 +375,10 @@ def _run_release_stats(
     )
 
     targets = _selected_release_targets(args.dataset_version)
-    confirmations = _release_confirmations(parser, args, targets)
+    try:
+        confirmations = _release_confirmations(args, targets)
+    except CliFailure as failure:
+        return report_cli_error(parser.prog, failure)
     releases = {"v1": release_v1_polygon_stats, "v2": release_v2_polygon_stats}
     hub = StubHfHub() if args.dry_run else None
     reports = []
@@ -384,7 +395,7 @@ def _run_release_stats(
                 generated_on=getattr(args, "generated_on", None),
             )
         except StatsReleaseError as error:
-            parser.error(str(error))
+            return report_cli_error(parser.prog, error)
         reports.append(report)
         print(json.dumps(report.to_payload(), sort_keys=True))
     return 0
@@ -411,7 +422,7 @@ def _run_language_splits(
             dry_run=args.dry_run,
         )
     except LanguageSplitReleaseError as error:
-        parser.error(str(error))
+        return report_cli_error(parser.prog, error)
     print(result.to_json())
     return 0
 
@@ -440,7 +451,7 @@ def _run_publish_language_splits(
             token=args.hf_token,
         )
     except LanguagePublicationError as error:
-        parser.error(str(error))
+        return report_cli_error(parser.prog, error)
     print(result.to_json())
     return 0
 
@@ -477,19 +488,21 @@ def _dispatch_command(
 
 
 def run_parsed(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    """Dispatch already-parsed arguments after the app's lightweight startup."""
-    tool_status = dispatch_tool(args)
-    if tool_status is not None:
-        return tool_status
-    data_root, settings = _prepare_runtime(args)
-    _authenticate_for_push(parser, args, settings)
-    return _dispatch_command(parser, args, data_root=data_root, settings=settings)
+    """Run an already-parsed processing or augmentation command.
+
+    Tool subcommands are dispatched by :func:`parse_and_dispatch`, never here.
+    Expected failures are reported once on stderr with exit status 1.
+    """
+    try:
+        data_root, settings = _prepare_runtime(args)
+        _authenticate_for_push(args, settings)
+        return _dispatch_command(parser, args, data_root=data_root, settings=settings)
+    except (CliFailure, DataRootError) as failure:
+        return report_cli_error(parser.prog, failure)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return run_parsed(parser, args)
+    return parse_and_dispatch(build_parser(), argv, run_parsed)
 
 
 if __name__ == "__main__":  # pragma: no cover

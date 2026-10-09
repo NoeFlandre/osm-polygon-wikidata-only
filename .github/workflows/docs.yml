@@ -30,7 +30,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install Python
-        run: uv python install 3.12
+        run: uv python install
       - name: Install locked dependencies
         run: uv sync --frozen
       - name: Configure Pages

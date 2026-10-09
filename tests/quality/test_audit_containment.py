@@ -18,6 +18,7 @@ from scripts import audit_containment as audit_containment_shim
 def test_audit_main_separates_safe_and_blocked_parents_and_skips_retired_children(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     rules = (
         ContainmentRule("safe-latest", ("child-latest",)),
@@ -37,7 +38,10 @@ def test_audit_main_separates_safe_and_blocked_parents_and_skips_retired_childre
     monkeypatch.setattr(audit_containment, "audit_rule", audit)
     output = tmp_path / "audit.json"
 
-    assert commands.main(["audit-containment", str(tmp_path), "--output", str(output)]) == 2
+    assert commands.main(["audit-containment", str(tmp_path), "--output", str(output)]) == 1
+    assert capsys.readouterr().err == (
+        "osm-polygon-wikidata-only audit-containment: error: 1 blocked parent(s): blocked-latest\n"
+    )
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["retired_children"] == ["retired-latest"]
     assert payload["safe_parents"] == ["safe-latest"]

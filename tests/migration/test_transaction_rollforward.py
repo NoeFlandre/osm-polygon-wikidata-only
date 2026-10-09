@@ -72,6 +72,7 @@ def test_staged_files_preserved_after_mid_flight_crash(tmp_path: Path) -> None:
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
+            data_root=tmp_path,
             _crash_hook=crash_hook,
         )
 
@@ -113,6 +114,7 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
+            data_root=tmp_path,
             _crash_hook=crash_hook,
         )
 
@@ -128,6 +130,7 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
         directory=directory,
         stem="alpha-latest",
         replacements=targets_staged,
+        data_root=tmp_path,
     )
 
     for target, expected_hash in expected.items():
@@ -160,6 +163,7 @@ def test_target_staged_journal_paths_remain_inside_roots(tmp_path: Path) -> None
             directory=directory,
             stem="alpha-latest",
             replacements=targets_staged,
+            data_root=tmp_path,
             _crash_hook=_crash_hook,
         )
 

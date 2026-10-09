@@ -23,6 +23,9 @@ from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlan, Reco
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import UploadError
 
+from .errors import CliFailure, report_cli_error
+
+PROG = "osm-polygon-wikidata-only audit-remote"
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 CORPORA = (
     "polygons",
@@ -89,22 +92,26 @@ def audit(
 ) -> None:
     """Audit remote versus local canonical dataset files."""
     console = _console()
-    resolved_root = _resolve_root(console, data_root)
+    resolved_root = _resolve_root(data_root)
     inventory = _fetch_inventory(console, repo_id, hf_token)
     local_stems = sorted(path.stem for path in resolved_root.processed_polygons.glob("*.parquet"))
     console.print(f"Local finalized regions: [bold]{len(local_stems)}[/]")
     augmentation_current = _augmentation_state(resolved_root, local_stems)
-    plan = _build_plan(console, resolved_root, inventory, local_stems, augmentation_current)
+    plan = _build_plan(resolved_root, inventory, local_stems, augmentation_current)
     _print_plan(console, plan)
 
 
-def _resolve_root(console: Console, data_root: Path | None) -> DataRoot:
+def _failure(context: str, error: Exception) -> typer.Exit:
+    """Report ``context: error`` on stderr and return the typer exit for status 1."""
+    return typer.Exit(report_cli_error(PROG, CliFailure(f"{context}: {error}")))
+
+
+def _resolve_root(data_root: Path | None) -> DataRoot:
     repo_root = repository_root()
     try:
         return resolve_data_root(data_root, repo_root=repo_root)
     except (DataRootError, OSError) as error:
-        console.print(f"[bold red]Error resolving data root:[/] {error}")
-        raise typer.Exit(1) from None
+        raise _failure("cannot resolve data root", error) from None
 
 
 def _fetch_inventory(console: Console, repo_id: str, hf_token: str | None) -> RemoteInventory:
@@ -112,8 +119,7 @@ def _fetch_inventory(console: Console, repo_id: str, hf_token: str | None) -> Re
     try:
         return RemoteInventory.fetch(repo_id=repo_id, token=hf_token)
     except UploadError as error:
-        console.print(f"[bold red]Failed to fetch remote inventory:[/] {error}")
-        raise typer.Exit(1) from None
+        raise _failure("failed to fetch remote inventory", error) from None
 
 
 def _augmentation_state(resolved_root: DataRoot, local_stems: list[str]) -> dict[str, bool]:
@@ -129,7 +135,6 @@ def _augmentation_state(resolved_root: DataRoot, local_stems: list[str]) -> dict
 
 
 def _build_plan(
-    console: Console,
     resolved_root: DataRoot,
     inventory: RemoteInventory,
     local_stems: list[str],
@@ -143,8 +148,7 @@ def _build_plan(
             augmentation_current=augmentation_current,
         ).plan()
     except (OSError, ValueError) as error:
-        console.print(f"[bold red]Failed to compute reconciliation plan:[/] {error}")
-        raise typer.Exit(1) from None
+        raise _failure("failed to compute reconciliation plan", error) from None
 
 
 def run() -> None:
