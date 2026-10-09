@@ -321,7 +321,8 @@ def _recover_entry(entry: dict[str, Any], data_root: Path) -> None:
     """Roll forward one interrupted migration entry."""
     target = _validate_recovery_path(entry, "target", data_root)
     staged = _validate_recovery_path(entry, "staged", data_root)
-    assert target is not None and staged is not None
+    if target is None or staged is None:
+        raise RuntimeError("Link migration recovery requires target and staged paths")
     staged_hash = str(entry["staged_hash"])
     if _file_matches_hash(target, staged_hash):
         return
