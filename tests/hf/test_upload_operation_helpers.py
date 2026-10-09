@@ -296,6 +296,14 @@ def test_sanitizer_redacts_the_whole_basic_authorization_credential() -> None:
     assert "Basic" not in cleaned
 
 
+def test_sanitizer_redacts_url_userinfo_and_keeps_the_host() -> None:
+    cleaned = operations.sanitize_server_message("GET https://alice:secret@example.com failed")
+
+    assert "alice" not in cleaned
+    assert "secret" not in cleaned
+    assert "example.com" in cleaned
+
+
 def test_sanitizer_redacts_bare_hugging_face_tokens() -> None:
     cleaned = operations.sanitize_server_message("request failed for hf_abcdefghijklmnopqrstuvwx")
 

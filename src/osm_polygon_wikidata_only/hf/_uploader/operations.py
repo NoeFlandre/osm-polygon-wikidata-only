@@ -134,6 +134,8 @@ def sanitize_server_message(message: str) -> str:
         re.compile(r"Authorization:[^\r\n]*", re.IGNORECASE),
         # Bare Hugging Face access tokens, which carry no keyword to match on.
         re.compile(r"hf_[A-Za-z0-9]{8,}"),
+        # ``user:password@`` userinfo in a URL, keeping the scheme and host.
+        re.compile(r"(?<=://)[^\s/@]+@"),
         # ``request_id=<value>``
         re.compile(r"request_id\s*[:=]\s*[\S\"']+", re.IGNORECASE),
         # Full user-home paths on macOS / Linux (matches ``/Users/<name>``

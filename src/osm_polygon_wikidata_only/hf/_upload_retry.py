@@ -53,22 +53,30 @@ def _backoff_seconds(attempt: int) -> float:
 
 
 def _rate_limit_delay(error: BaseException) -> float:
-    """Return the server's Retry-After wait for a 429 in the cause chain, or 0.0.
+    """Return the server's Retry-After wait for a 429 in the cause chain, or 0.0."""
+    response = _rate_limited_response(error)
+    if response is None:
+        return 0.0
+    headers = getattr(response, "headers", None)
+    value = headers.get("Retry-After") if headers is not None else None
+    return parse_retry_after(value, default_s=0.0, max_s=_MAX_SERVER_RETRY_AFTER_SECONDS)
+
+
+def _rate_limited_response(error: BaseException) -> object | None:
+    """Return the 429 response carried by the error or its cause chain, if any.
 
     The Hub's HTTP error sits behind the translated UploadError as its cause, and
-    only the response carries the header the server asked us to honour.
+    only that response carries the header the server asked us to honour.
     """
     current: BaseException | None = error
     for _ in range(_MAX_CAUSE_DEPTH):
         if current is None:
-            break
+            return None
         response = getattr(current, "response", None)
         if getattr(response, "status_code", None) == 429:
-            headers = getattr(response, "headers", None)
-            value = headers.get("Retry-After") if headers is not None else None
-            return parse_retry_after(value, default_s=0.0, max_s=_MAX_SERVER_RETRY_AFTER_SECONDS)
+            return response
         current = current.__cause__ or current.__context__
-    return 0.0
+    return None
 
 
 def _should_retry(error: Exception, attempt: int, attempts: int) -> bool:
