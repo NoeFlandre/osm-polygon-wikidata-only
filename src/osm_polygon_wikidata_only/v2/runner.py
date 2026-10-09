@@ -39,6 +39,7 @@ from osm_polygon_wikidata_only.v2.publication import (
 )
 from osm_polygon_wikidata_only.v2.resume import V2FileHashCache
 from osm_polygon_wikidata_only.v2.reuse import (
+    ReuseFetchOptions,
     SectionClient,
     merge_v2_region,
     reconcile_v2_region,
@@ -368,11 +369,13 @@ def _process_extraction(
         index=state.index,
         wikipedia_client=state.wikipedia_client,
         section_client=state.section_client,
-        section_workers=state.section_workers,
+        options=ReuseFetchOptions(
+            section_workers=state.section_workers,
+            fetch_full_text=state.settings.fetch_full_text,
+            direct_workers=state.settings.enrichment_site_workers,
+            wait_for_index=False,
+        ),
         cache=state.cache,
-        fetch_full_text=state.settings.fetch_full_text,
-        direct_workers=state.settings.enrichment_site_workers,
-        wait_for_index=False,
         checkpoint_dir=state.data_root.v2_cache / "checkpoints",
     )
     state.extracted_stems.append(plan.stem)
@@ -416,9 +419,11 @@ def _reconcile_provisional_regions(state: _V2ExecutionState) -> None:
             index=state.index,
             wikipedia_client=state.wikipedia_client,
             cache=state.cache,
-            fetch_full_text=state.settings.fetch_full_text,
+            options=ReuseFetchOptions(
+                fetch_full_text=state.settings.fetch_full_text,
+                section_workers=state.section_workers,
+            ),
             section_client=state.section_client,
-            section_workers=state.section_workers,
             checkpoint_dir=state.data_root.v2_cache / "checkpoints",
         )
         clear_v2_checkpoints(state.data_root.v2_cache / "checkpoints", stem)
