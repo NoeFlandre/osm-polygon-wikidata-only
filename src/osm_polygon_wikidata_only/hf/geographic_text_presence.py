@@ -23,7 +23,7 @@ from ._geographic.polygon_identities import (
     load_unique_polygon_records,
 )
 from ._links.reader import DocumentLink, is_canonical_link_schema, read_document_links
-from .coverage_map import PointStyle, generate_coverage_map
+from .coverage_map import generate_coverage_map
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,7 +443,8 @@ def generate_geographic_text_presence(
         output_path,
         land_geojson_path=land_geojson_path,
         title="Polygons with Wikipedia or Wikivoyage text",
-        point_style=PointStyle(color="#2563EB", edge="#1E40AF"),
+        point_color="#2563EB",
+        point_edge="#1E40AF",
     )
     rate = len(points) / snapshot.polygon_count if snapshot.polygon_count else 0.0
     caption = (
