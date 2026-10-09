@@ -233,21 +233,23 @@ def test_recovery_journal_validates_version_and_stem(tmp_path: Path) -> None:
     path = tmp_path / "journal.json"
     path.write_text("{broken", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
-        transaction._load_recovery_journal(path, "region")
+        transaction._load_recovery_journal(path, "region", data_root=tmp_path)
     path.write_text(json.dumps({"contract_version": "wrong", "stem": "region"}), encoding="utf-8")
     with pytest.raises(RuntimeError, match="Invalid link migration journal"):
-        transaction._load_recovery_journal(path, "region")
+        transaction._load_recovery_journal(path, "region", data_root=tmp_path)
     path.write_text(
         json.dumps({"contract_version": transaction.TRANSACTION_VERSION, "stem": "other"}),
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="stem mismatch"):
-        transaction._load_recovery_journal(path, "region")
+        transaction._load_recovery_journal(path, "region", data_root=tmp_path)
     path.write_text(
         json.dumps({"contract_version": transaction.TRANSACTION_VERSION, "stem": "region"}),
         encoding="utf-8",
     )
-    assert transaction._load_recovery_journal(path, "region")["stem"] == "region"
+    assert (
+        transaction._load_recovery_journal(path, "region", data_root=tmp_path)["stem"] == "region"
+    )
 
 
 def test_v2_manifest_and_sentence_manifest_payloads_validate_shapes(tmp_path: Path) -> None:
@@ -587,14 +589,13 @@ def test_language_split_command_translates_publication_errors(
         dry_run=False,
         hf_token=None,
     )
-    with pytest.raises(SystemExit) as raised:
-        _coverage_call(
-            commands._run_publish_language_splits,
-            argparse.ArgumentParser(),
-            args,
-            data_root=SimpleNamespace(),
-        )
-    assert raised.value.code == 2
+    status = _coverage_call(
+        commands._run_publish_language_splits,
+        argparse.ArgumentParser(),
+        args,
+        data_root=SimpleNamespace(),
+    )
+    assert status == 1
     assert "release failed" in capsys.readouterr().err
 
 

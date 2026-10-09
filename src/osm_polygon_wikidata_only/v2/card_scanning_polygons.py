@@ -111,15 +111,6 @@ def merge_link_sources(values: set[str], batch: Any, source: str, path: Path) ->
             values.add(str(identity))
 
 
-def osm_polygon_identity(osm_type: Any, osm_id: Any) -> tuple[str, int] | None:
-    if osm_type in (None, "") or osm_id in (None, ""):
-        return None
-    try:
-        return str(osm_type), int(osm_id)
-    except (TypeError, ValueError):
-        return None
-
-
 def scan_polygon_metrics(paths: Iterable[Path]) -> _PolygonMetrics:
     """Collect polygon identities, QIDs, and source counts in one pass."""
     metrics = _PolygonMetrics(set(), set())
