@@ -27,6 +27,7 @@ from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
 from osm_polygon_wikidata_only.pipeline.sync_runner import UploadHooks
+from osm_polygon_wikidata_only.pipeline.wikidata_recovery import RepairClients
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
@@ -387,9 +388,11 @@ class SyncApplication:
         return self.services.repair_wikidata_region(
             self.context.data_root,
             plan,
-            wikidata_client=runtime.wikidata,
-            wikipedia_client=runtime.wikipedia,
-            augmentation_client=self.context.augmentation_client,
+            clients=RepairClients(
+                wikidata=runtime.wikidata,
+                wikipedia=runtime.wikipedia,
+                augmentation=self.context.augmentation_client,
+            ),
             settings=self.context.settings,
             log=self.services.logger.info,
             scheduler_snapshot=runtime.scheduler.snapshot,
