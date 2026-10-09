@@ -18,7 +18,7 @@ the caller supplies pinned ``generated_on`` metadata.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,20 +33,22 @@ from osm_polygon_wikidata_only.hf._stats_release.manifest import (
 )
 from osm_polygon_wikidata_only.hf._stats_release.models import (
     ReleasedFile,
+    ReleaseOptions,
+    RemoteVerifier,
     StatsReleaseError,
+    StatsReleaseReport,
 )
 from osm_polygon_wikidata_only.hf._stats_release.models import (
     RemoteState as _RemoteState,
-)
-from osm_polygon_wikidata_only.hf._stats_release.remote import (
-    RemoteVerifier,
-    default_remote_verifier,
 )
 from osm_polygon_wikidata_only.hf._stats_release.remote import (
     changed_paths as _changed_paths,
 )
 from osm_polygon_wikidata_only.hf._stats_release.remote import (
     client_for_release as _client_for_release,
+)
+from osm_polygon_wikidata_only.hf._stats_release.remote import (
+    default_remote_verifier,
 )
 from osm_polygon_wikidata_only.hf._stats_release.remote import (
     load_remote_state as _load_remote_state,
@@ -96,66 +98,12 @@ ReportExtraBuilder = Callable[[PolygonGeometryStats], Mapping[str, Any]]
 
 
 @dataclass(frozen=True)
-class ReleaseOptions:
-    """Publication mode, Hub access and revision pins for one statistics release.
-
-    ``apply=False`` plans the release and never touches the Hub.
-    """
-
-    apply: bool = False
-    hub: HfHub | None = None
-    verifier: RemoteVerifier | None = None
-    token: str | None = None
-    source_revision: str | None = None
-    data_revision: str | None = None
-
-
-@dataclass(frozen=True)
 class _PublicationOutcome:
     published: bool = False
     revision: str | None = None
     committed: bool = False
     no_op: bool = False
     changed_files: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class StatsReleaseReport:
-    """Evidence for one statistics release run."""
-
-    repo_id: str
-    processed_dir: str
-    files: tuple[ReleasedFile, ...]
-    polygon_files: int
-    polygon_rows: int
-    published: bool
-    revision: str | None
-    provenance: dict[str, Any] = field(default_factory=dict)
-    committed: bool = False
-    no_op: bool = False
-    changed_files: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "changed_files": list(self.changed_files),
-            "committed": self.committed,
-            "files": [
-                {
-                    "path_in_repo": item.path_in_repo,
-                    "sha256": item.sha256,
-                    "size_bytes": item.size_bytes,
-                }
-                for item in self.files
-            ],
-            "no_op": self.no_op,
-            "polygon_files": self.polygon_files,
-            "polygon_rows": self.polygon_rows,
-            "processed_dir": self.processed_dir,
-            "provenance": self.provenance,
-            "published": self.published,
-            "repo_id": self.repo_id,
-            "revision": self.revision,
-        }
 
 
 def _write_text_if_changed(path: Path, text: str) -> None:
@@ -444,13 +392,18 @@ def _release_report(
     )
 
 
-def release_v1_polygon_stats(
+def release_v1_polygon_stats(  # noqa: PLR0913 -- public keyword API kept for existing callers
     data_root: DataRoot,
     *,
     confirm_repo: str,
     repo_id: str = DEFAULT_REPO_ID,
     generated_on: str | None = None,
-    options: ReleaseOptions | None = None,
+    apply: bool = False,
+    hub: HfHub | None = None,
+    verifier: RemoteVerifier | None = None,
+    token: str | None = None,
+    source_revision: str | None = None,
+    data_revision: str | None = None,
 ) -> StatsReleaseReport:
     """Release the V1 Wikidata-only card and statistics report."""
     _require_canonical_repo(repo_id, DEFAULT_REPO_ID)
@@ -500,6 +453,14 @@ def release_v1_polygon_stats(
     def report_extra_builder(_stats: PolygonGeometryStats) -> Mapping[str, Any]:
         return get_prepared().report_extra
 
+    options = ReleaseOptions(
+        apply=apply,
+        hub=hub,
+        verifier=verifier,
+        token=token,
+        source_revision=source_revision,
+        data_revision=data_revision,
+    )
     return release_polygon_stats(
         processed_dir=data_root.processed,
         staging_dir=data_root.cache / _STAGING_DIRNAME / "v1",
@@ -512,13 +473,18 @@ def release_v1_polygon_stats(
     )
 
 
-def release_v2_polygon_stats(
+def release_v2_polygon_stats(  # noqa: PLR0913 -- public keyword API kept for existing callers
     data_root: DataRoot,
     *,
     confirm_repo: str,
     repo_id: str = V2_REPO_ID,
     generated_on: str | None = None,
-    options: ReleaseOptions | None = None,
+    apply: bool = False,
+    hub: HfHub | None = None,
+    verifier: RemoteVerifier | None = None,
+    token: str | None = None,
+    source_revision: str | None = None,
+    data_revision: str | None = None,
 ) -> StatsReleaseReport:
     """Release the V2 Wikidata + Wikipedia card and statistics report."""
     _require_canonical_repo(repo_id, V2_REPO_ID)
@@ -573,6 +539,14 @@ def release_v2_polygon_stats(
     def report_extra_builder(_stats: PolygonGeometryStats) -> Mapping[str, Any]:
         return get_prepared().report_extra
 
+    options = ReleaseOptions(
+        apply=apply,
+        hub=hub,
+        verifier=verifier,
+        token=token,
+        source_revision=source_revision,
+        data_revision=data_revision,
+    )
     return release_polygon_stats(
         processed_dir=processed_v2,
         staging_dir=data_root.cache / _STAGING_DIRNAME / "v2",

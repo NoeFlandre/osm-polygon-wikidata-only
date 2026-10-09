@@ -1459,6 +1459,4 @@ def test_release_forwards_explicit_token_to_the_release_function(
         == 0
     )
     capsys.readouterr()
-    options = captured["options"]
-    assert isinstance(options, stats_release.ReleaseOptions)
-    assert options.token == "explicit-token"
+    assert captured["token"] == "explicit-token"
