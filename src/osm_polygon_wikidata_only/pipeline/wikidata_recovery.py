@@ -8,6 +8,7 @@ from ._wikidata_recovery import (
     RecoveryRepairError,
     RecoveryRepairResult,
     RegionAuditResult,
+    RepairClients,
     audit_wikidata_integrity,
     repair_wikidata_region,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "RecoveryRepairError",
     "RecoveryRepairResult",
     "RegionAuditResult",
+    "RepairClients",
     "audit_wikidata_integrity",
     "repair_wikidata_region",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Any
 
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgress
@@ -73,29 +74,37 @@ def _load_recovery_checkpoints(
     return completed, missing
 
 
+@dataclass(frozen=True, slots=True)
+class RecoveryBatchRun:
+    """Collaborators shared by every recovery batch built for one region."""
+
+    stem: str
+    batch_total: int
+    checkpoint_store: RecoveryCheckpointStore
+    build_batch: Callable[[tuple[str, ...], RecoveryProgress], RecoveryBatchArtifacts]
+    emit: Callable[[str], None]
+    scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None
+
+
 def _build_and_checkpoint(
     index: int,
     batch_qids: tuple[str, ...],
-    *,
-    stem: str,
-    batch_total: int,
-    checkpoint_store: RecoveryCheckpointStore,
-    build_batch: Callable[[tuple[str, ...], RecoveryProgress], RecoveryBatchArtifacts],
-    emit: Callable[[str], None],
-    scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None,
+    run: RecoveryBatchRun,
 ) -> tuple[int, RecoveryBatchArtifacts]:
     """Build one recovery batch and persist its durable checkpoint."""
-    progress = RecoveryProgress(stem, batch_total, scheduler_snapshot=scheduler_snapshot)
+    progress = RecoveryProgress(
+        run.stem, run.batch_total, scheduler_snapshot=run.scheduler_snapshot
+    )
     progress.start_batch(index + 1, batch_qids)
-    with RecoveryHeartbeat(progress, emit):
-        artifacts = build_batch(batch_qids, progress)
-    checkpoint_store.save(index, artifacts)
+    with RecoveryHeartbeat(progress, run.emit):
+        artifacts = run.build_batch(batch_qids, progress)
+    run.checkpoint_store.save(index, artifacts)
     progress.checkpoint_saved(
         documents=len(artifacts.documents),
         sections=len(artifacts.sections),
         facts=len(artifacts.facts),
     )
-    emit(progress.message())
+    run.emit(progress.message())
     return index, artifacts
 
 
@@ -121,13 +130,8 @@ def _collect_recovery_futures(
 def _run_missing_recovery_batches(
     missing: list[tuple[int, tuple[str, ...]]],
     completed: dict[int, RecoveryBatchArtifacts],
+    run: RecoveryBatchRun,
     *,
-    stem: str,
-    batch_total: int,
-    checkpoint_store: RecoveryCheckpointStore,
-    build_batch: Callable[[tuple[str, ...], RecoveryProgress], RecoveryBatchArtifacts],
-    emit: Callable[[str], None],
-    scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None,
     batch_window: int,
     as_completed_fn: Callable[[object], Any] | None = None,
 ) -> None:
@@ -136,17 +140,7 @@ def _run_missing_recovery_batches(
     try:
         with ThreadPoolExecutor(max_workers=min(batch_window, len(missing))) as executor:
             futures = [
-                executor.submit(
-                    _build_and_checkpoint,
-                    index,
-                    batch_qids,
-                    stem=stem,
-                    batch_total=batch_total,
-                    checkpoint_store=checkpoint_store,
-                    build_batch=build_batch,
-                    emit=emit,
-                    scheduler_snapshot=scheduler_snapshot,
-                )
+                executor.submit(_build_and_checkpoint, index, batch_qids, run)
                 for index, batch_qids in missing
             ]
             _collect_recovery_futures(
@@ -177,15 +171,18 @@ def _execute_recovery_batches(
     completed, missing = _load_recovery_checkpoints(stem, batches, checkpoint_store, emit)
 
     if missing:
-        _run_missing_recovery_batches(
-            missing,
-            completed,
+        run = RecoveryBatchRun(
             stem=stem,
             batch_total=batch_total,
             checkpoint_store=checkpoint_store,
             build_batch=build_batch,
             emit=emit,
             scheduler_snapshot=scheduler_snapshot,
+        )
+        _run_missing_recovery_batches(
+            missing,
+            completed,
+            run,
             batch_window=batch_window,
             as_completed_fn=as_completed_fn,
         )

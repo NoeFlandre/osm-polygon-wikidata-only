@@ -117,9 +117,9 @@ def test_plan_sync_states_with_recovery_adds_noncanonical_link_migrations_to_rec
 
     states = plan_sync_states_with_recovery(
         [Path("region.osm.pbf")],
-        input_stems={"region"},
-        core_stems={"region"},
-        current_augmentation={"region"},
+        inventory=sync_planning.StemInventory(
+            input_stems={"region"}, core_stems={"region"}, current_augmentation={"region"}
+        ),
         force=False,
         pending_stems=set(),
         recovery_stems=set(),
@@ -164,12 +164,10 @@ def test_prepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Pa
         data_root=DataRoot(tmp_path),
         settings=Settings(),
         input_stems=set(),
-        hub=None,
-        inventory_override=None,
+        source=sync_reconciliation.RemoteSource(hub=None, inventory_override=None),
         validate_augmentation=lambda *_: pytest.fail("must not validate"),
         load_retired_parent_children=lambda *_: pytest.fail("must not load"),
-        canonical_region_paths=None,
-        planner_cls=None,
+        helpers=sync_reconciliation.RemoteHelpers(canonical_region_paths=None, planner_cls=None),
     )
 
     assert result.inventory is None
@@ -314,12 +312,14 @@ def test_prepare_remote_reconciliation_validates_inputs_and_builds_remote_state(
             data_root=data_root,
             settings=settings,
             input_stems={"beta", "alpha"},
-            hub=cast(Any, hub),
-            inventory_override=inventory,
+            source=sync_reconciliation.RemoteSource(
+                hub=cast(Any, hub), inventory_override=inventory
+            ),
             validate_augmentation=validate,
             load_retired_parent_children=retired,
-            canonical_region_paths=canonical_paths,
-            planner_cls=cast(Any, Planner),
+            helpers=sync_reconciliation.RemoteHelpers(
+                canonical_region_paths=canonical_paths, planner_cls=cast(Any, Planner)
+            ),
         )
 
     assert calls == [
@@ -438,12 +438,13 @@ def test_prepare_remote_reconciliation_forwards_inventory_credentials(
         data_root=data_root,
         settings=settings,
         input_stems={"alpha"},
-        hub=cast(Any, hub),
-        inventory_override=None,
+        source=sync_reconciliation.RemoteSource(hub=cast(Any, hub), inventory_override=None),
         validate_augmentation=lambda _root, _stems: {"alpha": False},
         load_retired_parent_children=lambda _path: {},
-        canonical_region_paths=lambda stem: {"polygons": f"{stem}/polygons.parquet"},
-        planner_cls=cast(Any, Planner),
+        helpers=sync_reconciliation.RemoteHelpers(
+            canonical_region_paths=lambda stem: {"polygons": f"{stem}/polygons.parquet"},
+            planner_cls=cast(Any, Planner),
+        ),
     )
 
     assert fetch_calls == [{"repo_id": "org/dataset", "hub": hub, "token": "token"}]
@@ -536,9 +537,9 @@ def test_plan_prepared_sync_forwards_all_inputs_and_records_repair_state(
     actual_pbfs, state_kwargs = observed["states"]
     assert actual_pbfs is pbfs
     assert state_kwargs == {
-        "input_stems": {"alpha"},
-        "core_stems": {"alpha", "beta"},
-        "current_augmentation": {"alpha"},
+        "inventory": sync_planning.StemInventory(
+            input_stems={"alpha"}, core_stems={"alpha", "beta"}, current_augmentation={"alpha"}
+        ),
         "force": True,
         "pending_stems": {"queued", "alpha"},
         "recovery_stems": set(),
@@ -678,9 +679,9 @@ def test_prepare_sync_plan_wires_local_remote_and_derived_plan_inputs(
     assert calls["helpers"] is True
     assert calls["states"][0] == [pbfs[0]]
     assert calls["states"][1] == {
-        "input_stems": input_stems,
-        "core_stems": {"alpha"},
-        "current_augmentation": {"alpha"},
+        "inventory": sync_planning.StemInventory(
+            input_stems=input_stems, core_stems={"alpha"}, current_augmentation={"alpha"}
+        ),
         "force": True,
         "pending_stems": {"queued", "alpha"},
         "recovery_stems": set(),
@@ -692,12 +693,14 @@ def test_prepare_sync_plan_wires_local_remote_and_derived_plan_inputs(
         "data_root": data_root,
         "settings": settings,
         "input_stems": input_stems,
-        "hub": hub,
-        "inventory_override": inventory,
+        "source": sync_reconciliation.RemoteSource(
+            hub=cast(Any, hub), inventory_override=inventory
+        ),
         "validate_augmentation": sync_planning.validate_local_augmentation_state,
         "load_retired_parent_children": containment_migration.load_retired_parent_children,
-        "canonical_region_paths": canonical_paths,
-        "planner_cls": planner,
+        "helpers": sync_reconciliation.RemoteHelpers(
+            canonical_region_paths=canonical_paths, planner_cls=planner
+        ),
     }
     assert result == sync_planning.PreparedSyncPlan(
         pbfs=[pbfs[0]],
@@ -855,9 +858,9 @@ def test_plan_sync_states_with_recovery_forwards_forced_and_migratable_stems(
     monkeypatch.setattr(sync_planning, "plan_sync_states", plan)
     result = sync_planning.plan_sync_states_with_recovery(
         pbfs,
-        input_stems={"alpha", "beta"},
-        core_stems={"alpha"},
-        current_augmentation={"alpha"},
+        inventory=sync_planning.StemInventory(
+            input_stems={"alpha", "beta"}, core_stems={"alpha"}, current_augmentation={"alpha"}
+        ),
         force=True,
         pending_stems={"pending"},
         recovery_stems={"forced"},

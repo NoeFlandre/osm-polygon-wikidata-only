@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import as_completed
+from dataclasses import dataclass
 from typing import Any
 
 from osm_polygon_wikidata_only.augmentation.steps import AugmentationClient
@@ -274,14 +275,21 @@ def _execute_recovery_batches(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class RepairClients:
+    """Wikidata, Wikipedia and augmentation clients used by one region repair."""
+
+    wikidata: WikidataClient
+    wikipedia: WikipediaClient
+    augmentation: AugmentationClient
+
+
 def _build_repair_outputs(
     data_root: DataRoot,
     region: RegionAuditResult,
     inputs: _RepairInputs,
     *,
-    wikidata_client: WikidataClient,
-    wikipedia_client: WikipediaClient,
-    augmentation_client: AugmentationClient,
+    clients: RepairClients,
     settings: Settings,
     emit: Callable[[str], None],
     scheduler_snapshot: Callable[[], RequestSchedulerSnapshot] | None,
@@ -297,9 +305,9 @@ def _build_repair_outputs(
         return _build_batch_artifacts(
             batch_qids,
             existing_documents=inputs.retained_documents,
-            wikidata_client=wikidata_client,
-            wikipedia_client=wikipedia_client,
-            augmentation_client=augmentation_client,
+            wikidata_client=clients.wikidata,
+            wikipedia_client=clients.wikipedia,
+            augmentation_client=clients.augmentation,
             settings=settings,
             progress=progress,
         )
@@ -315,43 +323,11 @@ def _build_repair_outputs(
     return _merge_repair_outputs(region, inputs, completed_batches), checkpoint_store
 
 
-def _persist_repair_outputs(
-    data_root: DataRoot,
-    region: RegionAuditResult,
-    inputs: _RepairInputs,
-    outputs: _RepairOutputs,
-    checkpoint_store: RecoveryCheckpointStore,
-    *,
-    transaction_root: Any,
-    wikidata_client: WikidataClient,
-    settings: Settings,
-    before_commit: Callable[[], None] | None,
-) -> RecoveryRepairResult:
-    """Preserve facade-level audit and receipt monkeypatch seams."""
-    return _persist_repair_outputs_impl(
-        data_root,
-        region,
-        inputs,
-        outputs,
-        checkpoint_store,
-        RepairPersistence(
-            transaction_root=transaction_root,
-            wikidata_client=wikidata_client,
-            settings=settings,
-            before_commit=before_commit,
-            audit_fn=audit_wikidata_integrity,
-            record_receipt_fn=record_region_recovery_receipt,
-        ),
-    )
-
-
 def repair_wikidata_region(
     data_root: DataRoot,
     region: RegionAuditResult,
     *,
-    wikidata_client: WikidataClient,
-    wikipedia_client: WikipediaClient,
-    augmentation_client: AugmentationClient,
+    clients: RepairClients,
     settings: Settings,
     before_commit: Callable[[], None] | None = None,
     log: Callable[[str], None] | None = None,
@@ -370,24 +346,33 @@ def repair_wikidata_region(
         data_root,
         region,
         inputs,
-        wikidata_client=wikidata_client,
-        wikipedia_client=wikipedia_client,
-        augmentation_client=augmentation_client,
+        clients=clients,
         settings=settings,
         emit=emit,
         scheduler_snapshot=scheduler_snapshot,
     )
-    return _persist_repair_outputs(
+    # Persistence resolves the audit and receipt functions from this facade at
+    # call time so tests can replace them here.
+    return _persist_repair_outputs_impl(
         data_root,
         region,
         inputs,
         outputs,
         checkpoint_store,
-        transaction_root=transaction_root,
-        wikidata_client=wikidata_client,
-        settings=settings,
-        before_commit=before_commit,
+        RepairPersistence(
+            transaction_root=transaction_root,
+            wikidata_client=clients.wikidata,
+            settings=settings,
+            before_commit=before_commit,
+            audit_fn=audit_wikidata_integrity,
+            record_receipt_fn=record_region_recovery_receipt,
+        ),
     )
 
 
-__all__ = ["RecoveryRepairError", "RecoveryRepairResult", "repair_wikidata_region"]
+__all__ = [
+    "RecoveryRepairError",
+    "RecoveryRepairResult",
+    "RepairClients",
+    "repair_wikidata_region",
+]

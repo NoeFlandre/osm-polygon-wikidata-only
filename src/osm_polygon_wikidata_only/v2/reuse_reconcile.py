@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
@@ -26,6 +27,7 @@ from osm_polygon_wikidata_only.v2.direct_enrichment import (
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     title_key as _title_key,
 )
+from osm_polygon_wikidata_only.v2.reuse_direct import DirectFetchSettings
 from osm_polygon_wikidata_only.v2.reuse_direct import (
     add_direct_result as _add_direct_result,
 )
@@ -122,8 +124,10 @@ def collect_speculative_direct_results(
         index=index,
         wikipedia_client=wikipedia_client,
         cache=cache,
-        fetch_full_text=fetch_full_text,
-        direct_workers=direct_workers,
+        settings=DirectFetchSettings(
+            fetch_full_text=fetch_full_text,
+            direct_workers=direct_workers,
+        ),
         initial_matches=initial_matches,
         fetch_checkpoint=fetch_checkpoint,
     )
@@ -331,10 +335,12 @@ def _reconcile_ref_chunk(
             ref,
             matches=matches,
             current_by_title=current_by_title,
-            index=index,
-            wikipedia_client=wikipedia_client,
-            cache=cache,
-            fetch_full_text=fetch_full_text,
+            lookup=ReconcileLookup(
+                index=index,
+                wikipedia_client=wikipedia_client,
+                cache=cache,
+                fetch_full_text=fetch_full_text,
+            ),
         )
         if candidates:
             _apply_reconciliation_candidate(
@@ -346,6 +352,16 @@ def _reconcile_ref_chunk(
             )
 
 
+@dataclass(frozen=True, slots=True)
+class ReconcileLookup:
+    """V1 index, Wikipedia client, cache and fetch flag for a recovery lookup."""
+
+    index: Any
+    wikipedia_client: Any | None
+    cache: Any
+    fetch_full_text: bool
+
+
 def _find_reconciliation_candidates(
     polygon_id: str,
     polygon: dict[str, Any],
@@ -353,11 +369,12 @@ def _find_reconciliation_candidates(
     *,
     matches: dict[tuple[str, str], Any],
     current_by_title: dict[tuple[str, str], list[dict[str, Any]]],
-    index: Any,
-    wikipedia_client: Any | None,
-    cache: Any,
-    fetch_full_text: bool,
+    lookup: ReconcileLookup,
 ) -> Any:
+    index = lookup.index
+    wikipedia_client = lookup.wikipedia_client
+    cache = lookup.cache
+    fetch_full_text = lookup.fetch_full_text
     candidates = matches.get(_title_key(ref.language, ref.title), ()) or current_by_title.get(
         (ref.language.casefold(), ref.title.replace("_", " ").casefold()),
         (),

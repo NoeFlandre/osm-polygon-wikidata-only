@@ -162,8 +162,8 @@ def test_combined_text_map_uses_blue_points_without_changing_default_map(
     monkeypatch.setattr(text_presence_module, "generate_coverage_map", capture_map)
     generate_geographic_text_presence(processed, tmp_path / "combined.png")
 
-    assert captured["point_color"] == "#2563EB"
-    assert captured["point_edge"] == "#1E40AF"
+    assert captured["point_style"].color == "#2563EB"
+    assert captured["point_style"].edge == "#1E40AF"
 
 
 def test_continent_assignment_and_public_rendering() -> None:

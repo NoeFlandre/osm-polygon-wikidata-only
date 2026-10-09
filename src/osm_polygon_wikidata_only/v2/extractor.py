@@ -201,6 +201,8 @@ def extract_v2_pbf(
         return V2ExtractedPbf(stem, tuple(rows), time.perf_counter() - started)
     reader = PBFReader(pbf_path, include_wikipedia_tagged=True)
 
+    provenance = _RowProvenance(stem=stem, pbf_path=pbf_path, extracted_at=extracted_at)
+
     def add(candidate: PolygonCandidate) -> None:
         _append_extraction_row(
             candidate,
@@ -208,9 +210,7 @@ def extract_v2_pbf(
             seen=seen,
             pending_checkpoint=pending_checkpoint,
             limit=limit,
-            stem=stem,
-            pbf_path=pbf_path,
-            extracted_at=extracted_at,
+            provenance=provenance,
             checkpoint=checkpoint,
             checkpoint_every=checkpoint_every,
         )
@@ -267,6 +267,15 @@ def _finish_checkpoint(
         checkpoint.mark_complete()
 
 
+@dataclass(frozen=True, slots=True)
+class _RowProvenance:
+    """Source PBF stem, path and extraction timestamp stamped on each polygon row."""
+
+    stem: V2PbfStem
+    pbf_path: Path
+    extracted_at: str
+
+
 def _append_extraction_row(
     candidate: PolygonCandidate,
     *,
@@ -274,12 +283,11 @@ def _append_extraction_row(
     seen: set[str],
     pending_checkpoint: list[dict[str, Any]],
     limit: int | None,
-    stem: V2PbfStem,
-    pbf_path: Path,
-    extracted_at: str,
+    provenance: _RowProvenance,
     checkpoint: ExtractionCheckpoint | None,
     checkpoint_every: int,
 ) -> None:
+    stem, pbf_path, extracted_at = provenance.stem, provenance.pbf_path, provenance.extracted_at
     if _limit_reached(limit, len(rows)):
         return
     row = candidate_to_v2_row(
