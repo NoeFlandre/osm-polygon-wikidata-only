@@ -110,7 +110,7 @@ def _ensure_repo_exists(hub: HfHub, repo_id: str, *, repo_type: str = "dataset")
         raise _translate_hf_error(error, repo_id=repo_id) from error
 
 
-def _sanitize_server_message(message: str) -> str:
+def sanitize_server_message(message: str) -> str:
     """Strip secrets, file-system paths and request-payload fragments.
 
     The Hugging Face API occasionally echoes back portions of the
@@ -159,7 +159,7 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
     before being shown to the operator.
     """
     status_code, server_message = _error_details(error)
-    message = _sanitize_server_message(server_message)
+    message = sanitize_server_message(server_message)
     if _is_auth_error(status_code, message):
         return _auth_upload_error(repo_id, message)
     return UploadError(

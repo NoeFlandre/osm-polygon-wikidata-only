@@ -65,9 +65,27 @@ def test_httpx_remote_protocol_error_is_retryable() -> None:
 @pytest.mark.parametrize(
     "error",
     [
+        httpx.ConnectTimeout("connect timed out"),
+        httpx.ReadTimeout("read timed out"),
+        httpx.WriteTimeout("write timed out"),
+        httpx.PoolTimeout("pool timed out"),
+        httpx.ConnectError("connection refused"),
+        httpx.ReadError("connection reset"),
+        httpx.WriteError("broken pipe"),
+        httpx.ProxyError("proxy unavailable"),
+    ],
+)
+def test_httpx_transport_failures_are_retryable(error: httpx.HTTPError) -> None:
+    assert is_transient_network_error(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
         http_error(404, msg="missing"),
         ValueError("malformed payload"),
         RuntimeError("programming error"),
+        httpx.LocalProtocolError("client sent an invalid request"),
     ],
 )
 def test_transient_network_error_rejects_permanent_failures(error: BaseException) -> None:

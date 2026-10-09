@@ -13,7 +13,7 @@ import random
 from collections.abc import Callable
 
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
-from osm_polygon_wikidata_only.hf._uploader.operations import _sanitize_server_message
+from osm_polygon_wikidata_only.hf._uploader.operations import sanitize_server_message
 from osm_polygon_wikidata_only.utils.retry import (
     is_transient_network_error,
     wait_for_retry_or_cancel,
@@ -38,7 +38,7 @@ def _loggable_message(error: Exception) -> str:
     Errors raised by upload callbacks are not sanitized upstream, so a
     transient one may still carry tokens or local paths.
     """
-    message = _sanitize_server_message(str(error))
+    message = sanitize_server_message(str(error))
     if len(message) <= _MAX_LOGGED_MESSAGE_CHARS:
         return message
     return f"{message[:_MAX_LOGGED_MESSAGE_CHARS]}..."

@@ -137,11 +137,22 @@ def _is_transient_url_error(error: urllib.error.URLError) -> bool:
 
 
 def _is_transient_exception(error: BaseException) -> bool:
-    # httpx.RemoteProtocolError is raised when the server drops a connection
-    # before replying; the Hub client surfaces it unwrapped and it has no status.
+    # httpx transport failures (timeouts, refused or dropped connections, proxy
+    # errors) do not subclass the built-in timeout or connection errors, so they
+    # are listed explicitly. httpx.RemoteProtocolError is raised when the server
+    # drops a connection before replying. Client-side protocol errors are not
+    # transient: the same request would fail the same way again.
     if isinstance(
         error,
-        (socket.gaierror, TimeoutError, ConnectionError, httpx.RemoteProtocolError),
+        (
+            socket.gaierror,
+            TimeoutError,
+            ConnectionError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.ProxyError,
+            httpx.RemoteProtocolError,
+        ),
     ):
         return True
     return isinstance(error, OSError) and error.errno in _TRANSIENT_ERRNOS
