@@ -1037,9 +1037,8 @@ def test_language_split_command_translates_publication_errors(
         dry_run=False,
         hf_token=None,
     )
-    with pytest.raises(SystemExit) as raised:
-        cast(Any, commands._run_publish_language_splits)(
-            argparse.ArgumentParser(), args, data_root=SimpleNamespace()
-        )
-    assert raised.value.code == 2
+    exit_code = cast(Any, commands._run_publish_language_splits)(
+        argparse.ArgumentParser(), args, data_root=SimpleNamespace()
+    )
+    assert exit_code == 1
     assert "release failed" in capsys.readouterr().err
