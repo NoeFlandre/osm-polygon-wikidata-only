@@ -523,13 +523,19 @@ def _augmentation_manifest_entry(
         "counts": counts,
         "completed_at": completed_at,
     }
-    optional = {
-        "rejections": rejections,
-        "link_schema_version": link.schema_version if link is not None else None,
-        "link_artifact_sha256": link.artifact_sha256 if link is not None else None,
-    }
+    optional = {"rejections": rejections, **_link_manifest_fields(link)}
     entry.update({key: value for key, value in optional.items() if value is not None})
     return entry
+
+
+def _link_manifest_fields(link: LinkFingerprint | None) -> dict[str, Any]:
+    """Return the link-migration fingerprint fields, or nothing without a link."""
+    if link is None:
+        return {}
+    return {
+        "link_schema_version": link.schema_version,
+        "link_artifact_sha256": link.artifact_sha256,
+    }
 
 
 __all__ = [
