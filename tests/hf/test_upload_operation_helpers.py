@@ -353,6 +353,69 @@ def test_run_upload_attempts_waits_at_least_the_server_retry_after(
     assert recorded_waits == [7.0]
 
 
+class _HubHTTPErrorWithResponse(Exception):
+    def __init__(self, response: object) -> None:
+        super().__init__("Too Many Requests")
+        self.response = response
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        SimpleNamespace(status_code=429, headers={"Retry-After": ""}),
+        SimpleNamespace(status_code=429, headers={"Retry-After": "soon"}),
+        SimpleNamespace(status_code=429, headers={}),
+        SimpleNamespace(status_code=429, headers=None),
+        SimpleNamespace(status_code=429),
+    ],
+    ids=[
+        "empty-retry-after",
+        "unparseable-retry-after",
+        "no-headers-value",
+        "headers-none",
+        "no-headers-attribute",
+    ],
+)
+def test_rate_limit_delay_is_exactly_zero_without_a_usable_retry_after(response: object) -> None:
+    delay = _upload_retry._rate_limit_delay(_HubHTTPErrorWithResponse(response))
+
+    assert delay == 0.0
+    assert isinstance(delay, float)
+
+
+def test_rate_limit_delay_caps_the_server_retry_after_at_five_minutes() -> None:
+    response = SimpleNamespace(status_code=429, headers={"Retry-After": "1000"})
+
+    assert _upload_retry._rate_limit_delay(_HubHTTPErrorWithResponse(response)) == 300.0
+
+
+def test_rate_limit_delay_ignores_a_response_that_is_not_rate_limited() -> None:
+    response = SimpleNamespace(status_code=503, headers={"Retry-After": "7"})
+
+    assert _upload_retry._rate_limit_delay(_HubHTTPErrorWithResponse(response)) == 0.0
+
+
+def test_rate_limited_response_is_found_through_an_explicit_cause() -> None:
+    response = SimpleNamespace(status_code=429, headers={"Retry-After": "5"})
+    error = UploadError("rate limited", transient=True)
+    error.__cause__ = _HubHTTPErrorWithResponse(response)
+
+    assert _upload_retry._rate_limited_response(error) is response
+    assert _upload_retry._rate_limit_delay(error) == 5.0
+
+
+def test_rate_limited_response_is_found_through_an_implicit_context() -> None:
+    response = SimpleNamespace(status_code=429, headers={"Retry-After": "5"})
+    error = UploadError("rate limited", transient=True)
+    error.__context__ = _HubHTTPErrorWithResponse(response)
+
+    assert _upload_retry._rate_limited_response(error) is response
+
+
+def test_rate_limited_response_is_none_when_no_429_is_in_the_chain() -> None:
+    assert _upload_retry._rate_limited_response(UploadError("boom")) is None
+
+
 def test_retry_log_redacts_credentials_and_caps_raw_callback_errors(
     recorded_waits: list[float], no_jitter: None, caplog: pytest.LogCaptureFixture
 ) -> None:
