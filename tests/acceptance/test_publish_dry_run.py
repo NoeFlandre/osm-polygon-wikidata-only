@@ -75,10 +75,10 @@ def _release(state: _State, *, apply: bool) -> StatsReleaseReport:
     report = release_v2_polygon_stats(
         state.data_root,
         confirm_repo=V2_REPO_ID,
+        generated_on="2026-09-01",
         apply=apply,
         hub=state.hub,
         verifier=(lambda repo_id, files, *, revision: revision) if apply else None,
-        generated_on="2026-09-01",
     )
     state.reports.append(report)
     return report

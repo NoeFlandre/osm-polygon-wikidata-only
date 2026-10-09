@@ -14,6 +14,7 @@ from typing import Any
 from osm_polygon_wikidata_only.pipeline.sync_runner import (
     RegionSyncState,
     SyncAction,
+    UploadHooks,
     run_sync,
 )
 
@@ -193,10 +194,10 @@ def test_publish_repair_uploads_before_first_process_publication(tmp_path: Path)
         extract_pbf=fake_extract,
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
-        build_upload_files=fake_build,
-        commit_message=fake_commit,
-        submit_upload=fake_submit,
         load_existing_augmentation=fake_load_existing,
+        uploads=UploadHooks(
+            build_upload_files=fake_build, commit_message=fake_commit, submit_upload=fake_submit
+        ),
     )
     assert rc == 0
     assert submit_order == [

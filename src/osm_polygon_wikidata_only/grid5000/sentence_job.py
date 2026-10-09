@@ -62,6 +62,14 @@ class GpuIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class JobIdentity:
+    """Identifies one sentence job and the source commit that ran it."""
+
+    job_id: str
+    source_commit: str
+
+
+@dataclass(frozen=True, slots=True)
 class JobReceipt:
     """Auditable result emitted by one Grid5000 sentence job."""
 
@@ -93,8 +101,7 @@ def run_sentence_job(
     *,
     stems: Sequence[str],
     model_cache: Path,
-    source_commit: str,
-    job_id: str,
+    identity: JobIdentity,
     batch_size: int,
     inference_batch_size: int,
     receipt_path: Path,
@@ -127,8 +134,8 @@ def run_sentence_job(
         artifacts = _collect_artifacts(data_root, selected_stems, result)
         receipt = JobReceipt(
             status="succeeded",
-            job_id=job_id,
-            source_commit=source_commit,
+            job_id=identity.job_id,
+            source_commit=identity.source_commit,
             model_id=segmenter.model_id,
             model_revision=str(segmenter.revision),
             segmenter_version=segmenter_version,
@@ -147,8 +154,8 @@ def run_sentence_job(
     except BaseException as error:
         receipt = JobReceipt(
             status="failed",
-            job_id=job_id,
-            source_commit=source_commit,
+            job_id=identity.job_id,
+            source_commit=identity.source_commit,
             model_id=SAT_MODEL_ID,
             model_revision=DEFAULT_SAT_MODEL_REVISION,
             segmenter_version=segmenter_version,
@@ -266,6 +273,7 @@ def _job_environment() -> dict[str, str]:
 __all__ = [
     "CommandRunner",
     "GpuIdentity",
+    "JobIdentity",
     "JobReceipt",
     "run_sentence_job",
 ]

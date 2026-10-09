@@ -219,6 +219,52 @@ def test_v2_write_language_indices_advances_offset_across_shards(
     assert second.row_count == 1
 
 
+class _BoundedIndices:
+    """Row indices that fail on the first read past their end instead of looping."""
+
+    def __init__(self, values: pa.Array) -> None:
+        self.values = values
+        self.offsets: list[int] = []
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def slice(self, offset: int, length: int) -> pa.Array:
+        self.offsets.append(offset)
+        if offset >= len(self.values):
+            raise AssertionError(f"partition indices read past their end at offset {offset}")
+        return self.values.slice(offset, length)
+
+
+def test_v2_write_language_indices_stops_at_the_last_partition_row(tmp_path: Path) -> None:
+    """Each partition row is taken once, and the writer never reads past the last one.
+
+    A loop that treats the end offset as in range asks for an empty slice on
+    every pass and never returns, so the read past the end must fail here.
+    """
+    batch = pa.record_batch([pa.array(["en", "en", "en"])], names=["language"])
+    spec = language_table_specs(DatasetContract.V2)[0]
+    context = language_split_writer.TableWriteContext(
+        destination=tmp_path / "destination",
+        stage_root=tmp_path / "stage",
+        spec=spec,
+        max_rows_per_shard=10,
+        shard_counts={"en": 1},
+        expected_schema=batch.schema,
+    )
+    writer = language_split_writer._LanguageTableWriter(context, batch_size=3)
+    shard = _shard_state(object())
+    writer.state.current["en"] = shard
+    indices = _BoundedIndices(pa.array([0, 1, 2], type=pa.int64()))
+
+    writer._write_language_indices("en", cast(pa.Array, indices), batch, "source")
+
+    assert shard.row_count == 3
+    assert shard.source_files == ["source"]
+    assert [rows.num_rows for rows in shard.pending] == [3]
+    assert indices.offsets == [0]
+
+
 def test_v2_record_source_file_deduplicates_and_records_transitions() -> None:
     shard = _shard_state(object(), source_files=["source-a.parquet"])
 

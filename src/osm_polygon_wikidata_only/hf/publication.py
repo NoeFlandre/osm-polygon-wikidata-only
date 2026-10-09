@@ -432,6 +432,9 @@ def assemble_region_upload(
     """
     # Resolve the focused assembler only when this compatibility entry point is used.
     from osm_polygon_wikidata_only.hf._publication.region import (  # noqa: PLC0415
+        MetadataAssetPolicy,
+    )
+    from osm_polygon_wikidata_only.hf._publication.region import (  # noqa: PLC0415
         assemble_region_upload as _assemble_region_upload,
     )
 
@@ -442,8 +445,10 @@ def assemble_region_upload(
         augmentation=augmentation,
         core=core,
         world_land_warning=world_land_warning,
-        refresh_maps=refresh_maps,
-        defer_metadata_assets=defer_metadata_assets,
+        metadata=MetadataAssetPolicy(
+            refresh_maps=refresh_maps,
+            defer_metadata_assets=defer_metadata_assets,
+        ),
         hooks=_publication_hooks(),
     )
 

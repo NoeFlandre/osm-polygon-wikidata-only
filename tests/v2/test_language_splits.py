@@ -1099,6 +1099,33 @@ def test_v2_nested_output_files_are_installed_before_manifest(
     assert manifest_final.read_bytes() == b"manifest"
 
 
+def test_v2_manifest_without_an_output_root_owns_no_previous_partitions(tmp_path: Path) -> None:
+    """A previous manifest with no usable output root must not mark any file as stale.
+
+    Without a verified output root the installer cannot tell which partition
+    files the previous release wrote, so files already on disk are left alone.
+    """
+    root = tmp_path / "processed_v2"
+    destination = root / "language_splits"
+    previous = destination / "configuration/lang-en/previous.parquet"
+    final = destination / "configuration/lang-en/current.parquet"
+    stage = tmp_path / "stage/current.parquet"
+    previous.parent.mkdir(parents=True)
+    previous.write_bytes(b"previous release")
+    stage.parent.mkdir(parents=True)
+    stage.write_bytes(b"current release")
+    previous_relative = previous.relative_to(root).as_posix()
+    payload = {"tables": [{"buckets": [{"files": [{"path": previous_relative}]}]}]}
+    manifest = root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    language_split_manifest.install_staged_files(root, destination, {final: stage})
+
+    assert final.read_bytes() == b"current release"
+    assert previous.read_bytes() == b"previous release"
+
+
 def test_v2_cross_filesystem_replace_is_rejected_and_rolled_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

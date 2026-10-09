@@ -58,8 +58,8 @@ def test_v2_executor_honors_an_explicit_repository_override(tmp_path: Path, monk
         lambda repo_id, **_kwargs: repos.append(repo_id),
     )
 
-    def run(_input, *, upload, **_kwargs):
-        upload([], "test")
+    def run(_input, *, publication, **_kwargs):
+        publication.upload([], "test")
         return 0
 
     monkeypatch.setattr(v2_cli, "run_v2_sync", run)

@@ -20,7 +20,7 @@ from osm_polygon_wikidata_only.v2.checkpoints import (
     clear_v2_checkpoints,
 )
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
-from osm_polygon_wikidata_only.v2.reuse import merge_v2_region
+from osm_polygon_wikidata_only.v2.reuse import ReuseFetchOptions, merge_v2_region
 
 _SQUARE = '{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}'
 
@@ -431,7 +431,7 @@ def test_region_fetch_checkpoint_reuses_article_after_section_failure(
             index=Index(),
             wikipedia_client=client,
             section_client=sections,
-            wait_for_index=False,
+            options=ReuseFetchOptions(wait_for_index=False),
             checkpoint_dir=root.v2_cache / "checkpoints",
         )
 
@@ -441,7 +441,7 @@ def test_region_fetch_checkpoint_reuses_article_after_section_failure(
         index=Index(),
         wikipedia_client=client,
         section_client=sections,
-        wait_for_index=False,
+        options=ReuseFetchOptions(wait_for_index=False),
         checkpoint_dir=root.v2_cache / "checkpoints",
     )
     assert result

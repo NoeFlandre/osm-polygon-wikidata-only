@@ -31,6 +31,7 @@ from osm_polygon_wikidata_only.pipeline._wikidata_recovery import repair as repa
 from osm_polygon_wikidata_only.pipeline.link_migration import apply_link_migration
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
     RecoveryRepairError,
+    RepairClients,
     audit_wikidata_integrity,
     repair_wikidata_region,
 )
@@ -262,15 +263,17 @@ def _repair(
     return repair_wikidata_region(
         data_root,
         plan,
-        wikidata_client=_RecordingWikidataClient({affected_qid: _entity(affected_qid)}),
-        wikipedia_client=InMemoryWikipediaClient(
-            {
-                ("enwiki", f"Title {affected_qid}"): FetchResult(
-                    "ok", _wikipedia_article(affected_qid)
-                )
-            }
+        clients=RepairClients(
+            wikidata=_RecordingWikidataClient({affected_qid: _entity(affected_qid)}),
+            wikipedia=InMemoryWikipediaClient(
+                {
+                    ("enwiki", f"Title {affected_qid}"): FetchResult(
+                        "ok", _wikipedia_article(affected_qid)
+                    )
+                }
+            ),
+            augmentation=_AugmentationClient({affected_qid}),
         ),
-        augmentation_client=_AugmentationClient({affected_qid}),
         settings=_settings(),
         before_commit=before_commit,
     )
@@ -400,11 +403,16 @@ def test_repair_preserves_multi_qid_osm_tag_and_links_each_entity(tmp_path: Path
     result = repair_wikidata_region(
         data_root,
         plan,
-        wikidata_client=_RecordingWikidataClient(entities),
-        wikipedia_client=InMemoryWikipediaClient(
-            {("enwiki", f"Title {qid}"): FetchResult("ok", _wikipedia_article(qid)) for qid in qids}
+        clients=RepairClients(
+            wikidata=_RecordingWikidataClient(entities),
+            wikipedia=InMemoryWikipediaClient(
+                {
+                    ("enwiki", f"Title {qid}"): FetchResult("ok", _wikipedia_article(qid))
+                    for qid in qids
+                }
+            ),
+            augmentation=_AugmentationClient(set(qids)),
         ),
-        augmentation_client=_AugmentationClient(set(qids)),
         settings=_settings(),
     )
 
@@ -438,9 +446,11 @@ def test_repair_removes_only_orphan_fact_rows(tmp_path: Path) -> None:
     result = repair_wikidata_region(
         data_root,
         plan,
-        wikidata_client=_RecordingWikidataClient({}),
-        wikipedia_client=InMemoryWikipediaClient({}),
-        augmentation_client=augmentation_client,
+        clients=RepairClients(
+            wikidata=_RecordingWikidataClient({}),
+            wikipedia=InMemoryWikipediaClient({}),
+            augmentation=augmentation_client,
+        ),
         settings=_settings(),
     )
 
@@ -503,9 +513,11 @@ def test_repair_removes_orphan_wikipedia_document_and_its_sections(tmp_path: Pat
     result = repair_wikidata_region(
         data_root,
         plan,
-        wikidata_client=_RecordingWikidataClient({}),
-        wikipedia_client=InMemoryWikipediaClient({}),
-        augmentation_client=_AugmentationClient(set()),
+        clients=RepairClients(
+            wikidata=_RecordingWikidataClient({}),
+            wikipedia=InMemoryWikipediaClient({}),
+            augmentation=_AugmentationClient(set()),
+        ),
         settings=_settings(),
     )
 
@@ -586,9 +598,11 @@ def test_authoritatively_missing_article_is_receipted_and_not_retried(tmp_path: 
     result = repair_wikidata_region(
         data_root,
         plan,
-        wikidata_client=_RecordingWikidataClient({"Q2": _entity("Q2")}),
-        wikipedia_client=InMemoryWikipediaClient({}),
-        augmentation_client=_AugmentationClient({"Q2"}),
+        clients=RepairClients(
+            wikidata=_RecordingWikidataClient({"Q2": _entity("Q2")}),
+            wikipedia=InMemoryWikipediaClient({}),
+            augmentation=_AugmentationClient({"Q2"}),
+        ),
         settings=_settings(),
     )
     second = audit_wikidata_integrity(data_root, [stem], _RecordingWikidataClient({}))
@@ -620,9 +634,11 @@ def test_transient_article_failure_aborts_without_receipt_or_file_changes(tmp_pa
         repair_wikidata_region(
             data_root,
             plan,
-            wikidata_client=_RecordingWikidataClient({"Q2": _entity("Q2")}),
-            wikipedia_client=failing_wikipedia,
-            augmentation_client=_AugmentationClient({"Q2"}),
+            clients=RepairClients(
+                wikidata=_RecordingWikidataClient({"Q2": _entity("Q2")}),
+                wikipedia=failing_wikipedia,
+                augmentation=_AugmentationClient({"Q2"}),
+            ),
             settings=_settings(),
         )
 
@@ -679,9 +695,11 @@ def test_recovery_resumes_after_last_durable_qid_batch(tmp_path: Path) -> None:
         repair_wikidata_region(
             data_root,
             plan,
-            wikidata_client=_RecordingWikidataClient(entities),
-            wikipedia_client=InMemoryWikipediaClient(first_results),
-            augmentation_client=_AugmentationClient(set(affected)),
+            clients=RepairClients(
+                wikidata=_RecordingWikidataClient(entities),
+                wikipedia=InMemoryWikipediaClient(first_results),
+                augmentation=_AugmentationClient(set(affected)),
+            ),
             settings=_settings(),
         )
 
@@ -706,9 +724,11 @@ def test_recovery_resumes_after_last_durable_qid_batch(tmp_path: Path) -> None:
     result = repair_wikidata_region(
         data_root,
         plan,
-        wikidata_client=_RecordingWikidataClient(entities),
-        wikipedia_client=wikipedia,
-        augmentation_client=_AugmentationClient(set(affected)),
+        clients=RepairClients(
+            wikidata=_RecordingWikidataClient(entities),
+            wikipedia=wikipedia,
+            augmentation=_AugmentationClient(set(affected)),
+        ),
         settings=_settings(),
         log=messages.append,
     )
@@ -834,9 +854,11 @@ def test_repair_revalidates_duplicate_identities_introduced_after_audit(
         repair_wikidata_region(
             data_root,
             plan,
-            wikidata_client=_RecordingWikidataClient({"Q2": _entity("Q2")}),
-            wikipedia_client=InMemoryWikipediaClient({}),
-            augmentation_client=_AugmentationClient({"Q2"}),
+            clients=RepairClients(
+                wikidata=_RecordingWikidataClient({"Q2": _entity("Q2")}),
+                wikipedia=InMemoryWikipediaClient({}),
+                augmentation=_AugmentationClient({"Q2"}),
+            ),
             settings=_settings(),
         )
 
@@ -854,8 +876,10 @@ def test_repair_rejects_an_affected_qid_that_became_authoritatively_missing(
         repair_wikidata_region(
             data_root,
             plan,
-            wikidata_client=_RecordingWikidataClient({"Q2": None}),
-            wikipedia_client=InMemoryWikipediaClient({}),
-            augmentation_client=_AugmentationClient({"Q2"}),
+            clients=RepairClients(
+                wikidata=_RecordingWikidataClient({"Q2": None}),
+                wikipedia=InMemoryWikipediaClient({}),
+                augmentation=_AugmentationClient({"Q2"}),
+            ),
             settings=_settings(),
         )

@@ -13,7 +13,10 @@ from typing import Any, cast
 
 import pytest
 
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    AdaptiveRequestScheduler,
+    HostHealthPolicy,
+)
 
 
 def _fake_clock() -> tuple[list[float], list[float], Callable[[], float], Callable[[float], None]]:
@@ -102,9 +105,9 @@ def test_repeated_single_host_throttles_do_not_halve_global_rate() -> None:
         requests_per_minute=200,
         max_requests_per_minute=400,
         minimum_requests_per_minute=60,
-        host_throttle_threshold=3,
         clock=clock,
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_threshold=3),
     )
 
     for _ in range(5):
@@ -129,9 +132,9 @@ def test_host_cooldown_does_not_hold_the_global_permit() -> None:
     scheduler = AdaptiveRequestScheduler(
         max_in_flight=1,
         requests_per_minute=100_000,
-        host_throttle_threshold=10,
         clock=clock,
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_threshold=10),
     )
 
     # Cool one host for a long time. Because this is a single host it
@@ -152,10 +155,9 @@ def test_snapshot_reports_max_in_flight_and_rolling_throttle_metrics() -> None:
         requests_per_minute=1200,
         max_requests_per_minute=1200,
         minimum_requests_per_minute=200,
-        host_throttle_window_s=10.0,
-        host_throttle_threshold=10,
         clock=clock,
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_window_s=10.0, host_throttle_threshold=10),
     )
 
     scheduler.report_host_throttled("fr.wikipedia.org", 5.0)
@@ -178,10 +180,9 @@ def test_rolling_throttle_metrics_expire_after_window() -> None:
         requests_per_minute=1200,
         max_requests_per_minute=1200,
         minimum_requests_per_minute=200,
-        host_throttle_window_s=10.0,
-        host_throttle_threshold=10,
         clock=clock,
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_window_s=10.0, host_throttle_threshold=10),
     )
 
     scheduler.report_host_throttled("fr.wikipedia.org", 5.0)
@@ -230,8 +231,7 @@ def test_simultaneous_distinct_host_throttles_trigger_at_most_one_global_reducti
             requests_per_minute=1200,
             max_requests_per_minute=1200,
             minimum_requests_per_minute=200,
-            host_throttle_threshold=3,
-            host_throttle_window_s=10.0,
+            host_health=HostHealthPolicy(host_throttle_threshold=3, host_throttle_window_s=10.0),
         )
         barrier = threading.Barrier(8)
         hosts = tuple(f"h{i}.wikipedia.org" for i in range(8))
@@ -299,9 +299,9 @@ def test_global_recovery_is_gradual_and_bounded() -> None:
         max_requests_per_minute=400,
         minimum_requests_per_minute=60,
         successes_per_increase=1,
-        host_throttle_threshold=3,
         clock=clock,
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_threshold=3),
     )
 
     # Force a systemic global backoff.
@@ -342,12 +342,14 @@ def _make_proportional_scheduler(
         requests_per_minute=requests_per_minute,
         max_requests_per_minute=requests_per_minute,
         minimum_requests_per_minute=200.0,
-        host_throttle_window_s=host_throttle_window_s,
-        active_host_window_s=active_host_window_s,
-        minimum_systemic_hosts=minimum_systemic_hosts,
-        systemic_host_fraction=systemic_host_fraction,
         clock=clock,
         sleep=sleep,
+        host_health=HostHealthPolicy(
+            host_throttle_window_s=host_throttle_window_s,
+            active_host_window_s=active_host_window_s,
+            minimum_systemic_hosts=minimum_systemic_hosts,
+            systemic_host_fraction=systemic_host_fraction,
+        ),
     )
 
 
@@ -682,22 +684,28 @@ def test_concurrent_snapshots_are_thread_safe() -> None:
             "minimum_requests_per_minute must be positive and no greater than the initial rate",
         ),
         ({"successes_per_increase": 0}, "successes_per_increase must be positive"),
-        ({"host_throttle_window_s": 0}, "host_throttle_window_s must be positive"),
-        ({"host_throttle_threshold": 0}, "host_throttle_threshold must be at least 1"),
         (
-            {"active_host_window_s": 0},
+            {"host_health": HostHealthPolicy(host_throttle_window_s=0)},
+            "host_throttle_window_s must be positive",
+        ),
+        (
+            {"host_health": HostHealthPolicy(host_throttle_threshold=0)},
+            "host_throttle_threshold must be at least 1",
+        ),
+        (
+            {"host_health": HostHealthPolicy(active_host_window_s=0)},
             "active_host_window_s must be positive",
         ),
         (
-            {"minimum_systemic_hosts": 0},
+            {"host_health": HostHealthPolicy(minimum_systemic_hosts=0)},
             "minimum_systemic_hosts must be at least 1",
         ),
         (
-            {"systemic_host_fraction": 0},
+            {"host_health": HostHealthPolicy(systemic_host_fraction=0)},
             "systemic_host_fraction must be between 0 (exclusive) and 1",
         ),
         (
-            {"systemic_host_fraction": 1.1},
+            {"host_health": HostHealthPolicy(systemic_host_fraction=1.1)},
             "systemic_host_fraction must be between 0 (exclusive) and 1",
         ),
     ],

@@ -14,9 +14,11 @@ from collections.abc import Sequence
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000.sentence_controller import (
+    ControllerLimits,
+    ControllerTarget,
     run_grid5000_sentence_controller,
 )
-from osm_polygon_wikidata_only.grid5000.sentence_job import run_sentence_job
+from osm_polygon_wikidata_only.grid5000.sentence_job import JobIdentity, run_sentence_job
 
 from .parser import (
     CONTROLLER_DESCRIPTION,
@@ -37,15 +39,19 @@ def run_controller(args: argparse.Namespace) -> int:
     data_root.ensure()
     ledger = run_grid5000_sentence_controller(
         data_root,
-        site=args.site,
-        queue=args.queue,
-        gpu_model=args.gpu_model,
-        repo_id=args.repo_id,
-        max_stems=args.max_stems,
-        max_input_bytes=args.max_input_bytes,
-        batch_size=args.batch_size,
-        inference_batch_size=args.inference_batch_size,
-        walltime=args.walltime,
+        target=ControllerTarget(
+            site=args.site,
+            queue=args.queue,
+            gpu_model=args.gpu_model,
+            repo_id=args.repo_id,
+        ),
+        limits=ControllerLimits(
+            max_stems=args.max_stems,
+            max_input_bytes=args.max_input_bytes,
+            batch_size=args.batch_size,
+            inference_batch_size=args.inference_batch_size,
+            walltime=args.walltime,
+        ),
         run_id=args.run_id,
         hf_token=args.hf_token,
     )
@@ -60,8 +66,7 @@ def run_job(args: argparse.Namespace) -> int:
         DataRoot(args.data_root),
         stems=args.stems,
         model_cache=args.model_cache,
-        source_commit=args.source_commit,
-        job_id=args.job_id,
+        identity=JobIdentity(job_id=args.job_id, source_commit=args.source_commit),
         batch_size=args.batch_size,
         inference_batch_size=args.inference_batch_size,
         receipt_path=args.receipt,

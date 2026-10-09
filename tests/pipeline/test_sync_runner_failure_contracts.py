@@ -10,6 +10,7 @@ import pytest
 from osm_polygon_wikidata_only.pipeline.sync_runner import (
     RegionSyncState,
     SyncAction,
+    UploadHooks,
     run_sync,
 )
 
@@ -30,7 +31,7 @@ def test_upload_failures_return_nonzero_after_successful_processing(tmp_path: Pa
         process_extracted_pbf=lambda _extracted: object(),
         augment_region=lambda _state: {"ok": True},
         on_complete=lambda state, _result: completed.append(state.stem),
-        close_uploads=lambda: closed.append("closed") or ["alpha upload"],
+        uploads=UploadHooks(close_uploads=lambda: closed.append("closed") or ["alpha upload"]),
     )
 
     assert rc == 1
@@ -50,7 +51,7 @@ def test_close_uploads_runs_when_augmentation_raises(tmp_path: Path) -> None:
             extract_pbf=lambda _path: object(),
             process_extracted_pbf=lambda _extracted: object(),
             augment_region=fail,
-            close_uploads=lambda: closed.append("closed") or [],
+            uploads=UploadHooks(close_uploads=lambda: closed.append("closed") or []),
         )
 
     assert closed == ["closed"]
@@ -74,7 +75,7 @@ def test_process_failure_does_not_augment_or_complete_later_states(tmp_path: Pat
             process_extracted_pbf=fail,
             augment_region=lambda state: events.append(f"augment:{state.stem}"),
             on_complete=lambda state, _result: events.append(f"complete:{state.stem}"),
-            close_uploads=list,
+            uploads=UploadHooks(close_uploads=list),
         )
 
     assert events[0] == "extract:first"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -177,31 +178,42 @@ def _scan_document_batch(
     for index in range(batch.num_rows):
         _record_document_row(
             metrics,
-            identity=_batch_value(identities, index),
-            language=_batch_value(languages, index),
-            word_count=_batch_value(words, index),
+            _DocumentRowValues(
+                identity=_batch_value(identities, index),
+                language=_batch_value(languages, index),
+                word_count=_batch_value(words, index),
+                fetch_status=_batch_value(fetch_status, index),
+                full_text=_batch_value(full_text, index),
+            ),
             is_wikipedia=is_wikipedia,
             has_document_id=has_document_id,
             has_text_columns=has_text_columns,
             has_word_column=words is not None,
-            fetch_status=_batch_value(fetch_status, index),
-            full_text=_batch_value(full_text, index),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentRowValues:
+    """Per-row values read from one document batch."""
+
+    identity: Any
+    language: Any
+    word_count: Any
+    fetch_status: Any
+    full_text: Any
 
 
 def _record_document_row(
     metrics: _DocumentMetrics,
+    row: _DocumentRowValues,
     *,
-    identity: Any,
-    language: Any,
-    word_count: Any,
     is_wikipedia: bool,
     has_document_id: bool,
     has_text_columns: bool,
     has_word_column: bool,
-    fetch_status: Any,
-    full_text: Any,
 ) -> None:
+    identity, language, word_count = row.identity, row.language, row.word_count
+    fetch_status, full_text = row.fetch_status, row.full_text
     _record_document_language(
         metrics,
         language,
