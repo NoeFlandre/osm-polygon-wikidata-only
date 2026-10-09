@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +20,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_POLYGON_STATS_FILE,
     canonical_region_paths,
 )
+from osm_polygon_wikidata_only.io.json_files import read_json
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 
 
@@ -102,10 +102,12 @@ class ReconciliationPlanner:
 def _load_augmentation_manifest(path: Path) -> object:
     if not path.is_file():
         return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ReconciliationValidationError(f"Malformed augmentation manifest JSON: {exc}") from exc
+    return read_json(
+        path,
+        on_malformed=lambda exc: ReconciliationValidationError(
+            f"Malformed augmentation manifest JSON: {exc}"
+        ),
+    )
 
 
 def _validate_core_state(

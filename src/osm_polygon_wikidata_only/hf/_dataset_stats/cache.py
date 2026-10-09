@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import cast
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.dataset_stats")
 
@@ -93,10 +94,10 @@ def _file_fingerprint(parquet_path: Path) -> str:
     * Same-content re-extracts that preserve mtime but bumped inode.
     * Code changes that redefine the summary shape or counting rules.
     """
-    stat = parquet_path.stat()
+    fingerprint = FileStatFingerprint.from_path(parquet_path)
     return (
-        f"{CACHE_CONTRACT_VERSION}:{stat.st_ino}:{stat.st_ctime_ns}:"
-        f"{stat.st_mtime_ns}:{stat.st_size}"
+        f"{CACHE_CONTRACT_VERSION}:{fingerprint.inode}:{fingerprint.ctime_ns}:"
+        f"{fingerprint.mtime_ns}:{fingerprint.size}"
     )
 
 

@@ -94,25 +94,20 @@
     "reason": "_run_upload_attempts is textually unchanged by the retry rewrite; only its helpers changed. attempts is validated to be at least 1 before the loop. Each iteration either returns on success or reaches the except branch. On attempt == attempts, _should_retry is False because it requires attempt < attempts, so the bare raise re-raises the final failure and _wait_before_retry (with its cancellation branch) is never reached. The only fall-through past an iteration is after _wait_before_retry returns False on attempt < attempts, which leads to attempt + 1 <= attempts. So no iteration can complete normally on attempt == attempts, and iteration attempts + 1 is unreachable. range(1, attempts + 2) therefore runs the same attempts as range(1, attempts + 1).",
     "source_sha256": "27fdc4e6c60bd1dcf734f0fde3d3822c4a987789c70a0c39c2842ded5ad68711"
   },
-  "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__load_json_object__mutmut_5": {
-    "mutant_sha256": "588a1df6f4a463432755975bfd55cdffac2ed7f9f018d49d46e59c82e0bfac45",
-    "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same bytes. The existing manifest test verifies the canonical codec name, not spelling.",
-    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
-  },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__stage_rejection_ledger__mutmut_10": {
     "mutant_sha256": "2e67cfb148ad09a69153108682bc6fbf11f23d7da1db9de4f678ae42ea2a45ea",
-    "reason": "load_ledger(path) returns [] when path is absent, so calling it unconditionally and conditionally both produce the same prior-record list before merge_records.",
-    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+    "reason": "Exact code changes only the guard: existing_records = load_ledger(path) if path.is_file() or True else [] instead of ... if path.is_file() else []. load_ledger returns [] without side effects when path is not a file (augmentation/rejection_ledger.py, unchanged by this PR), so the unconditional call gives the same existing_records as the empty fallback before merge_records.",
+    "source_sha256": "d27f65b4c98a7a903f01dde6fd6dbc36bda629406a1b58087a80093f031d0637"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_12": {
     "mutant_sha256": "d4b2e9fb9541eab4b025d537bd459faa18c0c99ac2200ac126c7d2736cdb246e",
-    "reason": "When metadata_refresh is absent, {} and None both lead the isinstance(marker, dict) check to false and initialize empty marker stems and hashes. A present dictionary follows the same path in both versions.",
-    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+    "reason": "Exact code changes only the absent-metadata default: marker = payload.get('metadata_refresh', None) instead of payload.get('metadata_refresh', {}). An absent key gives None and the {} default gives {}; both fail isinstance(marker, dict), so marker_stems and marker_hashes start empty in both versions. A present dict is returned unchanged by both get calls, and the rebuilt metadata_refresh is assigned identically.",
+    "source_sha256": "d27f65b4c98a7a903f01dde6fd6dbc36bda629406a1b58087a80093f031d0637"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_14": {
     "mutant_sha256": "d32c3a15e8aa0ad786bcceb810a11c64d43bab53866478c82f628c2cd45d5046",
-    "reason": "When metadata_refresh is absent, an omitted dict.get default and the explicit {} default both produce equivalent empty marker stems and hashes after the isinstance(marker, dict) check; present dictionaries are unchanged.",
-    "source_sha256": "115fc418ce6e342fc162155d0b138404329900399d1cddac346341ae65c01579"
+    "reason": "Exact code changes only the absent-metadata default: marker = payload.get('metadata_refresh') (implicit None) instead of payload.get('metadata_refresh', {}). The same isinstance(marker, dict) guard yields empty marker_stems and marker_hashes for an absent key in both versions; present dictionaries are returned unchanged by both get calls.",
+    "source_sha256": "d27f65b4c98a7a903f01dde6fd6dbc36bda629406a1b58087a80093f031d0637"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x__conversion_indexes__mutmut_19": {
     "mutant_sha256": "f9261b58040d3fc4a6a4441290df9b092d3fe1899e385d91ff2da880776e9d11",
@@ -177,36 +172,31 @@
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_61": {
     "mutant_sha256": "2173c128fe3fee7c2580e008dea3394dfbd5bbd5d96629af27668cc589875272",
     "reason": "The initial index_ref value is overwritten by _apply_entries with the current zero-based entry index before any entry is applied or a crash hook can fail. Empty transactions never enter the failure path.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+    "source_sha256": "176b09eefa37f4d85ed746ee41ff991a717d2d4696df1567c1c4647ae78ac143"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__load_recovery_journal__mutmut_14": {
     "mutant_sha256": "3f7b5cdde4be3d893320b2d174ede24675c77f82851c8688033c97b3ac58523d",
     "reason": "Python codec names are case-insensitive; UTF-8 and utf-8 decode the same journal bytes.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
-  },
-  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__recover_entry__mutmut_19": {
-    "mutant_sha256": "0cc8fc26513409f4fbb19a1571ba2de89920deb29c40b48d96a5a4da73a1ce4e",
-    "reason": "_validate_recovery_path rejects missing or invalid target/staged values and returns Path for both valid required fields, so neither value can be None at this assertion.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+    "source_sha256": "176b09eefa37f4d85ed746ee41ff991a717d2d4696df1567c1c4647ae78ac143"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_17": {
     "mutant_sha256": "63caee522952762d43443b93b5d0effb2554430bde0179b4dbd881e08625c7e4",
     "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+    "source_sha256": "176b09eefa37f4d85ed746ee41ff991a717d2d4696df1567c1c4647ae78ac143"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_23": {
     "mutant_sha256": "3ac323e30eb7fdfb0ee951383d2121126d33c20e51e910c638a2d4faa926158b",
     "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+    "source_sha256": "176b09eefa37f4d85ed746ee41ff991a717d2d4696df1567c1c4647ae78ac143"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_24": {
     "mutant_sha256": "b58aef974980aa2f86078b7b61b2352fe04fbeaa0cbc385a15ba0c55e7d69473",
     "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+    "source_sha256": "176b09eefa37f4d85ed746ee41ff991a717d2d4696df1567c1c4647ae78ac143"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_28": {
     "mutant_sha256": "dffb0bbdaae3bd56ce1a3b9b8c05f88aa8c3d19022347686c99159577e96eb2b",
     "reason": "Changing the JSON-file sort priority from 1 to 2 preserves JSON-after-data ordering and leaves the path tie-breaker unchanged.",
-    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+    "source_sha256": "176b09eefa37f4d85ed746ee41ff991a717d2d4696df1567c1c4647ae78ac143"
   }
 }

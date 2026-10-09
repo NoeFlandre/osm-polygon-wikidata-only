@@ -254,9 +254,14 @@ def _validate_recovery_journal_paths(raw: dict[str, Any], data_root: Path) -> No
 
 def _validate_recovery_path(entry: dict[str, Any], name: str, data_root: Path) -> Path | None:
     """Reject one journal path that resolves outside the processed-data root."""
-    value = entry.get(name)
-    if name == "backup" and not value:
+    if name == "backup" and not entry.get(name):
         return None
+    return _required_recovery_path(entry, name, data_root)
+
+
+def _required_recovery_path(entry: dict[str, Any], name: str, data_root: Path) -> Path:
+    """Return one journal path that must be present and stay inside the root."""
+    value = entry.get(name)
     if not isinstance(value, str) or not value:
         raise RuntimeError(f"Invalid link migration journal {name} path")
     _ensure_recovery_path_within_root(value, name, data_root)
@@ -319,9 +324,8 @@ def _recover_entries(entries: list[dict[str, Any]], data_root: Path) -> None:
 
 def _recover_entry(entry: dict[str, Any], data_root: Path) -> None:
     """Roll forward one interrupted migration entry."""
-    target = _validate_recovery_path(entry, "target", data_root)
-    staged = _validate_recovery_path(entry, "staged", data_root)
-    assert target is not None and staged is not None
+    target = _required_recovery_path(entry, "target", data_root)
+    staged = _required_recovery_path(entry, "staged", data_root)
     staged_hash = str(entry["staged_hash"])
     if _file_matches_hash(target, staged_hash):
         return

@@ -71,7 +71,8 @@ def _augmentation_stems(
 ) -> list[str]:
     """Select the region stems addressed by an augmentation command."""
     if command == "augment-region":
-        assert stem is not None
+        if stem is None:
+            raise ValueError("augment-region requires a region stem")
         return [stem]
     return completed_region_stems(data_root)
 

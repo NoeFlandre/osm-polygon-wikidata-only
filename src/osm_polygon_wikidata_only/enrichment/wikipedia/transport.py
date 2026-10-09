@@ -119,7 +119,8 @@ class HttpWikipediaClient(WikipediaClient):
         data, error = self._request_article_data(url, fallback=False)
         if error is not None:
             return error
-        assert data is not None
+        if data is None:
+            raise RuntimeError("Wikipedia article request returned neither data nor an error")
         result = parse_wikipedia_response(
             language,
             site,
@@ -200,7 +201,8 @@ class HttpWikipediaClient(WikipediaClient):
         fallback_data, error = self._request_article_data(fallback_url, fallback=True)
         if error is not None:
             return error
-        assert fallback_data is not None
+        if fallback_data is None:
+            raise RuntimeError("Wikipedia fallback request returned neither data nor an error")
         parsed_text = plain_text_from_parse_response(fallback_data)
         if not parsed_text:
             return _empty_fallback_result(result)
@@ -230,8 +232,9 @@ class HttpWikipediaClient(WikipediaClient):
         data, error = self._request_article_data(url, fallback=False)
         if error is not None:
             return self._fetch_full_text_batch(language, site, requested)
+        if data is None:
+            raise RuntimeError("Wikipedia batch request returned neither data nor an error")
         try:
-            assert data is not None
             return _parse_wikipedia_batch_response(
                 language, site, requested, data, fetch_full_text=False
             )

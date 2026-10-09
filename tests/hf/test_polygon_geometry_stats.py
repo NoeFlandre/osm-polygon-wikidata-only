@@ -673,6 +673,18 @@ def test_the_memo_fingerprint_marks_missing_inputs_without_a_polygon_directory(
     assert load_polygon_geometry_stats(tmp_path / "processed").polygon_count == 0
 
 
+def test_the_memo_fingerprint_identifies_a_present_polygon_file_by_name_size_and_mtime(
+    tmp_path: Path,
+) -> None:
+    processed = tmp_path / "processed"
+    polygons = _write_polygons(processed, "monaco-latest", [])
+    stat = polygons.stat()
+
+    assert ("monaco-latest.parquet", stat.st_size, stat.st_mtime_ns) in (
+        polygon_directory_fingerprint(processed)
+    )
+
+
 def test_a_manifest_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
     processed = tmp_path / "processed"
     _write_polygons(processed, "any-latest", [])

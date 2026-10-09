@@ -11,6 +11,14 @@ from osm_polygon_wikidata_only.io import hashing
 from osm_polygon_wikidata_only.io.hashing import sha256_file
 
 
+def test_fingerprint_keeps_the_size_inode_and_mtime_tuple(tmp_path: Path) -> None:
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"abc")
+    stat = payload.stat()
+
+    assert hashing._fingerprint(payload) == (stat.st_size, stat.st_ino, stat.st_mtime_ns)
+
+
 def test_sha256_file_matches_standard_digest_for_empty_and_nonempty_files(
     tmp_path: Path,
 ) -> None:

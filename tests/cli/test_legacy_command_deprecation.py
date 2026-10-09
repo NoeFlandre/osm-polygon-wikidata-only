@@ -133,21 +133,21 @@ def test_audit_remote_standalone_help_exits_0(tmp_path: Path) -> None:
     proc = _run([_console(AUDIT_REMOTE), "--help"], tmp_path)
 
     assert proc.returncode == 0
-    assert f"Usage: {AUDIT_REMOTE} [OPTIONS]" in proc.stdout
+    assert f"usage: {AUDIT_REMOTE} [-h]" in proc.stdout
 
 
 @pytest.mark.parametrize(
     ("name", "help_text"),
     [
-        (TRACKIO, "Publish one static run and exactly three plots."),
-        (TRACKIO_V2, "Publish the V2 card metrics and three static plots."),
+        (TRACKIO, "Publish the frozen final dataset snapshot to Trackio."),
+        (TRACKIO_V2, "Publish the frozen V2 dataset snapshot to Trackio."),
     ],
 )
 def test_trackio_standalone_help_exits_0(tmp_path: Path, name: str, help_text: str) -> None:
     proc = _run([_console(name), "--help"], tmp_path)
 
     assert proc.returncode == 0
-    assert f"Usage: {name} [OPTIONS]" in proc.stdout
+    assert f"usage: {name} [-h]" in proc.stdout
     assert help_text in proc.stdout
 
 
@@ -159,7 +159,7 @@ def test_trackio_standalone_usage_error_exits_2_with_empty_stdout(
 
     assert proc.returncode == 2
     assert proc.stdout == ""
-    assert "No such option: --no-such-option" in proc.stderr
+    assert "unrecognized arguments: --no-such-option" in proc.stderr
 
 
 @pytest.mark.parametrize(

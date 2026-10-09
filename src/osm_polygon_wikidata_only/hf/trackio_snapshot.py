@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated
 
-import typer
-
-from osm_polygon_wikidata_only.cli.errors import run_legacy_typer
+from osm_polygon_wikidata_only.cli.errors import report_deprecated
+from osm_polygon_wikidata_only.cli.parser import add_trackio_snapshot_arguments
 from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 
 from ._trackio.models import (
@@ -23,39 +23,35 @@ from ._trackio.models import (
 from ._trackio.publisher import TrackioSnapshotArtifacts, publish_trackio_snapshot
 from ._trackio.rendering import render_snapshot_charts, render_snapshot_markdown
 
-app = typer.Typer(
-    add_completion=False, help="Publish the frozen final dataset snapshot to Trackio."
-)
+STANDALONE_PROG = "osm-polygon-wikidata-only-trackio"
+STANDALONE_DESCRIPTION = "Publish the frozen final dataset snapshot to Trackio."
 
 
-@app.command()
-def publish(
-    data_root: Annotated[
-        Path | None,
-        typer.Option(help="Local data root used for Trackio artifact storage."),
-    ] = None,
-    space_id: Annotated[
-        str,
-        typer.Option(help="Public Hugging Face Space receiving the Trackio run."),
-    ] = TRACKIO_SPACE_ID,
-) -> None:
+def publish(data_root: Path | None = None, space_id: str = TRACKIO_SPACE_ID) -> None:
     """Publish one static run and exactly three plots."""
     resolved = resolve_data_root(data_root, repo_root=repository_root())
     artifacts = publish_trackio_snapshot(
         output_dir=resolved.cache / "trackio" / TRACKIO_RUN_NAME,
         space_id=space_id,
     )
-    typer.echo(f"Trackio run published: https://huggingface.co/spaces/{space_id}")
-    typer.echo(f"Artifacts: {artifacts.output_dir}")
+    print(f"Trackio run published: https://huggingface.co/spaces/{space_id}")
+    print(f"Artifacts: {artifacts.output_dir}")
 
 
-def run() -> None:
-    """Installed console-script entry point."""
-    run_legacy_typer(
-        app,
-        "osm-polygon-wikidata-only-trackio",
-        "osm-polygon-wikidata-only trackio-snapshot",
-    )
+def main(argv: Sequence[str] | None = None) -> int:
+    """Installed console-script entry point for ``osm-polygon-wikidata-only-trackio``."""
+    parser = argparse.ArgumentParser(prog=STANDALONE_PROG, description=STANDALONE_DESCRIPTION)
+    add_trackio_snapshot_arguments(parser)
+    # Parse outside the try: a usage error or --help exits here, before the notice.
+    args = parser.parse_args(argv)
+    try:
+        publish(
+            data_root=args.data_root,
+            space_id=TRACKIO_SPACE_ID if args.space_id is None else args.space_id,
+        )
+        return 0
+    finally:
+        report_deprecated(STANDALONE_PROG, "osm-polygon-wikidata-only trackio-snapshot")
 
 
 __all__ = [
@@ -68,10 +64,9 @@ __all__ = [
     "TRACKIO_SPACE_URL",
     "FinalDatasetSnapshot",
     "TrackioSnapshotArtifacts",
-    "app",
+    "main",
     "publish",
     "publish_trackio_snapshot",
     "render_snapshot_charts",
     "render_snapshot_markdown",
-    "run",
 ]

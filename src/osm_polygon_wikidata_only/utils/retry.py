@@ -282,7 +282,8 @@ def _run_retry_loop[T](
         if next_delay is None:
             break
         backoff_delay = next_delay
-    assert last_exc is not None
+    if last_exc is None:
+        raise RuntimeError("Retry loop finished without an attempt")
     raise last_exc
 
 
@@ -310,7 +311,8 @@ def _next_retry_delay(
 ) -> float | None:
     if _is_final_attempt(attempt, attempts):
         return None
-    assert error is not None
+    if error is None:
+        raise RuntimeError("Retry attempt failed without an error")
     return _schedule_retry(
         attempt,
         error,
