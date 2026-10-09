@@ -109,9 +109,8 @@ def install_staged_files(
 def _previous_partition_paths(root: Path, destination: Path) -> set[Path]:  # noqa: ARG001 -- seam patched by tests with this signature
     payload = _read_previous_manifest(root / LANGUAGE_SPLITS_MANIFEST_RELATIVE_PATH)
     previous_destination = _manifest_output_root(payload, root)
-    if previous_destination is None:
+    if previous_destination is None or payload is None:
         return set()
-    assert payload is not None
     return _manifest_partition_paths(payload, root, previous_destination)
 
 

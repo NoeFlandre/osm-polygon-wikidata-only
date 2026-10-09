@@ -468,7 +468,8 @@ def _build_operations(
 
     if ops is not None:
         return _build_publication_operations(ops, CommitOperationAdd, CommitOperationDelete)
-    assert files is not None
+    if files is None:
+        raise UploadError("Upload operations require either publication ops or local files")
     return _build_file_operations(files, CommitOperationAdd)
 
 
@@ -495,7 +496,8 @@ def _publication_source_path(op: PublicationOp) -> Path:
             raise UploadError(f"Snapshot file does not exist: {snapshot_path}")
         return snapshot_path
     local_path = op.local_path
-    assert local_path is not None
+    if local_path is None:
+        raise UploadError(f"Publication op has no local file: {op.path_in_repo}")
     if not local_path.exists():
         raise UploadError(f"Local file does not exist: {local_path}")
     return local_path
