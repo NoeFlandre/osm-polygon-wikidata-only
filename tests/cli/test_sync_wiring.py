@@ -136,7 +136,7 @@ def test_execute_wires_the_plan_runtime_and_upload_lifecycle(
                     "prepared": prepared,
                     "mode": sync_runtime.SyncRunMode(push_enabled=True, dry_run=True),
                     "uploads": sync_runtime.SyncUploads(
-                        upload_queue=queue,
+                        upload_queue=cast(Any, queue),
                         containment_enqueued=True,
                         publish_builder=publish_builder,
                     ),

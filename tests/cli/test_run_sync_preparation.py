@@ -692,7 +692,9 @@ def test_prepare_sync_plan_wires_local_remote_and_derived_plan_inputs(
         "data_root": data_root,
         "settings": settings,
         "input_stems": input_stems,
-        "source": sync_reconciliation.RemoteSource(hub=hub, inventory_override=inventory),
+        "source": sync_reconciliation.RemoteSource(
+            hub=cast(Any, hub), inventory_override=inventory
+        ),
         "validate_augmentation": sync_planning.validate_local_augmentation_state,
         "load_retired_parent_children": containment_migration.load_retired_parent_children,
         "helpers": sync_reconciliation.RemoteHelpers(
