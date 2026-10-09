@@ -61,10 +61,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         ref,
         matches={key: [cached]},
         current_by_title={},
-        index=object(),
-        wikipedia_client=None,
-        cache=None,
-        fetch_full_text=True,
+        lookup=reuse_reconcile.ReconcileLookup(
+            index=object(), wikipedia_client=None, cache=None, fetch_full_text=True
+        ),
     ) == [cached]
     assert reuse_reconcile._find_reconciliation_candidates(
         "polygon",
@@ -72,10 +71,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         ref,
         matches={},
         current_by_title={("en", "title"): [cached]},
-        index=object(),
-        wikipedia_client=None,
-        cache=None,
-        fetch_full_text=True,
+        lookup=reuse_reconcile.ReconcileLookup(
+            index=object(), wikipedia_client=None, cache=None, fetch_full_text=True
+        ),
     ) == [cached]
     assert (
         reuse_reconcile._find_reconciliation_candidates(
@@ -84,10 +82,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
             ref,
             matches={},
             current_by_title={},
-            index=object(),
-            wikipedia_client=None,
-            cache=None,
-            fetch_full_text=True,
+            lookup=reuse_reconcile.ReconcileLookup(
+                index=object(), wikipedia_client=None, cache=None, fetch_full_text=True
+            ),
         )
         == ()
     )
@@ -106,10 +103,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         ref,
         matches={},
         current_by_title={},
-        index="index",
-        wikipedia_client="client",
-        cache="cache",
-        fetch_full_text=False,
+        lookup=reuse_reconcile.ReconcileLookup(
+            index="index", wikipedia_client="client", cache="cache", fetch_full_text=False
+        ),
     ) == [recovered]
     assert calls[0]["options"] == DirectLookupOptions(fetch_full_text=False, wait_for_index=True)
 
