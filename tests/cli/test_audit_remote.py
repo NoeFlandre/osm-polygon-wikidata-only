@@ -63,6 +63,8 @@ def test_unresolvable_data_root_is_reported_with_status_one(
     assert module.main(["--data-root", str(tmp_path)]) == 1
     assert capsys.readouterr().err == (
         "osm-polygon-wikidata-only audit-remote: error: cannot resolve data root: bad root\n"
+        f"{module.STANDALONE_PROG}: warning: deprecated; use "
+        "'osm-polygon-wikidata-only audit-remote' instead.\n"
     )
 
 
@@ -154,6 +156,8 @@ def test_audit_reports_inventory_failure_without_traceback(
     assert captured.err == (
         "osm-polygon-wikidata-only audit-remote: error: "
         "failed to fetch remote inventory: inventory unavailable\n"
+        f"{module.STANDALONE_PROG}: warning: deprecated; use "
+        "'osm-polygon-wikidata-only audit-remote' instead.\n"
     )
     assert "Traceback" not in captured.out + captured.err
 
