@@ -72,7 +72,8 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     }
 
     assert len(config["dependency-groups"]["dev"]) == len(set(config["dependency-groups"]["dev"]))
-    assert {"typer", "rich", "tqdm", "trackio"} <= runtime_names
+    assert {"rich", "tqdm", "trackio"} <= runtime_names
+    assert "typer" not in runtime_names
     assert {
         "mutmut",
         "pytest",
