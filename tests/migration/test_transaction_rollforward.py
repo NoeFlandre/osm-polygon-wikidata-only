@@ -139,6 +139,41 @@ def test_roll_forward_after_mid_flight_crash(tmp_path: Path) -> None:
         )
 
 
+def test_roll_forward_moves_staged_file_into_a_missing_target(tmp_path: Path) -> None:
+    """Recovery moves a staged file into place when its target is gone."""
+    targets_staged: list[tuple[Path, Path]] = []
+    for index in range(3):
+        target, staged = _make_pair(
+            tmp_path, f"file{index}.parquet", payload=f"STAGED_{index}".encode()
+        )
+        targets_staged.append((target, staged))
+    missing_target, missing_staged = targets_staged[2]
+    expected_hash = _file_hash(missing_staged)
+
+    directory = tmp_path / "txn"
+    directory.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        transaction.commit_ordered_replacements(
+            directory=directory,
+            stem="alpha-latest",
+            replacements=targets_staged,
+            data_root=tmp_path,
+            _crash_hook=_crash_after({1}),
+        )
+    # Index 2 was never applied; drop its target before the roll-forward.
+    missing_target.unlink()
+
+    transaction.commit_ordered_replacements(
+        directory=directory,
+        stem="alpha-latest",
+        replacements=targets_staged,
+        data_root=tmp_path,
+    )
+
+    assert _file_hash(missing_target) == expected_hash
+    assert not missing_staged.exists()
+
+
 def test_target_staged_journal_paths_remain_inside_roots(tmp_path: Path) -> None:
     """All paths in the journal must be inside their declared roots."""
     targets_staged: list[tuple[Path, Path]] = []
