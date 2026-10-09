@@ -173,6 +173,14 @@ def _record_link_result(summary: LinkSummary, site: str, result: FetchResult) ->
         summary.errors[site] = result.error
 
 
+@dataclass(frozen=True, slots=True)
+class FetchBatching:
+    """Wikidata lookup batch size and the Wikipedia site worker count."""
+
+    batch_size: int = DEFAULT_BATCH_SIZE
+    site_workers: int = DEFAULT_SITE_WORKERS
+
+
 def fetch_qids(
     qids: Iterable[str],
     *,
@@ -181,12 +189,11 @@ def fetch_qids(
     languages: Iterable[str] | None = None,
     fetch_full_text: bool = True,
     max_articles_per_qid: int | None = None,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    site_workers: int = DEFAULT_SITE_WORKERS,
+    batching: FetchBatching = FetchBatching(),
     progress: EnrichmentProgress | None = None,
 ) -> list[LinkSummary]:
     """Fetch and link several QIDs, returning one :class:`LinkSummary` each."""
-    _validate_fetch_options(batch_size, site_workers)
+    _validate_fetch_options(batching.batch_size, batching.site_workers)
     requested = list(qids)
     if progress is not None:
         progress.set_qids_total(len(requested))
@@ -200,8 +207,7 @@ def fetch_qids(
             languages=languages,
             fetch_full_text=fetch_full_text,
             max_articles_per_qid=max_articles_per_qid,
-            batch_size=batch_size,
-            site_workers=site_workers,
+            batching=batching,
             progress=progress,
         )
     return _fetch_compatibility_qids(
@@ -403,24 +409,23 @@ def _fetch_batched_qids(
     languages: Iterable[str] | None,
     fetch_full_text: bool,
     max_articles_per_qid: int | None,
-    batch_size: int,
-    site_workers: int,
+    batching: FetchBatching,
     progress: EnrichmentProgress | None,
 ) -> list[LinkSummary]:
     summaries = _fetch_batched_entities(
-        requested, wikidata_client, batch_size=batch_size, progress=progress
+        requested, wikidata_client, batch_size=batching.batch_size, progress=progress
     )
     requests, allow = _build_site_requests(summaries, languages)
     if progress is not None:
         progress.start_wikipedia(len(requests))
-    work, chunks_remaining = _plan_site_work(requests, batch_size=batch_size)
+    work, chunks_remaining = _plan_site_work(requests, batch_size=batching.batch_size)
     fetched = _fetch_site_work(
         work,
         requests,
         chunks_remaining,
         wikipedia_client,
         fetch_full_text=fetch_full_text,
-        site_workers=site_workers,
+        site_workers=batching.site_workers,
         progress=progress,
     )
     _populate_batched_summaries(

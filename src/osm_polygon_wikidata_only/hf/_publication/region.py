@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
@@ -36,6 +37,14 @@ from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.publication")
 
 
+@dataclass(frozen=True, slots=True)
+class MetadataAssetPolicy:
+    """Whether a region commit refreshes maps and defers repository metadata."""
+
+    refresh_maps: bool = True
+    defer_metadata_assets: bool = False
+
+
 def assemble_region_upload(
     *,
     data_root: DataRoot,
@@ -44,8 +53,7 @@ def assemble_region_upload(
     augmentation: AugmentationResult,
     core: ProcessResult | CorePublicationArtifacts | None,
     world_land_warning: Callable[[str], None] | None,
-    refresh_maps: bool = True,
-    defer_metadata_assets: bool = False,
+    metadata: MetadataAssetPolicy = MetadataAssetPolicy(),
     hooks: PublicationHooks,
 ) -> list[PublicationOp]:
     """Assemble one atomic region upload (sync-dir publication).
@@ -54,9 +62,9 @@ def assemble_region_upload(
     provided, the core operations are prepended to the augmentation
     operations. When ``core`` is ``None``, the augmentation block also
     refreshes the Wikivoyage-sensitive combined text-presence map.
-    ``refresh_maps=False`` is reserved for migration/recovery transactions
-    followed by one repository-level metadata publication. When
-    ``defer_metadata_assets`` is true, the regional commit contains data and
+    ``metadata.refresh_maps=False`` is reserved for migration/recovery
+    transactions followed by one repository-level metadata publication. When
+    ``metadata.defer_metadata_assets`` is true, the regional commit contains data and
     manifests only; maps, statistics, the hero, and README are generated once
     after every regional upload has drained. This keeps a full-dataset scan
     out of the per-region publication loop.
@@ -75,7 +83,9 @@ def assemble_region_upload(
     if core is not None:
         _validate_core_artifacts(core)
     _validate_augmentation_artifacts(augmentation)
-    publish_metadata_assets = _publishes_metadata_assets(refresh_maps, defer_metadata_assets)
+    publish_metadata_assets = _publishes_metadata_assets(
+        metadata.refresh_maps, metadata.defer_metadata_assets
+    )
     # Resolved before any snapshot is written so a missing hero asset fails
     # the assembly instead of leaving a half-written snapshot behind.
     hero_ops = _hero_operations(publish_metadata_assets, hooks)

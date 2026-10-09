@@ -21,7 +21,7 @@ from osm_polygon_wikidata_only.v2.config import (
     V2_CACHE_CONTRACT_VERSION,
     V2_TRACKIO_RUN_NAME,
 )
-from osm_polygon_wikidata_only.v2.runner import run_v2_sync
+from osm_polygon_wikidata_only.v2.runner import V2Publication, run_v2_sync
 from osm_polygon_wikidata_only.v2.sat import DEFAULT_SAT_MODEL_REVISION, SaT3lSegmenter
 from osm_polygon_wikidata_only.v2.sentence_runner import run_v2_sentence_split
 
@@ -52,10 +52,12 @@ def execute_v2(
         wikipedia_client=runtime.wikipedia,
         section_client=section_client,
         section_workers=settings.enrichment_site_workers,
-        push=bool(args.push),
-        upload=upload if args.push else None,
-        remote_inventory=remote_inventory,
-        trackio_publish=trackio_publish,
+        publication=V2Publication(
+            push=bool(args.push),
+            upload=upload if args.push else None,
+            remote_inventory=remote_inventory,
+            trackio_publish=trackio_publish,
+        ),
     )
 
 

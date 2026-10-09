@@ -268,7 +268,7 @@ def ensure_world_countries(cache_dir: Path) -> Path:
     return cache_path
 
 
-def generate_coverage_map(
+def generate_coverage_map(  # noqa: PLR0913 -- public keyword API kept for existing callers
     lons: list[float],
     lats: list[float],
     output_path: Path,

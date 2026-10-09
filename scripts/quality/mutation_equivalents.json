@@ -25,19 +25,19 @@
     "source_sha256": "835824d4c209def1974c580990175f0a568e16069bff40703904a1debc4121b2"
   },
   "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_16": {
-    "mutant_sha256": "606bfeddebd7d6aa169a001e21c2217d3c1078c969cde40d141db83adb10d311",
+    "mutant_sha256": "de37cad11130f5264ddd71a56d0dd47cc0ae1a62ac4f18c24f3406dd58050849",
     "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
-    "source_sha256": "fe87b5ad675876d9c0e176bd95c84d2f301e1c937b56b4fd1c4c30f17f175d25"
+    "source_sha256": "c0804e2febd1b7f408762f0b708d2df677c5b97f5d6c8f02b5c64ef72dfd9d7b"
   },
   "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_5": {
-    "mutant_sha256": "26eb82af89e3bd2178b333b9ef6fdbafc914b6dde3743c827c87392b28f5fb4c",
+    "mutant_sha256": "3adc747ca64db53fad127d69cbdc7e3e8578b337d8c5f304fab888d8eb51b6a1",
     "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
-    "source_sha256": "fe87b5ad675876d9c0e176bd95c84d2f301e1c937b56b4fd1c4c30f17f175d25"
+    "source_sha256": "c0804e2febd1b7f408762f0b708d2df677c5b97f5d6c8f02b5c64ef72dfd9d7b"
   },
   "osm_polygon_wikidata_only.cli.sync_runtime.x_build_sync_services__mutmut_72": {
     "mutant_sha256": "d945f645849189824fb64157248e6b37c340c4c359bd4d7f979fe972db62e97c",
     "reason": "Omitting logger from SyncApplicationServices uses its default LOGGER; this module obtains the same named logging.Logger singleton, so the constructed service object is unchanged.",
-    "source_sha256": "0b23fc4cf4b85f7fd3e40000202d09c5f47104e4793b9403ef7504e2d438c3a8"
+    "source_sha256": "0bc7dee6b139341d264e983556d018f7cf32c587c0b5c6a88131c03212a532d2"
   },
   "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_10": {
     "mutant_sha256": "ed1846f9572e7c1b52eb5f96b3aecd45dd6e866cc09f3a3921cfed0ff890544b",

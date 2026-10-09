@@ -481,15 +481,19 @@ def _controller(
 ) -> sentence_controller.Grid5000SentenceController:
     return sentence_controller.Grid5000SentenceController(
         data_root,
-        site="grenoble",
-        queue=queue,
-        gpu_model=gpu_model,
-        repo_id="example/v2",
+        target=sentence_controller.ControllerTarget(
+            site="grenoble",
+            queue=queue,
+            gpu_model=gpu_model,
+            repo_id="example/v2",
+        ),
         transport=transport,
         publisher=publisher,
-        run_id=run_id,
-        source_commit=source_commit,
-        repo_root=Path.cwd(),
+        provenance=sentence_controller.RunProvenance(
+            run_id=run_id,
+            source_commit=source_commit,
+            repo_root=Path.cwd(),
+        ),
         sleep=sleep if sleep is not None else lambda _seconds: None,
     )
 

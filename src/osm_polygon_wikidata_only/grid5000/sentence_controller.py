@@ -10,18 +10,14 @@ import re
 import shutil
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.config.defaults import (
-    DEFAULT_BATCH_SIZE,
     DEFAULT_GRID5000_GPU_MODEL,
     DEFAULT_GRID5000_QUEUE,
     DEFAULT_GRID5000_SITE,
-    DEFAULT_INFERENCE_BATCH_SIZE,
-    DEFAULT_MAX_INPUT_BYTES,
-    DEFAULT_MAX_STEMS,
-    DEFAULT_WALLTIME,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.hf.uploader import resolve_hf_token, upload_files
@@ -67,6 +63,25 @@ _QUEUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _GPU_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 
 
+@dataclass(frozen=True)
+class ControllerTarget:
+    """Grid5000 placement and Hub repository that one controller run uses."""
+
+    site: str = DEFAULT_GRID5000_SITE
+    queue: str = DEFAULT_GRID5000_QUEUE
+    gpu_model: str = DEFAULT_GRID5000_GPU_MODEL
+    repo_id: str = V2_REPO_ID
+
+
+@dataclass(frozen=True)
+class RunProvenance:
+    """Identity and source checkout recorded for one controller run."""
+
+    run_id: str | None = None
+    source_commit: str | None = None
+    repo_root: Path | None = None
+
+
 class Grid5000SentenceController(
     SentenceControllerLifecycleMixin,
     SentenceControllerBatchMixin,
@@ -79,44 +94,29 @@ class Grid5000SentenceController(
         self,
         data_root: DataRoot,
         *,
-        site: str = DEFAULT_GRID5000_SITE,
-        queue: str = DEFAULT_GRID5000_QUEUE,
-        gpu_model: str = DEFAULT_GRID5000_GPU_MODEL,
-        repo_id: str = V2_REPO_ID,
+        target: ControllerTarget = ControllerTarget(),
         transport: Grid5000Transport,
         publisher: HubPublisher,
-        max_stems: int = DEFAULT_MAX_STEMS,
-        max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
-        batch_size: int = DEFAULT_BATCH_SIZE,
-        inference_batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE,
-        walltime: str = DEFAULT_WALLTIME,
-        run_id: str | None = None,
-        source_commit: str | None = None,
-        repo_root: Path | None = None,
+        limits: ControllerLimits = ControllerLimits(),
+        provenance: RunProvenance = RunProvenance(),
         sleep: Callable[[float], None] = time.sleep,
         poll_interval_s: float = 10.0,
     ) -> None:
         self.data_root = data_root
-        self.site = site
-        if not _QUEUE_PATTERN.fullmatch(queue):
-            raise ControllerRunError(f"Unsafe Grid5000 queue: {queue!r}")
-        self.queue = queue
-        if not _GPU_MODEL_PATTERN.fullmatch(gpu_model):
-            raise ControllerRunError(f"Unsafe Grid5000 GPU model: {gpu_model!r}")
-        self.gpu_model = gpu_model
-        self.repo_id = repo_id
+        self.site = target.site
+        if not _QUEUE_PATTERN.fullmatch(target.queue):
+            raise ControllerRunError(f"Unsafe Grid5000 queue: {target.queue!r}")
+        self.queue = target.queue
+        if not _GPU_MODEL_PATTERN.fullmatch(target.gpu_model):
+            raise ControllerRunError(f"Unsafe Grid5000 GPU model: {target.gpu_model!r}")
+        self.gpu_model = target.gpu_model
+        self.repo_id = target.repo_id
         self.transport = transport
         self.publisher = publisher
-        self.run_id = run_id
-        self.repo_root = Path(repo_root or Path.cwd())
-        self.source_commit = source_commit or _git_source_commit(self.repo_root)
-        self.limits = ControllerLimits(
-            max_stems=max_stems,
-            max_input_bytes=max_input_bytes,
-            batch_size=batch_size,
-            inference_batch_size=inference_batch_size,
-            walltime=walltime,
-        )
+        self.run_id = provenance.run_id
+        self.repo_root = Path(provenance.repo_root or Path.cwd())
+        self.source_commit = provenance.source_commit or _git_source_commit(self.repo_root)
+        self.limits = limits
         self._sleep = sleep
         self.poll_interval_s = poll_interval_s
         self._ledger: LedgerDict | None = None
@@ -158,41 +158,26 @@ class HfHubSentencePublisher(_HfHubSentencePublisher):
 def run_grid5000_sentence_controller(
     data_root: DataRoot,
     *,
-    site: str = DEFAULT_GRID5000_SITE,
-    queue: str = DEFAULT_GRID5000_QUEUE,
-    gpu_model: str = DEFAULT_GRID5000_GPU_MODEL,
-    repo_id: str = V2_REPO_ID,
-    max_stems: int = DEFAULT_MAX_STEMS,
-    max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    inference_batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE,
-    walltime: str = DEFAULT_WALLTIME,
+    target: ControllerTarget = ControllerTarget(),
+    limits: ControllerLimits = ControllerLimits(),
     run_id: str | None = None,
     hf_token: str | None = None,
     repo_root: Path | None = None,
 ) -> LedgerDict:
     """Run the controller under its non-blocking local lock."""
-    transport = SubprocessGrid5000Transport(site)
+    transport = SubprocessGrid5000Transport(target.site)
     publisher = HfHubSentencePublisher(
-        repo_id,
+        target.repo_id,
         token=resolve_hf_token(hf_token),
         cache_dir=data_root.cache / "hf-verify",
     )
     controller = Grid5000SentenceController(
         data_root,
-        site=site,
-        queue=queue,
-        gpu_model=gpu_model,
-        repo_id=repo_id,
+        target=target,
         transport=transport,
         publisher=publisher,
-        max_stems=max_stems,
-        max_input_bytes=max_input_bytes,
-        batch_size=batch_size,
-        inference_batch_size=inference_batch_size,
-        walltime=walltime,
-        run_id=run_id,
-        repo_root=repo_root,
+        limits=limits,
+        provenance=RunProvenance(run_id=run_id, repo_root=repo_root),
     )
     with exclusive_run_lock(data_root.cache / "grid5000-sentence-splitting.lock"):
         return controller.run()
@@ -239,10 +224,12 @@ __all__ = [
     "DEFAULT_GRID5000_QUEUE",
     "ControllerLimits",
     "ControllerRunError",
+    "ControllerTarget",
     "Grid5000SentenceController",
     "Grid5000Transport",
     "HfHubSentencePublisher",
     "HubPublisher",
+    "RunProvenance",
     "SubprocessGrid5000Transport",
     "run_grid5000_sentence_controller",
 ]

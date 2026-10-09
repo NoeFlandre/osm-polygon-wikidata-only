@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from osm_polygon_wikidata_only.augmentation.mediawiki import AugmentationWikimediaClient
@@ -82,6 +82,23 @@ def build_augmentation_client(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SyncRunMode:
+    """Whether this sync run pushes to the Hub and whether it is a dry run."""
+
+    push_enabled: bool
+    dry_run: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SyncUploads:
+    """Upload queue state and publication builder shared by the sync run."""
+
+    upload_queue: BackgroundUploadQueue | None
+    containment_enqueued: bool
+    publish_builder: Callable[..., list[PublicationOp]] | None
+
+
 def run_sync_application(
     args: argparse.Namespace,
     *,
@@ -90,11 +107,8 @@ def run_sync_application(
     runtime: WikimediaRuntime,
     augmentation_client: AugmentationWikimediaClient,
     prepared: PreparedSyncPlan,
-    push_enabled: bool,
-    dry_run: bool,
-    upload_queue: BackgroundUploadQueue | None,
-    containment_enqueued: bool,
-    publish_builder: Callable[..., list[PublicationOp]] | None,
+    mode: SyncRunMode,
+    uploads: SyncUploads,
 ) -> int:
     application = SyncApplication(
         context=SyncApplicationContext(
@@ -103,16 +117,16 @@ def run_sync_application(
             runtime=runtime,
             augmentation_client=augmentation_client,
             states=prepared.states,
-            push_enabled=push_enabled,
-            dry_run=dry_run,
+            push_enabled=mode.push_enabled,
+            dry_run=mode.dry_run,
             pending_stems=prepared.all_pending_stems,
             stems_with_gaps=prepared.remote_state.stems_with_gaps,
             reconciliation_plan=prepared.remote_state.plan,
-            upload_queue=upload_queue,
-            publish_builder=publish_builder,
+            upload_queue=uploads.upload_queue,
+            publish_builder=uploads.publish_builder,
             core_will_be_repaired=prepared.core_will_be_repaired,
             core_repaired=prepared.remote_state.core_repaired,
-            containment_enqueued=containment_enqueued,
+            containment_enqueued=uploads.containment_enqueued,
         ),
         services=build_sync_services(
             args,

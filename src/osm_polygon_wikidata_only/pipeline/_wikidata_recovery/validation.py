@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from osm_polygon_wikidata_only.enrichment.wikidata.parsing import qids_from_osm_tag
@@ -120,15 +121,19 @@ def _validate_fact(fact: dict[str, Any], valid_qids: set[str]) -> None:
         raise RecoveryRepairError(f"fact references absent QID {fact['wikidata']!r}")
 
 
+@dataclass(frozen=True)
+class RowVersions:
+    """One table's rows before and after a repair merge."""
+
+    original: list[dict[str, Any]]
+    updated: list[dict[str, Any]]
+
+
 def validate_preservation(
-    original_polygons: list[dict[str, Any]],
-    updated_polygons: list[dict[str, Any]],
-    original_documents: list[dict[str, Any]],
-    updated_documents: list[dict[str, Any]],
-    original_sections: list[dict[str, Any]],
-    updated_sections: list[dict[str, Any]],
-    original_facts: list[dict[str, Any]],
-    updated_facts: list[dict[str, Any]],
+    polygons: RowVersions,
+    documents: RowVersions,
+    sections: RowVersions,
+    facts: RowVersions,
     *,
     affected_qids: set[str],
     removed_document_ids: set[str],
@@ -136,18 +141,18 @@ def validate_preservation(
 ) -> None:
     """Prove healthy rows remain byte-equivalent at the row level."""
     _validate_healthy_polygon_preservation(
-        original_polygons,
-        updated_polygons,
+        polygons.original,
+        polygons.updated,
         affected_qids=affected_qids,
     )
-    for original, updated, key, label, removed_ids in (
-        (original_documents, updated_documents, "document_id", "document", removed_document_ids),
-        (original_sections, updated_sections, "section_id", "section", removed_section_ids),
-        (original_facts, updated_facts, "fact_id", "fact", set()),
+    for versions, key, label, removed_ids in (
+        (documents, "document_id", "document", removed_document_ids),
+        (sections, "section_id", "section", removed_section_ids),
+        (facts, "fact_id", "fact", set()),
     ):
         _validate_rows_preserved(
-            original,
-            updated,
+            versions.original,
+            versions.updated,
             key=key,
             label=label,
             removed_ids=removed_ids,

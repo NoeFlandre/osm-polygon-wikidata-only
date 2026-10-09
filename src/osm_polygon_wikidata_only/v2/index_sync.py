@@ -12,6 +12,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -21,6 +22,17 @@ from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 from osm_polygon_wikidata_only.v2.index_queries import title_key as _title_key
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.v2.v1_index")
+
+
+@dataclass(frozen=True, slots=True)
+class _ShardScan:
+    """Parquet shard path, open file handle and row-group layout for one scan."""
+
+    path: Path
+    legacy_articles: bool
+    total_row_groups: int
+    parquet_file: pq.ParquetFile
+
 
 DocumentRow = index_scanning.DocumentRow
 _effective_paths = index_scanning.effective_paths
@@ -328,18 +340,21 @@ class PersistentIndexSync:
     def _scan_row_groups(
         self,
         reader: ThreadPoolExecutor,
-        path: Path,
+        shard: _ShardScan,
         *,
-        legacy_articles: bool,
         start_row_group: int,
-        total_row_groups: int,
-        parquet_file: pq.ParquetFile,
         resolved: str,
         fingerprint: tuple[int, int, int, int, bool],
         position: int,
         total_files: int,
     ) -> bool:
         """Scan and commit a shard's row groups with one-row-group lookahead."""
+        path, legacy_articles, total_row_groups, parquet_file = (
+            shard.path,
+            shard.legacy_articles,
+            shard.total_row_groups,
+            shard.parquet_file,
+        )
         next_group = self._submit_row_group(
             reader,
             path,
@@ -426,11 +441,13 @@ class PersistentIndexSync:
         try:
             return_value = self._scan_row_groups(
                 self._index_reader(),
-                path,
-                legacy_articles=legacy_articles,
+                _ShardScan(
+                    path=path,
+                    legacy_articles=legacy_articles,
+                    total_row_groups=total_row_groups,
+                    parquet_file=parquet_file,
+                ),
                 start_row_group=start_row_group,
-                total_row_groups=total_row_groups,
-                parquet_file=parquet_file,
                 resolved=resolved,
                 fingerprint=fingerprint,
                 position=position,

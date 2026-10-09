@@ -57,16 +57,18 @@ def test_unchanged_repair_records_receipt_and_clears_checkpoint(tmp_path: Path) 
         inputs,
         outputs,
         checkpoint,
-        transaction_root=tmp_path / "transactions",
-        wikidata_client=cast(Any, object()),
-        settings=Settings(
-            languages=None,
-            fetch_full_text=True,
-            max_articles_per_qid=None,
-            enrichment_batch_size=50,
+        repair_outputs.RepairPersistence(
+            transaction_root=tmp_path / "transactions",
+            wikidata_client=cast(Any, object()),
+            settings=Settings(
+                languages=None,
+                fetch_full_text=True,
+                max_articles_per_qid=None,
+                enrichment_batch_size=50,
+            ),
+            before_commit=None,
+            record_receipt_fn=record_receipt,
         ),
-        before_commit=None,
-        record_receipt_fn=record_receipt,
     )
 
     assert result.changed is False

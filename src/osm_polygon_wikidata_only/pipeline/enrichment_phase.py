@@ -29,7 +29,11 @@ from dataclasses import dataclass
 
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.models import Polygon
-from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary, fetch_qids
+from osm_polygon_wikidata_only.enrichment.article_linker import (
+    FetchBatching,
+    LinkSummary,
+    fetch_qids,
+)
 from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgress
 from osm_polygon_wikidata_only.enrichment.wikidata_client import WikidataClient
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaClient
@@ -99,8 +103,10 @@ def run_enrichment_phase(
                 languages=settings.languages,
                 fetch_full_text=settings.fetch_full_text,
                 max_articles_per_qid=settings.max_articles_per_qid,
-                batch_size=settings.enrichment_batch_size,
-                site_workers=settings.enrichment_site_workers,
+                batching=FetchBatching(
+                    batch_size=settings.enrichment_batch_size,
+                    site_workers=settings.enrichment_site_workers,
+                ),
                 progress=progress,
             )
         for s in unique_summaries:

@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWik
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    DirectLookupOptions,
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
 )
@@ -425,7 +426,7 @@ def test_speculative_enrichment_returns_before_index_and_reconciles_afterward() 
         (ref,),
         index=cast(V1ReuseIndex, index),
         wikipedia_client=RecordingClient(),
-        wait_for_index=False,
+        options=DirectLookupOptions(wait_for_index=False),
     )
     assert speculative.statuses[0].status == "ok"
     assert speculative.documents[0]["wikidata"] is None

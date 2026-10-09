@@ -387,12 +387,12 @@ def _run_release_stats(
             report = releases[target](
                 data_root,
                 confirm_repo=confirmations[target],
+                generated_on=getattr(args, "generated_on", None),
                 apply=args.apply,
                 hub=hub,
                 token=getattr(args, "hf_token", None),
                 source_revision=getattr(args, "source_revision", None),
                 data_revision=getattr(args, "data_revision", None),
-                generated_on=getattr(args, "generated_on", None),
             )
         except StatsReleaseError as error:
             return report_cli_error(parser.prog, error)

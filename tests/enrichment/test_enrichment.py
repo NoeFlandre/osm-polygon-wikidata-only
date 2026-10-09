@@ -988,7 +988,7 @@ def test_fetch_qids_reports_batched_qid_site_and_article_progress() -> None:
         ["Q1", "Q2"],
         wikidata_client=wd,
         wikipedia_client=wiki,
-        batch_size=1,
+        batching=article_linker.FetchBatching(batch_size=1),
         progress=progress,
     )
 
@@ -1070,7 +1070,7 @@ def test_fetch_qids_chunks_same_site_title_batches_at_requested_limit() -> None:
         qids,
         wikidata_client=wd,
         wikipedia_client=wiki,
-        batch_size=50,
+        batching=article_linker.FetchBatching(batch_size=50),
     )
     assert len(summaries) == 51
     assert wiki.batch_sizes == [50, 1]
@@ -1119,8 +1119,7 @@ def test_fetch_qids_prioritizes_other_sites_before_more_large_site_chunks() -> N
                 qids,
                 wikidata_client=wd,
                 wikipedia_client=GatedBatchWiki({}),
-                batch_size=2,
-                site_workers=2,
+                batching=article_linker.FetchBatching(batch_size=2, site_workers=2),
                 progress=progress,
             )
         )
@@ -1182,8 +1181,7 @@ def test_fetch_qids_reports_completed_chunks_before_site_finishes() -> None:
             "qids": qids,
             "wikidata_client": wd,
             "wikipedia_client": GatedBatchWiki({}),
-            "batch_size": 2,
-            "site_workers": 2,
+            "batching": article_linker.FetchBatching(batch_size=2, site_workers=2),
             "progress": progress,
         },
     )
@@ -1266,7 +1264,7 @@ def test_fetch_qids_reports_site_progress_as_sites_complete_not_in_input_order()
             "qids": slow_qids + fast_qids,
             "wikidata_client": wd,
             "wikipedia_client": wiki,
-            "site_workers": 4,
+            "batching": article_linker.FetchBatching(site_workers=4),
             "progress": progress,
         },
     )
