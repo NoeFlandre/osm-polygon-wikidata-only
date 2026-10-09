@@ -18,8 +18,6 @@ def test_gauntlet_runs_the_required_stages_in_order_through_just() -> None:
         ("ty", ("just", "ty")),
         ("tests", ("just", "tests")),
         ("coverage floor", ("just", "coverage-floor")),
-        ("property tests", ("just", "property-tests")),
-        ("acceptance tests", ("just", "acceptance-tests")),
         ("architecture checks", ("just", "architecture-checks")),
         ("CRAP", ("just", "crap-report")),
         ("mutation tests", ("just", "mutation")),
@@ -76,22 +74,18 @@ def test_gauntlet_stops_at_first_failed_stage(capsys) -> None:
         ("just", "ty"),
         ("just", "tests"),
         ("just", "coverage-floor"),
-        ("just", "property-tests"),
-        ("just", "acceptance-tests"),
         ("just", "architecture-checks"),
         ("just", "crap-report"),
     ]
     output = capsys.readouterr()
     assert output.out == (
-        "QA stage 1/12: baseline\n"
-        "QA stage 2/12: ruff\n"
-        "QA stage 3/12: ty\n"
-        "QA stage 4/12: tests\n"
-        "QA stage 5/12: coverage floor\n"
-        "QA stage 6/12: property tests\n"
-        "QA stage 7/12: acceptance tests\n"
-        "QA stage 8/12: architecture checks\n"
-        "QA stage 9/12: CRAP\n"
+        "QA stage 1/10: baseline\n"
+        "QA stage 2/10: ruff\n"
+        "QA stage 3/10: ty\n"
+        "QA stage 4/10: tests\n"
+        "QA stage 5/10: coverage floor\n"
+        "QA stage 6/10: architecture checks\n"
+        "QA stage 7/10: CRAP\n"
     )
     assert output.err == "QA gauntlet stopped at CRAP (exit 9)\n"
 
@@ -101,18 +95,16 @@ def test_progress_is_flushed_before_each_stage_runner_starts() -> None:
     stream = TextIOWrapper(BufferedWriter(raw), encoding="utf-8")
     observed_before_runner: list[str] = []
     progress_lines = [
-        "QA stage 1/12: baseline\n",
-        "QA stage 2/12: ruff\n",
-        "QA stage 3/12: ty\n",
-        "QA stage 4/12: tests\n",
-        "QA stage 5/12: coverage floor\n",
-        "QA stage 6/12: property tests\n",
-        "QA stage 7/12: acceptance tests\n",
-        "QA stage 8/12: architecture checks\n",
-        "QA stage 9/12: CRAP\n",
-        "QA stage 10/12: mutation tests\n",
-        "QA stage 11/12: smoke test\n",
-        "QA stage 12/12: diff review\n",
+        "QA stage 1/10: baseline\n",
+        "QA stage 2/10: ruff\n",
+        "QA stage 3/10: ty\n",
+        "QA stage 4/10: tests\n",
+        "QA stage 5/10: coverage floor\n",
+        "QA stage 6/10: architecture checks\n",
+        "QA stage 7/10: CRAP\n",
+        "QA stage 8/10: mutation tests\n",
+        "QA stage 9/10: smoke test\n",
+        "QA stage 10/10: diff review\n",
     ]
 
     def runner(_command: Sequence[str]) -> int:
