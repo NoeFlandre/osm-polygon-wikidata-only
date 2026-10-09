@@ -372,7 +372,6 @@ def _draw_landmasses(ax: Any, geojson_path: Path) -> None:
 
 __all__ = [
     "WORLD_LAND_FILENAME",
-    "PointStyle",
     "ensure_world_land",
     "generate_coverage_map",
     "load_centroids_from_parquet",
