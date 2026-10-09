@@ -50,7 +50,7 @@ Augmentation adds the Wikipedia and Wikivoyage section tables and the Wikidata f
 
 ## Configuration and Docker
 
-Set `OSM_POLYGON_DATA_ROOT` or use `--data-root`. The directory must exist. It must stay outside the source checkout. Use `HF_TOKEN` only for an explicit upload to the Hub. Prefer the `HF_TOKEN` environment variable or a saved `huggingface-cli login` over `--hf-token`, because a token passed on the command line appears in `ps` output and in shell history. Keep the credentials in an untracked `.env` file. Never put them in source control.
+Set `OSM_POLYGON_DATA_ROOT` or use `--data-root`. The directory must exist. It must stay outside the source checkout. Use `HF_TOKEN` only for an explicit upload to the Hub. Prefer the `HF_TOKEN` environment variable or a saved `hf auth login` over `--hf-token`, because a token passed on the command line appears in `ps` output and in shell history. Keep the credentials in an untracked `.env` file. Never put them in source control.
 
 The Compose service `pipeline` builds the non-root `runtime` target. It mounts the data root at `/data`. Its default command is `--help`:
 
