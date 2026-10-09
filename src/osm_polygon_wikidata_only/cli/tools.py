@@ -34,10 +34,8 @@ def _run_enforce_integrity(args: argparse.Namespace) -> int:
 
 
 def _run_audit_remote(args: argparse.Namespace) -> int:
-    return _typer_status(
-        lambda: _tool_module("audit_remote").audit(
-            data_root=args.data_root, repo_id=args.repo_id, hf_token=args.hf_token
-        )
+    return _tool_module("audit_remote").audit(
+        data_root=args.data_root, repo_id=args.repo_id, hf_token=args.hf_token
     )
 
 
@@ -53,24 +51,13 @@ def _run_trackio_snapshot(args: argparse.Namespace) -> int:
     if args.dataset_version == "v2":
         from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_SPACE_ID  # noqa: PLC0415
 
-        space_id = args.space_id or V2_TRACKIO_SPACE_ID
-        return _typer_status(
-            lambda: v2_trackio_snapshot.publish(data_root=args.data_root, space_id=space_id)
+        v2_trackio_snapshot.publish(
+            data_root=args.data_root, space_id=args.space_id or V2_TRACKIO_SPACE_ID
         )
-    space_id = args.space_id or trackio_snapshot.TRACKIO_SPACE_ID
-    return _typer_status(
-        lambda: trackio_snapshot.publish(data_root=args.data_root, space_id=space_id)
+        return 0
+    trackio_snapshot.publish(
+        data_root=args.data_root, space_id=args.space_id or trackio_snapshot.TRACKIO_SPACE_ID
     )
-
-
-def _typer_status(call: Callable[[], None]) -> int:
-    """Run a Typer command body and translate its ``typer.Exit`` into a status."""
-    import typer  # noqa: PLC0415
-
-    try:
-        call()
-    except typer.Exit as exit_:
-        return exit_.exit_code
     return 0
 
 

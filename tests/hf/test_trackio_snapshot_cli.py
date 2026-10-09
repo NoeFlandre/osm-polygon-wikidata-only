@@ -1,4 +1,4 @@
-"""Typer entry points for the V1 and V2 Trackio snapshot publishers."""
+"""argparse entry points for the V1 and V2 Trackio snapshot publishers."""
 
 from __future__ import annotations
 
@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from typer.testing import CliRunner
 
 from osm_polygon_wikidata_only.hf import trackio_snapshot, v2_trackio_snapshot
 from osm_polygon_wikidata_only.hf._trackio import publisher as trackio_publisher
 from osm_polygon_wikidata_only.v2.card import V2CardStats
-from osm_polygon_wikidata_only.v2.config import V2_TRACKIO_RUN_NAME, V2_TRACKIO_SPACE_URL
+from osm_polygon_wikidata_only.v2.config import (
+    V2_TRACKIO_RUN_NAME,
+    V2_TRACKIO_SPACE_ID,
+    V2_TRACKIO_SPACE_URL,
+)
 from tests.hf.test_trackio_snapshot import _FakeTrackio
 
 
@@ -46,27 +49,27 @@ def _inject_fake_trackio(monkeypatch: pytest.MonkeyPatch) -> _FakeTrackio:
 
 
 def test_v1_publish_command_writes_artifacts_under_the_data_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fake = _inject_fake_trackio(monkeypatch)
     data_root = tmp_path / "data"
     data_root.mkdir()
 
-    result = CliRunner().invoke(
-        trackio_snapshot.app,
+    status = trackio_snapshot.main(
         ["--data-root", str(data_root), "--space-id", "example/space"],
     )
 
-    assert result.exit_code == 0, result.output
-    assert "Trackio run published: https://huggingface.co/spaces/example/space" in result.output
+    output = capsys.readouterr().out
+    assert status == 0
+    assert "Trackio run published: https://huggingface.co/spaces/example/space" in output
     expected_dir = data_root / "cache" / "trackio" / trackio_snapshot.TRACKIO_RUN_NAME
-    assert f"Artifacts: {expected_dir}" in result.output
+    assert f"Artifacts: {expected_dir}" in output
     assert fake.sync_kwargs is not None
     assert fake.sync_kwargs["space_id"] == "example/space"
 
 
 def test_v2_publish_command_uses_data_derived_stats(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fake = _inject_fake_trackio(monkeypatch)
     seen: list[tuple[Path, Path]] = []
@@ -79,14 +82,14 @@ def test_v2_publish_command_uses_data_derived_stats(
     data_root = tmp_path / "data"
     data_root.mkdir()
 
-    result = CliRunner().invoke(
-        v2_trackio_snapshot.app,
+    status = v2_trackio_snapshot.main(
         ["--data-root", str(data_root), "--space-id", "example/v2-space"],
     )
 
-    assert result.exit_code == 0, result.output
-    assert f"Trackio run published: {V2_TRACKIO_SPACE_URL}" in result.output
-    assert str(data_root / "cache" / "trackio" / V2_TRACKIO_RUN_NAME) in result.output
+    output = capsys.readouterr().out
+    assert status == 0
+    assert f"Trackio run published: {V2_TRACKIO_SPACE_URL}" in output
+    assert str(data_root / "cache" / "trackio" / V2_TRACKIO_RUN_NAME) in output
     assert len(seen) == 1
     assert fake.logged is not None
     metrics = fake.logged["metrics"]
@@ -112,6 +115,52 @@ def test_console_entry_points_render_help(
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["trackio-snapshot", "--help"])
     with pytest.raises(SystemExit) as exit_info:
-        module.run()
+        module.main()
     assert exit_info.value.code == 0
     assert "Trackio" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("module", [trackio_snapshot, v2_trackio_snapshot])
+def test_console_entry_points_reject_unknown_options_with_status_two(
+    module: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        module.main(["--dataset-version", "v2"])
+    assert exit_info.value.code == 2
+    assert "unrecognized arguments: --dataset-version v2" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("module", "default_space"),
+    [
+        (trackio_snapshot, trackio_snapshot.TRACKIO_SPACE_ID),
+        (v2_trackio_snapshot, V2_TRACKIO_SPACE_ID),
+    ],
+)
+def test_console_entry_points_forward_space_id_without_defaulting_empty(
+    module: Any, default_space: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forwarded: list[dict[str, object]] = []
+    monkeypatch.setattr(module, "publish", lambda **kwargs: forwarded.append(kwargs))
+
+    assert module.main(["--space-id", ""]) == 0
+    assert module.main([]) == 0
+    assert module.main(["--space-id", "me/space"]) == 0
+
+    assert [call["space_id"] for call in forwarded] == ["", default_space, "me/space"]
+
+
+@pytest.mark.parametrize("module", [trackio_snapshot, v2_trackio_snapshot])
+def test_console_empty_space_id_uploads_nothing_without_env(
+    module: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TRACKIO_SPACE_ID", raising=False)
+    monkeypatch.setattr(v2_trackio_snapshot, "compute_v2_card_stats", lambda *_, **__: _stats())
+    fake = _inject_fake_trackio(monkeypatch)
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+
+    status = module.main(["--data-root", str(data_root), "--space-id", ""])
+
+    assert status == 0
+    assert fake.sync_kwargs is None

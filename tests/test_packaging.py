@@ -72,7 +72,8 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     }
 
     assert len(config["dependency-groups"]["dev"]) == len(set(config["dependency-groups"]["dev"]))
-    assert {"typer", "rich", "tqdm", "trackio"} <= runtime_names
+    assert {"rich", "tqdm", "trackio"} <= runtime_names
+    assert "typer" not in runtime_names
     assert {
         "mutmut",
         "pytest",
@@ -83,11 +84,15 @@ def test_project_declares_operator_and_quality_tooling_directly() -> None:
     } <= development_names
     assert (
         config["project"]["scripts"]["osm-polygon-wikidata-only-audit-remote"]
-        == "osm_polygon_wikidata_only.cli.audit_remote:run"
+        == "osm_polygon_wikidata_only.cli.audit_remote:main"
     )
     assert (
         config["project"]["scripts"]["osm-polygon-wikidata-only-trackio"]
-        == "osm_polygon_wikidata_only.hf.trackio_snapshot:run"
+        == "osm_polygon_wikidata_only.hf.trackio_snapshot:main"
+    )
+    assert (
+        config["project"]["scripts"]["osm-polygon-wikidata-and-wikipedia-trackio"]
+        == "osm_polygon_wikidata_only.hf.v2_trackio_snapshot:main"
     )
     assert config["project"]["optional-dependencies"]["sentence-splitting"] == [
         "wtpsplit[onnx-cpu]==2.2.1"

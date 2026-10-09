@@ -24,7 +24,6 @@ dependencies = [
     "matplotlib>=3.11.0",
     "osmium>=4.3.1",
     "pyarrow>=25.0.0",
-    "typer>=0.27.0",
     "rich>=15.0.0",
     "tqdm>=4.70.0",
     "trackio>=0.38.0,<1",
@@ -33,9 +32,9 @@ dependencies = [
 [project.scripts]
 osm-polygon-wikidata-only = "osm_polygon_wikidata_only.cli.app:run"
 osm-polygon-wikidata-only-enforce-integrity = "osm_polygon_wikidata_only.cli.enforce_integrity:run"
-osm-polygon-wikidata-only-audit-remote = "osm_polygon_wikidata_only.cli.audit_remote:run"
-osm-polygon-wikidata-only-trackio = "osm_polygon_wikidata_only.hf.trackio_snapshot:run"
-osm-polygon-wikidata-and-wikipedia-trackio = "osm_polygon_wikidata_only.hf.v2_trackio_snapshot:run"
+osm-polygon-wikidata-only-audit-remote = "osm_polygon_wikidata_only.cli.audit_remote:main"
+osm-polygon-wikidata-only-trackio = "osm_polygon_wikidata_only.hf.trackio_snapshot:main"
+osm-polygon-wikidata-and-wikipedia-trackio = "osm_polygon_wikidata_only.hf.v2_trackio_snapshot:main"
 
 [project.urls]
 Source = "https://github.com/NoeFlandre/osm-polygon-wikidata-only"
@@ -125,6 +124,8 @@ max-args = 8
 "preprocessing/tests/**/*.py" = ["S101", "ARG", "T20", "BLE001", "C901", "PERF401"]
 "benchmarks/**/*.py" = ["S101"]
 "src/osm_polygon_wikidata_only/cli/**/*.py" = ["T201"]
+"src/osm_polygon_wikidata_only/hf/trackio_snapshot.py" = ["T201"]
+"src/osm_polygon_wikidata_only/hf/v2_trackio_snapshot.py" = ["T201"]
 "scripts/**/*.py" = ["T201"]
 "preprocessing/scripts/**/*.py" = ["T201"]
 "preprocessing/src/osm_polygon_wikidata_only_preprocessing/cli.py" = ["T201"]
