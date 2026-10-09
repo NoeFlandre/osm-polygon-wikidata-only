@@ -146,6 +146,18 @@ def test_fetch_options_accept_positive_limits() -> None:
     article_linker._validate_fetch_options(1, 1)
 
 
+def test_linking_articles_refuses_a_summary_without_an_entity() -> None:
+    summary = article_linker.LinkSummary(qid="Q1", entity=None)
+
+    with pytest.raises(ValueError, match="without a Wikidata entity: Q1"):
+        article_linker._link_entity_articles(
+            summary,
+            cast(article_linker.WikipediaClient, None),
+            allow=None,
+            fetch_full_text=False,
+        )
+
+
 # --- language_from_site --------------------------------------------------
 
 

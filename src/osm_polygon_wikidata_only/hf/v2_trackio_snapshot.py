@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated
 
-import typer
-
+from osm_polygon_wikidata_only.cli.errors import report_deprecated
+from osm_polygon_wikidata_only.cli.parser import add_trackio_snapshot_arguments
 from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 from osm_polygon_wikidata_only.hf._trackio.models import FinalDatasetSnapshot
 from osm_polygon_wikidata_only.hf._trackio.publisher import (
@@ -23,7 +24,8 @@ from osm_polygon_wikidata_only.v2.config import (
     V2_TRACKIO_SPACE_URL,
 )
 
-app = typer.Typer(add_completion=False, help="Publish the frozen V2 dataset snapshot to Trackio.")
+STANDALONE_PROG = "osm-polygon-wikidata-and-wikipedia-trackio"
+STANDALONE_DESCRIPTION = "Publish the frozen V2 dataset snapshot to Trackio."
 
 
 def snapshot_from_v2_stats(stats: V2CardStats) -> FinalDatasetSnapshot:
@@ -69,17 +71,7 @@ def publish_v2_trackio_snapshot(
     )
 
 
-@app.command()
-def publish(
-    data_root: Annotated[
-        Path | None,
-        typer.Option(help="Local data root used for V2 Trackio artifact storage."),
-    ] = None,
-    space_id: Annotated[
-        str,
-        typer.Option(help="Public Hugging Face Space receiving the V2 run."),
-    ] = V2_TRACKIO_SPACE_ID,
-) -> None:
+def publish(data_root: Path | None = None, space_id: str = V2_TRACKIO_SPACE_ID) -> None:
     """Publish the V2 card metrics and three static plots."""
     resolved = resolve_data_root(data_root, repo_root=repository_root())
     stats = compute_v2_card_stats(resolved.processed_v2, v1_processed=resolved.processed)
@@ -88,20 +80,32 @@ def publish(
         stats=stats,
         space_id=space_id,
     )
-    typer.echo(f"Trackio run published: {V2_TRACKIO_SPACE_URL}")
-    typer.echo(f"Artifacts: {artifacts.output_dir}")
+    print(f"Trackio run published: {V2_TRACKIO_SPACE_URL}")
+    print(f"Artifacts: {artifacts.output_dir}")
 
 
-def run() -> None:
-    """Installed console-script entry point."""
-    app()
+def main(argv: Sequence[str] | None = None) -> int:
+    """Installed console-script entry point for ``osm-polygon-wikidata-and-wikipedia-trackio``."""
+    parser = argparse.ArgumentParser(prog=STANDALONE_PROG, description=STANDALONE_DESCRIPTION)
+    add_trackio_snapshot_arguments(parser)
+    # Parse outside the try: a usage error or --help exits here, before the notice.
+    args = parser.parse_args(argv)
+    try:
+        publish(
+            data_root=args.data_root,
+            space_id=V2_TRACKIO_SPACE_ID if args.space_id is None else args.space_id,
+        )
+        return 0
+    finally:
+        report_deprecated(
+            STANDALONE_PROG, "osm-polygon-wikidata-only trackio-snapshot --dataset-version v2"
+        )
 
 
 __all__ = [
     "V2_TRACKIO_RUN_NAME",
-    "app",
+    "main",
     "publish",
     "publish_v2_trackio_snapshot",
-    "run",
     "snapshot_from_v2_stats",
 ]

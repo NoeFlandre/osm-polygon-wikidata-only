@@ -27,6 +27,7 @@ from osm_polygon_wikidata_only.v2.storage import load_v2_manifest
 
 from .sentence_protocol import (
     FileDigest,
+    scrub_hf_credentials,
     sentence_source_paths,
     sha256_manifest,
 )
@@ -266,7 +267,7 @@ def _run_command(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 def _job_environment() -> dict[str, str]:
     """Drop any Hub credential from the compute-node subprocess environment."""
-    return {key: value for key, value in os.environ.items() if key != "HF_TOKEN"}
+    return scrub_hf_credentials(os.environ)
 
 
 __all__ = [

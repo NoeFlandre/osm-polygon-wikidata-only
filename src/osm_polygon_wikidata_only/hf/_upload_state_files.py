@@ -71,14 +71,6 @@ def read_json_object(path: Path) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-def read_envelope(path: Path) -> dict[str, Any] | None:
-    """Read a current upload envelope."""
-    raw = read_json_object(path)
-    if raw is None or raw.get("contract_version") != QUEUE_CONTRACT_VERSION:
-        return None
-    return raw
-
-
 def read_legacy_or_current_envelope(path: Path) -> dict[str, Any] | None:
     """Read either the current or legacy envelope shape."""
     return read_json_object(path)

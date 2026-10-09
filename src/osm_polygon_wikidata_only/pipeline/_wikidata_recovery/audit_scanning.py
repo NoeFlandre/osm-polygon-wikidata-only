@@ -49,8 +49,9 @@ def scan_regions(
         )
         if reused is not None:
             reused_results[stem] = reused
+        elif scan is None:
+            raise RuntimeError(f"Audit scan produced neither a reused result nor a scan: {stem}")
         else:
-            assert scan is not None
             scans[stem] = scan
         emit_scan_progress(
             emit,

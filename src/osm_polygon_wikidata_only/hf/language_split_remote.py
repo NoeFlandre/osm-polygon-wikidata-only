@@ -256,7 +256,8 @@ def _remote_card(
         data_root=data_root,
         required=True,
     )
-    assert raw is not None
+    if raw is None:
+        raise LanguagePublicationError(f"remote README is missing for {repo_id}")
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError as error:

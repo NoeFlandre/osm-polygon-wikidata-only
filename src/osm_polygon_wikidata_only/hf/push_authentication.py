@@ -45,7 +45,7 @@ def _require_token(settings: Settings, fail: Failure) -> None:
         )
     fail(
         "--push requires a Hugging Face write token: pass --hf-token, "
-        "set HF_TOKEN, or run `huggingface-cli login`."
+        "set HF_TOKEN, or run `hf auth login`."
     )
 
 

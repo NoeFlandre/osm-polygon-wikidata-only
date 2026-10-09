@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 
 import pytest
-import typer
 
 from osm_polygon_wikidata_only.cli import audit_remote, commands, tools
 from osm_polygon_wikidata_only.cli.parser import build_parser
@@ -41,9 +40,9 @@ def test_enforce_integrity_subcommand_reuses_the_standalone_implementation(
 def test_audit_remote_subcommand_forwards_options(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_audit(**kwargs: object) -> None:
+    def fake_audit(**kwargs: object) -> int:
         seen.update(kwargs)
-        raise typer.Exit(3)
+        return 3
 
     monkeypatch.setattr(audit_remote, "audit", fake_audit)
     status = commands.main(["audit-remote", "--repo-id", "o/r", "--hf-token", "t"])

@@ -23,8 +23,9 @@ class LanguagePublishedFile:
     def git_sha1(self) -> str:
         """Return the git blob SHA-1 of the local file, computed once."""
         if self._git_sha1 is None:
-            object.__setattr__(self, "_git_sha1", _git_blob_sha1(self.local_path))
-        assert self._git_sha1 is not None
+            digest = _git_blob_sha1(self.local_path)
+            object.__setattr__(self, "_git_sha1", digest)
+            return digest
         return self._git_sha1
 
     def to_dict(self) -> dict[str, object]:

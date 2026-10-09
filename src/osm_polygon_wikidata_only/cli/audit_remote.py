@@ -1,13 +1,12 @@
-"""Read-only Typer operator interface for local/remote reconciliation audits."""
+"""Read-only argparse operator interface for local/remote reconciliation audits."""
 
 from __future__ import annotations
 
+import argparse
 import sys
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from pathlib import Path
-from typing import Annotated
 
-import typer
 from rich.console import Console
 from rich.table import Table
 from tqdm import tqdm
@@ -23,6 +22,11 @@ from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlan, Reco
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import UploadError
 
+from .errors import CliFailure, report_cli_error, report_deprecated
+from .parser import AUDIT_REMOTE_DESCRIPTION, add_audit_remote_arguments
+
+PROG = "osm-polygon-wikidata-only audit-remote"
+STANDALONE_PROG = "osm-polygon-wikidata-only-audit-remote"
 DEFAULT_REPO_ID = "NoeFlandre/osm-polygon-wikidata-only"
 CORPORA = (
     "polygons",
@@ -34,14 +38,9 @@ CORPORA = (
     "wikidata/facts",
 )
 
-app = typer.Typer(
-    add_completion=False,
-    help="Audit remote versus local canonical dataset files without changing either side.",
-)
-
 
 def _console() -> Console:
-    """Create a console at call time so Typer's test capture remains effective."""
+    """Create the console at call time so that test capture of stdout applies."""
     return Console()
 
 
@@ -71,40 +70,43 @@ def _print_path_group(console: Console, paths: Collection[str], title: str) -> N
         console.print(f"  • {path}")
 
 
-@app.command()
 def audit(
-    data_root: Annotated[
-        Path | None,
-        typer.Option(help="Local dataset root; defaults to OSM_POLYGON_DATA_ROOT."),
-    ] = None,
-    repo_id: Annotated[
-        str, typer.Option(help="Hugging Face dataset repository.")
-    ] = DEFAULT_REPO_ID,
-    hf_token: Annotated[
-        str | None,
-        typer.Option(
-            help="Hugging Face token; defaults to configured credentials.", hide_input=True
-        ),
-    ] = None,
-) -> None:
-    """Audit remote versus local canonical dataset files."""
+    data_root: Path | None = None,
+    repo_id: str = DEFAULT_REPO_ID,
+    hf_token: str | None = None,
+) -> int:
+    """Audit remote versus local canonical dataset files and return the exit status.
+
+    Expected operator failures are reported on stderr with status 1. Every
+    other exception propagates.
+    """
     console = _console()
-    resolved_root = _resolve_root(console, data_root)
-    inventory = _fetch_inventory(console, repo_id, hf_token)
-    local_stems = sorted(path.stem for path in resolved_root.processed_polygons.glob("*.parquet"))
-    console.print(f"Local finalized regions: [bold]{len(local_stems)}[/]")
-    augmentation_current = _augmentation_state(resolved_root, local_stems)
-    plan = _build_plan(console, resolved_root, inventory, local_stems, augmentation_current)
+    try:
+        resolved_root = _resolve_root(data_root)
+        inventory = _fetch_inventory(console, repo_id, hf_token)
+        local_stems = sorted(
+            path.stem for path in resolved_root.processed_polygons.glob("*.parquet")
+        )
+        console.print(f"Local finalized regions: [bold]{len(local_stems)}[/]")
+        augmentation_current = _augmentation_state(resolved_root, local_stems)
+        plan = _build_plan(resolved_root, inventory, local_stems, augmentation_current)
+    except CliFailure as failure:
+        return report_cli_error(PROG, failure)
     _print_plan(console, plan)
+    return 0
 
 
-def _resolve_root(console: Console, data_root: Path | None) -> DataRoot:
+def _failure(context: str, error: Exception) -> CliFailure:
+    """Describe an expected operator failure as ``context: error``."""
+    return CliFailure(f"{context}: {error}")
+
+
+def _resolve_root(data_root: Path | None) -> DataRoot:
     repo_root = repository_root()
     try:
         return resolve_data_root(data_root, repo_root=repo_root)
     except (DataRootError, OSError) as error:
-        console.print(f"[bold red]Error resolving data root:[/] {error}")
-        raise typer.Exit(1) from None
+        raise _failure("cannot resolve data root", error) from None
 
 
 def _fetch_inventory(console: Console, repo_id: str, hf_token: str | None) -> RemoteInventory:
@@ -112,8 +114,7 @@ def _fetch_inventory(console: Console, repo_id: str, hf_token: str | None) -> Re
     try:
         return RemoteInventory.fetch(repo_id=repo_id, token=hf_token)
     except UploadError as error:
-        console.print(f"[bold red]Failed to fetch remote inventory:[/] {error}")
-        raise typer.Exit(1) from None
+        raise _failure("failed to fetch remote inventory", error) from None
 
 
 def _augmentation_state(resolved_root: DataRoot, local_stems: list[str]) -> dict[str, bool]:
@@ -129,7 +130,6 @@ def _augmentation_state(resolved_root: DataRoot, local_stems: list[str]) -> dict
 
 
 def _build_plan(
-    console: Console,
     resolved_root: DataRoot,
     inventory: RemoteInventory,
     local_stems: list[str],
@@ -143,13 +143,19 @@ def _build_plan(
             augmentation_current=augmentation_current,
         ).plan()
     except (OSError, ValueError) as error:
-        console.print(f"[bold red]Failed to compute reconciliation plan:[/] {error}")
-        raise typer.Exit(1) from None
+        raise _failure("failed to compute reconciliation plan", error) from None
 
 
-def run() -> None:
-    """Installed console-script entry point."""
-    app()
+def main(argv: Sequence[str] | None = None) -> int:
+    """Installed console-script entry point for ``osm-polygon-wikidata-only-audit-remote``."""
+    parser = argparse.ArgumentParser(prog=STANDALONE_PROG, description=AUDIT_REMOTE_DESCRIPTION)
+    add_audit_remote_arguments(parser)
+    # Parse outside the try: a usage error or --help exits here, before the notice.
+    args = parser.parse_args(argv)
+    try:
+        return audit(data_root=args.data_root, repo_id=args.repo_id, hf_token=args.hf_token)
+    finally:
+        report_deprecated(STANDALONE_PROG, "osm-polygon-wikidata-only audit-remote")
 
 
-__all__ = ["app", "audit", "run"]
+__all__ = ["audit", "main"]

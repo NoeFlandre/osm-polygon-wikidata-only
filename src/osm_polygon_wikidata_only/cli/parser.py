@@ -53,6 +53,7 @@ DEFAULT_UPLOAD_THREADS = 5
 CONTROLLER_DESCRIPTION = "Run and resume the local Grid5000 sentence-splitting controller."
 JOB_DESCRIPTION = "Run one CUDA-required sentence batch on a reserved Grid5000 node."
 AUDIT_CONTAINMENT_DESCRIPTION = "Read-only audit of configured whole-file containment retirements."
+AUDIT_REMOTE_DESCRIPTION = "Read-only audit of remote versus local canonical dataset files"
 
 
 def add_grid5000_controller_arguments(parser: argparse.ArgumentParser) -> None:
@@ -132,6 +133,29 @@ def add_enforce_integrity_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)
 
 
+def add_audit_remote_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the audit-remote options (shared by the subcommand and its executable)."""
+    parser.add_argument(
+        "--data-root", type=Path, default=None, help="Local dataset root; defaults to env var"
+    )
+    parser.add_argument(
+        "--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face dataset repository"
+    )
+    parser.add_argument("--hf-token", default=None, help="Hugging Face token")
+
+
+def add_trackio_snapshot_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the Trackio publish options (shared by the subcommand and both executables)."""
+    parser.add_argument(
+        "--data-root", type=Path, default=None, help="Local data root for artifact storage"
+    )
+    parser.add_argument(
+        "--space-id",
+        default=None,
+        help="Hugging Face Space receiving the run (default: the version's public Space)",
+    )
+
+
 def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
     """Register the operator tools that also ship as standalone executables."""
     integrity = sub.add_parser(
@@ -140,15 +164,8 @@ def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
     )
     add_enforce_integrity_arguments(integrity)
 
-    audit = sub.add_parser(
-        "audit-remote",
-        help="Read-only audit of remote versus local canonical dataset files",
-    )
-    audit.add_argument(
-        "--data-root", type=Path, default=None, help="Local dataset root; defaults to env var"
-    )
-    audit.add_argument("--repo-id", default=DEFAULT_REPO_ID, help="Hugging Face dataset repository")
-    audit.add_argument("--hf-token", default=None, help="Hugging Face token")
+    audit = sub.add_parser("audit-remote", help=AUDIT_REMOTE_DESCRIPTION)
+    add_audit_remote_arguments(audit)
 
     trackio = sub.add_parser(
         "trackio-snapshot",
@@ -160,20 +177,13 @@ def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
         default="v1",
         help="Which dataset snapshot to publish (default: v1)",
     )
-    trackio.add_argument(
-        "--data-root", type=Path, default=None, help="Local data root for artifact storage"
-    )
-    trackio.add_argument(
-        "--space-id",
-        default=None,
-        help="Hugging Face Space receiving the run (default: the version's public Space)",
-    )
+    add_trackio_snapshot_arguments(trackio)
 
     add_grid5000_parser(sub)
 
     containment = sub.add_parser(
         "audit-containment",
-        help="Read-only JSON audit of whole-file containment retirements (exit 2 if blocked)",
+        help="Read-only JSON audit of whole-file containment retirements (exit 1 if blocked)",
         description=AUDIT_CONTAINMENT_DESCRIPTION,
     )
     add_audit_containment_arguments(containment)
@@ -194,7 +204,7 @@ def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Hugging Face write token. Defaults to the HF_TOKEN env var "
-            "or the saved `huggingface-cli login` token."
+            "or the saved `hf auth login` token."
         ),
     )
     parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)

@@ -54,7 +54,7 @@ just docker-test
 just docker-check
 ```
 
-The development image does not declare an ambient `OSM_POLYGON_DATA_ROOT`. The test suite resolves its own temporary roots. Only the runtime image declares that contract, with the `/data` volume behind it. The image also runs `pytest -m "not repository"`. This is because `presentations/` is intentionally not in the build context. The `quality` CI job runs those repository-completeness contracts against a full checkout.
+The development image does not declare an ambient `OSM_POLYGON_DATA_ROOT`. The test suite resolves its own temporary roots. Only the runtime image declares that contract, with the `/data` volume behind it. Its default command runs `pytest -m "not repository"`. This is because `presentations/` is intentionally not in the build context. The CI container job runs only a smoke selection of that command. The `quality` CI job runs the full `tests/` suite, including those repository-completeness contracts, against a full checkout.
 
 ### Docker Compose runtime
 
@@ -131,8 +131,6 @@ just ruff
 just ty
 just tests
 just coverage-floor
-just property-tests
-just acceptance-tests
 just architecture-checks
 just crap-report
 just mutation
@@ -142,9 +140,9 @@ just diff-review
 
 `just coverage-floor` reads the root `coverage.json` that `just tests` writes. It fails when a measured file has a line coverage below 85%. A healthy aggregate thus cannot hide a module with almost no coverage.
 
-`just property-tests` runs the deterministic Hypothesis properties. They test lossless sentence routing and invariance at the batch boundary. `just acceptance-tests` runs the pytest-bdd resumability scenario and the local pipeline integration tests. These checks use the real local Parquet, JSON, and manifest formats. They stub the external clients. They do not need a live network or GPU services. The tests compare a resumed fixture run with a clean replay. A retry thus cannot change rows, offsets, or routing silently.
+`just property-tests` and `just acceptance-tests` are local-only focused runs. The gauntlet does not repeat them, because their files are part of the full `just tests` run. `just property-tests` runs the deterministic Hypothesis properties. They test lossless sentence routing and invariance at the batch boundary. `just acceptance-tests` runs the pytest-bdd resumability scenario and the local pipeline integration tests. These checks use the real local Parquet, JSON, and manifest formats. They stub the external clients. They do not need a live network or GPU services. The tests compare a resumed fixture run with a clean replay. A retry thus cannot change rows, offsets, or routing silently.
 
-`just architecture-checks` runs the local import-graph rules for cycles, domain purity, and the direction from the pipeline to the CLI. It also runs the package checks, documentation checks, and CLI contract checks. The smoke stage checks both public CLI help paths. It does not read a data root. It does not make a network request. The Docker runtime has its own recipe `docker-help` and its own CI container contract. `diff-review` runs `git diff --check` and a short branch status check.
+`just architecture-checks` runs the local import-graph rules for cycles, domain purity, and the direction from the pipeline to the CLI. It also builds the package and the strict documentation site, runs the package smoke install, and runs the preprocessing checks. Its pytest contract files (`tests/contracts`, and the MkDocs, documentation and Docker tests) run in `just tests`. `just architecture-tests` runs them alone. The smoke stage checks both public CLI help paths. It does not read a data root. It does not make a network request. The Docker runtime has its own recipe `docker-help` and its own CI container contract. `diff-review` runs `git diff --check` and a short branch status check.
 
 `just mutation` deletes the generated `mutants/` tree before each run. `pyproject.toml` configures the mutation scope. The scope uses `mutate_only_covered_lines`. The mutant population thus depends on the own coverage attribution of mutmut. When the incremental mutmut state was reused after a source edit, the run generated 2801 mutants. A clean tree produced 3038 mutants. The gate is weaker in the first case, but it does not fail. A new generation from scratch keeps the reported mutant count reproducible. The cost is a full run each time. The gate refuses each result that is not killed. It has no configured equivalence exemptions.
 
@@ -264,7 +262,7 @@ uv run osm-polygon-wikidata-only-audit-remote \
   --data-root "$OSM_POLYGON_DATA_ROOT"
 ```
 
-Typer parses this command. Rich renders the report. tqdm shows the progress only when stderr is interactive. The command is separate from the stable argparse processing CLI. It does not change the dataset output.
+argparse parses this command. Its options are declared once in `add_audit_remote_arguments` in `cli/parser.py`, and both entry points share them. The two entry points do not print the same `--help` text. The standalone command `osm-polygon-wikidata-only-audit-remote` uses that program name and prints `AUDIT_REMOTE_DESCRIPTION` as its description. The subcommand `osm-polygon-wikidata-only audit-remote` uses its own program name and has no description. The golden file `tests/fixtures/golden/cli_help_audit-remote.txt` freezes only the subcommand help, rendered through `build_parser()`. No golden file freezes the standalone help. Rich renders the report. tqdm shows the progress only when stderr is interactive. The command is separate from the stable argparse processing CLI. It does not change the dataset output.
 
 ## Release checklist
 

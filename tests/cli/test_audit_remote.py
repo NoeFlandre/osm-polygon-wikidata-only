@@ -1,4 +1,4 @@
-"""Contracts for the read-only Typer/Rich/tqdm operator audit."""
+"""Contracts for the read-only argparse/Rich/tqdm operator audit."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from typer.testing import CliRunner
 
 
 def _module() -> Any:
@@ -17,21 +16,60 @@ def _module() -> Any:
     return audit_remote
 
 
-def test_audit_help_is_public_and_focused() -> None:
+def test_audit_help_is_public_and_focused(capsys: pytest.CaptureFixture[str]) -> None:
     module = _module()
-    result = CliRunner().invoke(module.app, ["--help"])
-    plain_stdout = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    with pytest.raises(SystemExit) as exit_info:
+        module.main(["--help"])
+    plain_stdout = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", capsys.readouterr().out)
 
-    assert result.exit_code == 0
-    assert "Audit remote versus local canonical dataset files" in plain_stdout
+    assert exit_info.value.code == 0
+    assert "Read-only audit of remote versus local canonical dataset files" in plain_stdout
     assert "--data-root" in plain_stdout
     assert "--repo-id" in plain_stdout
     assert "--hf-token" in plain_stdout
     assert "sync-dir" not in plain_stdout
 
 
+def test_standalone_help_uses_the_shared_option_text(capsys: pytest.CaptureFixture[str]) -> None:
+    module = _module()
+    with pytest.raises(SystemExit):
+        module.main(["--help"])
+    stdout = capsys.readouterr().out
+
+    assert "Local dataset root; defaults to env var" in stdout
+    assert "Hugging Face dataset repository" in stdout
+    assert "Hugging Face token" in stdout
+
+
+def test_standalone_usage_error_exits_with_status_two(capsys: pytest.CaptureFixture[str]) -> None:
+    module = _module()
+    with pytest.raises(SystemExit) as exit_info:
+        module.main(["--no-such-option"])
+
+    assert exit_info.value.code == 2
+    assert "usage: osm-polygon-wikidata-only-audit-remote" in capsys.readouterr().err
+
+
+def test_unresolvable_data_root_is_reported_with_status_one(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _module()
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise module.DataRootError("bad root")
+
+    monkeypatch.setattr(module, "resolve_data_root", fail)
+
+    assert module.main(["--data-root", str(tmp_path)]) == 1
+    assert capsys.readouterr().err == (
+        "osm-polygon-wikidata-only audit-remote: error: cannot resolve data root: bad root\n"
+        f"{module.STANDALONE_PROG}: warning: deprecated; use "
+        "'osm-polygon-wikidata-only audit-remote' instead.\n"
+    )
+
+
 def test_audit_uses_sorted_progress_and_renders_reconciliation(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = _module()
     processed = tmp_path / "processed" / "polygons"
@@ -84,24 +122,23 @@ def test_audit_uses_sorted_progress_and_renders_reconciliation(
         ),
     )
 
-    result = CliRunner().invoke(module.app, ["--data-root", str(tmp_path)])
-
-    assert result.exit_code == 0, result.output
+    assert module.main(["--data-root", str(tmp_path)]) == 0
+    stdout = capsys.readouterr().out
     assert observed == [
         "progress:Checking local augmentation:region",
         "andorra-latest",
         "zambia-latest",
     ]
-    assert "Local finalized regions" in result.stdout
-    assert "2" in result.stdout
-    assert "andorra-latest.parquet" in result.stdout
-    assert "zambia-latest.parquet" in result.stdout
-    assert "unexpected/file.parquet" in result.stdout
-    assert "README.md" in result.stdout
+    assert "Local finalized regions" in stdout
+    assert "2" in stdout
+    assert "andorra-latest.parquet" in stdout
+    assert "zambia-latest.parquet" in stdout
+    assert "unexpected/file.parquet" in stdout
+    assert "README.md" in stdout
 
 
 def test_audit_reports_inventory_failure_without_traceback(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = _module()
     from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
@@ -113,12 +150,16 @@ def test_audit_reports_inventory_failure_without_traceback(
         raise UploadError("inventory unavailable")
 
     monkeypatch.setattr(module.RemoteInventory, "fetch", fail)
-    result = CliRunner().invoke(module.app, ["--data-root", str(tmp_path)])
 
-    assert result.exit_code == 1
-    assert "Failed to fetch remote inventory" in result.stdout
-    assert "inventory unavailable" in result.stdout
-    assert "Traceback" not in result.stdout
+    assert module.main(["--data-root", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "osm-polygon-wikidata-only audit-remote: error: "
+        "failed to fetch remote inventory: inventory unavailable\n"
+        f"{module.STANDALONE_PROG}: warning: deprecated; use "
+        "'osm-polygon-wikidata-only audit-remote' instead.\n"
+    )
+    assert "Traceback" not in captured.out + captured.err
 
 
 def test_audit_does_not_suppress_unexpected_data_root_errors(
@@ -134,7 +175,7 @@ def test_audit_does_not_suppress_unexpected_data_root_errors(
     monkeypatch.setattr(module, "resolve_data_root", fail)
 
     with pytest.raises(TypeError, match="data-root programming bug"):
-        module._resolve_root(module.Console(), tmp_path)
+        module._resolve_root(tmp_path)
 
 
 def test_audit_does_not_suppress_unexpected_inventory_errors(monkeypatch: Any) -> None:
@@ -165,4 +206,4 @@ def test_audit_does_not_suppress_unexpected_reconciliation_errors(
     monkeypatch.setattr(module, "ReconciliationPlanner", BrokenPlanner)
 
     with pytest.raises(KeyError, match="reconciliation programming bug"):
-        module._build_plan(module.Console(), object(), object(), [], {})
+        module._build_plan(object(), object(), [], {})
