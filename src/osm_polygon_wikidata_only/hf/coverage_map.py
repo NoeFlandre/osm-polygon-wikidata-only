@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import shutil
 from collections.abc import Callable, Collection, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,17 @@ _LAND_EDGE = "#b8aa90"
 _POINT_COLOR = "#e8743b"
 _POINT_EDGE = "#c0392b"
 _POINT_SIZE = 1.5
+
+
+@dataclass(frozen=True, slots=True)
+class PointStyle:
+    """Marker size, fill colour and edge colour for the coverage scatter."""
+
+    size: float = _POINT_SIZE
+    color: str = _POINT_COLOR
+    edge: str = _POINT_EDGE
+
+
 _POINT_ALPHA = 0.5
 _CENTROID_BATCH_SIZE = 65_536
 
@@ -277,9 +289,7 @@ def generate_coverage_map(
     title: str = "Dataset Coverage",
     figsize: tuple[float, float] = (16, 8),
     dpi: int = 100,
-    point_size: float = _POINT_SIZE,
-    point_color: str = _POINT_COLOR,
-    point_edge: str = _POINT_EDGE,
+    point_style: PointStyle = PointStyle(),
 ) -> Path:
     """Render the coverage map PNG with one scatter point per polygon.
 
@@ -292,7 +302,7 @@ def generate_coverage_map(
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     fig.set_facecolor("white")
     _configure_coverage_axes(ax, land_geojson_path)
-    _draw_coverage_points(ax, lons, lats, point_size, point_color, point_edge)
+    _draw_coverage_points(ax, lons, lats, point_style.size, point_style.color, point_style.edge)
     _decorate_coverage_axes(ax, title, len(lons))
     _save_coverage_map(fig, output_path)
 
@@ -362,6 +372,7 @@ def _draw_landmasses(ax: Any, geojson_path: Path) -> None:
 
 __all__ = [
     "WORLD_LAND_FILENAME",
+    "PointStyle",
     "ensure_world_land",
     "generate_coverage_map",
     "load_centroids_from_parquet",
