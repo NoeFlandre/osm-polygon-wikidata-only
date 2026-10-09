@@ -1,7 +1,8 @@
 """Retry-with-backoff helpers used by the enrichment clients.
 
-Kept tiny and dependency-free so tests can use it without mocking
-heavy networking stacks. The actual HTTP layer is in the
+Kept tiny so tests can use it without mocking heavy networking stacks;
+its only third-party import is httpx, the HTTP client the Hub and
+Wikimedia layers already depend on. The actual HTTP layer is in the
 :mod:`enrichment` package.
 """
 
@@ -11,12 +12,15 @@ import errno
 import logging
 import random
 import socket
+import ssl
 import threading
 import urllib.error
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import count
 from typing import TypeVar, cast
+
+import httpx
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +62,22 @@ def _wait_for_retry(delay: float) -> None:
         raise _RetryCancelled
 
 
-_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+def wait_for_retry_or_cancel(delay: float) -> bool:
+    """Sleep up to *delay* seconds; return ``True`` if retries were cancelled.
+
+    Unlike the internal wait used by :func:`with_retries`, this never raises,
+    so callers that run on worker threads can surface their own last failure.
+    """
+    return _RETRY_CANCELLATION.wait(delay)
+
+
+# 520-524 are Cloudflare origin failures (unknown origin error, web server down,
+# origin connection timeout, origin unreachable, origin response timeout) returned
+# by a fronting gateway when its origin stalls or is down. They are retried like
+# the 504 gateway timeout beside them.
+_TRANSIENT_HTTP_STATUS_CODES = frozenset(
+    {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+)
 _TRANSIENT_ERRNOS = frozenset(
     {
         errno.ECONNABORTED,
@@ -73,6 +92,29 @@ _TRANSIENT_ERRNOS = frozenset(
 )
 
 
+_MAX_CAUSE_DEPTH = 8
+
+
+def is_transient_failure(error: BaseException, *, status_code: int | None = None) -> bool:
+    """Return whether a failed remote call is worth retrying.
+
+    An HTTP status, when the call produced a response, decides on its own.
+    Otherwise the exception and its cause chain are checked for a network outage.
+    """
+    if status_code is not None:
+        return status_code in _TRANSIENT_HTTP_STATUS_CODES
+    return any(is_transient_network_error(cause) for cause in _cause_chain(error))
+
+
+def _cause_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and len(chain) < _MAX_CAUSE_DEPTH:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def is_transient_network_error(error: BaseException) -> bool:
     """Return whether *error* represents a retryable network outage.
 
@@ -80,6 +122,8 @@ def is_transient_network_error(error: BaseException) -> bool:
     authentication failures, certificate errors, and permanent HTTP
     statuses are not transient and must still reach the caller.
     """
+    if _has_certificate_error(error):
+        return False
     if isinstance(error, urllib.error.HTTPError):
         return _is_transient_http_error(error)
     if isinstance(error, urllib.error.ContentTooShortError):
@@ -87,6 +131,15 @@ def is_transient_network_error(error: BaseException) -> bool:
     if isinstance(error, urllib.error.URLError):
         return _is_transient_url_error(error)
     return _is_transient_exception(error)
+
+
+def _has_certificate_error(error: BaseException) -> bool:
+    """Return whether a TLS certificate verification failure is in the cause chain.
+
+    HTTPX reports a bad or expired certificate as a connect error, so the
+    network-error classes would otherwise retry a permanent configuration failure.
+    """
+    return any(isinstance(cause, ssl.SSLCertVerificationError) for cause in _cause_chain(error))
 
 
 def _is_transient_http_error(error: urllib.error.HTTPError) -> bool:
@@ -99,7 +152,23 @@ def _is_transient_url_error(error: urllib.error.URLError) -> bool:
 
 
 def _is_transient_exception(error: BaseException) -> bool:
-    if isinstance(error, (socket.gaierror, TimeoutError, ConnectionError)):
+    # httpx transport failures (timeouts, refused or dropped connections, proxy
+    # errors) do not subclass the built-in timeout or connection errors, so they
+    # are listed explicitly. httpx.RemoteProtocolError is raised when the server
+    # drops a connection before replying. Client-side protocol errors are not
+    # transient: the same request would fail the same way again.
+    if isinstance(
+        error,
+        (
+            socket.gaierror,
+            TimeoutError,
+            ConnectionError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.ProxyError,
+            httpx.RemoteProtocolError,
+        ),
+    ):
         return True
     return isinstance(error, OSError) and error.errno in _TRANSIENT_ERRNOS
 

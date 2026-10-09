@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import ssl
 import threading
 import urllib.error
 
+import httpx
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
@@ -53,15 +55,51 @@ def test_transient_network_error_classifies_retryable_failures(error: BaseExcept
     assert is_transient_network_error(error)
 
 
+@pytest.mark.parametrize("status", [520, 521, 522, 523, 524])
+def test_cloudflare_origin_failures_are_retryable(status: int) -> None:
+    assert is_transient_network_error(http_error(status, msg="origin failure"))
+
+
+def test_httpx_remote_protocol_error_is_retryable() -> None:
+    error = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    assert is_transient_network_error(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectTimeout("connect timed out"),
+        httpx.ReadTimeout("read timed out"),
+        httpx.WriteTimeout("write timed out"),
+        httpx.PoolTimeout("pool timed out"),
+        httpx.ConnectError("connection refused"),
+        httpx.ReadError("connection reset"),
+        httpx.WriteError("broken pipe"),
+        httpx.ProxyError("proxy unavailable"),
+    ],
+)
+def test_httpx_transport_failures_are_retryable(error: httpx.HTTPError) -> None:
+    assert is_transient_network_error(error)
+
+
 @pytest.mark.parametrize(
     "error",
     [
         http_error(404, msg="missing"),
         ValueError("malformed payload"),
         RuntimeError("programming error"),
+        httpx.LocalProtocolError("client sent an invalid request"),
     ],
 )
 def test_transient_network_error_rejects_permanent_failures(error: BaseException) -> None:
+    assert not is_transient_network_error(error)
+
+
+def test_certificate_failure_behind_httpx_connect_error_is_not_retryable() -> None:
+    error = httpx.ConnectError("TLS handshake failed")
+    error.__cause__ = ssl.SSLCertVerificationError(1, "certificate verify failed: expired")
+
     assert not is_transient_network_error(error)
 
 
@@ -180,6 +218,16 @@ def test_retry_backoff_can_be_cancelled_cooperatively() -> None:
     assert not thread.is_alive(), "retry sleep ignored cooperative cancellation"
     assert len(failures) == 1
     assert type(failures[0]).__name__ == "_RetryCancelled"
+
+
+def test_wait_for_retry_or_cancel_reports_cancellation() -> None:
+    retry_mod.reset_retry_cancellation()
+    try:
+        assert retry_mod.wait_for_retry_or_cancel(0) is False
+        retry_mod.cancel_pending_retries()
+        assert retry_mod.wait_for_retry_or_cancel(60) is True
+    finally:
+        retry_mod.reset_retry_cancellation()
 
 
 def test_cancelled_retries_do_not_start_another_attempt() -> None:

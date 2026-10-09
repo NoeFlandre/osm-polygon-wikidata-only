@@ -29,6 +29,10 @@ from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncRegionPosition
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
 from osm_polygon_wikidata_only.pipeline.sync_runner import UploadHooks
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import RepairClients
+from osm_polygon_wikidata_only.utils.retry import (
+    cancel_pending_retries,
+    reset_retry_cancellation,
+)
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.cli")
 
@@ -124,14 +128,16 @@ class SyncApplication:
     def _run_with_cleanup(self) -> tuple[int, bool, list[str]]:
         rc = 0
         metadata_repaired = False
+        finished = False
         try:
             rc, metadata_repaired = self._execute_plan()
+            finished = True
         except Exception as error:
             if self.context.upload_queue is not None:
                 self.services.logger.error("Unified sync aborted: %s", error)
             raise
         finally:
-            failures = self._close_uploads()
+            failures = self._close_uploads(aborted=not finished)
             if failures:
                 rc = 1
         return rc, metadata_repaired, failures
@@ -566,10 +572,17 @@ class SyncApplication:
             return True
         return stem in self._recovery_map_refresh_stems
 
-    def _close_uploads(self) -> list[str]:
+    def _close_uploads(self, *, aborted: bool) -> list[str]:
         if self.context.upload_queue is None:
             return []
-        return self.context.upload_queue.close_and_wait()
+        if not aborted:
+            return self.context.upload_queue.close_and_wait()
+        # An aborted run must not sit out a Retry-After backoff while draining.
+        cancel_pending_retries()
+        try:
+            return self.context.upload_queue.close_and_wait()
+        finally:
+            reset_retry_cancellation()
 
 
 __all__ = [

@@ -26,6 +26,8 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from osm_polygon_wikidata_only.utils.retry import is_transient_failure
+
 from .errors import UploadError
 from .http_transport import configure_hf_http_transport
 from .plan import PublicationOp
@@ -108,7 +110,7 @@ def _ensure_repo_exists(hub: HfHub, repo_id: str, *, repo_type: str = "dataset")
         raise _translate_hf_error(error, repo_id=repo_id) from error
 
 
-def _sanitize_server_message(message: str) -> str:
+def sanitize_server_message(message: str) -> str:
     """Strip secrets, file-system paths and request-payload fragments.
 
     The Hugging Face API occasionally echoes back portions of the
@@ -127,7 +129,13 @@ def _sanitize_server_message(message: str) -> str:
         ),
         # ``Bearer <value>`` and ``Authorization: <value>``
         re.compile(r"Bearer\s+[\w\-.]+", re.IGNORECASE),
-        re.compile(r"Authorization:\s*[^\s,;]+", re.IGNORECASE),
+        # Redact to the end of the line: schemes such as Digest and AWS carry comma- or
+        # space-separated credential fields that a single-token match would leak.
+        re.compile(r"Authorization:[^\r\n]*", re.IGNORECASE),
+        # Bare Hugging Face access tokens, which carry no keyword to match on.
+        re.compile(r"hf_[A-Za-z0-9]{8,}"),
+        # ``user:password@`` userinfo in a URL, keeping the scheme and host.
+        re.compile(r"(?<=://)[^\s/@]+@"),
         # ``request_id=<value>``
         re.compile(r"request_id\s*[:=]\s*[\S\"']+", re.IGNORECASE),
         # Full user-home paths on macOS / Linux (matches ``/Users/<name>``
@@ -157,10 +165,13 @@ def _translate_hf_error(error: Exception, *, repo_id: str) -> UploadError:
     before being shown to the operator.
     """
     status_code, server_message = _error_details(error)
-    message = _sanitize_server_message(server_message)
+    message = sanitize_server_message(server_message)
     if _is_auth_error(status_code, message):
         return _auth_upload_error(repo_id, message)
-    return UploadError(f"Hugging Face upload to {repo_id} failed: {message}")
+    return UploadError(
+        f"Hugging Face upload to {repo_id} failed: {message}",
+        transient=is_transient_failure(error, status_code=status_code),
+    )
 
 
 def _error_details(error: Exception) -> tuple[int | None, str]:

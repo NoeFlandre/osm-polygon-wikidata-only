@@ -89,6 +89,11 @@
     "reason": "For None the original and mutated conditions both return False; for every non-None value both evaluate bool(value).",
     "source_sha256": "95a8c7a13682908c8c7882d49dac03bb808e404199bf0b6e094129fe35f77eff"
   },
+  "osm_polygon_wikidata_only.hf._upload_retry.x__run_upload_attempts__mutmut_8": {
+    "mutant_sha256": "21ad90191fe137d5888fca0bfa686b253ca6c74c6815f2b7032f1f5e4dcdc50b",
+    "reason": "_run_upload_attempts is textually unchanged by the retry rewrite; only its helpers changed. attempts is validated to be at least 1 before the loop. Each iteration either returns on success or reaches the except branch. On attempt == attempts, _should_retry is False because it requires attempt < attempts, so the bare raise re-raises the final failure and _wait_before_retry (with its cancellation branch) is never reached. The only fall-through past an iteration is after _wait_before_retry returns False on attempt < attempts, which leads to attempt + 1 <= attempts. So no iteration can complete normally on attempt == attempts, and iteration attempts + 1 is unreachable. range(1, attempts + 2) therefore runs the same attempts as range(1, attempts + 1).",
+    "source_sha256": "27fdc4e6c60bd1dcf734f0fde3d3822c4a987789c70a0c39c2842ded5ad68711"
+  },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__stage_rejection_ledger__mutmut_10": {
     "mutant_sha256": "2e67cfb148ad09a69153108682bc6fbf11f23d7da1db9de4f678ae42ea2a45ea",
     "reason": "Exact code changes only the guard: existing_records = load_ledger(path) if path.is_file() or True else [] instead of ... if path.is_file() else []. load_ledger returns [] without side effects when path is not a file (augmentation/rejection_ledger.py, unchanged by this PR), so the unconditional call gives the same existing_records as the empty fallback before merge_records.",
