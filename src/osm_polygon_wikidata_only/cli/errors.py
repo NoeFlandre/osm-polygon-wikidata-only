@@ -59,7 +59,8 @@ def run_legacy_typer(app: Typer, legacy: str, replacement: str) -> None:
 
 def _with_notice(command: CommandInfo, legacy: str, replacement: str) -> CommandInfo:
     body = command.callback
-    assert body is not None, "Typer commands registered with @app.command() have a callback"
+    if body is None:
+        raise RuntimeError("Typer commands registered with @app.command() have a callback")
 
     @functools.wraps(body)
     def run_body(*args: Any, **kwargs: Any) -> Any:
