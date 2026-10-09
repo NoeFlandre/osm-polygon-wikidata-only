@@ -233,9 +233,11 @@ def _plan_prepared_sync(
     )
     states = plan_sync_states_with_recovery(
         pbfs,
-        input_stems=input_stems,
-        core_stems=core_stems,
-        current_augmentation=current_augmentation,
+        inventory=StemInventory(
+            input_stems=input_stems,
+            core_stems=core_stems,
+            current_augmentation=current_augmentation,
+        ),
         force=settings.force or not settings.skip_existing,
         pending_stems=all_pending_stems,
         recovery_stems=set(),
@@ -345,12 +347,19 @@ def _prepare_containment_rules(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class StemInventory:
+    """Stem sets read from the processed, core and augmentation stores."""
+
+    input_stems: set[str]
+    core_stems: set[str]
+    current_augmentation: set[str]
+
+
 def plan_sync_states_with_recovery(
     pbfs: list[Path],
     *,
-    input_stems: set[str],
-    core_stems: set[str],
-    current_augmentation: set[str],
+    inventory: StemInventory,
     force: bool,
     pending_stems: set[str],
     recovery_stems: set[str],
@@ -361,20 +370,20 @@ def plan_sync_states_with_recovery(
     recovery = set(recovery_stems)
     recovery.update(
         _recovery_audit_stems(
-            input_stems=input_stems,
-            core_stems=core_stems,
-            current_augmentation=current_augmentation,
+            input_stems=inventory.input_stems,
+            core_stems=inventory.core_stems,
+            current_augmentation=inventory.current_augmentation,
             force=force,
         )
     )
-    link_plan = plan_link_migration(processed_path, stems=input_stems)
+    link_plan = plan_link_migration(processed_path, stems=inventory.input_stems)
     recovery.update(
         stem.stem for stem in link_plan.stems if stem.classification.value != "canonical"
     )
     return plan_sync_states(
         pbfs,
-        core_stems=core_stems,
-        augmentation_stems=current_augmentation,
+        core_stems=inventory.core_stems,
+        augmentation_stems=inventory.current_augmentation,
         force=force,
         pending_stems=pending_stems,
         recovery_stems=recovery,

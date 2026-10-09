@@ -116,9 +116,9 @@ def test_plan_sync_states_with_recovery_adds_noncanonical_link_migrations_to_rec
 
     states = plan_sync_states_with_recovery(
         [Path("region.osm.pbf")],
-        input_stems={"region"},
-        core_stems={"region"},
-        current_augmentation={"region"},
+        inventory=sync_planning.StemInventory(
+            input_stems={"region"}, core_stems={"region"}, current_augmentation={"region"}
+        ),
         force=False,
         pending_stems=set(),
         recovery_stems=set(),
@@ -535,9 +535,9 @@ def test_plan_prepared_sync_forwards_all_inputs_and_records_repair_state(
     actual_pbfs, state_kwargs = observed["states"]
     assert actual_pbfs is pbfs
     assert state_kwargs == {
-        "input_stems": {"alpha"},
-        "core_stems": {"alpha", "beta"},
-        "current_augmentation": {"alpha"},
+        "inventory": sync_planning.StemInventory(
+            input_stems={"alpha"}, core_stems={"alpha", "beta"}, current_augmentation={"alpha"}
+        ),
         "force": True,
         "pending_stems": {"queued", "alpha"},
         "recovery_stems": set(),
@@ -677,9 +677,9 @@ def test_prepare_sync_plan_wires_local_remote_and_derived_plan_inputs(
     assert calls["helpers"] is True
     assert calls["states"][0] == [pbfs[0]]
     assert calls["states"][1] == {
-        "input_stems": input_stems,
-        "core_stems": {"alpha"},
-        "current_augmentation": {"alpha"},
+        "inventory": sync_planning.StemInventory(
+            input_stems=input_stems, core_stems={"alpha"}, current_augmentation={"alpha"}
+        ),
         "force": True,
         "pending_stems": {"queued", "alpha"},
         "recovery_stems": set(),
@@ -854,9 +854,9 @@ def test_plan_sync_states_with_recovery_forwards_forced_and_migratable_stems(
     monkeypatch.setattr(sync_planning, "plan_sync_states", plan)
     result = sync_planning.plan_sync_states_with_recovery(
         pbfs,
-        input_stems={"alpha", "beta"},
-        core_stems={"alpha"},
-        current_augmentation={"alpha"},
+        inventory=sync_planning.StemInventory(
+            input_stems={"alpha", "beta"}, core_stems={"alpha"}, current_augmentation={"alpha"}
+        ),
         force=True,
         pending_stems={"pending"},
         recovery_stems={"forced"},
