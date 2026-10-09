@@ -20,3 +20,15 @@ def report_cli_error(prog: str, err: BaseException) -> int:
     """Print ``<prog>: error: <err>`` on stderr and return :data:`EXIT_FAILURE`."""
     print(f"{prog}: error: {err}", file=sys.stderr)
     return EXIT_FAILURE
+
+
+def report_deprecated(legacy: str, replacement: str) -> None:
+    """Print a deprecation notice for *legacy* on stderr only.
+
+    stdout and the exit status are left untouched, so JSON consumers that read
+    stdout are unaffected. When stderr is closed (``sys.stderr`` is ``None``)
+    the notice is skipped: ``print`` would otherwise fall back to stdout.
+    """
+    if sys.stderr is None:
+        return
+    print(f"{legacy}: warning: deprecated; use '{replacement}' instead.", file=sys.stderr)

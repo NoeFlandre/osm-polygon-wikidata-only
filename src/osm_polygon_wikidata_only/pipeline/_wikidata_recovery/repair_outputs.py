@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -103,10 +104,24 @@ def _stage_repair_tables(
         documents=outputs.merged_documents,
         sections=outputs.merged_sections,
         facts=outputs.merged_facts,
-        affected_qids=outputs.affected_qids,
-        affected_polygon_count=len(outputs.affected_polygon_ids),
+        affected=AffectedScope(
+            qids=outputs.affected_qids,
+            polygon_count=len(outputs.affected_polygon_ids),
+        ),
     )
     return staged
+
+
+@dataclass(frozen=True)
+class RepairPersistence:
+    """Transaction, verification and receipt collaborators for one repair commit."""
+
+    transaction_root: Path
+    wikidata_client: WikidataClient
+    settings: Settings
+    before_commit: Callable[[], None] | None
+    audit_fn: Callable[..., Any] = audit_wikidata_integrity
+    record_receipt_fn: Callable[..., Any] = record_region_recovery_receipt
 
 
 def persist_repair_outputs(
@@ -115,17 +130,11 @@ def persist_repair_outputs(
     inputs: _RepairInputs,
     outputs: _RepairOutputs,
     checkpoint_store: RecoveryCheckpointStore,
-    *,
-    transaction_root: Path,
-    wikidata_client: WikidataClient,
-    settings: Settings,
-    before_commit: Callable[[], None] | None,
-    audit_fn: Callable[..., Any] = audit_wikidata_integrity,
-    record_receipt_fn: Callable[..., Any] = record_region_recovery_receipt,
+    persistence: RepairPersistence,
 ) -> RecoveryRepairResult:
     """Persist changed repair outputs transactionally and verify convergence."""
     if not outputs.changed:
-        record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
+        persistence.record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
         checkpoint_store.clear()
         return RecoveryRepairResult(
             region.stem,
@@ -135,7 +144,7 @@ def persist_repair_outputs(
             (),
             False,
         )
-    directory = transaction_directory(transaction_root, region.stem)
+    directory = transaction_directory(persistence.transaction_root, region.stem)
     directory.mkdir(parents=True, exist_ok=False)
     staged = _stage_repair_tables(
         region.stem,
@@ -145,12 +154,18 @@ def persist_repair_outputs(
         directory=directory,
     )
     replacements = [(inputs.paths[key], staged[key]) for key in staged]
-    commit_replacements(directory, region.stem, replacements, before_commit=before_commit)
-    record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
-    post_audit = audit_fn(
+    commit_replacements(
+        directory,
+        region.stem,
+        replacements,
+        before_commit=persistence.before_commit,
+    )
+    persistence.record_receipt_fn(data_root, region.stem, outputs.terminal_classifications)
+    settings = persistence.settings
+    post_audit = persistence.audit_fn(
         data_root,
         [region.stem],
-        wikidata_client,
+        persistence.wikidata_client,
         batch_size=settings.enrichment_batch_size,
         languages=settings.languages,
         max_articles_per_qid=settings.max_articles_per_qid,
@@ -169,6 +184,14 @@ def persist_repair_outputs(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class AffectedScope:
+    """Changed QIDs and polygon count recorded in the processed manifest."""
+
+    qids: tuple[str, ...]
+    polygon_count: int
+
+
 def _stage_manifests(
     stem: str,
     *,
@@ -178,8 +201,7 @@ def _stage_manifests(
     documents: list[dict[str, Any]],
     sections: list[dict[str, Any]],
     facts: list[dict[str, Any]],
-    affected_qids: tuple[str, ...],
-    affected_polygon_count: int,
+    affected: AffectedScope,
 ) -> None:
     """Stage both manifests from the same repaired artifact snapshot."""
     _stage_processed_manifest(
@@ -188,8 +210,8 @@ def _stage_manifests(
         staged=staged["processed_manifest"],
         polygons=polygons,
         documents=documents,
-        affected_qids=affected_qids,
-        affected_polygon_count=affected_polygon_count,
+        affected_qids=affected.qids,
+        affected_polygon_count=affected.polygon_count,
     )
     _stage_augmentation_manifest(
         stem,

@@ -46,7 +46,7 @@ def _verified_owner(explicit: str | None, verify: Any) -> str:
         raise
     if username is None:
         raise UploadError(
-            "No Hugging Face token available. Set HF_TOKEN, run `huggingface-cli login`, "
+            "No Hugging Face token available. Set HF_TOKEN, run `hf auth login`, "
             "or pass --hf-token."
         )
     return str(username)

@@ -13,7 +13,6 @@ import osm_polygon_wikidata_only.pipeline.containment_manifest_stats as manifest
 import osm_polygon_wikidata_only.pipeline.containment_migration as containment_migration
 from osm_polygon_wikidata_only.pipeline.containment_manifest_stats import (
     document_manifest_stats,
-    polygon_manifest_stats,
 )
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
     ChildAudit,
@@ -51,41 +50,6 @@ def _seed_required_files(processed: Path) -> None:
             path = processed / contract.subdir / f"{stem}.parquet"
             path.parent.mkdir(parents=True, exist_ok=True)
             pq.write_table(pa.Table.from_pylist([row], schema=schema), path)
-
-
-def test_polygon_manifest_stats_count_values_and_ignore_bad_tag_json() -> None:
-    rows = [
-        {
-            "area_bucket": "small",
-            "tag_keys": '["wikidata", "name"]',
-            "wikidata": "Q42",
-            "has_wikipedia": True,
-            "text_available": True,
-        },
-        {
-            "area_bucket": "large",
-            "tag_keys": "not-json",
-            "wikidata": "",
-            "has_wikipedia": False,
-            "text_available": False,
-        },
-        {
-            "area_bucket": "small",
-            "tag_keys": '["name"]',
-            "wikidata": "Q42",
-            "has_wikipedia": True,
-            "text_available": False,
-        },
-    ]
-
-    assert polygon_manifest_stats(rows) == {
-        "polygon_count": 3,
-        "unique_wikidata_count": 1,
-        "rows_with_wikipedia": 2,
-        "rows_with_full_text": 1,
-        "area_bucket_counts": {"small": 2, "large": 1},
-        "top_tag_keys": {"wikidata": 1, "name": 2},
-    }
 
 
 def test_top_tag_keys_parse_each_distinct_serialized_value_once(

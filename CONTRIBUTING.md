@@ -11,7 +11,7 @@ Thank you for your help with `osm-polygon-wikidata-only`. The project accepts sm
 5. Refactor the code while the tests pass.
 6. Run the complete local quality gate. [`docs/development.md`](docs/development.md) describes it.
 
-Before you request a review, run `just quality-gauntlet`. It is the standard fail-fast sequence. The sequence has these stages: baseline, Ruff, ty, tests, acceptance tests, architecture checks, CRAP, mutation tests, smoke test, and diff review.
+Before you request a review, run `just quality-gauntlet`. It is the standard fail-fast sequence. The sequence has these stages: baseline, Ruff, ty, tests, coverage floor, architecture checks, CRAP, mutation tests, smoke test, and diff review.
 
 The CRAP stage (`just crap-report`) applies two rules to each function:
 

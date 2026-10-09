@@ -112,11 +112,13 @@ def test_cuda_runtime_rejects_missing_runtime_and_accepts_cuda(
 
 def test_job_environment_removes_hub_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "secret-token")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "secret-token")
     monkeypatch.setenv("GRID5000_TEST_VALUE", "retained")
 
     environment = sentence_job._job_environment()
 
     assert "HF_TOKEN" not in environment
+    assert "HUGGING_FACE_HUB_TOKEN" not in environment
     assert environment["GRID5000_TEST_VALUE"] == "retained"
 
 
@@ -158,8 +160,7 @@ def test_sentence_job_hung_preflight_writes_failed_receipt_and_reraises(
             data_root,
             stems=("alpha-latest",),
             model_cache=tmp_path / "model-cache",
-            source_commit="abc123",
-            job_id="job-1",
+            identity=sentence_job.JobIdentity(job_id="job-1", source_commit="abc123"),
             batch_size=256,
             inference_batch_size=16,
             receipt_path=receipt_path,
@@ -191,8 +192,7 @@ def test_sentence_job_requires_nvidia_smi_and_writes_sanitized_failure_receipt(
             data_root,
             stems=("alpha-latest",),
             model_cache=tmp_path / "model-cache",
-            source_commit="abc123",
-            job_id="job-1",
+            identity=sentence_job.JobIdentity(job_id="job-1", source_commit="abc123"),
             batch_size=256,
             inference_batch_size=16,
             receipt_path=receipt_path,
@@ -218,8 +218,7 @@ def test_sentence_job_rejects_onnxruntime_without_cuda(
             data_root,
             stems=("alpha-latest",),
             model_cache=tmp_path / "model-cache",
-            source_commit="abc123",
-            job_id="job-1",
+            identity=sentence_job.JobIdentity(job_id="job-1", source_commit="abc123"),
             batch_size=256,
             inference_batch_size=16,
             receipt_path=receipt_path,
@@ -258,8 +257,7 @@ def test_sentence_job_redacts_inference_exception_from_failure_receipt(
             data_root,
             stems=("alpha-latest",),
             model_cache=tmp_path / "model-cache",
-            source_commit="abc123",
-            job_id="job-1",
+            identity=sentence_job.JobIdentity(job_id="job-1", source_commit="abc123"),
             batch_size=256,
             inference_batch_size=16,
             receipt_path=receipt_path,
@@ -322,8 +320,7 @@ def test_sentence_job_runs_selected_stems_and_writes_provenance_receipt(
         data_root,
         stems=("alpha-latest",),
         model_cache=tmp_path / "model-cache",
-        source_commit="abc123",
-        job_id="job-1",
+        identity=sentence_job.JobIdentity(job_id="job-1", source_commit="abc123"),
         batch_size=32,
         inference_batch_size=7,
         receipt_path=receipt_path,

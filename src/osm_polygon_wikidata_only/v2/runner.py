@@ -39,6 +39,7 @@ from osm_polygon_wikidata_only.v2.publication import (
 )
 from osm_polygon_wikidata_only.v2.resume import V2FileHashCache
 from osm_polygon_wikidata_only.v2.reuse import (
+    ReuseFetchOptions,
     SectionClient,
     merge_v2_region,
     reconcile_v2_region,
@@ -189,6 +190,16 @@ def _plan_regions(
     )
 
 
+@dataclass(frozen=True)
+class V2Publication:
+    """Optional Hub publication collaborators for one V2 sync run."""
+
+    push: bool = False
+    upload: Upload | None = None
+    remote_inventory: RemoteInventory | None = None
+    trackio_publish: Callable[[V2CardStats], None] | None = None
+
+
 def run_v2_sync(
     input_path: Path,
     *,
@@ -198,12 +209,10 @@ def run_v2_sync(
     section_client: SectionClient | None = None,
     section_workers: int = 8,
     cache: JsonFileCache | None = None,
-    push: bool = False,
-    upload: Upload | None = None,
-    remote_inventory: RemoteInventory | None = None,
-    trackio_publish: Callable[[V2CardStats], None] | None = None,
+    publication: V2Publication | None = None,
 ) -> int:
     """Build V2 regions and optionally publish each completed region."""
+    publication = V2Publication() if publication is None else publication
     pbfs = collect_pbfs([input_path])
     if not pbfs:
         LOGGER.warning("No PBF inputs to process for V2")
@@ -227,8 +236,8 @@ def run_v2_sync(
         data_root=data_root,
         settings=settings,
         manifest=manifest,
-        push=push,
-        remote_inventory=remote_inventory,
+        push=publication.push,
+        remote_inventory=publication.remote_inventory,
         hash_cache=hash_cache,
     )
     state = _V2ExecutionState(
@@ -240,8 +249,8 @@ def run_v2_sync(
         cache=v2_cache,
         hash_cache=hash_cache,
         index=index,
-        upload=upload,
-        push=push,
+        upload=publication.upload,
+        push=publication.push,
         extraction_executor=ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="v2-extraction",
@@ -250,7 +259,7 @@ def run_v2_sync(
     try:
         _schedule_next(state, plans, after_index=-1)
         completed = _process_regions(state, plans, total=len(pbfs))
-        _finalize_regions(state, completed, trackio_publish=trackio_publish)
+        _finalize_regions(state, completed, trackio_publish=publication.trackio_publish)
         return 0
     finally:
         _cleanup(state)
@@ -360,11 +369,13 @@ def _process_extraction(
         index=state.index,
         wikipedia_client=state.wikipedia_client,
         section_client=state.section_client,
-        section_workers=state.section_workers,
+        options=ReuseFetchOptions(
+            section_workers=state.section_workers,
+            fetch_full_text=state.settings.fetch_full_text,
+            direct_workers=state.settings.enrichment_site_workers,
+            wait_for_index=False,
+        ),
         cache=state.cache,
-        fetch_full_text=state.settings.fetch_full_text,
-        direct_workers=state.settings.enrichment_site_workers,
-        wait_for_index=False,
         checkpoint_dir=state.data_root.v2_cache / "checkpoints",
     )
     state.extracted_stems.append(plan.stem)
@@ -408,9 +419,11 @@ def _reconcile_provisional_regions(state: _V2ExecutionState) -> None:
             index=state.index,
             wikipedia_client=state.wikipedia_client,
             cache=state.cache,
-            fetch_full_text=state.settings.fetch_full_text,
+            options=ReuseFetchOptions(
+                fetch_full_text=state.settings.fetch_full_text,
+                section_workers=state.section_workers,
+            ),
             section_client=state.section_client,
-            section_workers=state.section_workers,
             checkpoint_dir=state.data_root.v2_cache / "checkpoints",
         )
         clear_v2_checkpoints(state.data_root.v2_cache / "checkpoints", stem)
@@ -544,4 +557,4 @@ def _region_files_match(
     return True
 
 
-__all__ = ["run_v2_sync"]
+__all__ = ["V2Publication", "run_v2_sync"]

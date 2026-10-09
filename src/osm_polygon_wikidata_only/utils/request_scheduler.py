@@ -228,6 +228,17 @@ def _resolve_systemic_config(
     return _SystemicConfig(proportional, active_window, minimum_hosts, host_fraction)
 
 
+@dataclass(frozen=True)
+class HostHealthPolicy:
+    """Per-host throttle and systemic-outage detection settings."""
+
+    host_throttle_window_s: float = 10.0
+    host_throttle_threshold: int = 3
+    active_host_window_s: float | None = None
+    minimum_systemic_hosts: int | None = None
+    systemic_host_fraction: float | None = None
+
+
 class AdaptiveRequestScheduler:
     """Bound global concurrency, pacing, and cooldown across Wikimedia hosts."""
 
@@ -239,27 +250,24 @@ class AdaptiveRequestScheduler:
         max_requests_per_minute: float | None = None,
         minimum_requests_per_minute: float = 60,
         successes_per_increase: int = 100,
-        host_throttle_window_s: float = 10.0,
-        host_throttle_threshold: int = 3,
-        active_host_window_s: float | None = None,
-        minimum_systemic_hosts: int | None = None,
-        systemic_host_fraction: float | None = None,
+        host_health: HostHealthPolicy | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        health = HostHealthPolicy() if host_health is None else host_health
         maximum = _validate_scheduler_values(
             max_in_flight=max_in_flight,
             requests_per_minute=requests_per_minute,
             max_requests_per_minute=max_requests_per_minute,
             minimum_requests_per_minute=minimum_requests_per_minute,
             successes_per_increase=successes_per_increase,
-            host_throttle_window_s=host_throttle_window_s,
-            host_throttle_threshold=host_throttle_threshold,
+            host_throttle_window_s=health.host_throttle_window_s,
+            host_throttle_threshold=health.host_throttle_threshold,
         )
         systemic = _resolve_systemic_config(
-            active_host_window_s=active_host_window_s,
-            minimum_systemic_hosts=minimum_systemic_hosts,
-            systemic_host_fraction=systemic_host_fraction,
+            active_host_window_s=health.active_host_window_s,
+            minimum_systemic_hosts=health.minimum_systemic_hosts,
+            systemic_host_fraction=health.systemic_host_fraction,
         )
         self._systemic = systemic
         self._limits = _RateLimits(
@@ -267,8 +275,8 @@ class AdaptiveRequestScheduler:
             max_requests_per_minute=maximum,
             minimum_requests_per_minute=minimum_requests_per_minute,
             successes_per_increase=successes_per_increase,
-            host_throttle_window_s=host_throttle_window_s,
-            host_throttle_threshold=host_throttle_threshold,
+            host_throttle_window_s=health.host_throttle_window_s,
+            host_throttle_threshold=health.host_throttle_threshold,
         )
         # Mutable global pacing state. Protected by ``_lock``.
         self._rate = _GlobalRateState(current_requests_per_minute=requests_per_minute)
@@ -553,9 +561,11 @@ class AdaptiveRequestScheduler:
 
 
 _DEFAULT_SCHEDULER = AdaptiveRequestScheduler(
-    active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
-    minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
-    systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+    host_health=HostHealthPolicy(
+        active_host_window_s=SYSTEMIC_ACTIVE_HOST_WINDOW_S,
+        minimum_systemic_hosts=SYSTEMIC_MINIMUM_HOSTS,
+        systemic_host_fraction=SYSTEMIC_HOST_FRACTION,
+    ),
 )
 
 
@@ -568,6 +578,7 @@ __all__ = [
     "SYSTEMIC_HOST_FRACTION",
     "SYSTEMIC_MINIMUM_HOSTS",
     "AdaptiveRequestScheduler",
+    "HostHealthPolicy",
     "RequestSchedulerSnapshot",
     "default_scheduler",
 ]

@@ -9,7 +9,10 @@ import pytest
 
 from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult, WikipediaArticle
 from osm_polygon_wikidata_only.v2 import direct_enrichment, maps, reuse_reconcile, runner
-from osm_polygon_wikidata_only.v2.direct_enrichment import DirectWikipediaStatus
+from osm_polygon_wikidata_only.v2.direct_enrichment import (
+    DirectLookupOptions,
+    DirectWikipediaStatus,
+)
 from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
 
 
@@ -58,10 +61,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         ref,
         matches={key: [cached]},
         current_by_title={},
-        index=object(),
-        wikipedia_client=None,
-        cache=None,
-        fetch_full_text=True,
+        lookup=reuse_reconcile.ReconcileLookup(
+            index=object(), wikipedia_client=None, cache=None, fetch_full_text=True
+        ),
     ) == [cached]
     assert reuse_reconcile._find_reconciliation_candidates(
         "polygon",
@@ -69,10 +71,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         ref,
         matches={},
         current_by_title={("en", "title"): [cached]},
-        index=object(),
-        wikipedia_client=None,
-        cache=None,
-        fetch_full_text=True,
+        lookup=reuse_reconcile.ReconcileLookup(
+            index=object(), wikipedia_client=None, cache=None, fetch_full_text=True
+        ),
     ) == [cached]
     assert (
         reuse_reconcile._find_reconciliation_candidates(
@@ -81,10 +82,9 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
             ref,
             matches={},
             current_by_title={},
-            index=object(),
-            wikipedia_client=None,
-            cache=None,
-            fetch_full_text=True,
+            lookup=reuse_reconcile.ReconcileLookup(
+                index=object(), wikipedia_client=None, cache=None, fetch_full_text=True
+            ),
         )
         == ()
     )
@@ -103,12 +103,11 @@ def test_find_reconciliation_candidates_uses_cached_or_recovered_documents(
         ref,
         matches={},
         current_by_title={},
-        index="index",
-        wikipedia_client="client",
-        cache="cache",
-        fetch_full_text=False,
+        lookup=reuse_reconcile.ReconcileLookup(
+            index="index", wikipedia_client="client", cache="cache", fetch_full_text=False
+        ),
     ) == [recovered]
-    assert calls[0]["wait_for_index"] is True
+    assert calls[0]["options"] == DirectLookupOptions(fetch_full_text=False, wait_for_index=True)
 
 
 def test_has_wikipedia_refs_ignores_malformed_and_empty_values() -> None:
@@ -157,9 +156,7 @@ def test_apply_pending_outcome_records_error_and_non_ok_article() -> None:
         (DirectWikipediaStatus(ref, "deferred_error"), None, deferred),
         ref,
         {},
-        {},
-        {},
-        statuses,
+        direct_enrichment._DirectRows(statuses=statuses),
         deferred_errors,
     )
     assert statuses[0].status == "deferred_error"
@@ -198,9 +195,7 @@ def test_apply_pending_outcome_records_error_and_non_ok_article() -> None:
         ),
         ref,
         {"source_pbf": "region.osm.pbf"},
-        documents,
-        links,
-        statuses,
+        direct_enrichment._DirectRows(documents=documents, links=links, statuses=statuses),
         deferred_errors,
     )
     [(document_id, document)] = list(documents.items())

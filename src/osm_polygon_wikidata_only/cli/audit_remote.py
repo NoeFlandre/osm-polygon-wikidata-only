@@ -22,7 +22,7 @@ from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlan, Reco
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.hf.uploader import UploadError
 
-from .errors import CliFailure, report_cli_error
+from .errors import CliFailure, report_cli_error, report_deprecated
 from .parser import AUDIT_REMOTE_DESCRIPTION, add_audit_remote_arguments
 
 PROG = "osm-polygon-wikidata-only audit-remote"
@@ -150,8 +150,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Installed console-script entry point for ``osm-polygon-wikidata-only-audit-remote``."""
     parser = argparse.ArgumentParser(prog=STANDALONE_PROG, description=AUDIT_REMOTE_DESCRIPTION)
     add_audit_remote_arguments(parser)
+    # Parse outside the try: a usage error or --help exits here, before the notice.
     args = parser.parse_args(argv)
-    return audit(data_root=args.data_root, repo_id=args.repo_id, hf_token=args.hf_token)
+    try:
+        return audit(data_root=args.data_root, repo_id=args.repo_id, hf_token=args.hf_token)
+    finally:
+        report_deprecated(STANDALONE_PROG, "osm-polygon-wikidata-only audit-remote")
 
 
 __all__ = ["audit", "main"]

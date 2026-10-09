@@ -10,7 +10,7 @@ from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
 from osm_polygon_wikidata_only.v2.card_models import V2CardStats
 from osm_polygon_wikidata_only.v2.config import V2_ASSET_PATHS
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem
-from osm_polygon_wikidata_only.v2.runner import run_v2_sync
+from osm_polygon_wikidata_only.v2.runner import V2Publication, run_v2_sync
 from osm_polygon_wikidata_only.v2.storage import write_v2_region
 
 pytestmark = pytest.mark.map_orchestration
@@ -187,8 +187,10 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
             data_root=root,
             settings=Settings(skip_existing=True),
             wikipedia_client=client,
-            push=True,
-            upload=lambda ops, message: uploads.append((ops, message)),
+            publication=V2Publication(
+                push=True,
+                upload=lambda ops, message: uploads.append((ops, message)),
+            ),
         )
         == 0
     )
@@ -203,15 +205,17 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
             data_root=root,
             settings=Settings(skip_existing=True),
             wikipedia_client=client,
-            push=True,
-            upload=lambda ops, message: uploads.append((ops, message)),
-            remote_inventory=RemoteInventory(
-                {
-                    "polygons/region-latest.parquet",
-                    "wikipedia/documents/region-latest.parquet",
-                    "wikipedia/sections/region-latest.parquet",
-                    "polygon_document_links/region-latest.parquet",
-                }
+            publication=V2Publication(
+                push=True,
+                upload=lambda ops, message: uploads.append((ops, message)),
+                remote_inventory=RemoteInventory(
+                    {
+                        "polygons/region-latest.parquet",
+                        "wikipedia/documents/region-latest.parquet",
+                        "wikipedia/sections/region-latest.parquet",
+                        "polygon_document_links/region-latest.parquet",
+                    }
+                ),
             ),
         )
         == 0
@@ -225,9 +229,11 @@ def test_v2_runner_is_resumable_and_publishes_metadata_last(tmp_path: Path, monk
             data_root=root,
             settings=Settings(skip_existing=True),
             wikipedia_client=client,
-            push=True,
-            upload=lambda ops, message: uploads.append((ops, message)),
-            remote_inventory=RemoteInventory({"polygons/region-latest.parquet"}),
+            publication=V2Publication(
+                push=True,
+                upload=lambda ops, message: uploads.append((ops, message)),
+                remote_inventory=RemoteInventory({"polygons/region-latest.parquet"}),
+            ),
         )
         == 0
     )
@@ -318,8 +324,10 @@ def test_v2_runner_groups_region_publications_into_bounded_commits(
             data_root=root,
             settings=Settings(skip_existing=True),
             wikipedia_client=InMemoryWikipediaClient({}),
-            push=True,
-            upload=lambda ops, message: uploads.append((ops, message)),
+            publication=V2Publication(
+                push=True,
+                upload=lambda ops, message: uploads.append((ops, message)),
+            ),
         )
         == 0
     )

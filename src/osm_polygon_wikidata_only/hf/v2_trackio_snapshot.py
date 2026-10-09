@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from osm_polygon_wikidata_only.cli.errors import report_deprecated
 from osm_polygon_wikidata_only.cli.parser import add_trackio_snapshot_arguments
 from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 from osm_polygon_wikidata_only.hf._trackio.models import FinalDatasetSnapshot
@@ -87,12 +88,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Installed console-script entry point for ``osm-polygon-wikidata-and-wikipedia-trackio``."""
     parser = argparse.ArgumentParser(prog=STANDALONE_PROG, description=STANDALONE_DESCRIPTION)
     add_trackio_snapshot_arguments(parser)
+    # Parse outside the try: a usage error or --help exits here, before the notice.
     args = parser.parse_args(argv)
-    publish(
-        data_root=args.data_root,
-        space_id=V2_TRACKIO_SPACE_ID if args.space_id is None else args.space_id,
-    )
-    return 0
+    try:
+        publish(
+            data_root=args.data_root,
+            space_id=V2_TRACKIO_SPACE_ID if args.space_id is None else args.space_id,
+        )
+        return 0
+    finally:
+        report_deprecated(
+            STANDALONE_PROG, "osm-polygon-wikidata-only trackio-snapshot --dataset-version v2"
+        )
 
 
 __all__ = [

@@ -16,6 +16,7 @@ from .models import RecoveryClassification, RecoveryRepairError, RegionAuditResu
 from .repair_fields import recompute_affected_polygon_fields as _recompute_affected_polygon_fields
 from .repair_types import RepairInputs as _RepairInputs
 from .repair_types import RepairOutputs as _RepairOutputs
+from .validation import RowVersions
 from .validation import validate_existing_rows as _validate_existing_rows
 from .validation import validate_preservation as _validate_preservation
 
@@ -148,14 +149,10 @@ def _validate_merged_repair(
         merged_facts,
     )
     _validate_preservation(
-        inputs.polygons,
-        updated_polygons,
-        inputs.documents,
-        merged_documents,
-        inputs.sections,
-        merged_sections,
-        inputs.retained_facts,
-        merged_facts,
+        RowVersions(inputs.polygons, updated_polygons),
+        RowVersions(inputs.documents, merged_documents),
+        RowVersions(inputs.sections, merged_sections),
+        RowVersions(inputs.retained_facts, merged_facts),
         affected_qids=set(affected_qids),
         removed_document_ids=inputs.orphan_document_ids,
         removed_section_ids=_removed_section_ids(inputs.sections, inputs.orphan_document_ids),

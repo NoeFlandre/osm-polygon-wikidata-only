@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -224,19 +225,35 @@ def _make_dummy_article(
     return row
 
 
+@dataclass(frozen=True, slots=True)
+class _DocumentContent:
+    """Text and hash of a dummy Wikipedia document row."""
+
+    full_text: str = "This is full text."
+    content_hash: str = "hash123"
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentIds:
+    """Optional explicit article and document identifiers for a dummy row."""
+
+    article_id: str | None = None
+    document_id: str | None = None
+
+
 def _make_dummy_document(
     wikidata: str = "Q123",
     language: str = "en",
     page_id: int = 456,
     revision_id: int = 789,
-    full_text: str = "This is full text.",
-    content_hash: str = "hash123",
-    article_id: str | None = None,
-    document_id: str | None = None,
+    content: _DocumentContent = _DocumentContent(),
+    ids: _DocumentIds = _DocumentIds(),
     project: str = "wikipedia",
     include_canonical_cols: bool = False,
     **kwargs: Any,
 ) -> dict:
+    full_text, content_hash = content.full_text, content.content_hash
+    article_id, document_id = ids.article_id, ids.document_id
     a_id = article_id or f"{wikidata}:{language}:{page_id}:{revision_id}"
     d_id = document_id or f"{wikidata}:wikipedia:{language}:{page_id}:{revision_id}"
     row = {
@@ -571,7 +588,8 @@ def test_synthetic_failure_modes(tmp_path: Path, case_name: str, expected_reason
         )
         pq.write_table(
             pa.Table.from_pylist(
-                [_make_dummy_document(wikidata="Q1", full_text="text B")], schema=document_schema()
+                [_make_dummy_document(wikidata="Q1", content=_DocumentContent(full_text="text B"))],
+                schema=document_schema(),
             ),
             doc_dir / "case.parquet",
         )
@@ -585,7 +603,11 @@ def test_synthetic_failure_modes(tmp_path: Path, case_name: str, expected_reason
         )
         pq.write_table(
             pa.Table.from_pylist(
-                [_make_dummy_document(wikidata="Q1", content_hash="hashB")],
+                [
+                    _make_dummy_document(
+                        wikidata="Q1", content=_DocumentContent(content_hash="hashB")
+                    )
+                ],
                 schema=document_schema(),
             ),
             doc_dir / "case.parquet",
@@ -610,7 +632,7 @@ def test_synthetic_failure_modes(tmp_path: Path, case_name: str, expected_reason
                 [
                     _make_dummy_document(
                         wikidata="Q1",
-                        article_id="Q1:en:456:shared",
+                        ids=_DocumentIds(article_id="Q1:en:456:shared"),
                         revision_id=200,
                     )
                 ],
@@ -640,7 +662,7 @@ def test_synthetic_failure_modes(tmp_path: Path, case_name: str, expected_reason
         )
         pq.write_table(
             pa.Table.from_pylist(
-                [_make_dummy_document(wikidata="Q1", document_id="invalid_id")],
+                [_make_dummy_document(wikidata="Q1", ids=_DocumentIds(document_id="invalid_id"))],
                 schema=document_schema(),
             ),
             doc_dir / "case.parquet",

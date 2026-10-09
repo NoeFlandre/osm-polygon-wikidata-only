@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,7 @@ from .sync_planner import RegionSyncState, SyncAction
 __all__ = [
     "RegionSyncState",
     "SyncAction",
+    "UploadHooks",
     "run_sync",
     "run_sync_plan",
 ]
@@ -81,16 +83,39 @@ def _partition_states(
     )
 
 
+@dataclass(frozen=True)
+class UploadHooks:
+    """Optional atomic-publication collaborators for completed regions.
+
+    ``build_upload_files(state, augmentation, core)`` returns the operations for
+    one region, ``commit_message(state)`` names its commit,
+    ``submit_upload(ops, message)`` enqueues one atomic commit, and
+    ``close_uploads()`` returns the failed upload job names. ``None`` disables
+    the matching stage.
+    """
+
+    build_upload_files: Callable[..., list[Any]] | None = None
+    commit_message: Callable[[RegionSyncState], str] | None = None
+    submit_upload: Callable[[list[Any], str], None] | None = None
+    close_uploads: Callable[[], list[str]] | None = None
+
+
+@dataclass(frozen=True)
+class _RegionCallbacks:
+    """Extraction, processing and augmentation collaborators for PROCESS states."""
+
+    extract_pbf: Callable[[Path], Any]
+    process_extracted_pbf: Callable[[Any], Any]
+    augment_region: Callable[[RegionSyncState], Any]
+
+
 def run_sync(
     states: list[RegionSyncState],
     *,
     extract_pbf: Callable[[Path], Any],
     process_extracted_pbf: Callable[[Any], Any],
     augment_region: Callable[[RegionSyncState], Any],
-    build_upload_files: Callable[..., list[Any]] | None = None,
-    commit_message: Callable[[RegionSyncState], str] | None = None,
-    submit_upload: Callable[[list[Any], str], None] | None = None,
-    close_uploads: Callable[[], list[str]] | None = None,
+    uploads: UploadHooks | None = None,
     on_complete: Callable[[RegionSyncState, Any], None] | None = None,
     load_existing_augmentation: Callable[[RegionSyncState], Any] | None = None,
     recover_region: Callable[[RegionSyncState], Any] | None = None,
@@ -113,17 +138,16 @@ def run_sync(
 
     Optional collaborators (default ``None``):
 
-    * ``build_upload_files(state, augmentation, core)``: returns a
-      list of ``PublicationOp`` records (one atomic unit of work
-      per op, see ``osm_polygon_wikidata_only.hf._uploader.plan``)
-      to commit as one atomic upload. ``None`` means no
-      publication assembly.
-    * ``commit_message(state)``: returns the per-region commit
-      message. Defaults to ``f"Sync complete region {state.stem}"``.
-    * ``submit_upload(ops, message)``: enqueues one atomic
-      commit. ``None`` means no upload submission.
-    * ``close_uploads()``: returns a list of failed-job names from
-      the upload queue. ``None`` means no queue is open.
+    * ``uploads`` (:class:`UploadHooks`): publication hooks. Its
+      ``build_upload_files(state, augmentation, core)`` returns a list of
+      ``PublicationOp`` records (one atomic unit of work per op, see
+      ``osm_polygon_wikidata_only.hf._uploader.plan``) to commit as one atomic
+      upload; ``None`` means no publication assembly. ``commit_message(state)``
+      returns the per-region commit message and defaults to
+      ``f"Sync complete region {state.stem}"``. ``submit_upload(ops, message)``
+      enqueues one atomic commit; ``None`` means no upload submission.
+      ``close_uploads()`` returns the failed-job names from the upload queue;
+      ``None`` means no queue is open.
     * ``on_complete(state, result)``: invoked once per successful
       augmentation step (PROCESS or AUGMENT).
     * ``load_existing_augmentation(state)``: loads the local
@@ -158,6 +182,7 @@ def run_sync(
        ``build_upload_files`` and ``submit_upload`` are provided,
        assemble and submit one atomic publication.
     """
+    uploads = UploadHooks() if uploads is None else uploads
     _validate_required_collaborators(extract_pbf, process_extracted_pbf, augment_region)
 
     process_states, augment_states, publish_states, recovery_states = _partition_states(states)
@@ -179,9 +204,7 @@ def run_sync(
             recover_region=recover_region,
             core_results=core_results,
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
 
         # Step 2: once recovery has converged, restore the established
@@ -199,9 +222,7 @@ def run_sync(
             augment_region=augment_region,
             core_results=core_results,
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
 
         # Step 3: drain PUBLISH-only reconciliation repairs. These
@@ -215,9 +236,7 @@ def run_sync(
             load_existing_augmentation=load_existing_augmentation,
             core_results=core_results,
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
 
         # Step 4+5: walk PROCESS states. For each, await extraction,
@@ -229,19 +248,19 @@ def run_sync(
             process_states,
             extraction_future=extraction_future,
             extraction_executor=extraction_executor,
-            extract_pbf=extract_pbf,
-            process_extracted_pbf=process_extracted_pbf,
-            augment_region=augment_region,
+            callbacks=_RegionCallbacks(
+                extract_pbf=extract_pbf,
+                process_extracted_pbf=process_extracted_pbf,
+                augment_region=augment_region,
+            ),
             core_results=core_results,
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
     finally:
         extraction_executor.shutdown(wait=True, cancel_futures=True)
-        if close_uploads is not None:
-            failures.extend(close_uploads())
+        if uploads.close_uploads is not None:
+            failures.extend(uploads.close_uploads())
     return int(bool(failures))
 
 
@@ -275,9 +294,7 @@ def _complete_state(
     *,
     core: Any | None,
     on_complete: Callable[[RegionSyncState, Any], None] | None,
-    submit_upload: Callable[[list[Any], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
-    commit_message: Callable[[RegionSyncState], str] | None,
+    uploads: UploadHooks,
 ) -> None:
     if on_complete is not None:
         on_complete(state, result)
@@ -285,9 +302,7 @@ def _complete_state(
         state=state,
         augmentation=result,
         core=core,
-        submit_upload=submit_upload,
-        build_upload_files=build_upload_files,
-        commit_message=commit_message,
+        uploads=uploads,
     )
 
 
@@ -297,9 +312,7 @@ def _run_recovery_phase(
     recover_region: Callable[[RegionSyncState], Any] | None,
     core_results: dict[str, Any],
     on_complete: Callable[[RegionSyncState, Any], None] | None,
-    submit_upload: Callable[[list[Any], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
-    commit_message: Callable[[RegionSyncState], str] | None,
+    uploads: UploadHooks,
 ) -> None:
     """Drain recovery states before any PBF extraction starts."""
     if not states:
@@ -314,9 +327,7 @@ def _run_recovery_phase(
                 result,
                 core=core_results.get(state.stem),
                 on_complete=on_complete,
-                submit_upload=submit_upload,
-                build_upload_files=build_upload_files,
-                commit_message=commit_message,
+                uploads=uploads,
             )
 
 
@@ -326,9 +337,7 @@ def _run_augment_phase(
     augment_region: Callable[[RegionSyncState], Any],
     core_results: dict[str, Any],
     on_complete: Callable[[RegionSyncState, Any], None] | None,
-    submit_upload: Callable[[list[Any], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
-    commit_message: Callable[[RegionSyncState], str] | None,
+    uploads: UploadHooks,
 ) -> None:
     """Drain the existing augmentation backlog."""
     for state in states:
@@ -337,9 +346,7 @@ def _run_augment_phase(
             augment_region(state),
             core=core_results.get(state.stem),
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
 
 
@@ -349,9 +356,7 @@ def _run_publish_phase(
     load_existing_augmentation: Callable[[RegionSyncState], Any] | None,
     core_results: dict[str, Any],
     on_complete: Callable[[RegionSyncState, Any], None] | None,
-    submit_upload: Callable[[list[Any], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
-    commit_message: Callable[[RegionSyncState], str] | None,
+    uploads: UploadHooks,
 ) -> None:
     """Drain publish-only repairs without extraction or Wikimedia calls."""
     if not states:
@@ -366,9 +371,7 @@ def _run_publish_phase(
             load_existing_augmentation(state),
             core=core_results.get(state.stem),
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
 
 
@@ -377,14 +380,10 @@ def _run_process_phase(
     *,
     extraction_future: Future[Any] | None,
     extraction_executor: ThreadPoolExecutor,
-    extract_pbf: Callable[[Path], Any],
-    process_extracted_pbf: Callable[[Any], Any],
-    augment_region: Callable[[RegionSyncState], Any],
+    callbacks: _RegionCallbacks,
     core_results: dict[str, Any],
     on_complete: Callable[[RegionSyncState, Any], None] | None,
-    submit_upload: Callable[[list[Any], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
-    commit_message: Callable[[RegionSyncState], str] | None,
+    uploads: UploadHooks,
 ) -> None:
     """Process cores with one PBF extraction prefetched ahead."""
     for index, state in enumerate(states):
@@ -392,19 +391,19 @@ def _run_process_phase(
             raise RuntimeError(f"Missing prefetched extraction for PROCESS state {state.stem}")
         extracted = extraction_future.result()
         if index + 1 < len(states):
-            extraction_future = extraction_executor.submit(extract_pbf, states[index + 1].pbf_path)
+            extraction_future = extraction_executor.submit(
+                callbacks.extract_pbf, states[index + 1].pbf_path
+            )
         else:
             extraction_future = None
-        result = process_extracted_pbf(extracted)
+        result = callbacks.process_extracted_pbf(extracted)
         core_results[state.stem] = result
         _complete_state(
             state,
-            augment_region(state),
+            callbacks.augment_region(state),
             core=result,
             on_complete=on_complete,
-            submit_upload=submit_upload,
-            build_upload_files=build_upload_files,
-            commit_message=commit_message,
+            uploads=uploads,
         )
 
 
@@ -413,15 +412,16 @@ def _maybe_submit(
     state: RegionSyncState,
     augmentation: Any,
     core: Any | None,
-    submit_upload: Callable[[list[Any], str], None] | None,
-    build_upload_files: Callable[[RegionSyncState, Any, Any | None], list[Any]] | None,
-    commit_message: Callable[[RegionSyncState], str] | None,
+    uploads: UploadHooks,
 ) -> None:
+    submit_upload = uploads.submit_upload
+    build_upload_files = uploads.build_upload_files
     if submit_upload is None or build_upload_files is None:
         return
     ops = build_upload_files(state, augmentation, core)
     if not ops:
         return
+    commit_message = uploads.commit_message
     message = (
         commit_message(state)
         if commit_message is not None

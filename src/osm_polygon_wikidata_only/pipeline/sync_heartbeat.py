@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgressSnapshot
 from osm_polygon_wikidata_only.enrichment.progress import EnrichmentProgressSnapshot
@@ -93,15 +94,22 @@ def format_sync_progress(
     return "; ".join(parts)
 
 
+@dataclass(frozen=True, slots=True)
+class SyncRegionPosition:
+    """Region stem and its one-based position within the sync run."""
+
+    region: str
+    index: int
+    total: int
+
+
 class SyncHeartbeat(EnrichmentHeartbeat):
     """Reuse the established heartbeat lifecycle with sync-specific snapshots."""
 
     def __init__(
         self,
         *,
-        region: str,
-        region_index: int,
-        region_total: int,
+        position: SyncRegionPosition,
         augmentation_snapshot: Callable[[], AugmentationProgressSnapshot],
         scheduler_snapshot: Callable[[], RequestSchedulerSnapshot],
         log: Callable[[str], None],
@@ -110,9 +118,9 @@ class SyncHeartbeat(EnrichmentHeartbeat):
         clock: Callable[[], float] = time.monotonic,
         stop_event: StopSignal | None = None,
     ) -> None:
-        self._sync_region = region
-        self._region_index = region_index
-        self._region_total = region_total
+        self._sync_region = position.region
+        self._region_index = position.index
+        self._region_total = position.total
         self._augmentation_snapshot = augmentation_snapshot
         self._scheduler_snapshot = scheduler_snapshot
         self._auth_snapshot = auth_snapshot
@@ -120,7 +128,7 @@ class SyncHeartbeat(EnrichmentHeartbeat):
         self._sync_clock = clock
         self._sync_started_at = clock()
         super().__init__(
-            region=region,
+            region=position.region,
             snapshot=lambda: EnrichmentProgressSnapshot(0, 0, 0, 0, 0, "sync"),
             log=log,
             interval_s=interval_s,
@@ -144,4 +152,4 @@ class SyncHeartbeat(EnrichmentHeartbeat):
             )
 
 
-__all__ = ["SyncHeartbeat", "format_sync_progress"]
+__all__ = ["SyncHeartbeat", "SyncRegionPosition", "format_sync_progress"]

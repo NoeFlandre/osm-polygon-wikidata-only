@@ -25,19 +25,19 @@
     "source_sha256": "835824d4c209def1974c580990175f0a568e16069bff40703904a1debc4121b2"
   },
   "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_16": {
-    "mutant_sha256": "606bfeddebd7d6aa169a001e21c2217d3c1078c969cde40d141db83adb10d311",
+    "mutant_sha256": "de37cad11130f5264ddd71a56d0dd47cc0ae1a62ac4f18c24f3406dd58050849",
     "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
-    "source_sha256": "fe87b5ad675876d9c0e176bd95c84d2f301e1c937b56b4fd1c4c30f17f175d25"
+    "source_sha256": "c0804e2febd1b7f408762f0b708d2df677c5b97f5d6c8f02b5c64ef72dfd9d7b"
   },
   "osm_polygon_wikidata_only.cli.run_sync.x_execute__mutmut_5": {
-    "mutant_sha256": "26eb82af89e3bd2178b333b9ef6fdbafc914b6dde3743c827c87392b28f5fb4c",
+    "mutant_sha256": "3adc747ca64db53fad127d69cbdc7e3e8578b337d8c5f304fab888d8eb51b6a1",
     "reason": "The mutated default changes only the falsey fallback passed through bool(getattr(...)); False and None both produce False when the CLI attribute is absent.",
-    "source_sha256": "fe87b5ad675876d9c0e176bd95c84d2f301e1c937b56b4fd1c4c30f17f175d25"
+    "source_sha256": "c0804e2febd1b7f408762f0b708d2df677c5b97f5d6c8f02b5c64ef72dfd9d7b"
   },
   "osm_polygon_wikidata_only.cli.sync_runtime.x_build_sync_services__mutmut_72": {
     "mutant_sha256": "d945f645849189824fb64157248e6b37c340c4c359bd4d7f979fe972db62e97c",
     "reason": "Omitting logger from SyncApplicationServices uses its default LOGGER; this module obtains the same named logging.Logger singleton, so the constructed service object is unchanged.",
-    "source_sha256": "0b23fc4cf4b85f7fd3e40000202d09c5f47104e4793b9403ef7504e2d438c3a8"
+    "source_sha256": "0bc7dee6b139341d264e983556d018f7cf32c587c0b5c6a88131c03212a532d2"
   },
   "osm_polygon_wikidata_only.domain.geometry.x__projection_for_rings__mutmut_10": {
     "mutant_sha256": "ed1846f9572e7c1b52eb5f96b3aecd45dd6e866cc09f3a3921cfed0ff890544b",
@@ -169,19 +169,39 @@
     "reason": "If a malformed polygon row omits wikidata, the original empty-string fallback and the omitted default both yield no valid QID components; qids_from_osm_tag returns the same empty tuple.",
     "source_sha256": "a7d29ca17769fa6c86c0fca147e239bf45a0e4df129452bc55cdfcd0f73e0911"
   },
-  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_46": {
-    "mutant_sha256": "b56027bf1af494eeaa0d164f2ead26765e90799e5815c973adc7f243d9aeffdb",
-    "reason": "_apply_entries overwrites index_ref[0] with enumerate's first index before any entry operation can fail. With no entries, commit_ordered_replacements returns before calling _commit_new_transaction. The initial value is never observed.",
-    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__commit_new_transaction__mutmut_61": {
+    "mutant_sha256": "2173c128fe3fee7c2580e008dea3394dfbd5bbd5d96629af27668cc589875272",
+    "reason": "The initial index_ref value is overwritten by _apply_entries with the current zero-based entry index before any entry is applied or a crash hook can fail. Empty transactions never enter the failure path.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
   },
-  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__load_recovery_journal__mutmut_5": {
-    "mutant_sha256": "2584b23ecf946cc9c428430f7d4fdf26d5f88c3faf2b39bee19f90d5575f92f9",
-    "reason": "Python codec names are case-insensitive: \"UTF-8\" and \"utf-8\" decode the same journal bytes. The recovery-reader test checks codec identity rather than its spelling.",
-    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__load_recovery_journal__mutmut_14": {
+    "mutant_sha256": "3f7b5cdde4be3d893320b2d174ede24675c77f82851c8688033c97b3ac58523d",
+    "reason": "Python codec names are case-insensitive; UTF-8 and utf-8 decode the same journal bytes.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
   },
-  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_11": {
-    "mutant_sha256": "c3b8d778f6f667b2413085959678674c1acc68ebd66d05d67f11b2a00d6725d5",
-    "reason": "The sort priority is 0 for data files and either 1 or 2 for JSON files. Changing 1 to 2 preserves JSON-after-data ordering and the path tie-breaker.",
-    "source_sha256": "eec284f47696d9f69738f3bb0d4a29154663b19421b97b0ef8d3550a5d81d54e"
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__recover_entry__mutmut_19": {
+    "mutant_sha256": "0cc8fc26513409f4fbb19a1571ba2de89920deb29c40b48d96a5a4da73a1ce4e",
+    "reason": "_validate_recovery_path rejects missing or invalid target/staged values and returns Path for both valid required fields, so neither value can be None at this assertion.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_17": {
+    "mutant_sha256": "63caee522952762d43443b93b5d0effb2554430bde0179b4dbd881e08625c7e4",
+    "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_23": {
+    "mutant_sha256": "3ac323e30eb7fdfb0ee951383d2121126d33c20e51e910c638a2d4faa926158b",
+    "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x__remove_recovery_backup__mutmut_24": {
+    "mutant_sha256": "b58aef974980aa2f86078b7b61b2352fe04fbeaa0cbc385a15ba0c55e7d69473",
+    "reason": "The mutated argument changes only the diagnostic role text if the redundant second confinement check catches a path swap after the earlier backup validation; the escape is still rejected before unlink.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
+  },
+  "osm_polygon_wikidata_only.pipeline._link_migration.transaction.x_commit_ordered_replacements__mutmut_28": {
+    "mutant_sha256": "dffb0bbdaae3bd56ce1a3b9b8c05f88aa8c3d19022347686c99159577e96eb2b",
+    "reason": "Changing the JSON-file sort priority from 1 to 2 preserves JSON-after-data ordering and leaves the path tie-breaker unchanged.",
+    "source_sha256": "9cd5f0dc3041e9c86974c681b27cbf0e5c239b78c9db8edf17b19ffbabc88f3d"
   }
 }

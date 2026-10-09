@@ -33,6 +33,6 @@ options:
  --upload-threads UPLOAD_THREADS
  Concurrent Hugging Face upload workers per atomic commit
  --hf-token HF_TOKEN Hugging Face write token. Defaults to the HF_TOKEN env var or the
- saved `huggingface-cli login` token.
+ saved `hf auth login` token.
  --log-level {DEBUG,INFO,WARNING,ERROR}
  --dry-run Use a stub HF client (no network)

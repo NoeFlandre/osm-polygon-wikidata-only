@@ -18,7 +18,7 @@ the caller supplies pinned ``generated_on`` metadata.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,20 +33,22 @@ from osm_polygon_wikidata_only.hf._stats_release.manifest import (
 )
 from osm_polygon_wikidata_only.hf._stats_release.models import (
     ReleasedFile,
+    ReleaseOptions,
+    RemoteVerifier,
     StatsReleaseError,
+    StatsReleaseReport,
 )
 from osm_polygon_wikidata_only.hf._stats_release.models import (
     RemoteState as _RemoteState,
-)
-from osm_polygon_wikidata_only.hf._stats_release.remote import (
-    RemoteVerifier,
-    default_remote_verifier,
 )
 from osm_polygon_wikidata_only.hf._stats_release.remote import (
     changed_paths as _changed_paths,
 )
 from osm_polygon_wikidata_only.hf._stats_release.remote import (
     client_for_release as _client_for_release,
+)
+from osm_polygon_wikidata_only.hf._stats_release.remote import (
+    default_remote_verifier,
 )
 from osm_polygon_wikidata_only.hf._stats_release.remote import (
     load_remote_state as _load_remote_state,
@@ -96,42 +98,12 @@ ReportExtraBuilder = Callable[[PolygonGeometryStats], Mapping[str, Any]]
 
 
 @dataclass(frozen=True)
-class StatsReleaseReport:
-    """Evidence for one statistics release run."""
-
-    repo_id: str
-    processed_dir: str
-    files: tuple[ReleasedFile, ...]
-    polygon_files: int
-    polygon_rows: int
-    published: bool
-    revision: str | None
-    provenance: dict[str, Any] = field(default_factory=dict)
+class _PublicationOutcome:
+    published: bool = False
+    revision: str | None = None
     committed: bool = False
     no_op: bool = False
     changed_files: tuple[str, ...] = ()
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "changed_files": list(self.changed_files),
-            "committed": self.committed,
-            "files": [
-                {
-                    "path_in_repo": item.path_in_repo,
-                    "sha256": item.sha256,
-                    "size_bytes": item.size_bytes,
-                }
-                for item in self.files
-            ],
-            "no_op": self.no_op,
-            "polygon_files": self.polygon_files,
-            "polygon_rows": self.polygon_rows,
-            "processed_dir": self.processed_dir,
-            "provenance": self.provenance,
-            "published": self.published,
-            "repo_id": self.repo_id,
-            "revision": self.revision,
-        }
 
 
 def _write_text_if_changed(path: Path, text: str) -> None:
@@ -189,27 +161,23 @@ def release_polygon_stats(
     confirm_repo: str,
     card_writer: CardWriter,
     asset_writer: AssetWriter | None = None,
-    apply: bool = False,
-    hub: HfHub | None = None,
-    verifier: RemoteVerifier | None = None,
-    token: str | None = None,
-    source_revision: str | None = None,
-    data_revision: str | None = None,
     report_extra_builder: ReportExtraBuilder | None = None,
+    options: ReleaseOptions | None = None,
 ) -> StatsReleaseReport:
     """Recompute, publish, and verify the card, report, and coverage assets."""
+    options = ReleaseOptions() if options is None else options
     _require_exact_repo(confirm_repo, repo_id)
     _require_published_polygons(processed_dir)
     provenance = _build_provenance(
         processed_dir,
-        source_revision=source_revision,
-        data_revision=data_revision,
+        source_revision=options.source_revision,
+        data_revision=options.data_revision,
     )
     stats = _load_release_stats(processed_dir)
     client, remote = _release_remote_state(
-        apply,
-        hub=hub,
-        token=token,
+        options.apply,
+        hub=options.hub,
+        token=options.token,
         repo_id=repo_id,
         staging_dir=staging_dir,
         asset_writer=asset_writer,
@@ -223,22 +191,22 @@ def release_polygon_stats(
         remote=remote,
         report_extra_builder=report_extra_builder,
     )
-    if not apply:
+    if not options.apply:
         return _release_report(
             repo_id=repo_id,
             processed_dir=processed_dir,
             stats=stats,
             files=files,
             provenance=provenance,
-            published=False,
+            outcome=_PublicationOutcome(),
         )
     revision, committed, no_op, changed_files = _apply_release(
         repo_id,
         files,
         remote=remote,
         client=client,
-        token=token,
-        verifier=verifier,
+        token=options.token,
+        verifier=options.verifier,
         staging_dir=staging_dir,
         local_paths=local_paths,
     )
@@ -248,11 +216,13 @@ def release_polygon_stats(
         stats=stats,
         files=files,
         provenance=provenance,
-        published=True,
-        revision=revision,
-        committed=committed,
-        no_op=no_op,
-        changed_files=changed_files,
+        outcome=_PublicationOutcome(
+            published=True,
+            revision=revision,
+            committed=committed,
+            no_op=no_op,
+            changed_files=changed_files,
+        ),
     )
 
 
@@ -405,11 +375,7 @@ def _release_report(
     stats: PolygonGeometryStats,
     files: tuple[ReleasedFile, ...],
     provenance: dict[str, Any],
-    published: bool,
-    revision: str | None = None,
-    committed: bool = False,
-    no_op: bool = False,
-    changed_files: tuple[str, ...] = (),
+    outcome: _PublicationOutcome,
 ) -> StatsReleaseReport:
     return StatsReleaseReport(
         repo_id=repo_id,
@@ -417,27 +383,27 @@ def _release_report(
         files=files,
         polygon_files=stats.file_count,
         polygon_rows=stats.polygon_count,
-        published=published,
-        revision=revision,
+        published=outcome.published,
+        revision=outcome.revision,
         provenance=provenance,
-        committed=committed,
-        no_op=no_op,
-        changed_files=changed_files,
+        committed=outcome.committed,
+        no_op=outcome.no_op,
+        changed_files=outcome.changed_files,
     )
 
 
-def release_v1_polygon_stats(
+def release_v1_polygon_stats(  # noqa: PLR0913 -- public keyword API kept for existing callers
     data_root: DataRoot,
     *,
     confirm_repo: str,
     repo_id: str = DEFAULT_REPO_ID,
+    generated_on: str | None = None,
     apply: bool = False,
     hub: HfHub | None = None,
     verifier: RemoteVerifier | None = None,
     token: str | None = None,
     source_revision: str | None = None,
     data_revision: str | None = None,
-    generated_on: str | None = None,
 ) -> StatsReleaseReport:
     """Release the V1 Wikidata-only card and statistics report."""
     _require_canonical_repo(repo_id, DEFAULT_REPO_ID)
@@ -487,6 +453,14 @@ def release_v1_polygon_stats(
     def report_extra_builder(_stats: PolygonGeometryStats) -> Mapping[str, Any]:
         return get_prepared().report_extra
 
+    options = ReleaseOptions(
+        apply=apply,
+        hub=hub,
+        verifier=verifier,
+        token=token,
+        source_revision=source_revision,
+        data_revision=data_revision,
+    )
     return release_polygon_stats(
         processed_dir=data_root.processed,
         staging_dir=data_root.cache / _STAGING_DIRNAME / "v1",
@@ -494,28 +468,23 @@ def release_v1_polygon_stats(
         confirm_repo=confirm_repo,
         card_writer=write_card,
         asset_writer=write_assets,
-        apply=apply,
-        hub=hub,
-        verifier=verifier,
-        token=token,
-        source_revision=source_revision,
-        data_revision=data_revision,
         report_extra_builder=report_extra_builder,
+        options=options,
     )
 
 
-def release_v2_polygon_stats(
+def release_v2_polygon_stats(  # noqa: PLR0913 -- public keyword API kept for existing callers
     data_root: DataRoot,
     *,
     confirm_repo: str,
     repo_id: str = V2_REPO_ID,
+    generated_on: str | None = None,
     apply: bool = False,
     hub: HfHub | None = None,
     verifier: RemoteVerifier | None = None,
     token: str | None = None,
     source_revision: str | None = None,
     data_revision: str | None = None,
-    generated_on: str | None = None,
 ) -> StatsReleaseReport:
     """Release the V2 Wikidata + Wikipedia card and statistics report."""
     _require_canonical_repo(repo_id, V2_REPO_ID)
@@ -570,6 +539,14 @@ def release_v2_polygon_stats(
     def report_extra_builder(_stats: PolygonGeometryStats) -> Mapping[str, Any]:
         return get_prepared().report_extra
 
+    options = ReleaseOptions(
+        apply=apply,
+        hub=hub,
+        verifier=verifier,
+        token=token,
+        source_revision=source_revision,
+        data_revision=data_revision,
+    )
     return release_polygon_stats(
         processed_dir=processed_v2,
         staging_dir=data_root.cache / _STAGING_DIRNAME / "v2",
@@ -577,19 +554,15 @@ def release_v2_polygon_stats(
         confirm_repo=confirm_repo,
         card_writer=write_card,
         asset_writer=write_assets,
-        apply=apply,
-        hub=hub,
-        verifier=verifier,
-        token=token,
-        source_revision=source_revision,
-        data_revision=data_revision,
         report_extra_builder=report_extra_builder,
+        options=options,
     )
 
 
 __all__ = [
     "RELEASE_COMMIT_MESSAGE",
     "REMOTE_CARD_FILE",
+    "ReleaseOptions",
     "ReleasedFile",
     "StatsReleaseError",
     "StatsReleaseReport",

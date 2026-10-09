@@ -6,6 +6,7 @@ import json
 import logging
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from osm_polygon_wikidata_only.v2.checkpoints import (
 )
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectEnrichmentResult,
+    DirectLookupOptions,
     enrich_wikipedia_refs,
     reconcile_wikipedia_refs,
 )
@@ -120,10 +122,12 @@ def _enrich_direct_item(
         wikipedia_client=wikipedia_client,
         polygon_context=polygon,
         cache=None,
-        fetch_full_text=fetch_full_text,
-        wait_for_index=False,
-        initial_matches=initial_matches,
-        defer_final_lookup=True,
+        options=DirectLookupOptions(
+            fetch_full_text=fetch_full_text,
+            wait_for_index=False,
+            initial_matches=initial_matches,
+            defer_final_lookup=True,
+        ),
     )
 
 
@@ -189,6 +193,14 @@ def _run_direct_workers(
                 next_to_record += 1
 
 
+@dataclass(frozen=True, slots=True)
+class DirectFetchSettings:
+    """Full-text and worker settings for direct Wikipedia page lookups."""
+
+    fetch_full_text: bool
+    direct_workers: int
+
+
 def enrich_direct_inputs(
     stem: str,
     direct_inputs: tuple[_DirectInput, ...],
@@ -196,11 +208,12 @@ def enrich_direct_inputs(
     index: Any,
     wikipedia_client: Any,
     cache: Any,
-    fetch_full_text: bool,
-    direct_workers: int,
+    settings: DirectFetchSettings,
     initial_matches: dict[tuple[str, str], Any],
     fetch_checkpoint: RegionFetchCheckpoint | None,
 ) -> tuple[DirectEnrichmentResult, ...]:
+    fetch_full_text = settings.fetch_full_text
+    direct_workers = settings.direct_workers
     direct_client = _cached_client(wikipedia_client, cache)
     results_by_polygon, pending_inputs = _load_checkpointed_direct_results(
         stem,

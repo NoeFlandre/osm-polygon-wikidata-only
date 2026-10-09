@@ -204,7 +204,7 @@ def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Hugging Face write token. Defaults to the HF_TOKEN env var "
-            "or the saved `huggingface-cli login` token."
+            "or the saved `hf auth login` token."
         ),
     )
     parser.add_argument("--log-level", default="INFO", choices=LOG_LEVELS)

@@ -462,6 +462,14 @@ def _sidecar_document_table(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class LinkFingerprint:
+    """Link-migration fingerprint recorded beside one manifest entry."""
+
+    schema_version: str
+    artifact_sha256: str
+
+
 def update_augmentation_manifest(
     data_root: DataRoot,
     *,
@@ -471,15 +479,14 @@ def update_augmentation_manifest(
     counts: dict[str, int],
     completed_at: str,
     rejections: dict[str, Any] | None = None,
-    link_schema_version: str | None = None,
-    link_artifact_sha256: str | None = None,
+    link: LinkFingerprint | None = None,
 ) -> Path:
     """Atomic merge of ``stem``'s entry into the augmentation manifest
     while keeping every other region intact. Returns the manifest
     path; creates the parent directory on first write.
 
-    Optional ``link_schema_version`` and ``link_artifact_sha256`` add
-    the link-migration fingerprint fields per the Phase 2.5 design.
+    An optional ``link`` adds the link-migration fingerprint fields per
+    the Phase 2.5 design.
     """
     manifest_path = (
         data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
@@ -492,8 +499,7 @@ def update_augmentation_manifest(
         counts,
         completed_at,
         rejections,
-        link_schema_version,
-        link_artifact_sha256,
+        link,
     )
     manifest[stem] = entry
     atomic_write_text(manifest_path, dumps(manifest) + "\n")
@@ -507,8 +513,7 @@ def _augmentation_manifest_entry(
     counts: dict[str, int],
     completed_at: str,
     rejections: dict[str, Any] | None,
-    link_schema_version: str | None,
-    link_artifact_sha256: str | None,
+    link: LinkFingerprint | None,
 ) -> dict[str, Any]:
     """Build one manifest entry without mutating the loaded manifest."""
     entry: dict[str, Any] = {
@@ -518,13 +523,19 @@ def _augmentation_manifest_entry(
         "counts": counts,
         "completed_at": completed_at,
     }
-    optional = {
-        "rejections": rejections,
-        "link_schema_version": link_schema_version,
-        "link_artifact_sha256": link_artifact_sha256,
-    }
+    optional = {"rejections": rejections, **_link_manifest_fields(link)}
     entry.update({key: value for key, value in optional.items() if value is not None})
     return entry
+
+
+def _link_manifest_fields(link: LinkFingerprint | None) -> dict[str, Any]:
+    """Return the link-migration fingerprint fields, or nothing without a link."""
+    if link is None:
+        return {}
+    return {
+        "link_schema_version": link.schema_version,
+        "link_artifact_sha256": link.artifact_sha256,
+    }
 
 
 __all__ = [
