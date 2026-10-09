@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ def is_sha256_hex(value: object) -> bool:
 
 
 def _fingerprint(path: Path) -> _Fingerprint:
-    stat = path.stat()
-    return (stat.st_size, stat.st_ino, stat.st_mtime_ns)
+    fingerprint = FileStatFingerprint.from_path(path)
+    return (fingerprint.size, fingerprint.inode, fingerprint.mtime_ns)
 
 
 def sha256_file(path: Path) -> str:

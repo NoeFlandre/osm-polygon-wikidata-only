@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import threading
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +10,7 @@ from typing import Any, cast
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.hashing import is_sha256_hex
 
 # The durable envelope holds both the pending-publication stems and the
 # metadata-refresh marker, and it is read-modify-written from the main
@@ -22,8 +22,6 @@ _ENVELOPE_LOCK = threading.Lock()
 
 CONTRACT_VERSION = "pending-publications-v1"
 FILENAME = "pending_migration_publications.json"
-
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _validate_stem(stem: str) -> str:
@@ -50,7 +48,7 @@ def _validate_marker_stem_shape(stem: str) -> str:
 def _validate_marker_hash(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"Marker fingerprint hash must be a string; got {type(value).__name__}")
-    if not _SHA256_RE.match(value):
+    if not is_sha256_hex(value):
         raise ValueError(f"Marker fingerprint hash must be 64 lowercase hex chars; got {value!r}")
     return value
 

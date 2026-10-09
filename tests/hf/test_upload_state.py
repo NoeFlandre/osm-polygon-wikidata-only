@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -208,6 +209,14 @@ def test_json_reader_requires_utf8_and_rejects_non_objects(
     monkeypatch.setattr(Path, "read_text", read_text)
     assert state_files.read_json_object(path) is None
     assert encodings == ["utf-8"]
+
+
+@pytest.mark.skipif(sys.get_int_max_str_digits() == 0, reason="integer digit limit is disabled")
+def test_json_reader_treats_oversized_integer_as_malformed(tmp_path: Path) -> None:
+    path = tmp_path / "payload.json"
+    path.write_text("[" + "1" * (sys.get_int_max_str_digits() + 1) + "]", encoding="utf-8")
+
+    assert state_files.read_json_object(path) is None
 
 
 @pytest.mark.parametrize("sequence", [None, "1", 0, -1, True])

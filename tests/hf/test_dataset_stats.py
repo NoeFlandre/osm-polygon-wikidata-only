@@ -18,11 +18,23 @@ import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.hf._dataset_stats import aggregation
+from osm_polygon_wikidata_only.hf._dataset_stats import cache as cachemod
 from osm_polygon_wikidata_only.hf.dataset_stats import (
     compute_dataset_stats,
 )
 
 # --- helpers ------------------------------------------------------------
+
+
+def test_cache_file_fingerprint_encodes_inode_ctime_mtime_and_size(tmp_path: Path) -> None:
+    parquet = tmp_path / "monaco-latest.parquet"
+    parquet.write_bytes(b"payload")
+    stat = parquet.stat()
+
+    assert cachemod._file_fingerprint(parquet) == (
+        f"{cachemod.CACHE_CONTRACT_VERSION}:{stat.st_ino}:{stat.st_ctime_ns}:"
+        f"{stat.st_mtime_ns}:{stat.st_size}"
+    )
 
 
 @pytest.mark.parametrize("canonical_layout", [False, True])

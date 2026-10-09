@@ -25,6 +25,7 @@ from osm_polygon_wikidata_only.augmentation.schema import (
 from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import is_sha256_hex
+from osm_polygon_wikidata_only.io.json_files import read_json
 from osm_polygon_wikidata_only.io.parquet import write_typed_table
 from osm_polygon_wikidata_only.utils.json import dumps, loads
 
@@ -132,10 +133,7 @@ def _section_ids_are_unique(sections: list[Section]) -> bool:
 
 def _read_json_object(path: Path) -> dict[str, Any] | None:
     """Read one checkpoint JSON object, returning ``None`` on corruption."""
-    try:
-        raw = loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return None
+    raw = read_json(path)
     return raw if isinstance(raw, dict) else None
 
 

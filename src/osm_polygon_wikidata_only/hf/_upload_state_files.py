@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
+from osm_polygon_wikidata_only.io.json_files import read_json
 
 QUEUE_CONTRACT_VERSION = "bg-upload-v1"
 
@@ -67,10 +67,7 @@ def independent_copy(source: Path, target: Path) -> None:
 
 def read_json_object(path: Path) -> dict[str, Any] | None:
     """Read a JSON object, returning ``None`` for malformed input."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
+    raw = read_json(path)
     return raw if isinstance(raw, dict) else None
 
 

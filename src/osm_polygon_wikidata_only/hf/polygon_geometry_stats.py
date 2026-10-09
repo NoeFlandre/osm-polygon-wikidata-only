@@ -23,6 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json
+from osm_polygon_wikidata_only.v2.fingerprints import FileStatFingerprint
 
 from ._polygon_geometry.aggregation import compute_polygon_geometry_stats
 from ._polygon_geometry.codec import stats_payload
@@ -64,8 +65,8 @@ def _file_identity(path: Path) -> tuple[str, int, int]:
     """Return ``(name, size, mtime)``; a missing file has size and mtime ``-1``."""
     if not path.is_file():
         return (path.name, -1, -1)
-    stat = path.stat()
-    return (path.name, stat.st_size, stat.st_mtime_ns)
+    fingerprint = FileStatFingerprint.from_path(path)
+    return (path.name, fingerprint.size, fingerprint.mtime_ns)
 
 
 def load_polygon_geometry_stats(processed_dir: Path) -> PolygonGeometryStats:

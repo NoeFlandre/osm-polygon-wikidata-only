@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -19,6 +18,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
 )
 from osm_polygon_wikidata_only.domain.schema import polygon_article_schema, polygon_schema
 from osm_polygon_wikidata_only.io import manifest as manifest_io
+from osm_polygon_wikidata_only.io.json_files import read_json
 from osm_polygon_wikidata_only.pipeline.processor import ProcessResult
 
 from .models import CorePublicationArtifacts, PublicationValidationError
@@ -159,12 +159,12 @@ def _reject_missing_augmented_documents(data_root: DataRoot, stem: str, path: Pa
 
 
 def _load_augmentation_manifest(path: Path) -> dict[str, object]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise PublicationValidationError(
+    payload = read_json(
+        path,
+        on_malformed=lambda error: PublicationValidationError(
             f"Malformed augmentation manifest JSON: {error}"
-        ) from error
+        ),
+    )
     if not isinstance(payload, dict):
         raise PublicationValidationError("Malformed augmentation manifest JSON: expected an object")
     return payload
