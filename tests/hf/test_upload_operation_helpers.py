@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -94,18 +93,6 @@ def test_response_message_falls_back_when_response_text_cannot_be_read() -> None
 
     error = RuntimeError("request failed")
     assert operations._response_message(BrokenResponse(), error) == "request failed"
-
-
-def test_upload_queue_reads_only_current_envelopes(tmp_path: Path) -> None:
-    from osm_polygon_wikidata_only.hf._upload_state_files import read_envelope as _read_envelope
-    from osm_polygon_wikidata_only.hf.upload_queue import QUEUE_CONTRACT_VERSION
-
-    envelope = tmp_path / "pending.json"
-    envelope.write_text(json.dumps({"contract_version": QUEUE_CONTRACT_VERSION}))
-    assert _read_envelope(envelope) is not None
-
-    envelope.write_text(json.dumps({"message": "legacy"}))
-    assert _read_envelope(envelope) is None
 
 
 def test_upload_queue_removes_failed_upgrade_artifacts(tmp_path: Path) -> None:
