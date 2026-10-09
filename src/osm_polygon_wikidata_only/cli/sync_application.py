@@ -25,7 +25,10 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncRegionPosition
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
+from osm_polygon_wikidata_only.pipeline.sync_runner import UploadHooks
+from osm_polygon_wikidata_only.pipeline.wikidata_recovery import RepairClients
 from osm_polygon_wikidata_only.utils.retry import (
     cancel_pending_retries,
     reset_retry_cancellation,
@@ -145,7 +148,7 @@ class SyncApplication:
         self.context.core_will_be_repaired = self.context.core_will_be_repaired or bool(
             self._recovered_stems
         )
-        self._request_metadata_repair(rc, callbacks["submit_upload"])
+        self._request_metadata_repair(rc, callbacks["uploads"].submit_upload)
         return rc, False
 
     def _runner_callbacks(self) -> dict[str, Any]:
@@ -159,10 +162,12 @@ class SyncApplication:
             "extract_pbf": self.services.extract_pbf,
             "process_extracted_pbf": self.services.process_extracted_pbf,
             "augment_region": self._augment,
-            "build_upload_files": publish_builder,
-            "commit_message": self.services.commit_message,
-            "submit_upload": submit_upload,
-            "close_uploads": None,
+            "uploads": UploadHooks(
+                build_upload_files=publish_builder,
+                commit_message=self.services.commit_message,
+                submit_upload=submit_upload,
+                close_uploads=None,
+            ),
             "load_existing_augmentation": self._load_existing,
             "recover_region": self._recover,
             "on_complete": self._prepare_publication,
@@ -313,9 +318,11 @@ class SyncApplication:
         actionable = [s for s in self.context.states if s.action is not SyncAction.COMPLETE]
         runtime = self.context.runtime
         return self.services.sync_heartbeat(
-            region=state.stem,
-            region_index=self._region_index(state, actionable),
-            region_total=self._region_total(actionable),
+            position=SyncRegionPosition(
+                region=state.stem,
+                index=self._region_index(state, actionable),
+                total=self._region_total(actionable),
+            ),
             augmentation_snapshot=progress.snapshot,
             scheduler_snapshot=runtime.scheduler.snapshot,
             auth_snapshot=runtime.session.auth_snapshot,
@@ -390,9 +397,11 @@ class SyncApplication:
         return self.services.repair_wikidata_region(
             self.context.data_root,
             plan,
-            wikidata_client=runtime.wikidata,
-            wikipedia_client=runtime.wikipedia,
-            augmentation_client=self.context.augmentation_client,
+            clients=RepairClients(
+                wikidata=runtime.wikidata,
+                wikipedia=runtime.wikipedia,
+                augmentation=self.context.augmentation_client,
+            ),
             settings=self.context.settings,
             log=self.services.logger.info,
             scheduler_snapshot=runtime.scheduler.snapshot,

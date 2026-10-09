@@ -303,10 +303,12 @@ def _unsplit_row(section: dict[str, Any]) -> dict[str, Any]:
         start_char=0,
         end_char=len(text),
         text=text,
-        segmenter="unsplit",
-        segmenter_version="",
-        model_id="",
-        segmentation_status="unsupported_language",
+        stamp=SegmentationStamp(
+            segmenter="unsplit",
+            segmenter_version="",
+            model_id="",
+            segmentation_status="unsupported_language",
+        ),
     )
 
 
@@ -332,10 +334,12 @@ def _split_rows(
                 start_char=offset,
                 end_char=end,
                 text=piece,
-                segmenter=SAT_MODEL_NAME,
-                segmenter_version=segmenter_version,
-                model_id=model_id,
-                segmentation_status="split",
+                stamp=SegmentationStamp(
+                    segmenter=SAT_MODEL_NAME,
+                    segmenter_version=segmenter_version,
+                    model_id=model_id,
+                    segmentation_status="split",
+                ),
             )
         )
         offset = end
@@ -359,6 +363,16 @@ def _validate_piece(piece: str) -> None:
         raise ValueError("Sentence segmenter returned an empty sentence")
 
 
+@dataclass(frozen=True, slots=True)
+class SegmentationStamp:
+    """Segmenter identity and outcome recorded on every sentence row."""
+
+    segmenter: str
+    segmenter_version: str
+    model_id: str
+    segmentation_status: str
+
+
 def _sentence_row(
     section: dict[str, Any],
     *,
@@ -366,11 +380,10 @@ def _sentence_row(
     start_char: int,
     end_char: int,
     text: str,
-    segmenter: str,
-    segmenter_version: str,
-    model_id: str,
-    segmentation_status: str,
+    stamp: SegmentationStamp,
 ) -> dict[str, Any]:
+    segmenter, segmenter_version = stamp.segmenter, stamp.segmenter_version
+    model_id, segmentation_status = stamp.model_id, stamp.segmentation_status
     source_text = _text(section)
     source_content_hash = str(section.get("content_hash") or content_hash(source_text))
     row = {column: section.get(column) for column in _SECTION_CONTEXT_COLUMNS}

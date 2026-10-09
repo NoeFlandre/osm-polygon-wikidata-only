@@ -84,7 +84,7 @@ def _build_hf_api(
     if not getattr(api, "token", None):
         raise UploadError(
             "No Hugging Face token available. Set the HF_TOKEN environment variable, "
-            "run `huggingface-cli login`, or pass --hf-token explicitly."
+            "run `hf auth login`, or pass --hf-token explicitly."
         )
     return api
 

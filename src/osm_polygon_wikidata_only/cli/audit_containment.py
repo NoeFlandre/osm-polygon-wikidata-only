@@ -4,7 +4,6 @@ Audits the configured whole-file containment retirements and prints a JSON
 report. Exit status is 1 when any parent is blocked or the data root cannot
 be read, and 0 otherwise. The exit status 2 is not used for blocked parents,
 so it keeps meaning an argparse usage error. See ``docs/cli-reference.md``.
-``scripts/audit_containment.py`` is a thin shim over :func:`main`.
 """
 
 from __future__ import annotations
@@ -104,11 +103,16 @@ def run(args: argparse.Namespace) -> int:
     return _blocked_result(reports)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Legacy ``scripts/audit_containment.py`` entry point."""
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse the audit-containment arguments. A usage error or ``--help`` exits here."""
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     add_arguments(parser)
-    return run(parser.parse_args(argv))
+    return parser.parse_args(argv)
 
 
-__all__ = ["DESCRIPTION", "add_arguments", "main", "run"]
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the audit from command-line arguments and return the exit status."""
+    return run(parse_args(argv))
+
+
+__all__ = ["DESCRIPTION", "add_arguments", "main", "parse_args", "run"]

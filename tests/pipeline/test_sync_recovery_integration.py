@@ -20,6 +20,7 @@ from osm_polygon_wikidata_only.pipeline.sync_planning import (
 from osm_polygon_wikidata_only.pipeline.sync_runner import (
     RegionSyncState,
     SyncAction,
+    UploadHooks,
     run_sync,
 )
 from osm_polygon_wikidata_only.pipeline.wikidata_recovery import (
@@ -209,9 +210,9 @@ def test_recovery_publishes_before_process_upload(tmp_path: Path) -> None:
         process_extracted_pbf=fake_process,
         augment_region=fake_augment,
         recover_region=fake_recover,
-        build_upload_files=fake_build,
-        commit_message=fake_commit,
-        submit_upload=fake_submit,
+        uploads=UploadHooks(
+            build_upload_files=fake_build, commit_message=fake_commit, submit_upload=fake_submit
+        ),
     )
     assert rc == 0
     assert submit_order == [
@@ -265,9 +266,11 @@ def test_healthy_recovery_candidate_skips_completion_and_publication(tmp_path: P
         process_extracted_pbf=lambda _extracted: object(),
         augment_region=lambda _state: object(),
         recover_region=lambda _state: None,
-        build_upload_files=lambda *_args: ["unexpected"],
-        submit_upload=lambda _ops, message: submissions.append(message),
         on_complete=lambda completed, _result: completions.append(completed.stem),
+        uploads=UploadHooks(
+            build_upload_files=lambda *_args: ["unexpected"],
+            submit_upload=lambda _ops, message: submissions.append(message),
+        ),
     )
 
     assert rc == 0

@@ -212,9 +212,9 @@ def test_publication_only_does_not_invoke_augmentation_or_processing(
         process_extracted_pbf=_process,
         augment_region=_augment,
         load_existing_augmentation=_load,
-        submit_upload=None,
-        build_upload_files=None,
-        close_uploads=None,
+        uploads=sync_runner.UploadHooks(
+            submit_upload=None, build_upload_files=None, close_uploads=None
+        ),
     )
 
     assert calls == ["load_existing_augmentation"]

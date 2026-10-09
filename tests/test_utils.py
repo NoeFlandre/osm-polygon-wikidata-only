@@ -15,7 +15,10 @@ import pytest
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.utils import retry as retry_mod
 from osm_polygon_wikidata_only.utils.json import dumps, loads
-from osm_polygon_wikidata_only.utils.request_scheduler import AdaptiveRequestScheduler
+from osm_polygon_wikidata_only.utils.request_scheduler import (
+    AdaptiveRequestScheduler,
+    HostHealthPolicy,
+)
 from osm_polygon_wikidata_only.utils.retry import (
     is_transient_network_error,
     transient_retry_log_callback,
@@ -493,9 +496,9 @@ def test_report_host_throttled_escalates_when_threshold_hosts_fail() -> None:
         max_requests_per_minute=400,
         minimum_requests_per_minute=60,
         successes_per_increase=1,
-        host_throttle_threshold=3,
         clock=lambda: now[0],
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_threshold=3),
     )
 
     scheduler.report_host_throttled("fr.wikipedia.org", 60.0)
@@ -521,10 +524,9 @@ def test_report_host_throttled_prunes_events_outside_window() -> None:
         requests_per_minute=200,
         max_requests_per_minute=400,
         minimum_requests_per_minute=60,
-        host_throttle_window_s=10.0,
-        host_throttle_threshold=3,
         clock=lambda: now[0],
         sleep=sleep,
+        host_health=HostHealthPolicy(host_throttle_window_s=10.0, host_throttle_threshold=3),
     )
 
     scheduler.report_host_throttled("fr.wikipedia.org", 5.0)

@@ -28,7 +28,11 @@ from collections.abc import Mapping
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.domain.ids import article_id, content_hash
 from osm_polygon_wikidata_only.domain.models import Article, Polygon, PolygonArticleLink
-from osm_polygon_wikidata_only.enrichment.article_linker import LinkSummary, fetch_qids
+from osm_polygon_wikidata_only.enrichment.article_linker import (
+    FetchBatching,
+    LinkSummary,
+    fetch_qids,
+)
 from osm_polygon_wikidata_only.enrichment.text_cleaning import count_words, estimate_tokens
 from osm_polygon_wikidata_only.enrichment.wikidata_client import WikidataClient
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import WikipediaArticle, WikipediaClient
@@ -53,8 +57,10 @@ def enrich_polygon(
             languages=settings.languages,
             fetch_full_text=settings.fetch_full_text,
             max_articles_per_qid=settings.max_articles_per_qid,
-            batch_size=settings.enrichment_batch_size,
-            site_workers=settings.enrichment_site_workers,
+            batching=FetchBatching(
+                batch_size=settings.enrichment_batch_size,
+                site_workers=settings.enrichment_site_workers,
+            ),
         )[0]
         summaries[polygon.wikidata] = summary
     languages = sorted({article.language for article in summary.articles})

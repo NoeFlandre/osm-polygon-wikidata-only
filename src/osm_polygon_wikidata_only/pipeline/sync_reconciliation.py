@@ -105,31 +105,45 @@ def remote_reconciliation_helpers(
     return ReconciliationPlanner, canonical_region_paths
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteSource:
+    """Hub client or pre-fetched inventory that supplies the remote dataset state."""
+
+    hub: HfHub | None
+    inventory_override: RemoteInventory | None
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteHelpers:
+    """Injectable remote reconciliation collaborators; None selects the defaults."""
+
+    canonical_region_paths: Callable[[str], dict[str, str]] | None = None
+    planner_cls: type[ReconciliationPlanner] | None = None
+
+
 def prepare_remote_reconciliation(
     *,
     enabled: bool,
     data_root: DataRoot,
     settings: Settings,
     input_stems: set[str],
-    hub: HfHub | None,
-    inventory_override: RemoteInventory | None,
+    source: RemoteSource,
     validate_augmentation: Callable[[DataRoot, list[str]], dict[str, bool]],
     load_retired_parent_children: Callable[[Path], dict[str, tuple[str, ...]]],
-    canonical_region_paths: Callable[[str], dict[str, str]] | None = None,
-    planner_cls: type[ReconciliationPlanner] | None = None,
+    helpers: RemoteHelpers = RemoteHelpers(),
 ) -> RemoteReconciliation:
     """Prepare remote reconciliation inputs without work on local-only runs."""
     if not enabled:
         return RemoteReconciliation(None, None, {}, set(), {}, False)
     canonical_region_paths, planner_cls = require_remote_helpers(
-        canonical_region_paths, planner_cls
+        helpers.canonical_region_paths, helpers.planner_cls
     )
 
     augmentation_current = validate_augmentation(data_root, sorted(input_stems))
     inventory = _remote_inventory(
-        inventory_override,
+        source.inventory_override,
         repo_id=settings.repo_id,
-        hub=hub,
+        hub=source.hub,
         token=settings.hf_token,
     )
     retired_groups = load_retired_parent_children(data_root.processed)

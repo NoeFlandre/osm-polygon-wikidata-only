@@ -31,7 +31,7 @@ class TrackioSnapshotArtifacts:
     manifest_path: Path
 
 
-def publish_trackio_snapshot(
+def publish_trackio_snapshot(  # noqa: PLR0913 -- public keyword API kept for existing callers
     *,
     output_dir: Path,
     space_id: str | None = TRACKIO_SPACE_ID,

@@ -25,6 +25,7 @@ from osm_polygon_wikidata_only.hf.stats_release import (
     RELEASE_ASSET_FILES,
     REMOTE_CARD_FILE,
     ReleasedFile,
+    ReleaseOptions,
     StatsReleaseError,
     _merge_release_card,
     _require_consistent_text_coverage,
@@ -61,13 +62,18 @@ def processed(tmp_path: Path) -> Path:
     return root
 
 
+_OPTION_NAMES = ("apply", "hub", "verifier", "token", "source_revision", "data_revision")
+
+
 def _release(processed: Path, staging: Path, **kwargs: Any):
+    options = ReleaseOptions(**{name: kwargs.pop(name) for name in _OPTION_NAMES if name in kwargs})
     return release_polygon_stats(
         processed_dir=processed,
         staging_dir=staging,
         repo_id=_REPO,
         confirm_repo=str(kwargs.pop("confirm_repo", _REPO)),
         card_writer=_write_card,
+        options=options,
         **kwargs,
     )
 
@@ -315,8 +321,7 @@ def test_apply_regenerates_data_sections_and_preserves_front_matter_and_prose(
         repo_id=_REPO,
         confirm_repo=_REPO,
         card_writer=write_generated_card,
-        apply=True,
-        hub=hub,
+        options=ReleaseOptions(apply=True, hub=hub),
     )
 
     merged = hub.remote_content[REMOTE_CARD_FILE].decode("utf-8")
@@ -355,8 +360,7 @@ def test_apply_orders_generated_sections_before_preserved_citation(
         repo_id=_REPO,
         confirm_repo=_REPO,
         card_writer=write_generated_card,
-        apply=True,
-        hub=hub,
+        options=ReleaseOptions(apply=True, hub=hub),
     )
 
     merged = hub.remote_content[REMOTE_CARD_FILE].decode("utf-8")

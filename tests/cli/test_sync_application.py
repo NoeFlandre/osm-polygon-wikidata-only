@@ -272,9 +272,9 @@ def test_push_disabled_execution_never_exposes_publication_callbacks(tmp_path: P
     )
 
     assert application.run().return_code == 0
-    assert captured["build_upload_files"] is None
-    assert captured["submit_upload"] is None
-    assert captured["close_uploads"] is None
+    assert captured["uploads"].build_upload_files is None
+    assert captured["uploads"].submit_upload is None
+    assert captured["uploads"].close_uploads is None
 
 
 def test_push_enabled_runner_submits_one_atomic_region_commit(tmp_path: Path) -> None:
@@ -286,8 +286,10 @@ def test_push_enabled_runner_submits_one_atomic_region_commit(tmp_path: Path) ->
         state = states[0]
         augmentation = callbacks["augment_region"](state)
         callbacks["on_complete"](state, augmentation)
-        callbacks["build_upload_files"](state, augmentation, None)
-        callbacks["submit_upload"](["region-op"], callbacks["commit_message"](state))
+        callbacks["uploads"].build_upload_files(state, augmentation, None)
+        callbacks["uploads"].submit_upload(
+            ["region-op"], callbacks["uploads"].commit_message(state)
+        )
         return 0
 
     context = _context(

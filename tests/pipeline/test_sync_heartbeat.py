@@ -4,7 +4,7 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation.progress import AugmentationProgressSnapshot
 from osm_polygon_wikidata_only.enrichment.wikimedia_auth import WikimediaAuthSnapshot
-from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat
+from osm_polygon_wikidata_only.pipeline.sync_heartbeat import SyncHeartbeat, SyncRegionPosition
 from osm_polygon_wikidata_only.utils.request_scheduler import RequestSchedulerSnapshot
 
 
@@ -38,9 +38,7 @@ def test_sync_heartbeat_logs_once_then_stops(include_auth: bool) -> None:
         credentials_configured=True, authenticated_hosts=1, anonymous_hosts=0, pending_hosts=0
     )
     heartbeat = SyncHeartbeat(
-        region="region",
-        region_index=1,
-        region_total=1,
+        position=SyncRegionPosition(region="region", index=1, total=1),
         augmentation_snapshot=lambda: AugmentationProgressSnapshot(
             phase="documents", completed=1, total=2
         ),

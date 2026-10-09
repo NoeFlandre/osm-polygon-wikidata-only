@@ -10,7 +10,12 @@ import pytest
 
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
-from osm_polygon_wikidata_only.domain.models import Polygon
+from osm_polygon_wikidata_only.domain.models import (
+    Polygon,
+    PolygonIdentity,
+    PolygonOsmFields,
+    PolygonShape,
+)
 from osm_polygon_wikidata_only.enrichment.wikidata_client import InMemoryWikidataClient
 from osm_polygon_wikidata_only.enrichment.wikipedia_client import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.hf.uploader import UploadError
@@ -179,26 +184,32 @@ def test_enrich_polygon_fetches_and_summarizes_missing_qid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     polygon = Polygon.make(
-        source_pbf_stem="region-latest",
-        region="region",
-        source_pbf="region-latest.osm.pbf",
-        osm_type="relation",
-        osm_id=1,
-        wikidata="Q1",
-        name="Place",
-        tags="{}",
-        tag_keys="[]",
-        tag_count=0,
-        osm_primary_tag="",
-        centroid='{"type":"Point","coordinates":[0,0]}',
-        lat=0.0,
-        lon=0.0,
-        bbox="[0,0,0,0]",
-        area_m2=1.0,
-        area_km2=0.000001,
-        area_bucket="small",
-        has_name=True,
-        has_wikidata=True,
+        identity=PolygonIdentity(
+            source_pbf_stem="region-latest",
+            region="region",
+            source_pbf="region-latest.osm.pbf",
+            osm_type="relation",
+            osm_id=1,
+        ),
+        osm=PolygonOsmFields(
+            wikidata="Q1",
+            name="Place",
+            tags="{}",
+            tag_keys="[]",
+            tag_count=0,
+            osm_primary_tag="",
+            has_name=True,
+            has_wikidata=True,
+        ),
+        shape=PolygonShape(
+            centroid='{"type":"Point","coordinates":[0,0]}',
+            lat=0.0,
+            lon=0.0,
+            bbox="[0,0,0,0]",
+            area_m2=1.0,
+            area_km2=0.000001,
+            area_bucket="small",
+        ),
         extraction_version="v1",
         extracted_at="now",
     )

@@ -29,6 +29,7 @@ import pytest
 
 from osm_polygon_wikidata_only.utils.request_scheduler import (
     AdaptiveRequestScheduler,
+    HostHealthPolicy,
     RequestSchedulerSnapshot,
 )
 
@@ -87,12 +88,11 @@ def _build_scheduler(clock: _SimulatedClock, *, threshold: int) -> AdaptiveReque
     return AdaptiveRequestScheduler(
         max_in_flight=_AUTH_MAX_IN_FLIGHT,
         requests_per_minute=_AUTH_CEILING,
-        max_requests_per_minute=_AUTH_CEILING,
-        # Match the production authenticated floor (see cli.dependencies).
+        max_requests_per_minute=_AUTH_CEILING,  # Match the production authenticated floor (see cli.dependencies).
         minimum_requests_per_minute=200.0,
-        host_throttle_threshold=threshold,
         clock=clock.now,
         sleep=clock.sleep,
+        host_health=HostHealthPolicy(host_throttle_threshold=threshold),
     )
 
 
@@ -338,9 +338,9 @@ def test_concurrency_scaling_demonstrates_in_flight_bottleneck(max_in_flight: in
         requests_per_minute=_AUTH_CEILING,
         max_requests_per_minute=_AUTH_CEILING,
         minimum_requests_per_minute=200.0,
-        host_throttle_threshold=100,
         clock=clock.now,
         sleep=clock.sleep,
+        host_health=HostHealthPolicy(host_throttle_threshold=100),
     )
     completions = [0]
     workers = list(_HOSTS_HEALTHY)
