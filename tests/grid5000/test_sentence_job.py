@@ -112,11 +112,13 @@ def test_cuda_runtime_rejects_missing_runtime_and_accepts_cuda(
 
 def test_job_environment_removes_hub_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "secret-token")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "secret-token")
     monkeypatch.setenv("GRID5000_TEST_VALUE", "retained")
 
     environment = sentence_job._job_environment()
 
     assert "HF_TOKEN" not in environment
+    assert "HUGGING_FACE_HUB_TOKEN" not in environment
     assert environment["GRID5000_TEST_VALUE"] == "retained"
 
 

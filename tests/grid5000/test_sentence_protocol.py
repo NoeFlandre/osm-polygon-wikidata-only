@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pyarrow as pa
@@ -10,13 +11,16 @@ import pytest
 
 from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.grid5000.sentence_protocol import (
+    HF_CREDENTIAL_ENV_VARS,
     SentenceBatch,
     _pack_batches,
     _required_projects,
     _should_flush,
     _validate_stem,
+    hf_credential_unset_prefix,
     is_safe_run_id,
     plan_sentence_batches,
+    scrub_hf_credentials,
     sentence_source_paths,
     sha256_manifest,
     validate_cleanup_target,
@@ -249,3 +253,32 @@ def test_sha256_manifest_is_sorted_and_relative(tmp_path: Path) -> None:
     assert error.value.args == (missing,)
     with pytest.raises(ValueError, match="Duplicate artifact path"):
         sha256_manifest([first, first], root=tmp_path)
+
+
+def test_scrub_removes_every_hub_credential_and_keeps_other_variables() -> None:
+    environment = {name: f"secret-{name}" for name in HF_CREDENTIAL_ENV_VARS}
+    environment["GRID5000_TEST_VALUE"] = "retained"
+
+    scrubbed = scrub_hf_credentials(environment)
+
+    assert scrubbed == {"GRID5000_TEST_VALUE": "retained"}
+    assert environment["HF_TOKEN"] == "secret-HF_TOKEN"
+
+
+def test_unset_prefix_hides_every_hub_credential_from_the_child_process() -> None:
+    environment = {name: f"secret-{name}" for name in HF_CREDENTIAL_ENV_VARS}
+    environment["GRID5000_TEST_VALUE"] = "retained"
+    command = f"{hf_credential_unset_prefix()} env"
+
+    result = subprocess.run(
+        ["sh", "-c", command],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    seen = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    for name in HF_CREDENTIAL_ENV_VARS:
+        assert name not in seen
+    assert seen["GRID5000_TEST_VALUE"] == "retained"
