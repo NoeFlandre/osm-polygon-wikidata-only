@@ -31,7 +31,7 @@ jobs:
         with:
           tool: just
       - name: Install Python
-        run: uv python install 3.12
+        run: uv python install
       - name: Verify the lockfiles match pyproject.toml
         run: |
           uv lock --check
@@ -55,7 +55,7 @@ jobs:
         with:
           tool: just
       - name: Install Python
-        run: uv python install 3.12
+        run: uv python install
       - name: Audit both lockfiles for known vulnerabilities
         run: just audit
 
@@ -66,10 +66,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the development test image
         run: docker build --target development --tag osm-polygon-wikidata-only:ci-development .
-      - name: Run the development pytest suite
-        run: docker run --rm osm-polygon-wikidata-only:ci-development
+      # The full non-repository suite already runs in the quality job's `tests`
+      # stage, so this container job runs only a smoke selection.
+      - name: Run the development pytest smoke selection
+        run: >-
+          docker run --rm osm-polygon-wikidata-only:ci-development
+          uv run pytest -q -m "not repository"
+          tests/test_version.py tests/test_docker.py tests/test_public_api.py
       - name: Build the non-root runtime image
-        run: docker build --target runtime --tag osm-polygon-wikidata-only:local .
+        run: |
+          version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
+          docker build --target runtime --build-arg PROJECT_VERSION="${version}" --tag osm-polygon-wikidata-only:local .
       - name: Validate the Compose runtime configuration
         run: docker compose config --quiet
       - name: Create the Compose bind-mount data root
@@ -107,7 +114,7 @@ jobs:
         with:
           tool: just
       - name: Install Python
-        run: uv python install 3.12
+        run: uv python install
       - name: Install dependencies
         run: just sync
       - name: Run the benchmark suite

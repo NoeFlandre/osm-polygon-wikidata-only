@@ -34,7 +34,8 @@ ENFORCE_JSON = (
     '"wikivoyage_documents_rejected": 0, "wikivoyage_sections_cascaded": 0}\n'
 )
 AUDIT_REMOTE_MISSING_ROOT = (
-    "Error resolving data root: Data root absent (explicit --data-root) does not \nexist.\n"
+    "osm-polygon-wikidata-only audit-remote: error: cannot resolve data root: "
+    "Data root absent (explicit --data-root) does not exist.\n"
 )
 
 
@@ -124,7 +125,8 @@ def test_audit_remote_standalone_missing_root_pins_stdout_and_exit_code(tmp_path
     )
 
     assert proc.returncode == 1
-    assert proc.stdout == AUDIT_REMOTE_MISSING_ROOT
+    assert proc.stdout == ""
+    assert AUDIT_REMOTE_MISSING_ROOT in proc.stderr
 
 
 def test_audit_remote_standalone_help_exits_0(tmp_path: Path) -> None:

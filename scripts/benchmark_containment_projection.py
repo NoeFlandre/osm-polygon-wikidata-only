@@ -28,7 +28,7 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.pipeline.containment_manifest_stats import (
     POLYGON_MANIFEST_COLUMNS,
-    polygon_manifest_stats,
+    polygon_manifest_table_stats,
 )
 from osm_polygon_wikidata_only.pipeline.containment_migration import (
     StagedRule,
@@ -97,8 +97,8 @@ def _peak_rss_mib() -> float:
 
 def _worker_stats(mode: str, parquet_path: Path, documents_path: Path) -> dict[str, Any]:
     if mode == "all-columns":
-        polygons = pq.read_table(parquet_path).to_pylist()
-        return polygon_manifest_stats(polygons)
+        polygons = pq.read_table(parquet_path)
+        return polygon_manifest_table_stats(polygons)
     staged = StagedRule(
         "benchmark-latest",
         (),

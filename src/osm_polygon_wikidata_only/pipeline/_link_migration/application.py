@@ -57,6 +57,7 @@ def _apply_replacements(
         directory,
         stem="__replacements__",
         replacements=replacements,
+        data_root=processed_dir,
         _crash_hook=_crash_hook,
     )
 
@@ -148,6 +149,7 @@ def _apply_migratable_stem(
         journal_dir,
         stem=stem_plan.stem,
         replacements=replacements,
+        data_root=processed_dir,
         _crash_hook=_crash_hook,
     )
     staged_dir = processed_dir / ".link_migration_staging" / stem_plan.stem
