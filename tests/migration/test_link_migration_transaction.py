@@ -519,7 +519,7 @@ def test_move_recovery_staged_moves_the_staged_file_into_a_missing_target(tmp_pa
     target = tmp_path / "target.txt"
     staged.write_text("staged-payload", encoding="utf-8")
 
-    transaction_module._move_recovery_staged(staged, target)
+    transaction_module._move_recovery_staged(staged, target, data_root=tmp_path)
 
     assert target.read_text(encoding="utf-8") == "staged-payload"
     assert not staged.exists()
