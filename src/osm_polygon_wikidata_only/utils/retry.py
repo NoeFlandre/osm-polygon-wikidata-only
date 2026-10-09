@@ -1,7 +1,8 @@
 """Retry-with-backoff helpers used by the enrichment clients.
 
-Kept tiny and dependency-free so tests can use it without mocking
-heavy networking stacks. The actual HTTP layer is in the
+Kept tiny so tests can use it without mocking heavy networking stacks;
+its only third-party import is httpx, the HTTP client the Hub and
+Wikimedia layers already depend on. The actual HTTP layer is in the
 :mod:`enrichment` package.
 """
 
@@ -17,6 +18,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import count
 from typing import TypeVar, cast
+
+import httpx
 
 LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +70,10 @@ def wait_for_retry_or_cancel(delay: float) -> bool:
     return _RETRY_CANCELLATION.wait(delay)
 
 
-_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+# 520, 522 and 524 are Cloudflare origin failures (unknown origin error, origin
+# connection timeout, origin response timeout) returned by a fronting gateway
+# when its origin stalls. They are retried like the 504 gateway timeout beside them.
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504, 520, 522, 524})
 _TRANSIENT_ERRNOS = frozenset(
     {
         errno.ECONNABORTED,
@@ -131,7 +137,12 @@ def _is_transient_url_error(error: urllib.error.URLError) -> bool:
 
 
 def _is_transient_exception(error: BaseException) -> bool:
-    if isinstance(error, (socket.gaierror, TimeoutError, ConnectionError)):
+    # httpx.RemoteProtocolError is raised when the server drops a connection
+    # before replying; the Hub client surfaces it unwrapped and it has no status.
+    if isinstance(
+        error,
+        (socket.gaierror, TimeoutError, ConnectionError, httpx.RemoteProtocolError),
+    ):
         return True
     return isinstance(error, OSError) and error.errno in _TRANSIENT_ERRNOS
 

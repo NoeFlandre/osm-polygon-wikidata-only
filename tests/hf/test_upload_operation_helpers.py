@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import httpx
 import pytest
 
 from osm_polygon_wikidata_only.hf import _upload_retry
@@ -280,6 +281,30 @@ def test_translated_hub_error_without_response_is_transient_on_network_cause() -
     assert translated.transient
 
     assert not operations._translate_hf_error(ValueError("bad payload"), repo_id="a/b").transient
+
+
+def test_translated_hub_transport_disconnect_is_transient() -> None:
+    error = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    assert operations._translate_hf_error(error, repo_id="a/b").transient
+
+
+def test_retry_log_redacts_credentials_and_caps_raw_callback_errors(
+    recorded_waits: list[float], no_jitter: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    def upload(_ops: list, _message: str) -> None:
+        raise ConnectionResetError("Authorization: Bearer hf_live_secret " + "x" * 500)
+
+    with caplog.at_level("WARNING"), pytest.raises(ConnectionResetError):
+        _run_upload_attempts(upload, [], "retry", attempts=2)
+
+    [logged] = caplog.messages
+    assert "hf_live_secret" not in logged
+    assert "Authorization: Bearer" not in logged
+    assert "<redacted>" in logged
+    assert "ConnectionResetError" in logged
+    assert "x" * 201 not in logged
+    assert logged.endswith("retrying in 0.5s")
 
 
 def test_absent_delete_filter_is_a_noop_without_delete_paths() -> None:

@@ -13,6 +13,7 @@ import random
 from collections.abc import Callable
 
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+from osm_polygon_wikidata_only.hf._uploader.operations import _sanitize_server_message
 from osm_polygon_wikidata_only.utils.retry import (
     is_transient_network_error,
     wait_for_retry_or_cancel,
@@ -22,12 +23,25 @@ LOGGER = logging.getLogger(__name__)
 
 _BASE_DELAY_SECONDS = 0.5
 _MAX_DELAY_SECONDS = 8.0
+_MAX_LOGGED_MESSAGE_CHARS = 200
 
 
 def _is_transient(error: Exception) -> bool:
     if isinstance(error, UploadError):
         return error.transient
     return is_transient_network_error(error)
+
+
+def _loggable_message(error: Exception) -> str:
+    """Return the error text with secrets redacted and its length capped.
+
+    Errors raised by upload callbacks are not sanitized upstream, so a
+    transient one may still carry tokens or local paths.
+    """
+    message = _sanitize_server_message(str(error))
+    if len(message) <= _MAX_LOGGED_MESSAGE_CHARS:
+        return message
+    return f"{message[:_MAX_LOGGED_MESSAGE_CHARS]}..."
 
 
 def _backoff_seconds(attempt: int) -> float:
@@ -48,7 +62,7 @@ def _wait_before_retry(message: str, attempt: int, attempts: int, error: Excepti
         attempt,
         attempts,
         type(error).__name__,
-        error,
+        _loggable_message(error),
         delay,
     )
     return wait_for_retry_or_cancel(delay)

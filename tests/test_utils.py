@@ -8,6 +8,7 @@ import socket
 import threading
 import urllib.error
 
+import httpx
 import pytest
 
 from osm_polygon_wikidata_only.config.settings import Settings
@@ -47,6 +48,17 @@ def test_production_network_retry_budget_is_unbounded() -> None:
     ],
 )
 def test_transient_network_error_classifies_retryable_failures(error: BaseException) -> None:
+    assert is_transient_network_error(error)
+
+
+@pytest.mark.parametrize("status", [520, 522, 524])
+def test_cloudflare_origin_failures_are_retryable(status: int) -> None:
+    assert is_transient_network_error(http_error(status, msg="origin failure"))
+
+
+def test_httpx_remote_protocol_error_is_retryable() -> None:
+    error = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
     assert is_transient_network_error(error)
 
 
