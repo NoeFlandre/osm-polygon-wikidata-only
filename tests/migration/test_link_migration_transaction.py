@@ -484,6 +484,20 @@ def test_recovery_journal_rejects_wrong_version_and_stem(
         transaction_module._load_recovery_journal(journal, "expected", data_root=tmp_path)
 
 
+def test_recovery_journal_rejects_malformed_json_and_loads_a_matching_journal(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text("{broken", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        transaction_module._load_recovery_journal(journal, "expected", data_root=tmp_path)
+
+    matching = {"contract_version": transaction_module.TRANSACTION_VERSION, "stem": "expected"}
+    journal.write_text(json.dumps(matching), encoding="utf-8")
+    loaded = transaction_module._load_recovery_journal(journal, "expected", data_root=tmp_path)
+    assert loaded["stem"] == "expected"
+
+
 def test_cleanup_keeps_nonempty_nested_directories_without_raising(tmp_path: Path) -> None:
     transaction_dir = tmp_path / "transaction"
     nested = transaction_dir / "nested"

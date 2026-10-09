@@ -5,12 +5,16 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation import existing_results, orchestrator
+from osm_polygon_wikidata_only.augmentation.existing_results import (
+    _processed_link_manifest_is_current,
+)
 from osm_polygon_wikidata_only.augmentation.schema import (
     document_schema,
     fact_schema,
@@ -140,3 +144,56 @@ def test_reused_section_batch_logging_is_silent_when_none_reused(
     assert not caplog.records
     orchestrator._log_reused_section_batches(STEM, 1, 2)
     assert "reused 1/2" in caplog.records[-1].message
+
+
+def test_processed_link_manifest_returns_false_for_missing_or_malformed_data(
+    tmp_path: Path,
+) -> None:
+    root = DataRoot(tmp_path)
+    links = tmp_path / "links.parquet"
+    manifest = root.processed_manifests / "processed_pbfs.json"
+
+    assert not _processed_link_manifest_is_current(root, "region-latest", links)
+    for content in ("{broken", "[]", "{}"):
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(content, encoding="utf-8")
+        assert not _processed_link_manifest_is_current(root, "region-latest", links)
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "link_count", "expected"),
+    [
+        ("polygon-document-links-v1", 3, True),
+        ("legacy", 3, False),
+        ("polygon-document-links-v1", 2, False),
+    ],
+)
+def test_processed_link_manifest_requires_matching_schema_and_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_version: str,
+    link_count: int,
+    expected: bool,
+) -> None:
+    stem = "region-latest"
+    data_root = DataRoot(tmp_path)
+    manifest_path = data_root.processed_manifests / "processed_pbfs.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                f"{stem}.osm.pbf": {
+                    "link_schema_version": schema_version,
+                    "link_count": link_count,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        existing_results.pq, "read_metadata", lambda _path: SimpleNamespace(num_rows=3)
+    )
+
+    result = _processed_link_manifest_is_current(data_root, stem, tmp_path / "links.parquet")
+
+    assert result is expected

@@ -225,6 +225,7 @@ pytest_add_cli_args = ["--no-cov", "-q"]
 ]
 "src/osm_polygon_wikidata_only/pipeline/sync_reconciliation.py" = [
     "tests/pipeline/test_sync_reconciliation.py",
+    "tests/cli/test_run_sync_preparation.py",
     "tests/pipeline/test_sync_recovery_integration.py",
     "tests/contracts/test_sync_runner_decomposition.py",
 ]
@@ -356,7 +357,4 @@ pytest_add_cli_args = ["--no-cov", "-q"]
     "tests/quality/test_architecture_imports.py",
 ]
 "scripts/quality/bench_compare.py" = ["tests/quality/test_benchmark_gates.py"]
-"scripts/quality/slow_tests.py" = [
-    "tests/quality/test_benchmark_gates.py",
-    "tests/quality/test_crap_gate_remaining_coverage.py",
-]
+"scripts/quality/slow_tests.py" = ["tests/quality/test_benchmark_gates.py"]

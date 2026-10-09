@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from osm_polygon_wikidata_only.augmentation.rejection_ledger import (
     LEDGER_CONTRACT_VERSION,
@@ -14,6 +15,7 @@ from osm_polygon_wikidata_only.augmentation.rejection_ledger import (
     save_ledger,
 )
 from osm_polygon_wikidata_only.pipeline._link_migration import artifacts
+from osm_polygon_wikidata_only.pipeline._link_migration import artifacts as link_artifacts
 from osm_polygon_wikidata_only.pipeline._link_migration.models import StemApplyInputs
 
 
@@ -127,3 +129,28 @@ def test_retained_voyage_table_keeps_its_original_schema_and_metadata(tmp_path: 
     )
 
     assert pq.read_schema(staged).equals(schema, check_metadata=True)
+
+
+def test_source_pbf_helper_rejects_zero_or_multiple_values() -> None:
+    class Column:
+        def __init__(self, values: list[str]) -> None:
+            self.values = values
+
+        def to_pylist(self) -> list[str]:
+            return self.values
+
+    class Table:
+        def __init__(self, values: list[str]) -> None:
+            self.values = values
+
+        def column(self, name: str) -> Column:
+            assert name == "source_pbf"
+            return Column(self.values)
+
+    for values, count in [([], 0), (["a.pbf", "b.pbf"], 2)]:
+        inputs = SimpleNamespace(
+            stem_plan=SimpleNamespace(stem="region-latest"),
+            polygons_table=Table(values),
+        )
+        with pytest.raises(RuntimeError, match=f"{count} distinct source_pbf"):
+            link_artifacts.source_pbf_for_stem(cast(Any, inputs))

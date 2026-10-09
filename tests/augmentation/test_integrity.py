@@ -32,19 +32,23 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.augmentation import integrity
 from osm_polygon_wikidata_only.augmentation.integrity import (
     INTEGRITY_CONTRACT_VERSION,
     REASON_POLYGON_ARTICLES_MISMATCH,
     REASON_WIKIVOYAGE_ABSENT,
     PolygonArticlesIntegrityResult,
+    RejectionRecord,
     WikivoyageIntegrityResult,
     enforce_all_regions,
     enforce_polygon_articles_integrity,
     enforce_wikivoyage_integrity,
 )
+from osm_polygon_wikidata_only.augmentation.orchestrator import _integrity_rejections_payload
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
     SECTION_COLUMNS,
+    document_schema,
 )
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.domain.schema import (
@@ -626,3 +630,46 @@ def test_integrity_report_serializes_every_shard_result(tmp_path: Path):
     assert [entry["shard"] for entry in payload["polygon_articles"]] == [stem]
     assert payload["polygon_articles"][0]["rejected_row_count"] == 1
     assert payload["wikivoyage"] == []
+
+
+def test_integrity_helpers_cover_missing_polygons_and_empty_rows(tmp_path: Path) -> None:
+    path = tmp_path / "polygons.parquet"
+    with pytest.raises(FileNotFoundError, match="Polygons parquet missing"):
+        integrity._read_polygon_wikidata_set(path)
+
+    pq.write_table(pa.table({"wikidata": ["Q1", "", None]}), path)
+    assert integrity._read_polygon_wikidata_set(path) == {"Q1"}
+
+    schema = document_schema()
+    empty = integrity._table_from_rows([], tuple(schema.names), schema)
+    assert empty.num_rows == 0
+    assert empty.schema.equals(schema, check_metadata=True)
+
+
+def test_integrity_rejection_payload_serializes_rejected_documents() -> None:
+    rejection = RejectionRecord(
+        shard="region",
+        source_table="wikivoyage_documents",
+        identifier="doc-2",
+        wikidata="Q2",
+        expected=None,
+        reason="wikidata_absent_from_polygons",
+    )
+    integrity = WikivoyageIntegrityResult(
+        shard="region",
+        original_document_count=2,
+        retained_document_count=1,
+        rejected_document_count=1,
+        original_section_count=3,
+        retained_section_count=2,
+        cascaded_section_count=1,
+        rewritten_documents=True,
+        rewritten_sections=True,
+        rejections=(rejection,),
+    )
+
+    payload = _integrity_rejections_payload(integrity)
+
+    assert payload is not None
+    assert payload["rejected_document_count"] == 1
+    assert payload["rejections"] == [rejection.to_dict()]

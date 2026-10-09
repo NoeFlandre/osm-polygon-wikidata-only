@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -50,3 +51,11 @@ def test_fetch_qid_documents_skips_existing_and_collects_new_documents(
     assert documents == [{"document_id": "New"}]
     assert calls == ["Missing", "New"]
     assert progress.advanced == 1
+
+
+def test_recovery_entity_resolution_supports_single_and_batch_clients() -> None:
+    entity = WikidataEntity("Q1")
+    single = SimpleNamespace(get_entity=lambda qid: entity if qid == "Q1" else None)
+    batch = SimpleNamespace(get_entities=lambda qids: [entity for _ in qids])
+    assert cast(Any, repair_fetch._resolve_entities)(single, ("Q1",)) == {"Q1": entity}
+    assert cast(Any, repair_fetch._resolve_entities)(batch, ("Q1",)) == {"Q1": entity}

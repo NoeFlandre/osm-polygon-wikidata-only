@@ -26,6 +26,7 @@ import pytest
 from osm_polygon_wikidata_only.augmentation.existing_results import (
     _augmentation_inputs_exist,
     _core_hashes_are_current,
+    _is_valid_core_hash_entry,
     _is_valid_core_hash_path,
     _link_artifacts_are_current,
     augmentation_is_current,
@@ -325,3 +326,29 @@ def test_currentness_helpers_reject_missing_core_file_and_link_artifact(tmp_path
         data_root,
         STEM,
     )
+
+
+def test_core_hash_path_and_entry_reject_invalid_membership(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    path = str(root / "region.parquet")
+    allowed = {path}
+
+    assert not _is_valid_core_hash_path(path, set(), root)
+    assert _is_valid_core_hash_entry(42, "a" * 64, allowed, root) is False
+    assert _is_valid_core_hash_entry(path, "g" * 64, allowed, root) is False
+    assert _is_valid_core_hash_entry(path, "a" * 64, allowed, root)
+
+
+def test_core_hash_path_fails_closed_when_resolution_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path.resolve() / "region.parquet"
+    original_resolve = Path.resolve
+
+    def fail_target(self: Path, strict: bool = False) -> Path:
+        if self == path:
+            raise OSError("unresolvable path")
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_target)
+    assert not _is_valid_core_hash_path(str(path), {str(path)}, tmp_path.resolve())

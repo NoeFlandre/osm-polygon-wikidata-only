@@ -102,3 +102,23 @@ def test_trackio_publisher_targets_the_v2_run_directory(
     assert published == [
         {"output_dir": data_root.cache / "trackio" / V2_TRACKIO_RUN_NAME, "stats": stats}
     ]
+
+
+def test_v2_trackio_publisher_is_only_built_for_live_pushes(tmp_path: Path) -> None:
+    assert (
+        v2_cli._build_trackio_publisher(
+            argparse.Namespace(push=False, dry_run=False), DataRoot(tmp_path)
+        )
+        is None
+    )
+    assert (
+        v2_cli._build_trackio_publisher(
+            argparse.Namespace(push=True, dry_run=True), DataRoot(tmp_path)
+        )
+        is None
+    )
+    assert callable(
+        v2_cli._build_trackio_publisher(
+            argparse.Namespace(push=True, dry_run=False), DataRoot(tmp_path)
+        )
+    )

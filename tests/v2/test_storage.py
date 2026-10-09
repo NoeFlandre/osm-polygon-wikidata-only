@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from osm_polygon_wikidata_only.v2 import storage as v2_storage
 from osm_polygon_wikidata_only.v2.storage import (
     V2RegionArtifacts,
     load_v2_manifest,
@@ -133,3 +134,15 @@ def test_write_region_rejects_conflicting_duplicate_documents(tmp_path: Path) ->
             ],
             links=[],
         )
+
+
+def test_manifest_entries_reject_non_object_payloads_and_accept_region_mappings(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="not an object"):
+        v2_storage._manifest_entries(None, tmp_path / "processed_pbfs.json")
+    with pytest.raises(ValueError, match="regions is not an object"):
+        v2_storage._manifest_entries({"regions": []}, tmp_path / "processed_pbfs.json")
+    assert v2_storage._manifest_entries({"regions": {"region": {}}}, tmp_path / "manifest") == {
+        "region": {}
+    }

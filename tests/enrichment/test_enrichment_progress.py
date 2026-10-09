@@ -124,7 +124,7 @@ def test_progress_tracker_rejects_negative_counts(
 ) -> None:
     progress = EnrichmentProgress(total_qids=0)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="non-negative"):
         operation(progress)
 
 

@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -13,6 +14,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia.models import (
 )
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.io.cache import JsonFileCache
+from osm_polygon_wikidata_only.v2 import direct_enrichment as v2_direct_enrichment
 from osm_polygon_wikidata_only.v2.config import V2_CACHE_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.direct_enrichment import (
     DirectLookupOptions,
@@ -464,3 +466,35 @@ def test_direct_enrichment_preserves_operator_interrupts() -> None:
             index=cast(V1ReuseIndex, BackgroundIndex()),
             wikipedia_client=cast(WikipediaClient, InterruptingClient()),
         )
+
+
+def test_speculative_fetch_stops_when_index_finishes_and_keeps_errors() -> None:
+    from osm_polygon_wikidata_only.v2.wikipedia_tags import WikipediaTagRef
+
+    ref = WikipediaTagRef("en", "Title", "wikipedia:en", "Title")
+    state = {"calls": 0}
+
+    class Index:
+        @property
+        def is_ready(self) -> bool:
+            return state["calls"] > 0
+
+    class Client:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> object:
+            state["calls"] += 1
+            return "article"
+
+    result = cast(Any, v2_direct_enrichment._fetch_speculative_results)(
+        Index(), ((0, ref), (1, ref)), Client(), True
+    )
+    assert result == {0: "article"}
+
+    class FailingClient:
+        def fetch_article(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("temporary fetch failure")
+
+    errors = cast(Any, v2_direct_enrichment._fetch_speculative_results)(
+        SimpleNamespace(is_ready=False), ((2, ref),), FailingClient(), False
+    )
+    assert isinstance(errors[2], RuntimeError)
+    assert str(errors[2]) == "temporary fetch failure"

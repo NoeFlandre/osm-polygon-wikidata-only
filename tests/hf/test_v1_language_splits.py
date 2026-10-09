@@ -6,6 +6,8 @@ import errno
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -21,6 +23,7 @@ from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, 
 from osm_polygon_wikidata_only.hf.language_splits import LanguageTableInventory
 from osm_polygon_wikidata_only.hf.v1_language_splits import (
     V1_LANGUAGE_SPLIT_MANIFEST,
+    LanguageTableSpec,
     V1LanguageSplitError,
     _previous_partition_path,
     _validate_partition_counts,
@@ -603,3 +606,30 @@ def test_v1_cross_filesystem_install_is_rejected_and_rolled_back(
         path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()
     }
     assert after == before
+
+
+def test_v1_language_stream_wraps_unexpected_errors_and_preserves_domain_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    spec = cast(
+        LanguageTableSpec,
+        SimpleNamespace(language_column="language"),
+    )
+    args = (tmp_path / "source.parquet", spec, pa.schema([]), tmp_path, 1, {}, {}, {})
+
+    def fail_open(_path: Path) -> object:
+        raise OSError("unreadable shard")
+
+    monkeypatch.setattr(v1_language_splits, "open_parquet", fail_open)
+    with pytest.raises(V1LanguageSplitError, match="Could not partition language column"):
+        v1_language_splits._stream_source_file(*args)
+
+    domain_error = V1LanguageSplitError("invalid source schema")
+
+    def fail_validation(_path: Path) -> object:
+        raise domain_error
+
+    monkeypatch.setattr(v1_language_splits, "open_parquet", fail_validation)
+    with pytest.raises(V1LanguageSplitError, match="invalid source schema") as raised:
+        v1_language_splits._stream_source_file(*args)
+    assert raised.value is domain_error

@@ -351,3 +351,18 @@ def test_sentence_checkpoint_rejects_missing_and_schema_invalid_batch_metadata(
 
     assert checkpoint.batch_row_count(0) is None
     assert checkpoint.completed_batches == ()
+
+
+def test_sentence_batch_table_is_none_when_missing_or_schema_mismatched(tmp_path: Path) -> None:
+    checkpoint = SentenceCheckpoint(
+        tmp_path / "sentences",
+        "region",
+        "wikipedia",
+        input_fingerprint="input",
+        model_id="model",
+        model_revision="revision",
+        batch_size=2,
+    )
+    assert checkpoint.load_batch_table(0) is None
+    pq.write_table(pa.table({"unexpected": [1]}), checkpoint._batch_path(0))
+    assert checkpoint.load_batch_table(0) is None

@@ -8,7 +8,8 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -16,6 +17,8 @@ from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.grid5000 import (
     sentence_controller,
+    sentence_controller_batches,
+    sentence_controller_lifecycle,
     sentence_controller_policy,
     sentence_publication,
 )
@@ -1579,6 +1582,59 @@ def test_verified_incoming_artifact_rejects_untrusted_or_mismatched_files(
 
     with pytest.raises(sentence_controller.ControllerRunError, match=message):
         sentence_controller_policy.verified_incoming_artifact(root, artifacts, relative)
+
+
+def test_remote_job_cleanup_rejects_foreign_paths_and_is_idempotent() -> None:
+    error = sentence_controller_policy.ControllerRunError
+    for remote_root in (None, "another-run/jobs/job-1"):
+        controller = SimpleNamespace(remote_run_root="run-1")
+        with pytest.raises(error, match="Refusing cleanup"):
+            cast(
+                Any,
+                sentence_controller_lifecycle.SentenceControllerLifecycleMixin._cleanup_remote_job,
+            )(controller, {"remote_job_root": remote_root})
+
+    events: list[object] = []
+    controller = SimpleNamespace(
+        remote_run_root="run-1",
+        transport=SimpleNamespace(remove_tree=events.append),
+        _write_ledger=lambda: events.append("write"),
+    )
+    batch = {"remote_job_root": "run-1/jobs/job-1", "remote_cleaned": True}
+    cast(Any, sentence_controller_lifecycle.SentenceControllerLifecycleMixin._cleanup_remote_job)(
+        controller, batch
+    )
+    assert events == []
+    batch["remote_cleaned"] = False
+    cast(Any, sentence_controller_lifecycle.SentenceControllerLifecycleMixin._cleanup_remote_job)(
+        controller, batch
+    )
+    assert events == ["run-1/jobs/job-1", "write"]
+    assert batch["remote_cleaned"] is True
+
+
+def test_checkpoint_tree_staging_copies_only_existing_project_trees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sentence_controller_batches, "source_projects", lambda *_args: ("wikipedia", "wikivoyage")
+    )
+    v2_cache = tmp_path / "cache"
+    source = v2_cache / "sentence-checkpoints" / "region" / "wikipedia"
+    source.mkdir(parents=True)
+    (source / "checkpoint.json").write_text("{}", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    controller = SimpleNamespace(
+        data_root=SimpleNamespace(processed_v2=tmp_path / "processed", v2_cache=v2_cache)
+    )
+
+    cast(Any, sentence_controller_batches.SentenceControllerBatchMixin._stage_checkpoint_trees)(
+        controller, staged, "region"
+    )
+
+    assert (staged / "cache/v2/sentence-checkpoints/region/wikipedia/checkpoint.json").is_file()
+    assert not (staged / "cache/v2/sentence-checkpoints/region/wikivoyage").exists()
 
 
 @pytest.mark.parametrize("guard", ["_assert_baseline", "_finalize_run"])

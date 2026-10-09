@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from osm_polygon_wikidata_only.pipeline._wikidata_recovery import audit_receipts
 from osm_polygon_wikidata_only.pipeline._wikidata_recovery.audit_inputs import (
     required_string,
     validate_polygon_qid,
@@ -27,3 +30,22 @@ def test_required_string_accepts_only_nonempty_strings() -> None:
     for value in ("", None, 1):
         with pytest.raises(ScanError, match="empty or non-string id"):
             required_string({"id": value}, "id", "polygons")
+
+
+def test_recovery_receipt_loader_rejects_bad_json_and_accepts_contract(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "receipts.json"
+    assert audit_receipts.load_receipts(path) == ({}, False)
+
+    path.write_text("{broken", encoding="utf-8")
+    assert audit_receipts.load_receipts(path) == ({}, False)
+    path.write_text(
+        '{"contract_version":"wikidata-enrichment-integrity-v2","regions":{"region":{}}}',
+        encoding="utf-8",
+    )
+    assert audit_receipts.load_receipts(path) == ({"region": {}}, True)
+
+
+def test_receipt_classification_parser_rejects_unknown_values() -> None:
+    assert audit_receipts.parse_receipt_classifications({"Q1": "invalid-state"}) is None

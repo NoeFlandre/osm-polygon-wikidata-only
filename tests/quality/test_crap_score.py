@@ -187,11 +187,15 @@ def test_gate_optional_crap_maximum() -> None:
 
 
 @pytest.mark.parametrize(
-    "policy",
-    [GatePolicy(max_complexity=0), GatePolicy(min_coverage=1.5), GatePolicy(coverage_complexity=0)],
+    ("policy", "message"),
+    [
+        (GatePolicy(max_complexity=0), "complexity must be a positive integer"),
+        (GatePolicy(min_coverage=1.5), "coverage must be a finite fraction between 0 and 1"),
+        (GatePolicy(coverage_complexity=0), "complexity must be a positive integer"),
+    ],
 )
-def test_gate_rejects_invalid_policy(policy: GatePolicy) -> None:
-    with pytest.raises(ValueError):
+def test_gate_rejects_invalid_policy(policy: GatePolicy, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
         gate_violations([CrapEntry("m.py", "f", 1, 1.0)], policy)
 
 

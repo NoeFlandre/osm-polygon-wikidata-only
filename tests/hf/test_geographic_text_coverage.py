@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from osm_polygon_wikidata_only.domain.schema import (
     polygon_schema,
 )
 from osm_polygon_wikidata_only.hf._geographic import parquet_reader
+from osm_polygon_wikidata_only.hf._geographic.h3_geometry import _boundary_points
 from osm_polygon_wikidata_only.hf._geographic.rendering import format_count_tick
 from osm_polygon_wikidata_only.hf.geographic_text_coverage import (
     DEFAULT_H3_RESOLUTION,
@@ -724,7 +726,7 @@ def test_coverage_cell_is_immutable() -> None:
         coverage_rate=1.0,
         is_low_sample=False,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         setattr(cell, "coverage_rate", 0.0)
 
 
@@ -1281,7 +1283,7 @@ def test_generate_polygon_count_writes_deterministic_path(tmp_path: Path) -> Non
 
 def test_polygon_count_cell_is_immutable() -> None:
     cell = PolygonCountCell(h3_cell="833969fffffffff", polygon_count=5, is_low_sample=False)
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         setattr(cell, "polygon_count", 0)
 
 
@@ -1468,3 +1470,8 @@ def test_load_land_basemap_returns_none_for_corrupt_geojson(
     caplog.set_level("WARNING")
     assert load_land_basemap(cache_dir) is None
     assert any("Could not read cached land GeoJSON" in r.getMessage() for r in caplog.records)
+
+
+def test_boundary_points_handles_empty_and_short_coordinate_pairs() -> None:
+    assert _boundary_points([]) == []
+    assert _boundary_points([(50, 2), (8,), (60, 4)]) == [(2.0, 50.0), (4.0, 60.0)]

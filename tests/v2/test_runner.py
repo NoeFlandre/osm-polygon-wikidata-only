@@ -1,5 +1,7 @@
 import threading
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -7,6 +9,7 @@ from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.hf.remote_inventory import RemoteInventory
+from osm_polygon_wikidata_only.v2 import runner as v2_runner
 from osm_polygon_wikidata_only.v2.card_models import V2CardStats
 from osm_polygon_wikidata_only.v2.config import V2_ASSET_PATHS
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem
@@ -608,3 +611,73 @@ def test_v2_runner_does_not_start_later_extraction_after_failure(
             wikipedia_client=InMemoryWikipediaClient({}),
         )
     assert calls == [first.name]
+
+
+def test_v2_artifact_skip_policy_and_publication_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = SimpleNamespace(processed_v2=tmp_path)
+    calls: list[object] = []
+    monkeypatch.setattr(
+        v2_runner, "_region_artifacts_are_current", lambda *_args, **_kw: calls.append(1) or True
+    )
+    manifest = {"region": {}}
+    assert not cast(Any, v2_runner._local_region_artifacts_current)(
+        "region",
+        data_root=root,
+        settings=SimpleNamespace(skip_existing=False, force=False),
+        manifest=manifest,
+        hash_cache=None,
+    )
+    assert not cast(Any, v2_runner._local_region_artifacts_current)(
+        "region",
+        data_root=root,
+        settings=SimpleNamespace(skip_existing=True, force=True),
+        manifest=manifest,
+        hash_cache=None,
+    )
+    assert cast(Any, v2_runner._local_region_artifacts_current)(
+        "region",
+        data_root=root,
+        settings=SimpleNamespace(skip_existing=True, force=False),
+        manifest=manifest,
+        hash_cache=None,
+    )
+    assert calls == [1]
+
+    state = SimpleNamespace(upload=None)
+    with pytest.raises(RuntimeError, match="without an upload callback"):
+        cast(Any, v2_runner._publish_v2_metadata)(state)
+    ops = [object()]
+    messages: list[tuple[object, str]] = []
+    monkeypatch.setattr(v2_runner, "metadata_publication_ops", lambda *_args, **_kwargs: ops)
+    state = SimpleNamespace(
+        data_root=root, upload=lambda files, message: messages.append((files, message))
+    )
+    cast(Any, v2_runner._publish_v2_metadata)(state)
+    assert messages == [(ops, "Update V2 dataset card and manifest")]
+
+
+def test_v2_cleanup_shuts_down_and_closes_after_cache_write_failure() -> None:
+    events: list[object] = []
+
+    class Future:
+        def cancel(self) -> None:
+            events.append("cancel")
+
+    class Executor:
+        def shutdown(self, *, wait: bool, cancel_futures: bool) -> None:
+            events.append(("shutdown", wait, cancel_futures))
+
+    def fail_flush() -> None:
+        events.append("flush")
+        raise OSError("read-only cache")
+
+    state = SimpleNamespace(
+        extraction_future=Future(),
+        extraction_executor=Executor(),
+        hash_cache=SimpleNamespace(flush=fail_flush),
+        index=SimpleNamespace(close=lambda: events.append("close")),
+    )
+    cast(Any, v2_runner._cleanup)(state)
+    assert events == ["cancel", ("shutdown", True, True), "flush", "close"]

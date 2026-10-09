@@ -152,7 +152,7 @@ def test_article_table_accumulates_into_existing_totals() -> None:
 def test_python_reductions_preserve_boundaries_and_strict_pairing() -> None:
     assert aggregation._count_language_buckets([2, None, 5, 10, 10]) == (4, 3, 2)
     assert aggregation._sum_numeric([1.9, None, 2.2, 0.9]) == 3
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="argument 2 is shorter than argument 1"):
         aggregation._count_non_english([True], [])
 
 
@@ -205,7 +205,7 @@ def test_arrow_value_counts_rejects_misaligned_kernel_output(
         lambda *_args: MisalignedFrequencies(),
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="argument 2 is shorter than argument 1"):
         aggregation._arrow_value_counts(pa.chunked_array([["en"]]))
 
 

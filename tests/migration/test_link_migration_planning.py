@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pyarrow import ArrowInvalid
 
 from osm_polygon_wikidata_only.augmentation.schema import (
     DOCUMENT_COLUMNS,
@@ -22,6 +23,7 @@ from osm_polygon_wikidata_only.domain.schema import (
 from osm_polygon_wikidata_only.pipeline import link_migration
 from osm_polygon_wikidata_only.pipeline._link_migration import application as link_application
 from osm_polygon_wikidata_only.pipeline._link_migration import planning as link_planning
+from osm_polygon_wikidata_only.pipeline._link_migration.models import StemClassification, StemPlan
 
 EXPECTED_CANONICAL_COLUMNS: tuple[str, ...] = (
     "polygon_id",
@@ -1072,3 +1074,43 @@ def test_apply_link_migration_is_idempotent_on_second_run(tmp_path: Path) -> Non
         (processed / "polygon_articles" / "monaco-latest.parquet").read_bytes()
     ).hexdigest()
     assert first_hash == second_hash, "Second migration must be byte-stable for canonical stem"
+
+
+@pytest.mark.parametrize("error", [KeyError("missing column"), ArrowInvalid("bad schema")])
+def test_legacy_rejection_table_reader_returns_none_for_invalid_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    stem_plan = StemPlan(
+        "region-latest",
+        StemClassification.MIGRATABLE,
+        "",
+        "",
+        "",
+        "",
+        0,
+        None,
+    )
+    for path in link_planning._stem_paths(stem_plan.stem, tmp_path)[:2]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    monkeypatch.setattr(
+        link_planning.pq, "read_table", lambda *_args, **_kwargs: (_ for _ in ()).throw(error)
+    )
+
+    assert link_planning._read_legacy_rejection_tables(tmp_path, stem_plan) is None
+
+
+def test_link_migration_legacy_rejection_table_reader_handles_missing_files(
+    tmp_path: Path,
+) -> None:
+    plan = StemPlan(
+        "region-latest",
+        StemClassification.MIGRATABLE,
+        "",
+        "",
+        "",
+        "",
+        0,
+        None,
+    )
+    assert link_planning._read_legacy_rejection_tables(tmp_path, plan) is None

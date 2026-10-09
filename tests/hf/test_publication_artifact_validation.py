@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import AugmentationResult
+from osm_polygon_wikidata_only.augmentation.wikipedia_documents import wikipedia_document_schema
 from osm_polygon_wikidata_only.config.paths import DataRoot
+from osm_polygon_wikidata_only.hf._publication import artifacts as publication_artifacts
 from osm_polygon_wikidata_only.hf._publication.artifacts import (
     _load_augmentation_manifest,
     _reject_missing_augmented_documents,
@@ -144,3 +148,20 @@ def test_load_augmentation_manifest_requires_object(tmp_path: Path) -> None:
 
     with pytest.raises(PublicationValidationError, match="expected an object"):
         _load_augmentation_manifest(manifest)
+
+
+def test_wikipedia_publication_document_validation_checks_configured_path(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "documents.parquet"
+    pq.write_table(pa.Table.from_pylist([], schema=wikipedia_document_schema()), path)
+    publication_artifacts._validate_wikipedia_documents(
+        path, {}, "wikipedia/documents/region.parquet", "region"
+    )
+    with pytest.raises(publication_artifacts.PublicationValidationError, match="path mismatch"):
+        publication_artifacts._validate_wikipedia_documents(
+            path,
+            {"wikipedia_documents_path": "wikipedia/documents/other.parquet"},
+            "wikipedia/documents/region.parquet",
+            "region",
+        )

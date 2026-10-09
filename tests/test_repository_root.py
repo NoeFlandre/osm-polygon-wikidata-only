@@ -77,4 +77,3 @@ def test_installed_package_uses_packaged_assets(monkeypatch: pytest.MonkeyPatch)
 def test_checkout_prefers_repository_assets() -> None:
     assert repo_layout.LOCAL_DATASET_HERO_FILE == CHECKOUT / "assets/dataset_hero.png"
     assert repo_layout.LOCAL_V2_DATASET_HERO_FILE == CHECKOUT / "assets/dataset_hero_v2.png"
-    assert paths.repository_root() is not None

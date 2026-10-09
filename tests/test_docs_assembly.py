@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import assemble_docs_site
 from scripts import assemble_docs_site as assembly_module
 from scripts.assemble_docs_site import PRESENTATION_FILES, assemble_public_presentations
 
@@ -141,3 +142,19 @@ def test_assemble_public_presentations_cleans_backup_when_backup_fails(
 
     assert previous.read_text(encoding="utf-8") == "previous"
     assert not list(tmp_path.glob(".site-*"))
+
+
+def test_restore_site_removes_partial_output_and_restores_backup(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    backup = tmp_path / "backup"
+    site.mkdir()
+    backup.mkdir()
+    (site / "partial.html").write_text("partial", encoding="utf-8")
+    (backup / "index.html").write_text("previous", encoding="utf-8")
+
+    assemble_docs_site._restore_site(site, backup)
+
+    assert not (site / "partial.html").exists()
+    assert (site / "index.html").read_text(encoding="utf-8") == "previous"
+    assemble_docs_site._restore_site(site, None)
+    assert not site.exists()

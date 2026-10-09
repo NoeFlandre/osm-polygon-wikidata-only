@@ -635,9 +635,9 @@ def test_metadata_only_gaps_repaired_and_enqueued_last(
 
     # Verify enqueued last:
     # The last commit in stub.commits should be the metadata-only repair commit
-    assert len(stub.commits) > 0
     last_commit = stub.commits[-1]
     assert last_commit["commit_message"] == "Repair remote repository metadata and maps"
+    assert "README.md" in last_commit["paths"]
 
 
 def test_incomplete_local_augmentation_remains_augment(
