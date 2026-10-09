@@ -91,8 +91,8 @@
   },
   "osm_polygon_wikidata_only.hf._upload_retry.x__run_upload_attempts__mutmut_8": {
     "mutant_sha256": "21ad90191fe137d5888fca0bfa686b253ca6c74c6815f2b7032f1f5e4dcdc50b",
-    "reason": "attempts is validated to be at least 1 before the loop. For attempt == attempts, _should_retry is False, so every iteration either returns or re-raises and never completes normally. Iteration attempts + 1 is therefore unreachable, and range(1, attempts + 2) runs the same attempts as range(1, attempts + 1).",
-    "source_sha256": "678421302f2bb1ca2ba3fcf970e4b2ca798aa3f41816125cebd9e9fbaec8d5c5"
+    "reason": "_run_upload_attempts is textually unchanged by the retry rewrite; only its helpers changed. attempts is validated to be at least 1 before the loop. Each iteration either returns on success or reaches the except branch. On attempt == attempts, _should_retry is False because it requires attempt < attempts, so the bare raise re-raises the final failure and _wait_before_retry (with its cancellation branch) is never reached. The only fall-through past an iteration is after _wait_before_retry returns False on attempt < attempts, which leads to attempt + 1 <= attempts. So no iteration can complete normally on attempt == attempts, and iteration attempts + 1 is unreachable. range(1, attempts + 2) therefore runs the same attempts as range(1, attempts + 1).",
+    "source_sha256": "27fdc4e6c60bd1dcf734f0fde3d3822c4a987789c70a0c39c2842ded5ad68711"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__load_json_object__mutmut_5": {
     "mutant_sha256": "588a1df6f4a463432755975bfd55cdffac2ed7f9f018d49d46e59c82e0bfac45",
