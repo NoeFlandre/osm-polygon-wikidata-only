@@ -18,7 +18,7 @@ import urllib.error
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
-__all__ = ["retry_after_seconds"]
+__all__ = ["parse_retry_after", "retry_after_seconds"]
 
 
 def retry_after_seconds(
@@ -29,6 +29,16 @@ def retry_after_seconds(
 ) -> float:
     """Parse HTTP Retry-After header, falling back to default_s."""
     value = error.headers.get("Retry-After") if error.headers is not None else None
+    return parse_retry_after(value, default_s=default_s, max_s=max_s)
+
+
+def parse_retry_after(
+    value: str | None,
+    *,
+    default_s: float = 60.0,
+    max_s: float = 600.0,
+) -> float:
+    """Parse a Retry-After header value, falling back to default_s when absent or unusable."""
     if not value:
         return default_s
     numeric = _numeric_retry_delay(value, max_s)

@@ -296,6 +296,44 @@ def test_sanitizer_redacts_the_whole_basic_authorization_credential() -> None:
     assert "Basic" not in cleaned
 
 
+def test_sanitizer_redacts_multi_field_authorization_headers() -> None:
+    digest = 'Authorization: Digest username="u", realm="r", nonce="n", response="secret"'
+    aws = "Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE, Signature=deadbeef"
+
+    assert "secret" not in operations.sanitize_server_message(digest)
+    assert "deadbeef" not in operations.sanitize_server_message(aws)
+
+
+class _RateLimitedResponse:
+    def __init__(self) -> None:
+        self.status_code = 429
+        self.headers = {"Retry-After": "7"}
+
+
+class _HubHTTPError(Exception):
+    def __init__(self) -> None:
+        super().__init__("Too Many Requests")
+        self.response = _RateLimitedResponse()
+
+
+def test_run_upload_attempts_waits_at_least_the_server_retry_after(
+    recorded_waits: list[float], no_jitter: None
+) -> None:
+    calls: list[int] = []
+
+    def upload(_ops: list, _message: str) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            try:
+                raise _HubHTTPError()
+            except _HubHTTPError as hub_error:
+                raise UploadError("rate limited", transient=True) from hub_error
+
+    _run_upload_attempts(upload, [], "retry", attempts=2)
+
+    assert recorded_waits == [7.0]
+
+
 def test_retry_log_redacts_credentials_and_caps_raw_callback_errors(
     recorded_waits: list[float], no_jitter: None, caplog: pytest.LogCaptureFixture
 ) -> None:

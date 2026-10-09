@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
 from osm_polygon_wikidata_only.hf._uploader.operations import sanitize_server_message
+from osm_polygon_wikidata_only.utils.http_retry import parse_retry_after
 from osm_polygon_wikidata_only.utils.retry import (
     is_transient_network_error,
     wait_for_retry_or_cancel,
@@ -24,6 +25,8 @@ LOGGER = logging.getLogger(__name__)
 _BASE_DELAY_SECONDS = 0.5
 _MAX_DELAY_SECONDS = 8.0
 _MAX_LOGGED_MESSAGE_CHARS = 200
+_MAX_SERVER_RETRY_AFTER_SECONDS = 300.0
+_MAX_CAUSE_DEPTH = 10
 
 
 def _is_transient(error: Exception) -> bool:
@@ -49,13 +52,35 @@ def _backoff_seconds(attempt: int) -> float:
     return capped + random.uniform(0, _BASE_DELAY_SECONDS)
 
 
+def _rate_limit_delay(error: BaseException) -> float:
+    """Return the server's Retry-After wait for a 429 in the cause chain, or 0.0.
+
+    The Hub's HTTP error sits behind the translated UploadError as its cause, and
+    only the response carries the header the server asked us to honour.
+    """
+    current: BaseException | None = error
+    for _ in range(_MAX_CAUSE_DEPTH):
+        if current is None:
+            break
+        response = getattr(current, "response", None)
+        if getattr(response, "status_code", None) == 429:
+            headers = getattr(response, "headers", None)
+            value = headers.get("Retry-After") if headers is not None else None
+            return parse_retry_after(value, default_s=0.0, max_s=_MAX_SERVER_RETRY_AFTER_SECONDS)
+        current = current.__cause__ or current.__context__
+    return 0.0
+
+
 def _should_retry(error: Exception, attempt: int, attempts: int) -> bool:
     return attempt < attempts and _is_transient(error)
 
 
 def _wait_before_retry(message: str, attempt: int, attempts: int, error: Exception) -> bool:
-    """Log the failed attempt, back off, and return ``True`` if retries were cancelled."""
-    delay = _backoff_seconds(attempt)
+    """Log the failed attempt, back off, and return ``True`` if retries were cancelled.
+
+    A server Retry-After longer than the local backoff sets the minimum wait.
+    """
+    delay = max(_backoff_seconds(attempt), _rate_limit_delay(error))
     LOGGER.warning(
         "Upload '%s' attempt %d/%d failed (%s): %s; retrying in %.1fs",
         message,
