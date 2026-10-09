@@ -1900,7 +1900,6 @@ dependencies = [
     { name = "rich" },
     { name = "tqdm" },
     { name = "trackio" },
-    { name = "typer" },
 ]
 
 [package.optional-dependencies]
@@ -1942,7 +1941,6 @@ requires-dist = [
     { name = "rich", specifier = ">=15.0.0" },
     { name = "tqdm", specifier = ">=4.70.0" },
     { name = "trackio", specifier = ">=0.38.0,<1" },
-    { name = "typer", specifier = ">=0.27.0" },
     { name = "wtpsplit", extras = ["onnx-cpu"], marker = "extra == 'sentence-splitting'", specifier = "==2.2.1" },
     { name = "wtpsplit", extras = ["onnx-gpu"], marker = "extra == 'sentence-splitting-gpu'", specifier = "==2.2.1" },
 ]
