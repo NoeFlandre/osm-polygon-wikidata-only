@@ -11,6 +11,7 @@ from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data
 from osm_polygon_wikidata_only.hf._trackio.models import FinalDatasetSnapshot
 from osm_polygon_wikidata_only.hf._trackio.publisher import (
     TrackioSnapshotArtifacts,
+    TrackioTarget,
     publish_trackio_snapshot,
 )
 from osm_polygon_wikidata_only.v2.card import V2CardStats, compute_v2_card_stats
@@ -61,9 +62,11 @@ def publish_v2_trackio_snapshot(
         space_id=space_id,
         snapshot=snapshot_from_v2_stats(stats),
         trackio_module=trackio_module,
-        project=V2_TRACKIO_PROJECT,
-        run_name=V2_TRACKIO_RUN_NAME,
-        dataset_id=V2_TRACKIO_DATASET_ID,
+        target=TrackioTarget(
+            project=V2_TRACKIO_PROJECT,
+            run_name=V2_TRACKIO_RUN_NAME,
+            dataset_id=V2_TRACKIO_DATASET_ID,
+        ),
         dataset_repo_id=V2_REPO_ID,
         presentation_url=f"https://huggingface.co/datasets/{V2_REPO_ID}",
     )

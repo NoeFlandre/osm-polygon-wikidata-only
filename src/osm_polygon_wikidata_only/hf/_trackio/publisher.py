@@ -23,6 +23,15 @@ from .rendering import render_snapshot_charts, render_snapshot_markdown
 
 
 @dataclass(frozen=True, slots=True)
+class TrackioTarget:
+    """Trackio project, run name and sync dataset for one snapshot publication."""
+
+    project: str = TRACKIO_PROJECT
+    run_name: str = TRACKIO_RUN_NAME
+    dataset_id: str = TRACKIO_DATASET_ID
+
+
+@dataclass(frozen=True, slots=True)
 class TrackioSnapshotArtifacts:
     """Paths written locally for one Trackio publication."""
 
@@ -37,9 +46,7 @@ def publish_trackio_snapshot(
     space_id: str | None = TRACKIO_SPACE_ID,
     snapshot: FinalDatasetSnapshot = FINAL_DATASET_SNAPSHOT,
     trackio_module: Any | None = None,
-    project: str = TRACKIO_PROJECT,
-    run_name: str = TRACKIO_RUN_NAME,
-    dataset_id: str = TRACKIO_DATASET_ID,
+    target: TrackioTarget = TrackioTarget(),
     dataset_repo_id: str = "NoeFlandre/osm-polygon-wikidata-only",
     presentation_url: str | None = DATASET_PRESENTATION_URL,
 ) -> TrackioSnapshotArtifacts:
@@ -54,7 +61,7 @@ def publish_trackio_snapshot(
     # root. The production command passes the Seagate-backed cache directory.
     os.environ.setdefault("TRACKIO_DIR", str(output_dir / ".trackio"))
     chart_paths_by_name, manifest_path = _write_snapshot_artifacts(
-        output_dir, snapshot, project=project, run_name=run_name
+        output_dir, snapshot, project=target.project, run_name=target.run_name
     )
     trackio_module = _resolve_trackio(trackio_module)
     resolved_space_id = space_id or os.environ.get("TRACKIO_SPACE_ID")
@@ -62,8 +69,8 @@ def publish_trackio_snapshot(
         trackio_module,
         snapshot,
         chart_paths_by_name,
-        project=project,
-        run_name=run_name,
+        project=target.project,
+        run_name=target.run_name,
         dataset_repo_id=dataset_repo_id,
         resolved_space_id=resolved_space_id,
         presentation_url=presentation_url,
@@ -72,9 +79,9 @@ def publish_trackio_snapshot(
     sync = getattr(trackio_module, "sync", None)
     if resolved_space_id is not None and callable(sync):
         sync(
-            project=project,
+            project=target.project,
             space_id=resolved_space_id,
-            dataset_id=dataset_id,
+            dataset_id=target.dataset_id,
             sdk="static",
             force=True,
         )
@@ -215,4 +222,4 @@ def _reset_frozen_run(trackio_module: Any, *, project: str, run_name: str) -> No
     SQLiteStorage.delete_run(project, run_name)
 
 
-__all__ = ["TrackioSnapshotArtifacts", "publish_trackio_snapshot"]
+__all__ = ["TrackioSnapshotArtifacts", "TrackioTarget", "publish_trackio_snapshot"]
