@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import ssl
 import threading
 import urllib.error
 
@@ -89,6 +90,13 @@ def test_httpx_transport_failures_are_retryable(error: httpx.HTTPError) -> None:
     ],
 )
 def test_transient_network_error_rejects_permanent_failures(error: BaseException) -> None:
+    assert not is_transient_network_error(error)
+
+
+def test_certificate_failure_behind_httpx_connect_error_is_not_retryable() -> None:
+    error = httpx.ConnectError("TLS handshake failed")
+    error.__cause__ = ssl.SSLCertVerificationError(1, "certificate verify failed: expired")
+
     assert not is_transient_network_error(error)
 
 

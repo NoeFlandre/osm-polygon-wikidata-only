@@ -129,7 +129,8 @@ def sanitize_server_message(message: str) -> str:
         ),
         # ``Bearer <value>`` and ``Authorization: <value>``
         re.compile(r"Bearer\s+[\w\-.]+", re.IGNORECASE),
-        re.compile(r"Authorization:\s*[^\s,;]+", re.IGNORECASE),
+        # The optional scheme keeps ``Basic <credential>`` from leaving its second half behind.
+        re.compile(r"Authorization:\s*(?:(?:Basic|Digest|Token)\s+)?[^\s,;]+", re.IGNORECASE),
         # ``request_id=<value>``
         re.compile(r"request_id\s*[:=]\s*[\S\"']+", re.IGNORECASE),
         # Full user-home paths on macOS / Linux (matches ``/Users/<name>``

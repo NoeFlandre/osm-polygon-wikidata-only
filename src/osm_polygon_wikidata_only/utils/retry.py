@@ -12,6 +12,7 @@ import errno
 import logging
 import random
 import socket
+import ssl
 import threading
 import urllib.error
 from collections.abc import Callable
@@ -118,6 +119,8 @@ def is_transient_network_error(error: BaseException) -> bool:
     authentication failures, certificate errors, and permanent HTTP
     statuses are not transient and must still reach the caller.
     """
+    if _has_certificate_error(error):
+        return False
     if isinstance(error, urllib.error.HTTPError):
         return _is_transient_http_error(error)
     if isinstance(error, urllib.error.ContentTooShortError):
@@ -125,6 +128,15 @@ def is_transient_network_error(error: BaseException) -> bool:
     if isinstance(error, urllib.error.URLError):
         return _is_transient_url_error(error)
     return _is_transient_exception(error)
+
+
+def _has_certificate_error(error: BaseException) -> bool:
+    """Return whether a TLS certificate verification failure is in the cause chain.
+
+    HTTPX reports a bad or expired certificate as a connect error, so the
+    network-error classes would otherwise retry a permanent configuration failure.
+    """
+    return any(isinstance(cause, ssl.SSLCertVerificationError) for cause in _cause_chain(error))
 
 
 def _is_transient_http_error(error: urllib.error.HTTPError) -> bool:

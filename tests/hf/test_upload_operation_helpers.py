@@ -289,6 +289,13 @@ def test_translated_hub_transport_disconnect_is_transient() -> None:
     assert operations._translate_hf_error(error, repo_id="a/b").transient
 
 
+def test_sanitizer_redacts_the_whole_basic_authorization_credential() -> None:
+    cleaned = operations.sanitize_server_message("Authorization: Basic dXNlcjpwYXNz")
+
+    assert "dXNlcjpwYXNz" not in cleaned
+    assert "Basic" not in cleaned
+
+
 def test_retry_log_redacts_credentials_and_caps_raw_callback_errors(
     recorded_waits: list[float], no_jitter: None, caplog: pytest.LogCaptureFixture
 ) -> None:
