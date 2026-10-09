@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 
+from osm_polygon_wikidata_only.cli.errors import run_legacy_typer
 from osm_polygon_wikidata_only.config.paths import repository_root, resolve_data_root
 
 from ._trackio.models import (
@@ -50,7 +51,11 @@ def publish(
 
 def run() -> None:
     """Installed console-script entry point."""
-    app()
+    run_legacy_typer(
+        app,
+        "osm-polygon-wikidata-only-trackio",
+        "osm-polygon-wikidata-only trackio-snapshot",
+    )
 
 
 __all__ = [
