@@ -9,6 +9,7 @@ by a V1 document are fetched.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,16 @@ __all__ = [
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class ReuseFetchOptions:
+    """Full-text, section and direct-page fetch settings for one region merge."""
+
+    fetch_full_text: bool = True
+    section_workers: int = 8
+    direct_workers: int = 1
+    wait_for_index: bool = True
+
+
 def merge_v2_region(
     data_root: DataRoot,
     extracted: V2ExtractedPbf,
@@ -87,12 +98,9 @@ def merge_v2_region(
     index: Any,
     wikipedia_client: Any,
     cache: Any = None,
-    fetch_full_text: bool = True,
     section_client: SectionClient | None = None,
-    section_workers: int = 8,
-    direct_workers: int = 1,
-    wait_for_index: bool = True,
     checkpoint_dir: Path | None = None,
+    options: ReuseFetchOptions = ReuseFetchOptions(),
 ) -> tuple[dict[str, Any], ...]:
     """Merge V1 rows with V2 discoveries and persist one canonical region.
 
@@ -101,6 +109,10 @@ def merge_v2_region(
     marker.  The runner reconciles those regions after the shared V1 index is
     complete, so no provisional artifact is published as final data.
     """
+    fetch_full_text = options.fetch_full_text
+    section_workers = options.section_workers
+    direct_workers = options.direct_workers
+    wait_for_index = options.wait_for_index
     inputs = _load_merge_inputs(data_root, extracted)
     fetch_checkpoint = _fetch_checkpoint(
         checkpoint_dir,
@@ -152,10 +164,9 @@ def reconcile_v2_region(
     index: Any,
     wikipedia_client: Any | None = None,
     cache: Any = None,
-    fetch_full_text: bool = True,
     section_client: SectionClient | None = None,
-    section_workers: int = 8,
     checkpoint_dir: Path | None = None,
+    options: ReuseFetchOptions = ReuseFetchOptions(),
 ) -> tuple[dict[str, Any], ...]:
     """Finalize one provisionally written region after V1 indexing.
 
@@ -165,6 +176,8 @@ def reconcile_v2_region(
     linked instead.  The final region is written atomically with its
     reconciliation marker set.
     """
+    fetch_full_text = options.fetch_full_text
+    section_workers = options.section_workers
     polygons_rows, polygons, documents, links, current_by_title = _load_reconciliation_rows(
         data_root,
         stem,

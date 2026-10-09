@@ -162,10 +162,12 @@ def write_v2_region(
         processed_v2,
         stem,
         final_paths,
-        polygons,
-        documents,
-        sections or [],
-        links,
+        RegionRows(
+            polygons=polygons,
+            documents=documents,
+            sections=sections or [],
+            links=links,
+        ),
         file_hashes,
         v1_index_reconciled,
     )
@@ -229,17 +231,25 @@ def _hash_region_paths(processed_v2: Path, paths: tuple[Path, ...]) -> dict[str,
     return {str(path.relative_to(processed_v2)): sha256_file(path) for path in paths}
 
 
+@dataclass(frozen=True, slots=True)
+class RegionRows:
+    """Row sets written for one region and counted in its manifest entry."""
+
+    polygons: list[dict[str, Any]]
+    documents: list[dict[str, Any]]
+    sections: list[dict[str, Any]]
+    links: list[dict[str, Any]]
+
+
 def _region_manifest_entry(
     processed_v2: Path,
     stem: str,
     paths: tuple[Path, ...],
-    polygons: list[dict[str, Any]],
-    documents: list[dict[str, Any]],
-    sections: list[dict[str, Any]],
-    links: list[dict[str, Any]],
+    rows: RegionRows,
     file_hashes: dict[str, str],
     v1_index_reconciled: bool,
 ) -> dict[str, Any]:
+    polygons, documents, sections, links = rows.polygons, rows.documents, rows.sections, rows.links
     polygons_path, documents_path, sections_path, links_path = paths
     return {
         "contract_version": V2_CONTRACT_VERSION,

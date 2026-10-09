@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.enrichment.wikipedia.models import FetchResult
 from osm_polygon_wikidata_only.enrichment.wikipedia.transport import InMemoryWikipediaClient
 from osm_polygon_wikidata_only.v2.extractor import V2ExtractedPbf, V2PbfStem, candidate_to_v2_row
 from osm_polygon_wikidata_only.v2.reuse import (
+    ReuseFetchOptions,
     merge_v2_region,
     reconcile_v2_region,
 )
@@ -434,7 +435,7 @@ def test_merge_fetches_direct_wikipedia_pages_concurrently_and_deterministically
         index=build_v1_reuse_index(root.processed),
         wikipedia_client=client,
         section_client=SectionClient(),
-        direct_workers=2,
+        options=ReuseFetchOptions(direct_workers=2),
     )
 
     assert client.max_active == 2
@@ -496,8 +497,7 @@ def test_merge_batches_v1_title_lookups_across_region(tmp_path: Path) -> None:
         index=index,  # type: ignore[arg-type]
         wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
         section_client=SectionClient(),
-        direct_workers=1,
-        wait_for_index=False,
+        options=ReuseFetchOptions(direct_workers=1, wait_for_index=False),
     )
 
     assert index.calls == 2
@@ -565,8 +565,7 @@ def test_merge_rechecks_only_titles_missing_from_initial_v1_lookup(tmp_path: Pat
         index=index,  # type: ignore[arg-type]
         wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
         section_client=SectionClient(),
-        direct_workers=1,
-        wait_for_index=False,
+        options=ReuseFetchOptions(direct_workers=1, wait_for_index=False),
     )
 
     assert index.calls == [
@@ -624,7 +623,7 @@ def test_merge_fetches_sections_before_waiting_for_final_index(tmp_path: Path) -
         index=InFlightIndex(),  # type: ignore[arg-type]
         wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
         section_client=SectionClient(),
-        wait_for_index=False,
+        options=ReuseFetchOptions(wait_for_index=False),
     )
     assert sections_started.is_set()
     documents = pq.read_table(
@@ -689,7 +688,7 @@ def test_reconcile_v2_region_discards_speculative_duplicate_after_index_scan(
         index=PartialIndex(),  # type: ignore[arg-type]
         wikipedia_client=WikipediaClient(),  # type: ignore[arg-type]
         section_client=SectionClient(),
-        wait_for_index=False,
+        options=ReuseFetchOptions(wait_for_index=False),
     )
     reconcile_v2_region(
         root,

@@ -104,8 +104,10 @@ def _stage_repair_tables(
         documents=outputs.merged_documents,
         sections=outputs.merged_sections,
         facts=outputs.merged_facts,
-        affected_qids=outputs.affected_qids,
-        affected_polygon_count=len(outputs.affected_polygon_ids),
+        affected=AffectedScope(
+            qids=outputs.affected_qids,
+            polygon_count=len(outputs.affected_polygon_ids),
+        ),
     )
     return staged
 
@@ -182,6 +184,14 @@ def persist_repair_outputs(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class AffectedScope:
+    """Changed QIDs and polygon count recorded in the processed manifest."""
+
+    qids: tuple[str, ...]
+    polygon_count: int
+
+
 def _stage_manifests(
     stem: str,
     *,
@@ -191,8 +201,7 @@ def _stage_manifests(
     documents: list[dict[str, Any]],
     sections: list[dict[str, Any]],
     facts: list[dict[str, Any]],
-    affected_qids: tuple[str, ...],
-    affected_polygon_count: int,
+    affected: AffectedScope,
 ) -> None:
     """Stage both manifests from the same repaired artifact snapshot."""
     _stage_processed_manifest(
@@ -201,8 +210,8 @@ def _stage_manifests(
         staged=staged["processed_manifest"],
         polygons=polygons,
         documents=documents,
-        affected_qids=affected_qids,
-        affected_polygon_count=affected_polygon_count,
+        affected_qids=affected.qids,
+        affected_polygon_count=affected.polygon_count,
     )
     _stage_augmentation_manifest(
         stem,

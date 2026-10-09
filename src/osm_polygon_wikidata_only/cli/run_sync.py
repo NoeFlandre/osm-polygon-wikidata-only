@@ -76,11 +76,12 @@ def execute(
         runtime=runtime,
         augmentation_client=augmentation_client,
         prepared=prepared,
-        push_enabled=push_enabled,
-        dry_run=dry_run,
-        upload_queue=upload_queue,
-        containment_enqueued=containment_enqueued,
-        publish_builder=build_upload_files,
+        mode=sync_runtime.SyncRunMode(push_enabled=push_enabled, dry_run=dry_run),
+        uploads=sync_runtime.SyncUploads(
+            upload_queue=upload_queue,
+            containment_enqueued=containment_enqueued,
+            publish_builder=build_upload_files,
+        ),
     )
 
 

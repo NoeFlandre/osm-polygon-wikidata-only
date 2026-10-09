@@ -18,7 +18,7 @@ from osm_polygon_wikidata_only.grid5000.sentence_controller import (
     ControllerTarget,
     run_grid5000_sentence_controller,
 )
-from osm_polygon_wikidata_only.grid5000.sentence_job import run_sentence_job
+from osm_polygon_wikidata_only.grid5000.sentence_job import JobIdentity, run_sentence_job
 
 from .parser import (
     CONTROLLER_DESCRIPTION,
@@ -66,8 +66,7 @@ def run_job(args: argparse.Namespace) -> int:
         DataRoot(args.data_root),
         stems=args.stems,
         model_cache=args.model_cache,
-        source_commit=args.source_commit,
-        job_id=args.job_id,
+        identity=JobIdentity(job_id=args.job_id, source_commit=args.source_commit),
         batch_size=args.batch_size,
         inference_batch_size=args.inference_batch_size,
         receipt_path=args.receipt,

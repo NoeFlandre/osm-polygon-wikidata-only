@@ -13,6 +13,7 @@ from osm_polygon_wikidata_only.grid5000.sentence_controller import (
     ControllerLimits,
     ControllerTarget,
 )
+from osm_polygon_wikidata_only.grid5000.sentence_job import JobIdentity
 from scripts import grid5000_sentence_controller as controller_shim
 from scripts import grid5000_sentence_job as job_shim
 
@@ -117,7 +118,7 @@ def test_job_subcommand_forwards_reserved_node_options(
     assert commands.main(["grid5000", "job", *argv]) == 0
     assert captured["data_root"] == DataRoot(tmp_path / "data")
     assert captured["stems"] == ["a-latest", "b-latest"]
-    assert captured["source_commit"] == "abc"
+    assert captured["identity"] == JobIdentity(job_id="42", source_commit="abc")
     assert captured["batch_size"] == 256
     assert captured["receipt_path"] == tmp_path / "receipt.json"
     assert "Grid5000 sentence job 42: succeeded" in capsys.readouterr().out

@@ -9,7 +9,7 @@ from .models import (
     RecoveryRepairResult,
     RegionAuditResult,
 )
-from .repair import repair_wikidata_region
+from .repair import RepairClients, repair_wikidata_region
 
 __all__ = [
     "RECOVERY_CONTRACT_VERSION",
@@ -19,6 +19,7 @@ __all__ = [
     "RecoveryRepairError",
     "RecoveryRepairResult",
     "RegionAuditResult",
+    "RepairClients",
     "audit_wikidata_integrity",
     "repair_wikidata_region",
 ]
