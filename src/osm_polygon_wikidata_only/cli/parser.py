@@ -173,7 +173,7 @@ def _add_tool_parsers(sub: argparse._SubParsersAction) -> None:
 
     containment = sub.add_parser(
         "audit-containment",
-        help="Read-only JSON audit of whole-file containment retirements (exit 2 if blocked)",
+        help="Read-only JSON audit of whole-file containment retirements (exit 1 if blocked)",
         description=AUDIT_CONTAINMENT_DESCRIPTION,
     )
     add_audit_containment_arguments(containment)

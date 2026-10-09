@@ -116,9 +116,11 @@ def test_audit_reports_inventory_failure_without_traceback(
     result = CliRunner().invoke(module.app, ["--data-root", str(tmp_path)])
 
     assert result.exit_code == 1
-    assert "Failed to fetch remote inventory" in result.stdout
-    assert "inventory unavailable" in result.stdout
-    assert "Traceback" not in result.stdout
+    assert result.stderr == (
+        "osm-polygon-wikidata-only audit-remote: error: "
+        "failed to fetch remote inventory: inventory unavailable\n"
+    )
+    assert "Traceback" not in result.stdout + result.stderr
 
 
 def test_audit_does_not_suppress_unexpected_data_root_errors(
@@ -134,7 +136,7 @@ def test_audit_does_not_suppress_unexpected_data_root_errors(
     monkeypatch.setattr(module, "resolve_data_root", fail)
 
     with pytest.raises(TypeError, match="data-root programming bug"):
-        module._resolve_root(module.Console(), tmp_path)
+        module._resolve_root(tmp_path)
 
 
 def test_audit_does_not_suppress_unexpected_inventory_errors(monkeypatch: Any) -> None:
@@ -165,4 +167,4 @@ def test_audit_does_not_suppress_unexpected_reconciliation_errors(
     monkeypatch.setattr(module, "ReconciliationPlanner", BrokenPlanner)
 
     with pytest.raises(KeyError, match="reconciliation programming bug"):
-        module._build_plan(module.Console(), object(), object(), [], {})
+        module._build_plan(object(), object(), [], {})
