@@ -61,6 +61,7 @@ ruff: quality-runtime
 coverage: quality-runtime
     COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-coverage" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/coverage-pytest" -q
 
+# The gauntlet's single coverage run over all of tests/ (testpaths = tests).
 tests: quality-runtime
     COVERAGE_FILE="{{ QUALITY_REPORT_DIR }}/coverage-tests" uv run python -m pytest --cov=osm_polygon_wikidata_only --cov=scripts --cov-report=term-missing --cov-report="json:{{ QUALITY_REPORT_DIR }}/coverage.json" -p no:cacheprovider --basetemp="{{ TMPDIR }}/tests-pytest" -q -n auto --dist loadfile
 
@@ -85,11 +86,17 @@ bench-json out="bench.json":
 bench-compare mode="warn" out="bench.json":
     uv run python scripts/quality/bench_compare.py --baseline benchmarks/baseline.json --current {{ out }} --threshold 0.25 --mode {{ mode }}
 
+# Local-only focused runs. The gauntlet does not repeat them: their files are
+# part of the full `tests` run, which is the one coverage run in CI.
 property-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/property-pytest" -n auto --dist loadfile tests/property
 
 acceptance-tests: quality-runtime
     uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/acceptance-pytest" -n auto --dist loadfile tests/acceptance tests/pipeline/test_end_to_end.py tests/pipeline/test_sync_recovery_integration.py
+
+# Local-only focused run of the architecture contract files; also part of `tests`.
+architecture-tests: quality-runtime
+    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/architecture-pytest" tests/contracts tests/test_mkdocs.py tests/test_documentation.py tests/test_docker.py
 
 architecture-checks: quality-runtime
     just build
@@ -98,7 +105,6 @@ architecture-checks: quality-runtime
     just preprocessing-check
     uv run python scripts/quality/architecture.py
     uv run python scripts/quality/architecture.py --source-root preprocessing/src/osm_polygon_wikidata_only_preprocessing --package osm_polygon_wikidata_only_preprocessing
-    uv run python -m pytest -q --no-cov -p no:cacheprovider --basetemp="{{ TMPDIR }}/architecture-pytest" tests/contracts tests/test_mkdocs.py tests/test_documentation.py tests/test_docker.py
 
 # Canonical full-source CRAP reporting consumes coverage produced by the
 # preceding root `tests` and nested preprocessing quality stages.
