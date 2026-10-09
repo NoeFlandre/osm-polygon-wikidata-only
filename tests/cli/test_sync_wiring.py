@@ -134,11 +134,12 @@ def test_execute_wires_the_plan_runtime_and_upload_lifecycle(
                     "runtime": runtime,
                     "augmentation_client": augmentation_client,
                     "prepared": prepared,
-                    "push_enabled": True,
-                    "dry_run": True,
-                    "upload_queue": queue,
-                    "containment_enqueued": True,
-                    "publish_builder": publish_builder,
+                    "mode": sync_runtime.SyncRunMode(push_enabled=True, dry_run=True),
+                    "uploads": sync_runtime.SyncUploads(
+                        upload_queue=queue,
+                        containment_enqueued=True,
+                        publish_builder=publish_builder,
+                    ),
                 },
             ),
         ),
@@ -189,9 +190,10 @@ def test_execute_defaults_optional_cli_flags_and_thread_count(
         "num_threads": 2,
         "_hub": None,
     }
-    assert observed["application"]["push_enabled"] is False
-    assert observed["application"]["dry_run"] is False
-    assert observed["application"]["publish_builder"] is None
+    assert observed["application"]["mode"] == sync_runtime.SyncRunMode(
+        push_enabled=False, dry_run=False
+    )
+    assert observed["application"]["uploads"].publish_builder is None
 
 
 def test_run_sync_application_builds_complete_context_and_returns_code(
@@ -240,11 +242,12 @@ def test_run_sync_application_builds_complete_context_and_returns_code(
         runtime=cast(Any, runtime),
         augmentation_client=cast(Any, augmentation_client),
         prepared=prepared,
-        push_enabled=True,
-        dry_run=True,
-        upload_queue=cast(Any, queue),
-        containment_enqueued=True,
-        publish_builder=lambda *_a, **_k: [],
+        mode=sync_runtime.SyncRunMode(push_enabled=True, dry_run=True),
+        uploads=sync_runtime.SyncUploads(
+            upload_queue=cast(Any, queue),
+            containment_enqueued=True,
+            publish_builder=lambda *_a, **_k: [],
+        ),
     )
 
     context = captured["context"]
