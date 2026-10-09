@@ -33,7 +33,9 @@ from osm_polygon_wikidata_only.pipeline.sync_planner import (
     plan_sync_states,
 )
 from osm_polygon_wikidata_only.pipeline.sync_reconciliation import (
+    RemoteHelpers,
     RemoteReconciliation,
+    RemoteSource,
     core_repair_required,
     prepare_remote_reconciliation,
     remote_reconciliation_helpers,
@@ -164,12 +166,12 @@ def prepare_sync_plan(
         data_root=data_root,
         settings=settings,
         input_stems=input_stems,
-        hub=hub,
-        inventory_override=remote_inventory,
+        source=RemoteSource(hub=hub, inventory_override=remote_inventory),
         validate_augmentation=validate_local_augmentation_state,
         load_retired_parent_children=load_retired_parent_children,
-        canonical_region_paths=canonical_region_paths,
-        planner_cls=planner_cls,
+        helpers=RemoteHelpers(
+            canonical_region_paths=canonical_region_paths, planner_cls=planner_cls
+        ),
     )
     return _plan_prepared_sync(
         pbfs,

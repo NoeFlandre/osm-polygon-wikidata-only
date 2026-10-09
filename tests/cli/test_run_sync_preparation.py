@@ -163,12 +163,10 @@ def test_prepare_remote_reconciliation_disabled_returns_empty_state(tmp_path: Pa
         data_root=DataRoot(tmp_path),
         settings=Settings(),
         input_stems=set(),
-        hub=None,
-        inventory_override=None,
+        source=sync_reconciliation.RemoteSource(hub=None, inventory_override=None),
         validate_augmentation=lambda *_: pytest.fail("must not validate"),
         load_retired_parent_children=lambda *_: pytest.fail("must not load"),
-        canonical_region_paths=None,
-        planner_cls=None,
+        helpers=sync_reconciliation.RemoteHelpers(canonical_region_paths=None, planner_cls=None),
     )
 
     assert result.inventory is None
@@ -313,12 +311,14 @@ def test_prepare_remote_reconciliation_validates_inputs_and_builds_remote_state(
             data_root=data_root,
             settings=settings,
             input_stems={"beta", "alpha"},
-            hub=cast(Any, hub),
-            inventory_override=inventory,
+            source=sync_reconciliation.RemoteSource(
+                hub=cast(Any, hub), inventory_override=inventory
+            ),
             validate_augmentation=validate,
             load_retired_parent_children=retired,
-            canonical_region_paths=canonical_paths,
-            planner_cls=cast(Any, Planner),
+            helpers=sync_reconciliation.RemoteHelpers(
+                canonical_region_paths=canonical_paths, planner_cls=cast(Any, Planner)
+            ),
         )
 
     assert calls == [
@@ -437,12 +437,13 @@ def test_prepare_remote_reconciliation_forwards_inventory_credentials(
         data_root=data_root,
         settings=settings,
         input_stems={"alpha"},
-        hub=cast(Any, hub),
-        inventory_override=None,
+        source=sync_reconciliation.RemoteSource(hub=cast(Any, hub), inventory_override=None),
         validate_augmentation=lambda _root, _stems: {"alpha": False},
         load_retired_parent_children=lambda _path: {},
-        canonical_region_paths=lambda stem: {"polygons": f"{stem}/polygons.parquet"},
-        planner_cls=cast(Any, Planner),
+        helpers=sync_reconciliation.RemoteHelpers(
+            canonical_region_paths=lambda stem: {"polygons": f"{stem}/polygons.parquet"},
+            planner_cls=cast(Any, Planner),
+        ),
     )
 
     assert fetch_calls == [{"repo_id": "org/dataset", "hub": hub, "token": "token"}]
@@ -691,12 +692,12 @@ def test_prepare_sync_plan_wires_local_remote_and_derived_plan_inputs(
         "data_root": data_root,
         "settings": settings,
         "input_stems": input_stems,
-        "hub": hub,
-        "inventory_override": inventory,
+        "source": sync_reconciliation.RemoteSource(hub=hub, inventory_override=inventory),
         "validate_augmentation": sync_planning.validate_local_augmentation_state,
         "load_retired_parent_children": containment_migration.load_retired_parent_children,
-        "canonical_region_paths": canonical_paths,
-        "planner_cls": planner,
+        "helpers": sync_reconciliation.RemoteHelpers(
+            canonical_region_paths=canonical_paths, planner_cls=planner
+        ),
     }
     assert result == sync_planning.PreparedSyncPlan(
         pbfs=[pbfs[0]],
