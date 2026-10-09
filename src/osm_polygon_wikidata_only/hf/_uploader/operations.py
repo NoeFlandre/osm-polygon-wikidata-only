@@ -132,6 +132,8 @@ def sanitize_server_message(message: str) -> str:
         # Redact to the end of the line: schemes such as Digest and AWS carry comma- or
         # space-separated credential fields that a single-token match would leak.
         re.compile(r"Authorization:[^\r\n]*", re.IGNORECASE),
+        # Bare Hugging Face access tokens, which carry no keyword to match on.
+        re.compile(r"hf_[A-Za-z0-9]{8,}"),
         # ``request_id=<value>``
         re.compile(r"request_id\s*[:=]\s*[\S\"']+", re.IGNORECASE),
         # Full user-home paths on macOS / Linux (matches ``/Users/<name>``

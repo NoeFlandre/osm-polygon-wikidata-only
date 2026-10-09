@@ -296,6 +296,20 @@ def test_sanitizer_redacts_the_whole_basic_authorization_credential() -> None:
     assert "Basic" not in cleaned
 
 
+def test_sanitizer_redacts_bare_hugging_face_tokens() -> None:
+    cleaned = operations.sanitize_server_message("request failed for hf_abcdefghijklmnopqrstuvwx")
+
+    assert "abcdefghijklmnop" not in cleaned
+
+
+@pytest.mark.parametrize(("length", "truncated"), [(200, False), (201, True)])
+def test_loggable_message_caps_at_the_200_character_boundary(length: int, truncated: bool) -> None:
+    rendered = _upload_retry._loggable_message(ValueError("a" * length))
+
+    assert rendered.endswith("...") is truncated
+    assert len(rendered) == (203 if truncated else 200)
+
+
 def test_sanitizer_redacts_multi_field_authorization_headers() -> None:
     digest = 'Authorization: Digest username="u", realm="r", nonce="n", response="secret"'
     aws = "Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE, Signature=deadbeef"
