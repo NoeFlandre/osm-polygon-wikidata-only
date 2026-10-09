@@ -52,7 +52,7 @@ def test_transient_network_error_classifies_retryable_failures(error: BaseExcept
     assert is_transient_network_error(error)
 
 
-@pytest.mark.parametrize("status", [520, 522, 524])
+@pytest.mark.parametrize("status", [520, 521, 522, 523, 524])
 def test_cloudflare_origin_failures_are_retryable(status: int) -> None:
     assert is_transient_network_error(http_error(status, msg="origin failure"))
 

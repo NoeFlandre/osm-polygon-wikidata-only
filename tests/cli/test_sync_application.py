@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.cli import sync_runtime
 from osm_polygon_wikidata_only.config.paths import DataRoot
 from osm_polygon_wikidata_only.config.settings import Settings
 from osm_polygon_wikidata_only.pipeline.sync_planner import RegionSyncState, SyncAction
+from osm_polygon_wikidata_only.utils.retry import wait_for_retry_or_cancel
 
 MODULE_NAME = "osm_polygon_wikidata_only.cli.sync_application"
 
@@ -67,6 +68,18 @@ class _Queue:
 
     def upload_synchronously(self, ops: list[Any], message: str) -> None:
         self.synchronous.append((ops, message))
+
+
+class _RetryObservingQueue(_Queue):
+    """Record whether upload retries were cancelled when the drain began."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.retries_cancelled_at_drain: list[bool] = []
+
+    def close_and_wait(self) -> list[str]:
+        self.retries_cancelled_at_drain.append(wait_for_retry_or_cancel(0))
+        return super().close_and_wait()
 
 
 def _context(
@@ -372,6 +385,38 @@ def test_runner_exception_without_queue_still_propagates(tmp_path: Path) -> None
 
     with pytest.raises(RuntimeError, match="runner failed without queue"):
         application.run()
+
+
+def test_aborted_run_cancels_upload_backoff_during_the_drain(tmp_path: Path) -> None:
+    module = _application_module()
+    queue = _RetryObservingQueue()
+
+    def runner(_states: list[Any], **_callbacks: Any) -> int:
+        raise RuntimeError("runner failed")
+
+    application = module.SyncApplication(
+        context=_context(module, tmp_path, queue=queue),
+        services=_services(module, [], runner=runner),
+    )
+
+    with pytest.raises(RuntimeError, match="runner failed"):
+        application.run()
+    assert queue.retries_cancelled_at_drain == [True]
+    assert wait_for_retry_or_cancel(0) is False
+
+
+def test_normal_drain_keeps_upload_retries_enabled(tmp_path: Path) -> None:
+    module = _application_module()
+    queue = _RetryObservingQueue()
+    application = module.SyncApplication(
+        context=_context(module, tmp_path, queue=queue),
+        services=_services(module, []),
+    )
+
+    application.run()
+
+    assert queue.retries_cancelled_at_drain == [False]
+    assert wait_for_retry_or_cancel(0) is False
 
 
 def test_a_reconciliation_repair_publishes_once_after_the_queue_drains(tmp_path: Path) -> None:

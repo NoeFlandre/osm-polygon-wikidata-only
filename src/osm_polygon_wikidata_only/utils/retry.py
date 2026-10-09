@@ -71,10 +71,13 @@ def wait_for_retry_or_cancel(delay: float) -> bool:
     return _RETRY_CANCELLATION.wait(delay)
 
 
-# 520, 522 and 524 are Cloudflare origin failures (unknown origin error, origin
-# connection timeout, origin response timeout) returned by a fronting gateway
-# when its origin stalls. They are retried like the 504 gateway timeout beside them.
-_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504, 520, 522, 524})
+# 520-524 are Cloudflare origin failures (unknown origin error, web server down,
+# origin connection timeout, origin unreachable, origin response timeout) returned
+# by a fronting gateway when its origin stalls or is down. They are retried like
+# the 504 gateway timeout beside them.
+_TRANSIENT_HTTP_STATUS_CODES = frozenset(
+    {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+)
 _TRANSIENT_ERRNOS = frozenset(
     {
         errno.ECONNABORTED,
