@@ -24,7 +24,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
     LINK_CONTRACT_VERSION as _LINK_CONTRACT_VERSION,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_parquet
-from osm_polygon_wikidata_only.io.json_files import read_json
+from osm_polygon_wikidata_only.io.json_files import require_json_object
 from osm_polygon_wikidata_only.pipeline._link_migration.models import (
     StemApplyContext,
     StemApplyInputs,
@@ -68,9 +68,11 @@ def source_pbf_for_stem(inputs: StemApplyInputs) -> str:
 
 def _load_json_object(path: Path, error: str) -> dict[str, Any]:
     """Load a JSON object, preserving a precise corruption error."""
-    payload = read_json(path, on_malformed=lambda exc: ValueError(f"{error}: {exc}"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"{error} must be a JSON object")
+    payload = require_json_object(
+        path,
+        on_malformed=lambda exc: ValueError(f"{error}: {exc}"),
+        on_not_object=lambda: ValueError(f"{error} must be a JSON object"),
+    )
     return dict(payload)
 
 

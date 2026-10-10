@@ -48,6 +48,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     LanguageInventoryError,
     LanguageTableInventory,
 )
+from osm_polygon_wikidata_only.v2.language_split_manifest import shard_count
 from osm_polygon_wikidata_only.v2.language_splits import V2LanguageSplitResult
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
@@ -1296,3 +1297,17 @@ def test_plan_rejects_a_missing_data_root_with_a_release_error(tmp_path: Path, w
         language_split_release.plan_language_split_release(wrap(missing))
 
     assert str(error.value) == f"Data root is not a directory: {missing.resolve()}"
+
+
+@pytest.mark.parametrize(
+    ("row_count", "max_rows", "expected"),
+    [(0, 5, 0), (1, 5, 1), (5, 5, 1), (6, 5, 2), (10, 5, 2), (11, 5, 3), (7, 1, 7)],
+)
+def test_release_shard_count_rounds_up_to_whole_shards(
+    row_count: int, max_rows: int, expected: int
+) -> None:
+    assert shard_count(row_count, max_rows) == expected
+
+
+def test_release_uses_the_single_shared_shard_count_implementation() -> None:
+    assert language_split_release.shard_count is shard_count
