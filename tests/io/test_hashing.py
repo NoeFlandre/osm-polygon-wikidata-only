@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,26 @@ def test_persisted_digests_are_restored_and_revalidated(tmp_path: Path) -> None:
 
     assert hashing._CACHE, "the persisted index should be restored"
     assert sha256_file(payload) == expected
+
+
+def test_flushed_index_stores_size_inode_and_mtime_before_the_digest(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"persisted shape")
+    stat = payload.stat()
+    hashing._CACHE.clear()
+    hashing.enable_hash_cache(cache_dir)
+    digest = sha256_file(payload)
+
+    hashing.flush_hash_cache()
+
+    stored = json.loads((cache_dir / "hash_cache.json").read_text(encoding="utf-8"))
+    assert stored == {
+        "contract": "sha256-v1",
+        "entries": {
+            str(payload.resolve()): [stat.st_size, stat.st_ino, stat.st_mtime_ns, digest],
+        },
+    }
 
 
 @pytest.mark.parametrize(
