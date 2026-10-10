@@ -189,6 +189,16 @@ def test_section_parser_tracks_ignored_and_visible_text() -> None:
     ]
 
 
+def test_section_text_drops_tables_and_superscripts() -> None:
+    document = document_from_article_row(article_row())
+    sections = parse_sections(
+        document,
+        "lead<table><tr><td>cell</td></tr></table><sup>1</sup>tail",
+    )
+
+    assert [section.text for section in sections] == ["lead tail"]
+
+
 def test_section_stack_pops_siblings_and_descendants_only() -> None:
     document = document_from_article_row(article_row())
     stack = parse_sections(

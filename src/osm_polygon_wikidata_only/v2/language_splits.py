@@ -22,6 +22,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     language_table_specs,
 )
 from osm_polygon_wikidata_only.io.atomic import atomic_write_json
+from osm_polygon_wikidata_only.utils.validation import require_positive_batch_size
 from osm_polygon_wikidata_only.v2.language_split_manifest import (
     file_sort_key as _file_sort_key,
 )
@@ -101,7 +102,7 @@ def _prepare_v2_split_request(
     batch_size: int,
     max_rows_per_shard: int,
 ) -> tuple[Path, Path, LanguageInventory]:
-    _validate_batch_size(batch_size)
+    require_positive_batch_size(batch_size, ValueError)
     _validate_max_rows_per_shard(max_rows_per_shard)
     root = Path(processed_root).resolve()
     destination = (
@@ -187,11 +188,6 @@ def _stage_v2_files(
         files.extend(generated)
         staged_paths.update(table_staged_paths)
     return files, staged_paths
-
-
-def _validate_batch_size(batch_size: int) -> None:
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be positive, got {batch_size}")
 
 
 def _validate_max_rows_per_shard(max_rows_per_shard: int) -> None:

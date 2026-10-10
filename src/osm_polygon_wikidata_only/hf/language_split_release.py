@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     build_language_inventory,
 )
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
+from osm_polygon_wikidata_only.utils.validation import require_positive_batch_size
 from osm_polygon_wikidata_only.v2.language_split_manifest import shard_count
 from osm_polygon_wikidata_only.v2.language_splits import DEFAULT_MAX_ROWS_PER_SHARD
 
@@ -127,7 +128,7 @@ def plan_language_split_release(
 ) -> LanguageSplitReleasePlan:
     """Validate selected inventories and return a no-write release plan."""
     root = resolve_data_root(data_root, LanguageSplitReleaseError, label="Data root")
-    _validate_batch_size(batch_size)
+    require_positive_batch_size(batch_size, LanguageSplitReleaseError)
     versions = _selected_versions(dataset_version)
     release_plans = tuple(_plan_version(root, version) for version in versions)
     return LanguageSplitReleasePlan(
@@ -158,11 +159,6 @@ def run_language_split_release(
         _generate_version(release, batch_size=plan.batch_size) for release in plan.releases
     )
     return LanguageSplitReleaseResult(plan=plan, dry_run=False, generated=generated)
-
-
-def _validate_batch_size(batch_size: int) -> None:
-    if batch_size <= 0:
-        raise LanguageSplitReleaseError(f"batch_size must be positive, got {batch_size}")
 
 
 def _selected_versions(dataset_version: str) -> tuple[LanguageSplitVersion, ...]:

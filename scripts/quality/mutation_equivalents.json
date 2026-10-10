@@ -97,17 +97,17 @@
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__stage_rejection_ledger__mutmut_10": {
     "mutant_sha256": "2e67cfb148ad09a69153108682bc6fbf11f23d7da1db9de4f678ae42ea2a45ea",
     "reason": "Exact code changes only the guard: existing_records = load_ledger(path) if path.is_file() or True else [] instead of ... if path.is_file() else []. load_ledger returns [] without side effects when path is not a file (augmentation/rejection_ledger.py, unchanged by this PR), so the unconditional call gives the same existing_records as the empty fallback before merge_records.",
-    "source_sha256": "d27f65b4c98a7a903f01dde6fd6dbc36bda629406a1b58087a80093f031d0637"
+    "source_sha256": "ece1fce29b88468628b65239b07aa5ce62937be312ae68d6d5b8704a3db558fa"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_12": {
     "mutant_sha256": "d4b2e9fb9541eab4b025d537bd459faa18c0c99ac2200ac126c7d2736cdb246e",
     "reason": "Exact code changes only the absent-metadata default: marker = payload.get('metadata_refresh', None) instead of payload.get('metadata_refresh', {}). An absent key gives None and the {} default gives {}; both fail isinstance(marker, dict), so marker_stems and marker_hashes start empty in both versions. A present dict is returned unchanged by both get calls, and the rebuilt metadata_refresh is assigned identically.",
-    "source_sha256": "d27f65b4c98a7a903f01dde6fd6dbc36bda629406a1b58087a80093f031d0637"
+    "source_sha256": "ece1fce29b88468628b65239b07aa5ce62937be312ae68d6d5b8704a3db558fa"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_14": {
     "mutant_sha256": "d32c3a15e8aa0ad786bcceb810a11c64d43bab53866478c82f628c2cd45d5046",
     "reason": "Exact code changes only the absent-metadata default: marker = payload.get('metadata_refresh') (implicit None) instead of payload.get('metadata_refresh', {}). The same isinstance(marker, dict) guard yields empty marker_stems and marker_hashes for an absent key in both versions; present dictionaries are returned unchanged by both get calls.",
-    "source_sha256": "d27f65b4c98a7a903f01dde6fd6dbc36bda629406a1b58087a80093f031d0637"
+    "source_sha256": "ece1fce29b88468628b65239b07aa5ce62937be312ae68d6d5b8704a3db558fa"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.conversion.x__conversion_indexes__mutmut_19": {
     "mutant_sha256": "f9261b58040d3fc4a6a4441290df9b092d3fe1899e385d91ff2da880776e9d11",

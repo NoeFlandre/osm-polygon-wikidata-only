@@ -154,3 +154,13 @@ def test_source_pbf_helper_rejects_zero_or_multiple_values() -> None:
         )
         with pytest.raises(RuntimeError, match=f"{count} distinct source_pbf"):
             link_artifacts.source_pbf_for_stem(cast(Any, inputs))
+
+
+def test_processed_manifest_that_is_not_an_object_is_refused_with_its_filename(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "processed_pbfs.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"^processed_pbfs\.json must be a JSON object$"):
+        artifacts._load_processed_entries(path)
