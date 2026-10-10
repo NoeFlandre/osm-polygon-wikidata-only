@@ -77,57 +77,43 @@ class _V2ExecutionState:
     pending_publish_stems: list[str] = field(default_factory=list)
 
 
-def _plan_region(
-    pbf: Path,
-    *,
-    data_root: DataRoot,
-    settings: Settings,
-    manifest: dict[str, dict[str, Any]],
-    push: bool,
-    remote_inventory: RemoteInventory | None,
-    hash_cache: V2FileHashCache | None,
-) -> _RegionPlan:
+@dataclass(frozen=True, slots=True)
+class _RegionPlanningContext:
+    """Run-wide inputs that decide the durable action for every region."""
+
+    data_root: DataRoot
+    settings: Settings
+    manifest: dict[str, dict[str, Any]]
+    push: bool
+    remote_inventory: RemoteInventory | None
+    hash_cache: V2FileHashCache | None = None
+
+
+def _plan_region(pbf: Path, context: _RegionPlanningContext) -> _RegionPlan:
     """Choose the durable action for one source PBF."""
     stem = pbf.name.removesuffix(".osm.pbf")
-    action = _region_action(
-        stem,
-        data_root=data_root,
-        settings=settings,
-        manifest=manifest,
-        push=push,
-        remote_inventory=remote_inventory,
-        hash_cache=hash_cache,
-    )
+    action = _region_action(stem, context)
     return _RegionPlan(pbf, stem, action)
 
 
-def _region_action(
-    stem: str,
-    *,
-    data_root: DataRoot,
-    settings: Settings,
-    manifest: dict[str, dict[str, Any]],
-    push: bool,
-    remote_inventory: RemoteInventory | None,
-    hash_cache: V2FileHashCache | None,
-) -> str:
+def _region_action(stem: str, context: _RegionPlanningContext) -> str:
     """Select extract, reconcile, publish, or skip for one region."""
     local_artifacts_current = _local_region_artifacts_current(
         stem,
-        data_root=data_root,
-        settings=settings,
-        manifest=manifest,
-        hash_cache=hash_cache,
+        data_root=context.data_root,
+        settings=context.settings,
+        manifest=context.manifest,
+        hash_cache=context.hash_cache,
     )
     if not local_artifacts_current:
         return "extract"
-    if _needs_index_reconciliation(manifest, stem):
+    if _needs_index_reconciliation(context.manifest, stem):
         return "reconcile"
     return _remote_region_action(
-        data_root,
+        context.data_root,
         stem,
-        push=push,
-        remote_inventory=remote_inventory,
+        push=context.push,
+        remote_inventory=context.remote_inventory,
     )
 
 
@@ -168,26 +154,9 @@ def _local_region_artifacts_current(
 
 def _plan_regions(
     pbfs: Sequence[Path],
-    *,
-    data_root: DataRoot,
-    settings: Settings,
-    manifest: dict[str, dict[str, Any]],
-    push: bool,
-    remote_inventory: RemoteInventory | None,
-    hash_cache: V2FileHashCache | None = None,
+    context: _RegionPlanningContext,
 ) -> tuple[_RegionPlan, ...]:
-    return tuple(
-        _plan_region(
-            pbf,
-            data_root=data_root,
-            settings=settings,
-            manifest=manifest,
-            push=push,
-            remote_inventory=remote_inventory,
-            hash_cache=hash_cache,
-        )
-        for pbf in pbfs
-    )
+    return tuple(_plan_region(pbf, context) for pbf in pbfs)
 
 
 @dataclass(frozen=True)
@@ -233,12 +202,14 @@ def run_v2_sync(
     manifest = load_v2_manifest(data_root.processed_v2)
     plans = _plan_regions(
         pbfs,
-        data_root=data_root,
-        settings=settings,
-        manifest=manifest,
-        push=publication.push,
-        remote_inventory=publication.remote_inventory,
-        hash_cache=hash_cache,
+        _RegionPlanningContext(
+            data_root=data_root,
+            settings=settings,
+            manifest=manifest,
+            push=publication.push,
+            remote_inventory=publication.remote_inventory,
+            hash_cache=hash_cache,
+        ),
     )
     state = _V2ExecutionState(
         data_root=data_root,
