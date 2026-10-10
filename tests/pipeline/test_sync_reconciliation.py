@@ -633,11 +633,21 @@ def test_metadata_only_gaps_repaired_and_enqueued_last(
     assert "assets/coverage_map.png" in stub.remote_files
     assert "assets/dataset_hero.png" in stub.remote_files
 
-    # Verify enqueued last:
-    # The last commit in stub.commits should be the metadata-only repair commit
-    last_commit = stub.commits[-1]
-    assert last_commit["commit_message"] == "Repair remote repository metadata and maps"
-    assert "README.md" in last_commit["paths"]
+    # The metadata-only repair is enqueued last, after the region sync commit.
+    assert [commit["commit_message"] for commit in stub.commits] == [
+        "Sync complete region mexico-latest",
+        "Repair remote repository metadata and maps",
+    ]
+    assert stub.commits[-1]["paths"] == [
+        "manifests/processed_pbfs.json",
+        "assets/geographic_text_presence.png",
+        "assets/geographic_text_density.png",
+        "assets/coverage_map.png",
+        "assets/dataset_hero.png",
+        "manifests/augmentation_manifest.json",
+        "stats.json",
+        "README.md",
+    ]
 
 
 def test_incomplete_local_augmentation_remains_augment(
