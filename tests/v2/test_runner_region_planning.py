@@ -78,8 +78,7 @@ def _plan(
     hash_cache: Any = None,
 ) -> tuple[v2_runner._RegionPlan, ...]:
     pbfs = [root.raw / f"{stem}.osm.pbf" for stem in stems]
-    return v2_runner._plan_regions(
-        pbfs,
+    context = v2_runner._RegionPlanningContext(
         data_root=root,
         settings=Settings(skip_existing=True) if settings is None else settings,
         manifest=manifest,
@@ -87,6 +86,7 @@ def _plan(
         remote_inventory=remote_inventory,
         hash_cache=hash_cache,
     )
+    return v2_runner._plan_regions(pbfs, context)
 
 
 def _actions(plans: tuple[v2_runner._RegionPlan, ...]) -> list[tuple[str, str]]:
