@@ -114,10 +114,6 @@
     "pipeline/test_wikidata_recovery_repair_fetch.py": {
       "_fetch_recovery_document": 1
     },
-    "quality/test_crap_gate_remaining_coverage.py": {
-      "_identity_set": 1,
-      "_region_artifacts_are_current": 1
-    },
     "v2/test_card.py": {
       "_sum_first_available": 1,
       "_sum_metadata": 1,
