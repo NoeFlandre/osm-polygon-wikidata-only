@@ -256,7 +256,6 @@ pytest_add_cli_args = ["--no-cov", "-q"]
 ]
 "src/osm_polygon_wikidata_only/pipeline/_link_migration/artifacts.py" = [
     "tests/migration/test_link_migration_artifacts.py",
-    "tests/migration/test_json_object_loaders.py",
     "tests/migration/test_canonical_parquet_schema.py",
     "tests/grid5000/test_sentence_artifacts.py",
 ]
