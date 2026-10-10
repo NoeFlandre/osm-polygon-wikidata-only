@@ -25,7 +25,19 @@ from osm_polygon_wikidata_only.utils.retry import (
     with_retries,
 )
 from osm_polygon_wikidata_only.utils.time import utc_now_iso
+from osm_polygon_wikidata_only.utils.validation import require_positive_batch_size
 from tests.helpers import http_error
+
+
+class _Rejected(Exception):
+    """Stands in for a caller's own error type."""
+
+
+def test_require_positive_batch_size_accepts_one_and_raises_the_callers_error() -> None:
+    require_positive_batch_size(1, _Rejected)
+
+    with pytest.raises(_Rejected, match=r"^batch_size must be positive, got 0$"):
+        require_positive_batch_size(0, _Rejected)
 
 
 def test_dumps_is_deterministic() -> None:
