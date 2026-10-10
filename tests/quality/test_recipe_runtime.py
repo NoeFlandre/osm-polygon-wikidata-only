@@ -176,6 +176,16 @@ def test_crap_threshold_flags_have_one_definition_and_apply_to_both_reports() ->
     assert (result.stdout + result.stderr).count(CRAP_FLAGS) == 2
 
 
+def test_coverage_line_floor_has_one_definition_and_feeds_the_floor_check() -> None:
+    justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+    result = _run_just("--dry-run", "coverage-floor")
+
+    assert result.returncode == 0, result.stderr
+    assert justfile.count('COVERAGE_LINE_FLOOR := "85"') == 1
+    assert "--minimum 85" not in justfile
+    assert "--minimum 85" in result.stdout + result.stderr
+
+
 def test_crap_recipe_report_includes_a_nested_function(tmp_path: Path) -> None:
     source = tmp_path / "nested.py"
     source.write_text(

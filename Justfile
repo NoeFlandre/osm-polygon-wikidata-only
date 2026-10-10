@@ -11,6 +11,11 @@ export RUFF_CACHE_DIR := absolute_path(env_var_or_default("RUFF_CACHE_DIR", QUAL
 export HYPOTHESIS_STORAGE_DIRECTORY := absolute_path(env_var_or_default("HYPOTHESIS_STORAGE_DIRECTORY", QUALITY_CACHE_DIR + "/hypothesis"))
 export MPLCONFIGDIR := absolute_path(env_var_or_default("MPLCONFIGDIR", QUALITY_CACHE_DIR + "/matplotlib"))
 export UV_PYTHON_INSTALL_DIR := absolute_path(env_var_or_default("UV_PYTHON_INSTALL_DIR", QUALITY_CACHE_DIR + "/python"))
+# Per-file line-coverage floor in percent, applied to every measured file. The
+# aggregate floor is `fail_under = 90` in pyproject.toml; this per-file floor
+# stops a healthy total from hiding a module with almost no coverage.
+# docs/development.md explains both floors.
+COVERAGE_LINE_FLOOR := "85"
 COVERAGE_FLOOR_EXEMPTIONS := ""
 CRAP_FLAGS := "--maximum 6 --max-complexity 5 --min-coverage 0.8 --min-coverage-complexity 3"
 MUTMUT_MAX_CHILDREN := env_var_or_default("MUTMUT_MAX_CHILDREN", "2")
@@ -70,7 +75,7 @@ tests: quality-runtime
 # in-process coverage cannot observe them.
 coverage-floor: quality-runtime
     @test -s "{{ QUALITY_REPORT_DIR }}/coverage.json" || { echo "Run just tests first to generate root coverage." >&2; exit 1; }
-    uv run python scripts/quality/coverage_floor.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --minimum 85 {{ COVERAGE_FLOOR_EXEMPTIONS }}
+    uv run python scripts/quality/coverage_floor.py --coverage "{{ QUALITY_REPORT_DIR }}/coverage.json" --minimum {{ COVERAGE_LINE_FLOOR }} {{ COVERAGE_FLOOR_EXEMPTIONS }}
 
 # Time the hot pure functions and the workload benchmarks (benchmarks/ is not
 # part of the normal test run).
