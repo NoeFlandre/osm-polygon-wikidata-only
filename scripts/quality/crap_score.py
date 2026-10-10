@@ -220,7 +220,7 @@ def entries_from_reports(
 def _mapping(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} must be an object")
-    return cast(dict[str, object], dict(value))
+    return dict(value)
 
 
 def _mapping_value(value: Mapping[str, object], key: str) -> dict[str, object]:

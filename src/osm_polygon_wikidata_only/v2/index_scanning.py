@@ -7,7 +7,7 @@ the SQLite lifecycle and lookup code in :mod:`v1_index`.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -26,7 +26,7 @@ _INDEX_PROJECTION = ("document_id", "language", "title", "page_id", "revision_id
 
 
 @contextmanager
-def _shard_errors(path: Path) -> Iterator[None]:
+def _shard_errors(path: Path) -> Generator[None, None, None]:
     """Re-raise ``ValueError`` unchanged; convert other errors to one message."""
     try:
         yield

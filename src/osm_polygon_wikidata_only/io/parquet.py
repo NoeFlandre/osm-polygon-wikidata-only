@@ -8,7 +8,7 @@ and the reader can both be schema-driven.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -90,7 +90,7 @@ def read_table(path: Path) -> pa.Table:
 
 
 @contextmanager
-def _open_parquet_file(path: Path) -> Iterator[pq.ParquetFile]:
+def _open_parquet_file(path: Path) -> Generator[pq.ParquetFile, None, None]:
     """Own the lifecycle of a :class:`pyarrow.parquet.ParquetFile` for ``path``.
 
     The parquet module's readers that need a long-lived handle (row-group

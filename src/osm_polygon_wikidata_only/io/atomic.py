@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -37,7 +37,7 @@ from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 
 
 @contextmanager
-def atomic_replacement(path: Path) -> Iterator[Path]:
+def atomic_replacement(path: Path) -> Generator[Path, None, None]:
     """Yield a temporary sibling that becomes ``path`` when the block ends.
 
     The sibling is created inside ``path.parent`` -- creating that

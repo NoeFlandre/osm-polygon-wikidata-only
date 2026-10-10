@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -45,7 +45,7 @@ def test_sentence_split_runner_holds_dedicated_lock_and_delegates(
     delegated: list[tuple[argparse.Namespace, DataRoot, Settings]] = []
 
     @contextmanager
-    def fake_lock(path: Path) -> Iterator[None]:
+    def fake_lock(path: Path) -> Generator[None, None, None]:
         locked_paths.append(path)
         yield
 
