@@ -168,7 +168,8 @@ def test_slow_tests_parser_types_and_defaults() -> None:
 
     args = parser.parse_args(["--junit-xml", "j.xml", "--budget", "5"])
 
-    assert parser.description == slow_tests.__doc__
+    help_text = " ".join(parser.format_help().split())
+    assert "Fail when any single test exceeds the per-test time budget" in help_text
     assert args.junit_xml == Path("j.xml")
     assert args.budget == 5.0
     assert isinstance(args.budget, float)
@@ -190,7 +191,8 @@ def test_compare_parser_types_choices_and_defaults() -> None:
 
     args = parser.parse_args(["--baseline", "b.json", "--current", "c.json", "--threshold", "0.5"])
 
-    assert parser.description == bench_compare.__doc__
+    help_text = " ".join(parser.format_help().split())
+    assert "Compare a pytest-benchmark JSON run with a committed baseline" in help_text
     assert args.baseline == Path("b.json")
     assert args.current == Path("c.json")
     assert args.threshold == 0.5

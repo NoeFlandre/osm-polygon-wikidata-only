@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from osm_polygon_wikidata_only.hf._stats_release import manifest
 from osm_polygon_wikidata_only.hf._stats_release.manifest import build_provenance
 from osm_polygon_wikidata_only.hf._stats_release.models import StatsReleaseError
 
@@ -179,3 +180,29 @@ def test_unlisted_polygon_files_are_rejected(tmp_path: Path) -> None:
         StatsReleaseError, match=r"absent from the manifest: polygons/stray\.parquet"
     ):
         _provenance(tmp_path)
+
+
+def test_manifest_parsers_reject_invalid_container_and_metadata_shapes(tmp_path: Path) -> None:
+    with pytest.raises(manifest.StatsReleaseError, match="not an object"):
+        manifest._manifest_entries(None, tmp_path / "manifest.json")
+    with pytest.raises(manifest.StatsReleaseError, match="no region entries"):
+        manifest._manifest_entries({"regions": []}, tmp_path / "manifest.json")
+
+    path = tmp_path / "manifest.json"
+    metadata = {
+        "polygons_path": "polygons/region-latest.parquet",
+        "polygon_count": 7,
+    }
+    assert manifest._manifest_polygon_metadata("region-latest.osm.pbf", metadata, path) == (
+        "polygons/region-latest.parquet",
+        "region-latest.osm.pbf",
+        7,
+    )
+    with pytest.raises(manifest.StatsReleaseError, match="must point to"):
+        manifest._manifest_polygon_metadata(
+            "region-latest.osm.pbf", {**metadata, "polygons_path": "wrong.parquet"}, path
+        )
+    with pytest.raises(manifest.StatsReleaseError, match="source_pbf"):
+        manifest._manifest_polygon_metadata(
+            "region-latest.osm.pbf", {**metadata, "source_pbf": 3}, path
+        )
