@@ -548,3 +548,16 @@ def test_try_ensure_world_land_without_warn_callable_still_returns_none(tmp_path
         raise RuntimeError("nope")
 
     assert try_ensure_world_land(tmp_path, ensure=failing) is None
+
+
+@pytest.mark.parametrize("error", [OSError("unreadable"), KeyError("columns")])
+def test_centroid_file_scan_skips_unreadable_parquet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    def fail(_path: Path):
+        raise error
+
+    monkeypatch.setattr(coverage_map, "open_parquet", fail)
+    assert coverage_map._load_centroid_file(tmp_path / "corrupt.parquet") == ([], [])

@@ -597,10 +597,18 @@ def test_metadata_only_upload_contract(tmp_path: Path) -> None:
         data_root=data_root,
         repo_id="test/repo",
     )
-    paths = [op.path_in_repo for op in ops]
-    assert paths.count("README.md") == 1
-    assert ops[-1].action == "add"
-    assert paths[-1] == "README.md"
+    assert [(op.action, op.path_in_repo) for op in ops] == [
+        ("add", "manifests/processed_pbfs.json"),
+        ("add", "assets/geographic_text_presence.png"),
+        ("add", "assets/geographic_text_density.png"),
+        ("delete", "assets/geographic_wikipedia_text_coverage.png"),
+        ("delete", "assets/geographic_polygon_count.png"),
+        ("add", "assets/coverage_map.png"),
+        ("delete", "coverage_map.png"),
+        ("add", "assets/dataset_hero.png"),
+        ("add", "stats.json"),
+        ("add", "README.md"),
+    ]
 
 
 def test_repository_refresh_includes_the_hero_and_current_assets(tmp_path: Path) -> None:

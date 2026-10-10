@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from osm_polygon_wikidata_only.hf._dataset_stats import augmentation_scan as augmentation
 
@@ -101,3 +104,25 @@ def test_record_property_updates_keeps_first_label() -> None:
     augmentation._record_property_updates(("P31",), "Replacement", counts, labels)
     assert counts == {"P31": 1}
     assert labels == {"P31": "Original"}
+
+
+def test_augmentation_scanner_dispatch_and_path_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = tmp_path / "processed"
+    calls: list[str] = []
+    for kind, scanner, relative in (
+        ("documents", "_scan_documents_file", "wikipedia/documents/a.parquet"),
+        ("sections", "_scan_sections_file", "wikipedia/sections/a.parquet"),
+        ("facts", "_scan_facts_file", "wikidata/facts/a.parquet"),
+    ):
+        monkeypatch.setattr(
+            augmentation,
+            scanner,
+            lambda _root, _path, selected=kind: calls.append(selected),
+        )
+        assert augmentation.scan_one_file(processed, processed / relative) is None
+        assert calls[-1] == kind
+
+    assert augmentation.scan_one_file(processed, processed / "unmanaged/file.parquet") is None
+    assert augmentation.scan_one_file(processed, tmp_path / "outside.parquet") is None

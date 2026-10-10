@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -11,6 +11,7 @@ from osm_polygon_wikidata_only.hf import _upload_retry
 from osm_polygon_wikidata_only.hf._upload_retry import _run_upload_attempts
 from osm_polygon_wikidata_only.hf._uploader import operations
 from osm_polygon_wikidata_only.hf._uploader.errors import UploadError
+from osm_polygon_wikidata_only.hf._uploader.plan import PublicationOp
 
 
 def test_upload_operation_validation_rejects_empty_and_duplicate_paths() -> None:
@@ -516,3 +517,34 @@ def test_upload_queue_rejects_submit_after_close() -> None:
     queue.close_and_wait()
     with pytest.raises(RuntimeError, match="upload queue is closed"):
         queue.submit([], "late")
+
+
+def test_publication_operation_translation_covers_add_delete_and_invalid_paths(
+    tmp_path: Path,
+) -> None:
+    local = tmp_path / "source.txt"
+    local.write_text("data", encoding="utf-8")
+    add = operations._translate_publication_op(
+        PublicationOp("add", "remote.txt", local_path=local),
+        cast(Any, SimpleNamespace),
+        cast(Any, SimpleNamespace),
+    )
+    assert add.path_in_repo == "remote.txt"
+    assert add.path_or_fileobj == str(local)
+
+    delete = operations._translate_publication_op(
+        PublicationOp("delete", "remote.txt"),
+        cast(Any, SimpleNamespace),
+        cast(Any, SimpleNamespace),
+    )
+    assert delete.path_in_repo == "remote.txt"
+    with pytest.raises(UploadError, match="does not exist"):
+        operations._translate_publication_op(
+            PublicationOp("add", "missing.txt", local_path=tmp_path / "missing.txt"),
+            cast(Any, SimpleNamespace),
+            cast(Any, SimpleNamespace),
+        )
+
+    malformed = SimpleNamespace(action="replace", path_in_repo="x", local_path=None)
+    with pytest.raises(UploadError, match="Unknown action"):
+        cast(Any, operations._translate_publication_op)(malformed, SimpleNamespace, SimpleNamespace)
