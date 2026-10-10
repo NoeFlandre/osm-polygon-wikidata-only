@@ -16,6 +16,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     build_language_inventory,
 )
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
+from osm_polygon_wikidata_only.v2.language_split_manifest import shard_count
 from osm_polygon_wikidata_only.v2.language_splits import DEFAULT_MAX_ROWS_PER_SHARD
 
 DEFAULT_BATCH_SIZE = 65_536
@@ -256,8 +257,8 @@ def _expected_v2_files(
         for bucket in table.buckets:
             if bucket.row_count == 0:
                 continue
-            shard_count = _shard_count(bucket.row_count, DEFAULT_MAX_ROWS_PER_SHARD)
-            for shard_index in range(shard_count):
+            total_shards = shard_count(bucket.row_count, DEFAULT_MAX_ROWS_PER_SHARD)
+            for shard_index in range(total_shards):
                 row_count = min(
                     DEFAULT_MAX_ROWS_PER_SHARD,
                     bucket.row_count - shard_index * DEFAULT_MAX_ROWS_PER_SHARD,
@@ -266,7 +267,7 @@ def _expected_v2_files(
                     plan.output_root
                     / table.configuration
                     / bucket.split
-                    / f"part-{shard_index:05d}-of-{shard_count:05d}.parquet"
+                    / f"part-{shard_index:05d}-of-{total_shards:05d}.parquet"
                 )
                 records.append(
                     {
@@ -280,10 +281,6 @@ def _expected_v2_files(
                     }
                 )
     return records
-
-
-def _shard_count(row_count: int, max_rows_per_shard: int) -> int:
-    return (row_count + max_rows_per_shard - 1) // max_rows_per_shard
 
 
 def _expected_file_sort_key(record: dict[str, object]) -> tuple[str, str, str, str]:

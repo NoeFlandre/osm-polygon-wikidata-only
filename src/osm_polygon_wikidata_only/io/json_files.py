@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 
 def read_json(
@@ -48,4 +49,21 @@ def _reject_unparsed(
     raise error
 
 
-__all__ = ["read_json"]
+def require_json_object(
+    path: Path,
+    *,
+    on_malformed: Callable[[json.JSONDecodeError], Exception],
+    on_not_object: Callable[[], Exception],
+) -> dict[str, Any]:
+    """Read the JSON document at ``path`` and require it to be an object.
+
+    Reading follows :func:`read_json` with ``on_malformed`` set. A document that
+    parses to anything other than an object raises ``on_not_object()``.
+    """
+    payload = read_json(path, on_malformed=on_malformed)
+    if not isinstance(payload, dict):
+        raise on_not_object()
+    return payload
+
+
+__all__ = ["read_json", "require_json_object"]

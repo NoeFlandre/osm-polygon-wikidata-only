@@ -165,3 +165,25 @@ def test_wikipedia_publication_document_validation_checks_configured_path(
             "wikipedia/documents/region.parquet",
             "region",
         )
+
+
+def test_load_augmentation_manifest_returns_the_parsed_object(tmp_path: Path) -> None:
+    manifest = tmp_path / "augmentation_manifest.json"
+    manifest.write_text('{"demo-latest": {"counts": {}}}', encoding="utf-8")
+
+    assert _load_augmentation_manifest(manifest) == {"demo-latest": {"counts": {}}}
+
+
+def test_load_augmentation_manifest_chains_the_parser_error(tmp_path: Path) -> None:
+    manifest = tmp_path / "augmentation_manifest.json"
+    manifest.write_text("not-json", encoding="utf-8")
+
+    with pytest.raises(PublicationValidationError) as error:
+        _load_augmentation_manifest(manifest)
+
+    assert isinstance(error.value.__cause__, json.JSONDecodeError)
+
+
+def test_load_augmentation_manifest_propagates_unreadable_paths(tmp_path: Path) -> None:
+    with pytest.raises(IsADirectoryError):
+        _load_augmentation_manifest(tmp_path)

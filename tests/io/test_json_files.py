@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from osm_polygon_wikidata_only.io.json_files import read_json
+from osm_polygon_wikidata_only.io.json_files import read_json, require_json_object
 
 _DIGIT_LIMIT_SKIP = pytest.mark.skipif(
     sys.get_int_max_str_digits() == 0, reason="integer digit limit is disabled"
@@ -115,3 +115,51 @@ def test_strict_policy_lets_unreadable_content_propagate(tmp_path: Path) -> None
         read_json(tmp_path / "absent.json", on_malformed=factory)
 
     assert factory_calls == []
+
+
+def test_require_json_object_returns_the_parsed_object(tmp_path: Path) -> None:
+    path = tmp_path / "doc.json"
+    path.write_text('{"city": "München"}', encoding="utf-8")
+
+    result = require_json_object(
+        path,
+        on_malformed=lambda error: _Malformed(str(error)),
+        on_not_object=lambda: _Malformed("not an object"),
+    )
+
+    assert result == {"city": "München"}
+
+
+def test_require_json_object_chains_malformed_json_to_the_policy_error(tmp_path: Path) -> None:
+    path = tmp_path / "doc.json"
+    path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(_Malformed, match="labelled") as error:
+        require_json_object(
+            path,
+            on_malformed=lambda exc: _Malformed("labelled"),
+            on_not_object=lambda: AssertionError("not reached"),
+        )
+
+    assert isinstance(error.value.__cause__, json.JSONDecodeError)
+
+
+def test_require_json_object_raises_the_shape_error_for_non_objects(tmp_path: Path) -> None:
+    path = tmp_path / "doc.json"
+    path.write_text("[1, 2]", encoding="utf-8")
+
+    with pytest.raises(_Malformed, match="not an object"):
+        require_json_object(
+            path,
+            on_malformed=lambda exc: AssertionError("not reached"),
+            on_not_object=lambda: _Malformed("not an object"),
+        )
+
+
+def test_require_json_object_propagates_unreadable_paths_unchanged(tmp_path: Path) -> None:
+    with pytest.raises(IsADirectoryError):
+        require_json_object(
+            tmp_path,
+            on_malformed=lambda exc: _Malformed("unused"),
+            on_not_object=lambda: _Malformed("unused"),
+        )
