@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +26,7 @@ def test_main_fails_fast_when_another_sync_holds_the_run_lock(
     raw.mkdir()
 
     @contextmanager
-    def busy_lock(path: Path) -> Iterator[None]:
+    def busy_lock(path: Path) -> Generator[None, None, None]:
         del path
         raise RunLockError("Unified sync is already running")
         yield

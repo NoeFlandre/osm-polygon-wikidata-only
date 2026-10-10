@@ -120,11 +120,7 @@ def _manifest_entries(raw: object, path: Path) -> dict[object, object]:
 
 
 def _coerce_manifest_entries(entries: dict[object, object]) -> dict[str, dict[str, Any]]:
-    return {
-        str(key): cast(dict[str, Any], dict(value))
-        for key, value in entries.items()
-        if isinstance(value, dict)
-    }
+    return {str(key): dict(value) for key, value in entries.items() if isinstance(value, dict)}
 
 
 def write_v2_region(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import fcntl
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO
@@ -14,7 +14,7 @@ class RunLockError(RuntimeError):
 
 
 @contextmanager
-def exclusive_run_lock(path: Path) -> Iterator[None]:
+def exclusive_run_lock(path: Path) -> Generator[None, None, None]:
     """Hold an exclusive lock for one sync process without waiting."""
     path.parent.mkdir(parents=True, exist_ok=True)
     stream: IO[str] = path.open("a+", encoding="utf-8")
