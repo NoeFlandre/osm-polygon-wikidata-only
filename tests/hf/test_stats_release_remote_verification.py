@@ -255,3 +255,22 @@ def test_default_verification_path_uses_supplied_client(tmp_path: Path) -> None:
 def test_client_for_release_prefers_supplied_hub(tmp_path: Path) -> None:
     hub = FakeHub(tmp_path, {})
     assert remote.client_for_release(hub, "token") is hub
+
+
+def test_legacy_custom_verifier_signature_remains_supported() -> None:
+    def legacy_verifier(repo_id: str, _files: tuple) -> str:
+        return repo_id
+
+    assert remote._invoke_custom_verifier(
+        cast(Any, legacy_verifier), "owner/repo", (), "revision"
+    ) == ("owner/repo")
+
+
+def test_custom_verifier_falls_back_when_signature_cannot_be_inspected() -> None:
+    def opaque_verifier(repo_id: str, _files: tuple) -> str:
+        return repo_id
+
+    setattr(opaque_verifier, "__signature__", object())
+    assert remote._invoke_custom_verifier(
+        cast(Any, opaque_verifier), "owner/repo", (), "revision"
+    ) == ("owner/repo")

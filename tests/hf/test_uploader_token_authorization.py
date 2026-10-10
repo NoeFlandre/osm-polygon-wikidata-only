@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import pytest
 
 from osm_polygon_wikidata_only.hf._uploader import token as token_module
@@ -131,3 +134,21 @@ def test_authorization_defaults_to_live_token_verification(
 ) -> None:
     with pytest.raises(UploadError, match="No Hugging Face token available"):
         verify_repo_authorization(None, "alice/data")
+
+
+def test_hf_token_loader_handles_token_and_backend_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hub = ModuleType("huggingface_hub")
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    setattr(hub, "get_token", lambda: "token")
+    assert token_module._load_hf_token() == "token"
+    setattr(hub, "get_token", lambda: "")
+    assert token_module._load_hf_token() is None
+
+    def broken_backend() -> str:
+        raise RuntimeError("cache unavailable")
+
+    setattr(hub, "get_token", broken_backend)
+    assert token_module._load_hf_token() is None
