@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from html.parser import HTMLParser
 
 from osm_polygon_wikidata_only.enrichment.text_cleaning import (
+    BlockTextParser,
     clean_article_text,
     count_words,
     estimate_tokens,
@@ -15,59 +15,52 @@ from osm_polygon_wikidata_only.utils.json import dumps
 from .models import Document, Section, stable_id
 
 _EXCLUDED = frozenset({"references", "external links", "bibliography", "notes", "further reading"})
+_HEADING_TAGS = frozenset({"h2", "h3", "h4", "h5", "h6"})
 
 
-class _SectionParser(HTMLParser):
+class _SectionParser(BlockTextParser):
+    # Tables and superscripts are dropped from section text, not only scripts
+    # and styles. The block sets are this parser's own and differ from the
+    # rendered-text set in enrichment.text_cleaning.
+    IGNORED_TAGS = frozenset({"script", "style", "table", "sup"})
+    BLOCK_START_TAGS = frozenset({"p", "li", "br", "div"})
+    BLOCK_END_TAGS = frozenset({"p", "li", "div"})
+
     def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
+        super().__init__()
         self.sections: list[tuple[str, str, int, str]] = [("", "", 0, "")]
         self._heading_level = 0
         self._heading_parts: list[str] = []
         self._text_parts: list[str] = []
-        self._ignored = 0
 
     def _flush(self) -> None:
         heading, anchor, level, _ = self.sections[-1]
         self.sections[-1] = (heading, anchor, level, clean_article_text(" ".join(self._text_parts)))
         self._text_parts = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002 -- HTMLParser override signature
-        if tag in {"script", "style", "table", "sup"}:
-            self._ignored += 1
-        if tag in {"h2", "h3", "h4", "h5", "h6"}:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        super().handle_starttag(tag, attrs)
+        if tag in _HEADING_TAGS:
             self._flush()
             self._heading_level = int(tag[1])
             self._heading_parts = []
-        elif not self._ignored and tag in {"p", "li", "br", "div"}:
-            self._text_parts.append(" ")
 
     def handle_endtag(self, tag: str) -> None:
-        if self._close_ignored_tag(tag):
-            return
-        if self._close_heading(tag):
-            return
-        if not self._ignored and tag in {"p", "li", "div"}:
-            self._text_parts.append(" ")
+        super().handle_endtag(tag)
+        self._close_heading(tag)
 
-    def _close_ignored_tag(self, tag: str) -> bool:
-        if tag not in {"script", "style", "table", "sup"}:
-            return False
-        if self._ignored:
-            self._ignored -= 1
-        return True
-
-    def _close_heading(self, tag: str) -> bool:
+    def _close_heading(self, tag: str) -> None:
         if not self._heading_level or tag != f"h{self._heading_level}":
-            return False
+            return
         heading = clean_article_text(" ".join(self._heading_parts))
         self.sections.append((heading, heading.replace(" ", "_"), self._heading_level, ""))
         self._heading_level = 0
-        return True
 
-    def handle_data(self, data: str) -> None:
-        if self._ignored:
-            return
+    def on_text(self, data: str) -> None:
         (self._heading_parts if self._heading_level else self._text_parts).append(data)
+
+    def on_block_boundary(self) -> None:
+        self._text_parts.append(" ")
 
     def close(self) -> None:
         super().close()

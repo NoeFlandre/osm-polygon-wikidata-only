@@ -15,65 +15,107 @@ _WHITESPACE_RE = re.compile(r"\s+")
 _SENTINEL_RE = re.compile(r"\{\{[^}]*\}\}")  # simple {{...}} markers
 
 
-class _RenderedTextParser(HTMLParser):
-    """Collect visible text from MediaWiki parser HTML."""
+class BlockTextParser(HTMLParser):
+    """Collect text from HTML while skipping ignored elements.
 
-    _IGNORED: ClassVar[frozenset[str]] = frozenset({"script", "style"})
-    # Elements that start a new visual unit. Each one gets a separator on
-    # both its start and end tag so that neighbouring cells, terms and
-    # blocks never fuse into a single token. Inline tags are left out on
-    # purpose: ``foo<b>bar</b>`` must stay ``foobar``.
-    _BLOCK_TAGS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "article",
-            "blockquote",
-            "br",
-            "caption",
-            "dd",
-            "div",
-            "dl",
-            "dt",
-            "figcaption",
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "hr",
-            "li",
-            "ol",
-            "p",
-            "pre",
-            "section",
-            "table",
-            "td",
-            "th",
-            "tr",
-            "ul",
-        }
-    )
+    Character data inside an element named in ``IGNORED_TAGS`` is dropped, and
+    ignored elements may nest. Outside them, a start tag in ``BLOCK_START_TAGS``
+    or an end tag in ``BLOCK_END_TAGS`` reports a block boundary through
+    :meth:`on_block_boundary`, and other character data goes to :meth:`on_text`.
+    Subclasses set the three tag sets and decide where each callback writes.
+    """
+
+    IGNORED_TAGS: ClassVar[frozenset[str]] = frozenset()
+    BLOCK_START_TAGS: ClassVar[frozenset[str]] = frozenset()
+    BLOCK_END_TAGS: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
         self._ignored_depth = 0
 
+    @property
+    def ignoring(self) -> bool:
+        """Whether the parser is inside an element named in ``IGNORED_TAGS``."""
+        return self._ignored_depth > 0
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002 -- HTMLParser override signature
-        if tag in self._IGNORED:
+        if tag in self.IGNORED_TAGS:
             self._ignored_depth += 1
-        elif tag in self._BLOCK_TAGS:
-            self.parts.append(" ")
+        elif tag in self.BLOCK_START_TAGS and not self.ignoring:
+            self.on_block_boundary()
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in self._IGNORED and self._ignored_depth:
-            self._ignored_depth -= 1
-        elif tag in self._BLOCK_TAGS:
-            self.parts.append(" ")
+        if tag in self.IGNORED_TAGS:
+            if self._ignored_depth:
+                self._ignored_depth -= 1
+        elif tag in self.BLOCK_END_TAGS and not self.ignoring:
+            self.on_block_boundary()
 
     def handle_data(self, data: str) -> None:
-        if not self._ignored_depth:
-            self.parts.append(data)
+        if not self.ignoring:
+            self.on_text(data)
+
+    def on_block_boundary(self) -> None:
+        """Record a separator where a block element starts or ends."""
+        raise NotImplementedError
+
+    def on_text(self, data: str) -> None:
+        """Record visible character data."""
+        raise NotImplementedError
+
+
+# Elements that start a new visual unit. Each one gets a separator on both its
+# start and end tag so that neighbouring cells, terms and blocks never fuse into
+# a single token. Inline tags are left out on purpose: ``foo<b>bar</b>`` must
+# stay ``foobar``.
+_RENDERED_BLOCK_TAGS: frozenset[str] = frozenset(
+    {
+        "article",
+        "blockquote",
+        "br",
+        "caption",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "li",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "td",
+        "th",
+        "tr",
+        "ul",
+    }
+)
+
+
+class _RenderedTextParser(BlockTextParser):
+    """Collect visible text from MediaWiki parser HTML."""
+
+    IGNORED_TAGS = frozenset({"script", "style"})
+    BLOCK_START_TAGS = _RENDERED_BLOCK_TAGS
+    BLOCK_END_TAGS = _RENDERED_BLOCK_TAGS
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def on_block_boundary(self) -> None:
+        self.parts.append(" ")
+
+    def on_text(self, data: str) -> None:
+        self.parts.append(data)
 
 
 def normalize_whitespace(text: str) -> str:
