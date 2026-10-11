@@ -119,6 +119,12 @@ jobs:
         run: just sync
       - name: Run the benchmark suite
         run: just bench-json bench.json
+      - name: Upload the benchmark results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-results
+          path: bench.json
       - name: Publish the results to the job summary
         if: always()
         run: |

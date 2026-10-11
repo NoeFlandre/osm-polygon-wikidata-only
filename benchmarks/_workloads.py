@@ -137,6 +137,34 @@ def _legacy_document_row(index: int, _stem: str) -> dict[str, Any]:
     }
 
 
+def _v2_link_row(index: int, stem: str) -> dict[str, Any]:
+    qid = f"Q{index + 1}"
+    return {
+        "polygon_id": f"{stem}:relation:{index}",
+        "document_id": f"{qid}:wikipedia:en:{index + 1}:1",
+        "project": "wikipedia",
+        "wikidata": qid,
+        "language": "en",
+        "source_pbf": f"{stem}.osm.pbf",
+        "region": stem,
+        "osm_type": "relation",
+        "osm_id": index,
+        "page_id": index + 1,
+        "revision_id": 1,
+        "link_sources": json.dumps(["wikidata"]),
+    }
+
+
+def v2_region_rows(
+    count: int, stem: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return seeded polygon, document and link rows for one V2 region of ``count`` rows."""
+    polygons = [_polygon_row(index, stem) for index in range(count)]
+    documents = [_legacy_document_row(index, stem) for index in range(count)]
+    links = [_v2_link_row(index, stem) for index in range(count)]
+    return polygons, documents, links
+
+
 def _write_rows(
     path: Path,
     schema: pa.Schema,
