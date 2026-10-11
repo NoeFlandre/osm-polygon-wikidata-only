@@ -198,12 +198,13 @@ The `security` CI job runs `just audit`. This recipe exports both lockfiles with
 
 ## Benchmarks and the slow-test budget
 
-`benchmarks/` is outside the default test run. It has the micro-benchmarks for the hot paths of each polygon. It also has the workload benchmarks in `benchmarks/test_workloads.py`. They build seeded synthetic inputs (see `benchmarks/_workloads.py`). They call only public functions:
+`benchmarks/` is outside the default test run. It has the micro-benchmarks for the hot paths of each polygon. It also has the workload benchmarks in `benchmarks/test_workloads.py` and the timed V2 Parquet staging benchmark in `benchmarks/test_parquet_staging.py`. They build seeded synthetic inputs (see `benchmarks/_workloads.py`). They call only public functions, except that the staging benchmark times the private `_stage_region_tables` call directly:
 
 | Area | Benchmark input |
 |---|---|
 | Coverage map | `generate_coverage_map` with the land layer, 10,000 points |
 | Parquet staging | containment `_canonical_manifest_stats`, 200,000 polygon rows |
+| V2 region staging | `_stage_region_tables` over polygon, document and link Parquet tables, 50,000 rows each, with an empty section table |
 | Language splits | `partition_row_indices` plus `take`, 1,000,000 rows, 50 languages |
 | Link migration | `plan_link_migration` and `apply_link_migration`, 100,000 links |
 | CLI startup | `--version` in a fresh interpreter |
@@ -220,7 +221,7 @@ just bench-compare warn         # compare with benchmarks/baseline.json
 
 `just baseline` (the full run with no instrumentation) also writes a JUnit report. `scripts/quality/slow_tests.py` fails it when a single test takes more than 3 seconds. Each run prints the 20 slowest tests. Coverage increases the durations several times. The budget is thus not measured under coverage. If a test legitimately needs more time, list it with its own limit in `scripts/quality/slow_test_budgets.json`. CI runners are about three times slower than a laptop. A test that takes about one second locally thus has a limit of 10 seconds in that file.
 
-The CI job prints `bench.json` to its job summary. To record the baseline, copy it from there into `benchmarks/baseline.json`.
+The CI job prints `bench.json` to its job summary and uploads it as the `benchmark-results` artifact (the upload step runs even when the suite fails). To record the baseline, copy it from there into `benchmarks/baseline.json`.
 
 ## Test strength checks
 
