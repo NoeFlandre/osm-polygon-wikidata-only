@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entries
+from osm_polygon_wikidata_only.io.processed_manifest import (
+    processed_manifest_entries,
+    processed_manifest_entry,
+)
 
 
 class _Refused(Exception):
@@ -67,3 +70,23 @@ def test_empty_mappings_are_refused_when_disallowed(document: dict[str, object])
 
 def test_non_empty_mappings_pass_when_empty_is_disallowed() -> None:
     assert _read({"regions": {"region": {}}}, allow_empty=False) == {"region": {}}
+
+
+def test_manifest_entry_object_is_returned_without_copy() -> None:
+    entry = {"polygons_path": "polygons/region.parquet"}
+
+    assert (
+        processed_manifest_entry(
+            entry,
+            on_not_object=lambda: _Refused("entry is not an object"),
+        )
+        is entry
+    )
+
+
+def test_non_object_manifest_entry_raises_the_caller_error_factory() -> None:
+    with pytest.raises(_Refused, match="entry is not an object"):
+        processed_manifest_entry(
+            ["not an object"],
+            on_not_object=lambda: _Refused("entry is not an object"),
+        )

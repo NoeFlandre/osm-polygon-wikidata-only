@@ -35,6 +35,21 @@ def processed_manifest_entries(
     return cast(dict[object, object], entries)
 
 
+def processed_manifest_entry(
+    raw: object,
+    *,
+    on_not_object: Callable[[], Exception],
+) -> dict[object, object]:
+    """Return one parsed manifest entry as an object mapping.
+
+    Callers supply their package-specific refusal so the shared shape check
+    does not change existing exception types or messages.
+    """
+    if not isinstance(raw, dict):
+        raise on_not_object()
+    return cast(dict[object, object], raw)
+
+
 def _regions_of(document: dict[object, object], regions_required: bool) -> object:
     if regions_required:
         return document.get("regions")
@@ -45,4 +60,4 @@ def _regions_refused(entries: object, allow_empty: bool) -> bool:
     return not isinstance(entries, dict) or (not allow_empty and not entries)
 
 
-__all__ = ["processed_manifest_entries"]
+__all__ = ["processed_manifest_entries", "processed_manifest_entry"]

@@ -12,7 +12,10 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.hf._stats_release.models import StatsReleaseError
 from osm_polygon_wikidata_only.io.hashing import sha256_file
-from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entries
+from osm_polygon_wikidata_only.io.processed_manifest import (
+    processed_manifest_entries,
+    processed_manifest_entry,
+)
 
 _MANIFEST_RELATIVE_PATH = Path("manifests/processed_pbfs.json")
 
@@ -43,9 +46,13 @@ def _manifest_entry(
     value: object,
     manifest_path: Path,
 ) -> tuple[str, dict[str, Any]]:
-    if not isinstance(value, dict):
-        raise StatsReleaseError(f"processed manifest entry is not an object: {manifest_path}")
-    return str(key), cast(dict[str, Any], value)
+    entry = processed_manifest_entry(
+        value,
+        on_not_object=lambda: StatsReleaseError(
+            f"processed manifest entry is not an object: {manifest_path}"
+        ),
+    )
+    return str(key), cast(dict[str, Any], entry)
 
 
 def _manifest_row_count(entry: Mapping[str, Any], manifest_path: Path) -> int:

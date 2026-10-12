@@ -12,7 +12,10 @@ from osm_polygon_wikidata_only.hf.language_inventory_models import (
     LanguageInventoryError,
 )
 from osm_polygon_wikidata_only.io.hashing import sha256_file
-from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entries
+from osm_polygon_wikidata_only.io.processed_manifest import (
+    processed_manifest_entries,
+    processed_manifest_entry,
+)
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 
 _V1_MANIFEST_FIELDS = (
@@ -103,9 +106,15 @@ def _manifest_entry(
     manifest: Path,
 ) -> dict[str, object]:
     """Validate one manifest key/value pair and return its object value."""
-    if not isinstance(key, str) or not isinstance(raw_entry, dict):
+    if not isinstance(key, str):
         raise LanguageInventoryError(f"Malformed manifest entry {key!r} in {manifest}")
-    return cast(dict[str, object], raw_entry)
+    entry = processed_manifest_entry(
+        raw_entry,
+        on_not_object=lambda: LanguageInventoryError(
+            f"Malformed manifest entry {key!r} in {manifest}"
+        ),
+    )
+    return cast(dict[str, object], entry)
 
 
 def _manifest_field_path(
