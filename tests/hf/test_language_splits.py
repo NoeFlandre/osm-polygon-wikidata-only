@@ -18,6 +18,7 @@ from osm_polygon_wikidata_only.domain.polygon_document_links import (
 from osm_polygon_wikidata_only.domain.schema import POLYGON_COLUMNS, empty_row, polygon_schema
 from osm_polygon_wikidata_only.hf import language_splits as hf_language_splits
 from osm_polygon_wikidata_only.hf.language_artifact_manifest import (
+    _manifest_entries,
     _manifest_entry,
     _manifest_field_path,
     _manifest_fields_for,
@@ -50,6 +51,7 @@ from osm_polygon_wikidata_only.hf.language_splits import (
     language_table_specs,
     normalize_language,
 )
+from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 from osm_polygon_wikidata_only.v2.schema import (
     polygon_document_link_v2_schema,
     polygon_v2_schema,
@@ -240,6 +242,47 @@ def test_read_manifest_payload_validates_json_objects(
 
     with pytest.raises(LanguageInventoryError, match=message):
         _read_manifest_payload(path)
+
+
+def test_v1_manifest_entries_are_the_flat_payload_without_regions_nesting(tmp_path: Path) -> None:
+    payload: dict[str, object] = {
+        "regions": 5,
+        "fixture": {"polygons_path": "polygons/fixture.parquet"},
+    }
+
+    assert _manifest_entries(payload, DatasetContract.V1, tmp_path / "processed.json") == payload
+
+
+def test_v2_manifest_entries_read_the_regions_mapping_after_the_contract_check(
+    tmp_path: Path,
+) -> None:
+    entry = {"polygons_path": "polygons/fixture.parquet"}
+    payload: dict[str, object] = {
+        "contract_version": V2_CONTRACT_VERSION,
+        "regions": {"fixture": entry},
+    }
+
+    assert _manifest_entries(payload, DatasetContract.V2, tmp_path / "processed.json") == {
+        "fixture": entry
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"contract_version": V2_CONTRACT_VERSION},
+        {"contract_version": V2_CONTRACT_VERSION, "regions": None},
+        {"contract_version": V2_CONTRACT_VERSION, "regions": ["fixture"]},
+    ],
+)
+def test_v2_manifest_entries_require_a_regions_object(payload: dict[str, object]) -> None:
+    with pytest.raises(LanguageInventoryError, match="V2 manifest regions must be an object"):
+        _manifest_entries(payload, DatasetContract.V2, Path("processed.json"))
+
+
+def test_v2_manifest_entries_refuse_a_contract_version_mismatch() -> None:
+    with pytest.raises(LanguageInventoryError, match="V2 manifest contract version mismatch"):
+        _manifest_entries({"regions": {}}, DatasetContract.V2, Path("processed.json"))
 
 
 def test_manifest_entry_accepts_a_mapping() -> None:
