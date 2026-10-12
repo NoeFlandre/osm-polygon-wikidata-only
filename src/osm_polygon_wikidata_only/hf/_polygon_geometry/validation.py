@@ -31,11 +31,12 @@ import json
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pyarrow as pa
 
 from osm_polygon_wikidata_only.domain.schema import polygon_schema
+from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entry
 
 LOGGER = logging.getLogger("osm_polygon_wikidata_only.hf.polygon_geometry_stats")
 
@@ -198,10 +199,17 @@ def _v2_manifest_entries(manifest: Path, regions: dict[str, Any]) -> list[tuple[
 
 
 def _v2_manifest_entry(manifest: Path, key: str, entry: Any) -> tuple[str, int]:
-    if not isinstance(entry, dict):
-        raise PolygonStatsInputError(f"Processed manifest holds a non-object entry: {manifest}")
-    polygons_path = entry.get("polygons_path")
-    polygon_count = _v2_polygon_count(entry)
+    entry_object = cast(
+        dict[str, Any],
+        processed_manifest_entry(
+            entry,
+            on_not_object=lambda: PolygonStatsInputError(
+                f"Processed manifest holds a non-object entry: {manifest}"
+            ),
+        ),
+    )
+    polygons_path = entry_object.get("polygons_path")
+    polygon_count = _v2_polygon_count(entry_object)
     if not isinstance(polygons_path, str) or polygon_count is None:
         raise PolygonStatsInputError(
             f"Processed manifest entry lacks polygons_path/row_counts.polygons: {manifest}"
@@ -246,16 +254,23 @@ def _refuse_duplicate_stems(manifest: Path, entries: list[tuple[str, int]]) -> N
 
 
 def _manifest_entry(manifest: Path, key: str, entry: Any) -> tuple[str, int]:
-    if not isinstance(entry, dict):
-        raise PolygonStatsInputError(f"Processed manifest holds a non-object entry: {manifest}")
-    polygons_path = entry.get("polygons_path")
-    polygon_count = entry.get("polygon_count")
+    entry_object = cast(
+        dict[str, Any],
+        processed_manifest_entry(
+            entry,
+            on_not_object=lambda: PolygonStatsInputError(
+                f"Processed manifest holds a non-object entry: {manifest}"
+            ),
+        ),
+    )
+    polygons_path = entry_object.get("polygons_path")
+    polygon_count = entry_object.get("polygon_count")
     if not isinstance(polygons_path, str) or not isinstance(polygon_count, int):
         raise PolygonStatsInputError(
             f"Processed manifest entry lacks polygons_path/polygon_count: {manifest}"
         )
     stem = _canonical_polygons_stem(manifest, polygons_path)
-    _refuse_key_mismatch(manifest, key, entry, stem)
+    _refuse_key_mismatch(manifest, key, entry_object, stem)
     return stem, polygon_count
 
 
