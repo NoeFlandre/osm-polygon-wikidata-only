@@ -388,6 +388,16 @@ def test_v1_partition_rejects_non_positive_batch_size(tmp_path: Path) -> None:
         generate_v1_language_splits(tmp_path / "processed", output_file, batch_size=1)
 
 
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_v1_batch_size_error_is_a_plain_value_error(tmp_path: Path, batch_size: int) -> None:
+    with pytest.raises(ValueError, match=r"^batch_size must be positive") as error:
+        generate_v1_language_splits(
+            tmp_path / "processed", tmp_path / "release", batch_size=batch_size
+        )
+
+    assert type(error.value) is ValueError
+
+
 def test_v1_partition_removes_stale_splits_on_a_deterministic_rerun(tmp_path: Path) -> None:
     processed = tmp_path / "processed"
     output = tmp_path / "release"

@@ -43,6 +43,36 @@ def test_load_json_object_propagates_unreadable_paths_unchanged(tmp_path: Path) 
         artifacts._load_json_object(tmp_path, "manifest.json")
 
 
+def test_missing_augmentation_manifest_loads_as_an_empty_merge_base(tmp_path: Path) -> None:
+    assert artifacts._load_augmentation_manifest(tmp_path / "augmentation_manifest.json") == {}
+
+
+def test_malformed_augmentation_manifest_is_labelled_and_raises_plain_value_error(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "augmentation_manifest.json"
+    path.write_text("not-json", encoding="utf-8")
+
+    with pytest.raises(ValueError) as error:
+        artifacts._load_augmentation_manifest(path)
+
+    assert type(error.value) is ValueError
+    assert str(error.value).startswith("augmentation_manifest.json: ")
+    assert isinstance(error.value.__cause__, json.JSONDecodeError)
+
+
+def test_augmentation_manifest_rejects_a_non_object_document(tmp_path: Path) -> None:
+    path = tmp_path / "augmentation_manifest.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"^augmentation_manifest\.json must be a JSON object$"
+    ) as error:
+        artifacts._load_augmentation_manifest(path)
+
+    assert type(error.value) is ValueError
+
+
 def test_missing_processed_manifest_loads_as_no_entries(tmp_path: Path) -> None:
     assert artifacts._load_processed_entries(tmp_path / "processed_pbfs.json") == {}
 

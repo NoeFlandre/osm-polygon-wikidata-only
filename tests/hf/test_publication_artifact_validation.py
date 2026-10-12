@@ -187,3 +187,21 @@ def test_load_augmentation_manifest_chains_the_parser_error(tmp_path: Path) -> N
 def test_load_augmentation_manifest_propagates_unreadable_paths(tmp_path: Path) -> None:
     with pytest.raises(IsADirectoryError):
         _load_augmentation_manifest(tmp_path)
+
+
+@pytest.mark.parametrize("payload", ["not-json", "[]"], ids=["malformed", "not-object"])
+def test_load_augmentation_manifest_raises_exactly_the_publication_error(
+    tmp_path: Path, payload: str
+) -> None:
+    manifest = tmp_path / "augmentation_manifest.json"
+    manifest.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(PublicationValidationError) as error:
+        _load_augmentation_manifest(manifest)
+
+    assert type(error.value) is PublicationValidationError
+
+
+def test_load_augmentation_manifest_leaves_a_missing_file_to_the_caller(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        _load_augmentation_manifest(tmp_path / "absent.json")
