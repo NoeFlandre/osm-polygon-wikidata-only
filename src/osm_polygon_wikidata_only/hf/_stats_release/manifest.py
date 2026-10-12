@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 
 from osm_polygon_wikidata_only.hf._stats_release.models import StatsReleaseError
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entries
 
 _MANIFEST_RELATIVE_PATH = Path("manifests/processed_pbfs.json")
 
@@ -21,11 +22,16 @@ def _manifest_stem(key: str) -> str:
 
 
 def _manifest_entries(raw: object, manifest_path: Path) -> list[tuple[str, dict[str, Any]]]:
-    if not isinstance(raw, dict):
-        raise StatsReleaseError(f"processed manifest is not an object: {manifest_path}")
-    entries = raw.get("regions", raw)
-    if not isinstance(entries, dict) or not entries:
-        raise StatsReleaseError(f"processed manifest has no region entries: {manifest_path}")
+    entries = processed_manifest_entries(
+        raw,
+        on_not_object=lambda: StatsReleaseError(
+            f"processed manifest is not an object: {manifest_path}"
+        ),
+        on_regions_invalid=lambda: StatsReleaseError(
+            f"processed manifest has no region entries: {manifest_path}"
+        ),
+        allow_empty=False,
+    )
     result: list[tuple[str, dict[str, Any]]] = []
     for key, value in entries.items():
         result.append(_manifest_entry(key, value, manifest_path))

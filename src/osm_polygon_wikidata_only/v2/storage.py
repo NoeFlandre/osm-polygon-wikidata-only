@@ -6,7 +6,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -15,6 +15,7 @@ from osm_polygon_wikidata_only.augmentation.schema import section_schema
 from osm_polygon_wikidata_only.domain.stems import require_safe_stem
 from osm_polygon_wikidata_only.io.atomic import atomic_write_text
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entries
 from osm_polygon_wikidata_only.io.staged_install import cleanup_transaction as _cleanup_transaction
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
@@ -110,13 +111,11 @@ def _read_manifest(path: Path) -> object:
 
 
 def _manifest_entries(raw: object, path: Path) -> dict[object, object]:
-    if not isinstance(raw, dict):
-        raise ValueError(f"V2 manifest is not an object: {path}")
-    raw_dict = cast(dict[object, object], raw)
-    entries = raw_dict.get("regions", raw_dict)
-    if not isinstance(entries, dict):
-        raise ValueError(f"V2 manifest regions is not an object: {path}")
-    return cast(dict[object, object], entries)
+    return processed_manifest_entries(
+        raw,
+        on_not_object=lambda: ValueError(f"V2 manifest is not an object: {path}"),
+        on_regions_invalid=lambda: ValueError(f"V2 manifest regions is not an object: {path}"),
+    )
 
 
 def _coerce_manifest_entries(entries: dict[object, object]) -> dict[str, dict[str, Any]]:
