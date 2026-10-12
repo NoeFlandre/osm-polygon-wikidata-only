@@ -54,12 +54,18 @@ def require_json_object(
     *,
     on_malformed: Callable[[json.JSONDecodeError], Exception],
     on_not_object: Callable[[], Exception],
+    on_missing: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Read the JSON document at ``path`` and require it to be an object.
 
     Reading follows :func:`read_json` with ``on_malformed`` set. A document that
-    parses to anything other than an object raises ``on_not_object()``.
+    parses to anything other than an object raises ``on_not_object()``. When
+    ``on_missing`` is given and ``path`` is not a regular file, the result is
+    ``on_missing()`` and nothing is read; without it, an absent path raises as
+    the read does.
     """
+    if on_missing is not None and not path.is_file():
+        return on_missing()
     payload = read_json(path, on_malformed=on_malformed)
     if not isinstance(payload, dict):
         raise on_not_object()
