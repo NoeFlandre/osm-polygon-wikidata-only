@@ -101,7 +101,7 @@
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_12": {
     "mutant_sha256": "d4b2e9fb9541eab4b025d537bd459faa18c0c99ac2200ac126c7d2736cdb246e",
-    "reason": "Exact code changes only the absent-metadata default: marker = payload.get('metadata_refresh', None) instead of payload.get('metadata_refresh', {}). An absent key gives None and the {} default gives {}; both fail isinstance(marker, dict), so marker_stems and marker_hashes start empty in both versions. A present dict is returned unchanged by both get calls, and the rebuilt metadata_refresh is assigned identically.",
+    "reason": "Exact code changes only the absent-metadata default: marker = payload.get('metadata_refresh', None) instead of payload.get('metadata_refresh', {}). With the key absent, main's {} and the mutant's None both leave marker_stems as an empty set and marker_hashes as an empty dict: the code reads only the marker's stems and fingerprint_hashes, and an empty dict or None gives the same empty results. A present dict is returned unchanged by both get calls, and the rebuilt metadata_refresh is assigned identically.",
     "source_sha256": "88d8b436f14f374d1c195d0c8827f813a584928036baf30791d2124a24c66ad2"
   },
   "osm_polygon_wikidata_only.pipeline._link_migration.artifacts.x__updated_pending_publications__mutmut_14": {
