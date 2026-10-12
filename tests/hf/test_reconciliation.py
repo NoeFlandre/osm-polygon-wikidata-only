@@ -578,6 +578,25 @@ def test_malformed_augmentation_manifest_raises_exactly_the_reconciliation_error
     assert type(error.value) is ReconciliationValidationError
 
 
+def test_non_object_augmentation_manifest_raises_the_reconciliation_error(
+    tmp_path: Path,
+) -> None:
+    data_root = DataRoot(tmp_path)
+    data_root.ensure()
+    aug_manifest_path = (
+        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
+    )
+    aug_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    aug_manifest_path.write_text("[]")
+
+    planner = ReconciliationPlanner(data_root, RemoteInventory(set()), stems={"mexico-latest"})
+    with pytest.raises(
+        ReconciliationValidationError,
+        match=r"^Malformed augmentation manifest JSON: expected an object$",
+    ):
+        planner.plan()
+
+
 def test_missing_augmentation_manifest_plans_the_same_as_an_empty_one(tmp_path: Path) -> None:
     plans = []
     for name, payload in (("missing", None), ("empty", "{}")):

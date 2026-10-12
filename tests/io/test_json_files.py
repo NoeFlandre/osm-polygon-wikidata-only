@@ -163,3 +163,40 @@ def test_require_json_object_propagates_unreadable_paths_unchanged(tmp_path: Pat
             on_malformed=lambda exc: _Malformed("unused"),
             on_not_object=lambda: _Malformed("unused"),
         )
+
+
+def test_require_json_object_returns_the_missing_policy_value_without_reading(
+    tmp_path: Path,
+) -> None:
+    result = require_json_object(
+        tmp_path / "absent.json",
+        on_malformed=lambda exc: AssertionError("not reached"),
+        on_not_object=lambda: AssertionError("not reached"),
+        on_missing=dict,
+    )
+
+    assert result == {}
+
+
+def test_require_json_object_treats_a_directory_as_missing_under_a_missing_policy(
+    tmp_path: Path,
+) -> None:
+    result = require_json_object(
+        tmp_path,
+        on_malformed=lambda exc: AssertionError("not reached"),
+        on_not_object=lambda: AssertionError("not reached"),
+        on_missing=lambda: {"fallback": True},
+    )
+
+    assert result == {"fallback": True}
+
+
+def test_require_json_object_still_raises_for_an_absent_file_without_a_missing_policy(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        require_json_object(
+            tmp_path / "absent.json",
+            on_malformed=lambda exc: _Malformed("unused"),
+            on_not_object=lambda: _Malformed("unused"),
+        )

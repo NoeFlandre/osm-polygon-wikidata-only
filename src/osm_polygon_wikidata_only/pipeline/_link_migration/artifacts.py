@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -66,12 +67,18 @@ def source_pbf_for_stem(inputs: StemApplyInputs) -> str:
     return next(iter(source_pbf_set))
 
 
-def _load_json_object(path: Path, error: str) -> dict[str, Any]:
+def _load_json_object(
+    path: Path,
+    error: str,
+    *,
+    on_missing: Callable[[], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Load a JSON object, preserving a precise corruption error."""
     return require_json_object(
         path,
         on_malformed=lambda exc: ValueError(f"{error}: {exc}"),
         on_not_object=lambda: ValueError(f"{error} must be a JSON object"),
+        on_missing=on_missing,
     )
 
 
@@ -145,9 +152,7 @@ def _stage_processed_manifest(
 
 def _load_augmentation_manifest(path: Path) -> dict[str, Any]:
     """Load the augmentation manifest or return an empty merge base."""
-    if not path.is_file():
-        return {}
-    return _load_json_object(path, "augmentation_manifest.json")
+    return _load_json_object(path, "augmentation_manifest.json", on_missing=dict)
 
 
 def _augmentation_entry(

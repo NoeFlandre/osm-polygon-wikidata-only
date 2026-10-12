@@ -54,6 +54,7 @@ from osm_polygon_wikidata_only.io.staged_install import (
 )
 from osm_polygon_wikidata_only.utils.json import dumps as json_dumps
 from osm_polygon_wikidata_only.utils.json import loads as json_loads
+from osm_polygon_wikidata_only.utils.validation import require_positive_batch_size
 
 V1_LANGUAGE_SPLIT_MANIFEST = "manifests/language_splits_v1.json"
 V1_LANGUAGE_DATA_DIR = "data"
@@ -170,8 +171,7 @@ def _validate_generation_request(
     release_root: Path,
     batch_size: int,
 ) -> None:
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive")
+    require_positive_batch_size(batch_size, ValueError)
     if source_root == release_root:
         raise V1LanguageSplitError(
             "V1 language output must use a release root separate from processed input"
