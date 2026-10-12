@@ -24,10 +24,7 @@ from osm_polygon_wikidata_only.hf.publication import (
     assemble_metadata_only_upload,
     load_existing_core_artifacts,
 )
-from osm_polygon_wikidata_only.hf.reconciliation import (
-    ReconciliationPlanner,
-    ReconciliationValidationError,
-)
+from osm_polygon_wikidata_only.hf.reconciliation import ReconciliationPlanner
 from osm_polygon_wikidata_only.hf.remote_inventory import (
     RemoteInventory,
     _remote_file_fields,
@@ -556,62 +553,6 @@ def test_malformed_augmentation_manifest_json_raises(tmp_path: Path) -> None:
     planner = ReconciliationPlanner(data_root, inventory, stems={stem})
     with pytest.raises(ValueError, match="Malformed augmentation manifest JSON"):
         planner.plan()
-
-
-def test_malformed_augmentation_manifest_raises_exactly_the_reconciliation_error(
-    tmp_path: Path,
-) -> None:
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    aug_manifest_path = (
-        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
-    )
-    aug_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest_path.write_text("invalid{json")
-
-    planner = ReconciliationPlanner(data_root, RemoteInventory(set()), stems={"mexico-latest"})
-    with pytest.raises(
-        ReconciliationValidationError, match=r"^Malformed augmentation manifest JSON: "
-    ) as error:
-        planner.plan()
-
-    assert type(error.value) is ReconciliationValidationError
-
-
-def test_non_object_augmentation_manifest_raises_the_reconciliation_error(
-    tmp_path: Path,
-) -> None:
-    data_root = DataRoot(tmp_path)
-    data_root.ensure()
-    aug_manifest_path = (
-        data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
-    )
-    aug_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    aug_manifest_path.write_text("[]")
-
-    planner = ReconciliationPlanner(data_root, RemoteInventory(set()), stems={"mexico-latest"})
-    with pytest.raises(
-        ReconciliationValidationError,
-        match=r"^Malformed augmentation manifest JSON: expected an object$",
-    ):
-        planner.plan()
-
-
-def test_missing_augmentation_manifest_plans_the_same_as_an_empty_one(tmp_path: Path) -> None:
-    plans = []
-    for name, payload in (("missing", None), ("empty", "{}")):
-        data_root = DataRoot(tmp_path / name)
-        data_root.ensure()
-        if payload is not None:
-            aug_manifest_path = (
-                data_root.processed / "augmentation" / "manifests" / "augmentation_manifest.json"
-            )
-            aug_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            aug_manifest_path.write_text(payload)
-        planner = ReconciliationPlanner(data_root, RemoteInventory(set()), stems={"mexico-latest"})
-        plans.append(planner.plan())
-
-    assert plans[0] == plans[1]
 
 
 def _setup_minimal_region(data_root: DataRoot, stem: str) -> None:

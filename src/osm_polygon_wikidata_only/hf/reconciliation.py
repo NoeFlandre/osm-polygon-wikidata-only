@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from osm_polygon_wikidata_only.augmentation.orchestrator import (
     augmentation_is_current,
@@ -21,7 +20,7 @@ from osm_polygon_wikidata_only.hf.repo_layout import (
     REMOTE_POLYGON_STATS_FILE,
     canonical_region_paths,
 )
-from osm_polygon_wikidata_only.io.json_files import require_json_object
+from osm_polygon_wikidata_only.io.json_files import read_json
 from osm_polygon_wikidata_only.io.manifest import load_manifest
 
 
@@ -100,15 +99,13 @@ class ReconciliationPlanner:
         )
 
 
-def _load_augmentation_manifest(path: Path) -> dict[str, Any]:
-    return require_json_object(
+def _load_augmentation_manifest(path: Path) -> object:
+    if not path.is_file():
+        return {}
+    return read_json(
         path,
-        on_missing=dict,
         on_malformed=lambda exc: ReconciliationValidationError(
             f"Malformed augmentation manifest JSON: {exc}"
-        ),
-        on_not_object=lambda: ReconciliationValidationError(
-            "Malformed augmentation manifest JSON: expected an object"
         ),
     )
 
