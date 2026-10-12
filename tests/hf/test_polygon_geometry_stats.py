@@ -707,6 +707,17 @@ def test_a_manifest_entry_that_is_not_an_object_is_refused(tmp_path: Path) -> No
         compute_polygon_geometry_stats(processed)
 
 
+def test_a_regions_value_that_is_not_an_object_is_read_as_a_flat_entry(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    _write_polygons(processed, "any-latest", [])
+    manifest = processed / "manifests" / "processed_pbfs.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps({"regions": 5}), encoding="utf-8")
+
+    with pytest.raises(PolygonStatsInputError, match="non-object entry"):
+        compute_polygon_geometry_stats(processed)
+
+
 # --- review regressions -------------------------------------------------
 
 

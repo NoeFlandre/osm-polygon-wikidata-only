@@ -12,6 +12,7 @@ from osm_polygon_wikidata_only.hf.language_inventory_models import (
     LanguageInventoryError,
 )
 from osm_polygon_wikidata_only.io.hashing import sha256_file
+from osm_polygon_wikidata_only.io.processed_manifest import processed_manifest_entries
 from osm_polygon_wikidata_only.v2.config import V2_CONTRACT_VERSION
 
 _V1_MANIFEST_FIELDS = (
@@ -84,10 +85,16 @@ def _manifest_entries(
         raise LanguageInventoryError(
             f"V2 manifest contract version mismatch in {manifest}: expected {V2_CONTRACT_VERSION!r}"
         )
-    entries = payload.get("regions")
-    if not isinstance(entries, dict):
-        raise LanguageInventoryError(f"V2 manifest regions must be an object: {manifest}")
-    return cast(dict[object, object], entries)
+    return processed_manifest_entries(
+        payload,
+        on_not_object=lambda: LanguageInventoryError(
+            f"Processed manifest must be a JSON object: {manifest}"
+        ),
+        on_regions_invalid=lambda: LanguageInventoryError(
+            f"V2 manifest regions must be an object: {manifest}"
+        ),
+        regions_required=True,
+    )
 
 
 def _manifest_entry(

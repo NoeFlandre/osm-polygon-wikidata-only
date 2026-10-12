@@ -146,3 +146,17 @@ def test_manifest_entries_reject_non_object_payloads_and_accept_region_mappings(
     assert v2_storage._manifest_entries({"regions": {"region": {}}}, tmp_path / "manifest") == {
         "region": {}
     }
+
+
+def test_v2_manifest_entries_read_flat_mappings_and_accept_empty_regions(tmp_path: Path) -> None:
+    path = tmp_path / "processed_pbfs.json"
+    assert v2_storage._manifest_entries({"region": {}}, path) == {"region": {}}
+    assert v2_storage._manifest_entries({"regions": {}}, path) == {}
+
+
+@pytest.mark.parametrize("payload", [{"regions": None}, {"regions": "region"}])
+def test_v2_manifest_entries_refuse_a_present_regions_value_that_is_not_an_object(
+    tmp_path: Path, payload: object
+) -> None:
+    with pytest.raises(ValueError, match="V2 manifest regions is not an object"):
+        v2_storage._manifest_entries(payload, tmp_path / "processed_pbfs.json")

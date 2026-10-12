@@ -182,6 +182,31 @@ def test_unlisted_polygon_files_are_rejected(tmp_path: Path) -> None:
         _provenance(tmp_path)
 
 
+def test_manifest_entries_read_flat_and_nested_region_mappings_in_key_order(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    assert manifest._manifest_entries({"b.pbf": {}, "a.pbf": {}}, path) == [
+        ("a.pbf", {}),
+        ("b.pbf", {}),
+    ]
+    assert manifest._manifest_entries({"regions": {"a.pbf": {}}}, path) == [("a.pbf", {})]
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({}, "no region entries"),
+        ({"regions": {}}, "no region entries"),
+        ({"regions": 5}, "no region entries"),
+        ({"a.pbf": 5}, "entry is not an object"),
+    ],
+)
+def test_manifest_entries_refuse_empty_or_non_object_region_mappings(
+    tmp_path: Path, payload: object, message: str
+) -> None:
+    with pytest.raises(StatsReleaseError, match=message):
+        manifest._manifest_entries(payload, tmp_path / "manifest.json")
+
+
 def test_manifest_parsers_reject_invalid_container_and_metadata_shapes(tmp_path: Path) -> None:
     with pytest.raises(manifest.StatsReleaseError, match="not an object"):
         manifest._manifest_entries(None, tmp_path / "manifest.json")
