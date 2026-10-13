@@ -1,7 +1,7 @@
 """Stream V2 source rows into bounded, deterministic language partition shards.
 
-V2 keeps a separate publisher because it writes row-limited ``part-...-of-...``
-shards and records each shard's ``source_files`` in its manifest. V1 emits one
+V2 uses a separate shard writer for row-limited ``part-...-of-...`` shards;
+its manifest records each shard's ``source_files``. V1 emits one
 ``-00000-of-00001`` file per language/table with a V1 manifest. Both paths share
 inventory and row grouping in :mod:`osm_polygon_wikidata_only.hf.language_splits`,
 while retaining version-specific output contracts.
