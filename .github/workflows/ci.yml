@@ -128,7 +128,19 @@ jobs:
       - name: Publish the results to the job summary
         if: always()
         run: |
-          { echo '```json'; cat bench.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("bench.json").read_text(encoding="utf-8"))
+          benchmarks = report["benchmarks"]
+          print(f"Recorded {len(benchmarks)} benchmarks; full JSON is in the benchmark-results artifact.")
+          print()
+          print("| Benchmark | Median |")
+          print("| --- | ---: |")
+          for benchmark in benchmarks:
+              print(f"| {benchmark['fullname']} | {benchmark['stats']['median']:.4f}s |")
+          PY
       - name: Compare with the committed baseline
         run: just bench-compare "$BENCH_MODE" bench.json
 
