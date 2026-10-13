@@ -249,7 +249,10 @@ def test_committed_baseline_covers_issue_125_workloads_on_ci_runner() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     baseline_path = repository_root / "benchmarks" / "baseline.json"
     # The mutation runner copies tests into an isolated tree, but not benchmark data.
-    if not baseline_path.is_file() and (repository_root.parent / "benchmarks" / "baseline.json").is_file():
+    if (
+        not baseline_path.is_file()
+        and (repository_root.parent / "benchmarks" / "baseline.json").is_file()
+    ):
         baseline_path = repository_root.parent / "benchmarks" / "baseline.json"
 
     report = json.loads(baseline_path.read_text(encoding="utf-8"))
