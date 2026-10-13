@@ -14,6 +14,12 @@ The generated tree is suitable for a Hugging Face dataset repository::
 The work is staged beside the requested output and installed as one file
 transaction. Source files are read in the inventory's sorted order and only
 bounded Arrow batches are retained while partition files are written.
+
+V1 intentionally keeps one ``-00000-of-00001`` file per language/table and its
+own manifest contract. V2 instead writes row-limited shards and records each
+shard's source-file provenance. Both paths share inventory and row grouping in
+:mod:`osm_polygon_wikidata_only.hf.language_splits`; the writer cores stay
+separate to preserve their output contracts.
 """
 
 from __future__ import annotations
