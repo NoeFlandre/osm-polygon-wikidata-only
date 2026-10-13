@@ -243,3 +243,25 @@ def test_compare_reads_a_utf8_report(tmp_path: Path) -> None:
 
 def test_a_small_slowdown_of_a_slow_benchmark_is_not_a_regression() -> None:
     assert bench_compare.regressions({"a": 2.0}, {"a": 2.2}, 0.25) == []
+
+
+def test_committed_baseline_covers_issue_125_workloads_on_ci_runner() -> None:
+    baseline_path = Path(__file__).parents[2] / "benchmarks" / "baseline.json"
+    report = json.loads(baseline_path.read_text(encoding="utf-8"))
+    medians = bench_compare.medians(report)
+    required = {
+        "benchmarks/test_workloads.py::test_coverage_map_with_land",
+        "benchmarks/test_parquet_staging.py::test_parquet_staging_v2_region_tables",
+        "benchmarks/test_workloads.py::test_language_partitioning_1m_rows_50_languages",
+        "benchmarks/test_workloads.py::test_link_migration_plan_100k_links",
+        "benchmarks/test_workloads.py::test_link_migration_apply_100k_links",
+        "benchmarks/test_workloads.py::test_cli_version_cold_start",
+    }
+
+    assert required <= medians.keys()
+    assert all(median > 0 for median in medians.values())
+    assert report["commit_info"]["branch"] == "main"
+    assert report["commit_info"]["dirty"] is False
+    assert len(report["commit_info"]["id"]) == 40
+    assert report["machine_info"]["system"] == "Linux"
+    assert report["machine_info"]["cpu"]["count"] == 4
