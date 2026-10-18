@@ -261,7 +261,6 @@ def wikipedia_document_from_article_row(row: Mapping[str, object]) -> WikipediaD
     """
     article_cols_set = set(ARTICLE_COLUMNS)
 
-    # Validate no unknown keys
     extra_keys = sorted(set(row.keys()) - article_cols_set)
     if extra_keys:
         raise WikipediaDocumentConversionError(
@@ -269,20 +268,17 @@ def wikipedia_document_from_article_row(row: Mapping[str, object]) -> WikipediaD
             f"Only ARTICLE_COLUMNS keys are accepted."
         )
 
-    # Validate all required fields are present
     missing = sorted(article_cols_set - set(row.keys()))
     if missing:
         raise WikipediaDocumentConversionError(
             f"Missing required field(s) in article row: {missing}"
         )
 
-    # Validate and bind identity fields strictly
     wikidata = _validate_qid(row["wikidata"], "wikidata")
     language = _validate_language(row["language"], "language")
     page_id = _validate_positive_int(row["page_id"], "page_id")
     revision_id = _validate_positive_int(row["revision_id"], "revision_id")
 
-    # Validate and bind article_id consistency
     article_id = _require_exact_str(row["article_id"], "article_id")
     expected_article_id = _make_article_id(wikidata, language, page_id, revision_id)
     if article_id != expected_article_id:

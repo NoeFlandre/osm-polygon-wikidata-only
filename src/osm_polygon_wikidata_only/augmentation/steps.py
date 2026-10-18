@@ -220,11 +220,6 @@ def _normalized_article_row(source_row: dict[str, Any], schema: pa.Schema) -> di
     }
 
 
-# ---------------------------------------------------------------------------
-# load_core_inputs
-# ---------------------------------------------------------------------------
-
-
 def load_core_inputs(data_root: DataRoot, stem: str) -> CoreInputs:
     """Load the core artifacts for *stem* and capture pre-processing
     hashes. Raises :class:`FileNotFoundError` if either core parquet
@@ -266,11 +261,6 @@ def _core_qids(polygon_rows: list[dict[str, Any]]) -> list[str]:
     )
 
 
-# ---------------------------------------------------------------------------
-# resolve_entities
-# ---------------------------------------------------------------------------
-
-
 def resolve_entities(
     client: EntityResolver,
     qids: list[str],
@@ -283,11 +273,6 @@ def resolve_entities(
     entities = client.entities(qids, props="sitelinks|claims")
     progress.complete()
     return entities
-
-
-# ---------------------------------------------------------------------------
-# fetch_wikivoyage_documents
-# ---------------------------------------------------------------------------
 
 
 def fetch_wikivoyage_documents(
@@ -320,11 +305,6 @@ def fetch_wikivoyage_documents(
     ]
     voyage_documents.sort(key=lambda row: row.document_id)
     return voyage_documents
-
-
-# ---------------------------------------------------------------------------
-# fetch_document_sections
-# ---------------------------------------------------------------------------
 
 
 def fetch_document_sections(
@@ -371,11 +351,6 @@ def fetch_document_sections_batch(
     for rows in sections_by_project.values():
         rows.sort(key=lambda row: (row.document_id, row.section_index))
     return sections_by_project
-
-
-# ---------------------------------------------------------------------------
-# write_sidecars
-# ---------------------------------------------------------------------------
 
 
 def write_sidecars(
@@ -455,11 +430,6 @@ def _sidecar_document_table(
     if source_table.schema.equals(wikipedia_document_schema(), check_metadata=True):
         return source_table
     return build_wikipedia_document_table(_normalized_article_table(articles_path))
-
-
-# ---------------------------------------------------------------------------
-# update_augmentation_manifest
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
