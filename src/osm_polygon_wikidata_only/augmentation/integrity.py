@@ -92,10 +92,6 @@ from osm_polygon_wikidata_only.utils.time import utc_now_iso as _utc_now_iso
 _read_polygon_wikidata_set = read_polygon_wikidata_set
 _read_table_required = read_table_required
 
-# ---------------------------------------------------------------------------
-# enforce_wikivoyage_integrity
-# ---------------------------------------------------------------------------
-
 
 def _partition_wikivoyage_documents(
     stem: str,
@@ -263,11 +259,6 @@ def enforce_wikivoyage_integrity(
         rewritten_sections=rewritten_sections,
         rejections=rejections_tuple,
     )
-
-
-# ---------------------------------------------------------------------------
-# enforce_all_regions
-# ---------------------------------------------------------------------------
 
 
 def _collect_integrity_results(
